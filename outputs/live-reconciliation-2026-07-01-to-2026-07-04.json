@@ -1,0 +1,238 @@
+{
+  "generatedAt": "2026-07-04T13:36:56.102Z",
+  "period": {
+    "startDate": "2026-07-01",
+    "endDate": "2026-07-04"
+  },
+  "runtimeMs": 9534,
+  "warnings": [
+    "offices: 5 rows in 1515ms",
+    "rooms: 1168 rows in 1031ms",
+    "tenants: 1137 rows in 1397ms",
+    "properties: 4 rows in 295ms",
+    "landlords: 104 rows in 311ms",
+    "collections: 158 rows in 464ms",
+    "expenses: 4 rows in 307ms",
+    "promises: 1 rows in 273ms",
+    "landlord_payments: 63 rows in 288ms",
+    "landlord_monthly_payables: 211 rows in 407ms",
+    "landlord_advances: 2 rows in 463ms",
+    "cash_accounts: 6 rows in 293ms",
+    "cash_transactions: 174 rows in 296ms",
+    "tenant_rent_months: 1106 rows in 953ms",
+    "leases: 1138 rows in 937ms",
+    "employees: 8 rows in 273ms"
+  ],
+  "summary": {
+    "companiesChecked": 1,
+    "officesChecked": 5,
+    "mismatchesFound": 0
+  },
+  "reports": [
+    {
+      "companyId": "7744ee11-6375-44bb-953f-fdc8ea17eedd",
+      "officeCount": 5,
+      "offices": [
+        {
+          "companyId": "7744ee11-6375-44bb-953f-fdc8ea17eedd",
+          "officeId": "2987830f-906b-4f31-921f-734e6171dd10",
+          "officeName": "Kapeeka Office",
+          "metrics": {
+            "properties": 1,
+            "rooms": 239,
+            "occupiedRooms": 235,
+            "vacantRooms": 4,
+            "activeTenants": 235,
+            "currentMonthRentRows": 213,
+            "rentRollFromRooms": 21350000,
+            "dueOccupiedRentRollFromRooms": 18920000,
+            "rentRollFromTenantRentMonths": 18920000,
+            "tenantOutstandingFromProfiles": 23765000,
+            "tenantOutstandingFromRentMonths": 18920000,
+            "collectionsAmount": 0,
+            "collectionsRows": 0,
+            "expensesAmount": 0,
+            "expensesRows": 0,
+            "promisesActive": 0,
+            "landlordPayableComputed": 17269900.88,
+            "landlordPayableLedger": 17269900.88,
+            "landlordUnpaidComputed": 17269900.88,
+            "landlordUnpaidLedger": 17269900.88,
+            "landlordPaymentsMade": 0,
+            "landlordAdvancesGiven": 7223000,
+            "landlordAdvanceBalance": 7223000,
+            "employeeCount": 2,
+            "cash": {
+              "moneyAtOfficeTransactions": -7223000,
+              "moneyAtOfficeFormula": -7223000,
+              "moneyBanked": 0,
+              "adminFloatNet": 0
+            }
+          },
+          "mismatches": []
+        },
+        {
+          "companyId": "7744ee11-6375-44bb-953f-fdc8ea17eedd",
+          "officeId": "38bf5785-483c-46b8-8bb8-a7c2f0c55cb8",
+          "officeName": "Mbale Office",
+          "metrics": {
+            "properties": 0,
+            "rooms": 0,
+            "occupiedRooms": 0,
+            "vacantRooms": 0,
+            "activeTenants": 0,
+            "currentMonthRentRows": 0,
+            "rentRollFromRooms": 0,
+            "dueOccupiedRentRollFromRooms": 0,
+            "rentRollFromTenantRentMonths": 0,
+            "tenantOutstandingFromProfiles": 0,
+            "tenantOutstandingFromRentMonths": 0,
+            "collectionsAmount": 0,
+            "collectionsRows": 0,
+            "expensesAmount": 0,
+            "expensesRows": 0,
+            "promisesActive": 0,
+            "landlordPayableComputed": 0,
+            "landlordPayableLedger": 0,
+            "landlordUnpaidComputed": 0,
+            "landlordUnpaidLedger": 0,
+            "landlordPaymentsMade": 0,
+            "landlordAdvancesGiven": 0,
+            "landlordAdvanceBalance": 0,
+            "employeeCount": 1,
+            "cash": {
+              "moneyAtOfficeTransactions": 0,
+              "moneyAtOfficeFormula": 0,
+              "moneyBanked": 0,
+              "adminFloatNet": 0
+            }
+          },
+          "mismatches": []
+        },
+        {
+          "companyId": "7744ee11-6375-44bb-953f-fdc8ea17eedd",
+          "officeId": "5f01cfeb-048b-453b-8af3-70649f10ceb3",
+          "officeName": "Kiyindi Office",
+          "metrics": {
+            "properties": 1,
+            "rooms": 57,
+            "occupiedRooms": 57,
+            "vacantRooms": 0,
+            "activeTenants": 57,
+            "currentMonthRentRows": 57,
+            "rentRollFromRooms": 4035000,
+            "dueOccupiedRentRollFromRooms": 4035000,
+            "rentRollFromTenantRentMonths": 4035000,
+            "tenantOutstandingFromProfiles": 8035000,
+            "tenantOutstandingFromRentMonths": 4035000,
+            "collectionsAmount": 0,
+            "collectionsRows": 0,
+            "expensesAmount": 0,
+            "expensesRows": 0,
+            "promisesActive": 0,
+            "landlordPayableComputed": 3228000,
+            "landlordPayableLedger": 3228000,
+            "landlordUnpaidComputed": 3228000,
+            "landlordUnpaidLedger": 3228000,
+            "landlordPaymentsMade": 0,
+            "landlordAdvancesGiven": 0,
+            "landlordAdvanceBalance": 0,
+            "employeeCount": 1,
+            "cash": {
+              "moneyAtOfficeTransactions": 0,
+              "moneyAtOfficeFormula": 0,
+              "moneyBanked": 0,
+              "adminFloatNet": 0
+            }
+          },
+          "mismatches": []
+        },
+        {
+          "companyId": "7744ee11-6375-44bb-953f-fdc8ea17eedd",
+          "officeId": "714c0941-fd6e-4877-86b8-b1e7d65d283a",
+          "officeName": "Lugonjo Office",
+          "metrics": {
+            "properties": 1,
+            "rooms": 251,
+            "occupiedRooms": 250,
+            "vacantRooms": 1,
+            "activeTenants": 251,
+            "currentMonthRentRows": 250,
+            "rentRollFromRooms": 36945000,
+            "dueOccupiedRentRollFromRooms": 36865000,
+            "rentRollFromTenantRentMonths": 36865000,
+            "tenantOutstandingFromProfiles": 73360000,
+            "tenantOutstandingFromRentMonths": 36865000,
+            "collectionsAmount": 0,
+            "collectionsRows": 0,
+            "expensesAmount": 0,
+            "expensesRows": 0,
+            "promisesActive": 0,
+            "landlordPayableComputed": 29469040.900000006,
+            "landlordPayableLedger": 29469040.900000002,
+            "landlordUnpaidComputed": 29469040.900000006,
+            "landlordUnpaidLedger": 29469040.900000002,
+            "landlordPaymentsMade": 0,
+            "landlordAdvancesGiven": 0,
+            "landlordAdvanceBalance": 0,
+            "employeeCount": 1,
+            "cash": {
+              "moneyAtOfficeTransactions": 2930000,
+              "moneyAtOfficeFormula": 2930000,
+              "moneyBanked": 0,
+              "adminFloatNet": 0
+            }
+          },
+          "mismatches": []
+        },
+        {
+          "companyId": "7744ee11-6375-44bb-953f-fdc8ea17eedd",
+          "officeId": "c3aec325-e05f-45fd-af7d-1bcfef17732d",
+          "officeName": "Kigungu Main Office",
+          "metrics": {
+            "properties": 1,
+            "rooms": 619,
+            "occupiedRooms": 588,
+            "vacantRooms": 31,
+            "activeTenants": 594,
+            "currentMonthRentRows": 586,
+            "rentRollFromRooms": 57250000,
+            "dueOccupiedRentRollFromRooms": 54600000,
+            "rentRollFromTenantRentMonths": 54600000,
+            "tenantOutstandingFromProfiles": 97383000,
+            "tenantOutstandingFromRentMonths": 54330000,
+            "collectionsAmount": 0,
+            "collectionsRows": 0,
+            "expensesAmount": 0,
+            "expensesRows": 0,
+            "promisesActive": 1,
+            "landlordPayableComputed": 43451355.90000001,
+            "landlordPayableLedger": 43451355.9,
+            "landlordUnpaidComputed": 43451355.90000001,
+            "landlordUnpaidLedger": 43451355.9,
+            "landlordPaymentsMade": 0,
+            "landlordAdvancesGiven": 0,
+            "landlordAdvanceBalance": 0,
+            "employeeCount": 3,
+            "cash": {
+              "moneyAtOfficeTransactions": 8235000,
+              "moneyAtOfficeFormula": 8235000,
+              "moneyBanked": 2000000,
+              "adminFloatNet": 2000000
+            }
+          },
+          "mismatches": []
+        }
+      ],
+      "totals": {
+        "rentRollFromRooms": 119580000,
+        "collectionsAmount": 0,
+        "expensesAmount": 0,
+        "landlordPayableComputed": 93418297.68,
+        "landlordPayableLedger": 93418297.68,
+        "mismatches": 0
+      },
+      "mismatches": []
+    }
+  ]
+}

@@ -1,0 +1,5764 @@
+{
+  "generatedAt": "2026-06-22T18:07:00.172Z",
+  "sources": [
+    "/Users/daddytheo/Desktop/Master file.xlsx",
+    "/Users/daddytheo/Desktop/KIGUNGU 2024.xlsx",
+    "/Users/daddytheo/Desktop/LANDLORD'S CUT.xlsx"
+  ],
+  "sourceStats": {
+    "sourceRows": 1212,
+    "landlords": 110,
+    "commissionRows": 105
+  },
+  "summary": {
+    "landlordsCompared": 110,
+    "changedLandlords": 55,
+    "totalMissingRooms": 218,
+    "totalExtraRooms": 5,
+    "highConfidenceQaRoomsToArchive": 2,
+    "totalRentRollDifference": -17395000
+  },
+  "focused": [
+    {
+      "landlordName": "Alex Costa",
+      "matchedLandlord": "Alex Costa",
+      "matchCount": 1,
+      "excelRoomCount": 7,
+      "supabaseRoomCount": 9,
+      "extraRooms": [
+        {
+          "id": "5b33ca87-6712-46f4-a5c0-65125afe5ced",
+          "room": "QA-START-VAC-1782144137277",
+          "rent": 350000,
+          "status": "occupied",
+          "property": "Kigungu",
+          "office": "Kigungu Main Office",
+          "highConfidenceArchive": true
+        },
+        {
+          "id": "690932e6-247b-4a89-a137-fad4fb423eb4",
+          "room": "QA-START-OCC-1782144137277",
+          "rent": 120000,
+          "status": "occupied",
+          "property": "Kigungu",
+          "office": "Kigungu Main Office",
+          "highConfidenceArchive": true
+        }
+      ],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 450000,
+      "supabaseRentRoll": 920000,
+      "difference": 470000,
+      "commissionNetSource": {
+        "landlordNetPayable": 360000,
+        "source": "LANDLORD'S CUT.xlsx#4"
+      },
+      "correctedNetPayableTemporaryRule": 360000,
+      "proposedAction": "2 extra Supabase room(s) should be unassigned/archived if not in Excel"
+    },
+    {
+      "landlordName": "Kigongo",
+      "matchedLandlord": "Kigongo",
+      "matchCount": 1,
+      "excelRoomCount": 12,
+      "supabaseRoomCount": 12,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1030000,
+      "supabaseRentRoll": 1030000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 782000,
+        "source": "LANDLORD'S CUT.xlsx#27"
+      },
+      "correctedNetPayableTemporaryRule": 875500,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Alionzi",
+      "matchedLandlord": "Alionzi",
+      "matchCount": 1,
+      "excelRoomCount": 15,
+      "supabaseRoomCount": 14,
+      "extraRooms": [
+        {
+          "id": "8723ebaa-76cc-4bb5-a418-e8ee3c7f4d7d",
+          "room": "Z163",
+          "rent": 70000,
+          "status": "occupied",
+          "property": "Kigungu",
+          "office": "Kigungu Main Office",
+          "highConfidenceArchive": false
+        }
+      ],
+      "missingRooms": [
+        {
+          "room": "T33",
+          "rent": 0,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#26"
+        },
+        {
+          "room": "Z162",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#28"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1150000,
+      "supabaseRentRoll": 1130000,
+      "difference": -20000,
+      "commissionNetSource": {
+        "landlordNetPayable": 960500,
+        "source": "LANDLORD'S CUT.xlsx#5"
+      },
+      "correctedNetPayableTemporaryRule": 977500,
+      "proposedAction": "2 missing source room(s) need import or reassignment; 1 extra Supabase room(s) should be unassigned/archived if not in Excel"
+    }
+  ],
+  "changedTop": [
+    {
+      "landlordName": "Nansamba Agnes (Mama Benitha)",
+      "matchedLandlord": null,
+      "matchCount": 0,
+      "excelRoomCount": 28,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "A113/A117",
+          "rent": 150000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#417"
+        },
+        {
+          "room": "A114",
+          "rent": 150000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#418"
+        },
+        {
+          "room": "A118",
+          "rent": 90000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#419"
+        },
+        {
+          "room": "A119",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#420"
+        },
+        {
+          "room": "B601",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#421"
+        },
+        {
+          "room": "B602",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#422"
+        },
+        {
+          "room": "B603",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#423"
+        },
+        {
+          "room": "B604",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#424"
+        },
+        {
+          "room": "B605",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#425"
+        },
+        {
+          "room": "B614",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#426"
+        },
+        {
+          "room": "B615",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#427"
+        },
+        {
+          "room": "B616",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#428"
+        },
+        {
+          "room": "B617",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#429"
+        },
+        {
+          "room": "B618",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#430"
+        },
+        {
+          "room": "MUSIRAMU",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#431"
+        },
+        {
+          "room": "TEACHER",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#432"
+        },
+        {
+          "room": "Y59/Z121",
+          "rent": 160000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#433"
+        },
+        {
+          "room": "Y60",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#434"
+        },
+        {
+          "room": "Z62",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#435"
+        },
+        {
+          "room": "Z64",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#436"
+        },
+        {
+          "room": "Z65",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#437"
+        },
+        {
+          "room": "Z66",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#438"
+        },
+        {
+          "room": "Z67",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#439"
+        },
+        {
+          "room": "Z68",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#440"
+        },
+        {
+          "room": "Z69",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#441"
+        },
+        {
+          "room": "Z70B",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#442"
+        },
+        {
+          "room": "Z71B",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#443"
+        },
+        {
+          "room": "Z72B",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#444"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 2150000,
+      "supabaseRentRoll": 0,
+      "difference": -2150000,
+      "commissionNetSource": null,
+      "correctedNetPayableTemporaryRule": 1935000,
+      "proposedAction": "28 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "SALONGO",
+      "matchedLandlord": "SALONGO",
+      "matchCount": 1,
+      "excelRoomCount": 60,
+      "supabaseRoomCount": 41,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "E176",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1030"
+        },
+        {
+          "room": "E177",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1031"
+        },
+        {
+          "room": "E178",
+          "rent": 100000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1032"
+        },
+        {
+          "room": "E179",
+          "rent": 100000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1033"
+        },
+        {
+          "room": "E180",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1034"
+        },
+        {
+          "room": "E181",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1035"
+        },
+        {
+          "room": "E182",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1036"
+        },
+        {
+          "room": "E183",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1037"
+        },
+        {
+          "room": "E184",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1038"
+        },
+        {
+          "room": "E185",
+          "rent": 70000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1039"
+        },
+        {
+          "room": "E186",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1040"
+        },
+        {
+          "room": "E187",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1041"
+        },
+        {
+          "room": "E188",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1042"
+        },
+        {
+          "room": "E189",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1043"
+        },
+        {
+          "room": "E190",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1044"
+        },
+        {
+          "room": "E191",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1045"
+        },
+        {
+          "room": "E192",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1046"
+        },
+        {
+          "room": "E193",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1047"
+        },
+        {
+          "room": "E194",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1048"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 5110000,
+      "supabaseRentRoll": 3470000,
+      "difference": -1640000,
+      "commissionNetSource": {
+        "landlordNetPayable": 4343500,
+        "source": "LANDLORD'S CUT.xlsx#104"
+      },
+      "correctedNetPayableTemporaryRule": 4599000,
+      "proposedAction": "19 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "TUMWETE ROBERT",
+      "matchedLandlord": "TUMWETE ROBERT",
+      "matchCount": 1,
+      "excelRoomCount": 19,
+      "supabaseRoomCount": 1,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "E122",
+          "rent": 100000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#929"
+        },
+        {
+          "room": "E123",
+          "rent": 100000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#930"
+        },
+        {
+          "room": "E124",
+          "rent": 100000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#931"
+        },
+        {
+          "room": "E126",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#933"
+        },
+        {
+          "room": "E127",
+          "rent": 100000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#934"
+        },
+        {
+          "room": "E128",
+          "rent": 100000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#935"
+        },
+        {
+          "room": "E129",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#936"
+        },
+        {
+          "room": "E130",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#937"
+        },
+        {
+          "room": "E131",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#938"
+        },
+        {
+          "room": "E132",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#939"
+        },
+        {
+          "room": "E133",
+          "rent": 100000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#940"
+        },
+        {
+          "room": "E134",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#941"
+        },
+        {
+          "room": "E135",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#942"
+        },
+        {
+          "room": "E136",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#943"
+        },
+        {
+          "room": "E137",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#944"
+        },
+        {
+          "room": "E138",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#945"
+        },
+        {
+          "room": "E139",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#946"
+        },
+        {
+          "room": "E140",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#947"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1660000,
+      "supabaseRentRoll": 100000,
+      "difference": -1560000,
+      "commissionNetSource": {
+        "landlordNetPayable": 1411000,
+        "source": "LANDLORD'S CUT.xlsx#98"
+      },
+      "correctedNetPayableTemporaryRule": 1494000,
+      "proposedAction": "18 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Ssegujja Anthony",
+      "matchedLandlord": "Ssegujja Anthony",
+      "matchCount": 1,
+      "excelRoomCount": 33,
+      "supabaseRoomCount": 18,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "B94",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#554"
+        },
+        {
+          "room": "B95",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#555"
+        },
+        {
+          "room": "B96",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#556"
+        },
+        {
+          "room": "B97",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#557"
+        },
+        {
+          "room": "LYDIA",
+          "rent": 340000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#559"
+        },
+        {
+          "room": "R101",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#561"
+        },
+        {
+          "room": "R101B",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#562"
+        },
+        {
+          "room": "T40",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#563"
+        },
+        {
+          "room": "T41",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#564"
+        },
+        {
+          "room": "T43",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#565"
+        },
+        {
+          "room": "T44B",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#567"
+        },
+        {
+          "room": "T45A",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#568"
+        },
+        {
+          "room": "T46",
+          "rent": 140000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#569"
+        },
+        {
+          "room": "T48",
+          "rent": 90000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#571"
+        },
+        {
+          "room": "T51",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#574"
+        }
+      ],
+      "wrongLandlordCandidates": [
+        {
+          "room": "T40",
+          "expectedLandlord": "Ssegujja Anthony",
+          "currentLandlordId": "5e4b072f-2978-48b4-9ac9-bd85a3c7f2f6",
+          "roomId": "291fa5d7-1185-48bf-917a-742b386e141b"
+        },
+        {
+          "room": "T41",
+          "expectedLandlord": "Ssegujja Anthony",
+          "currentLandlordId": "5e4b072f-2978-48b4-9ac9-bd85a3c7f2f6",
+          "roomId": "586895e6-ed36-4c93-93c3-09d147367027"
+        },
+        {
+          "room": "T46",
+          "expectedLandlord": "Ssegujja Anthony",
+          "currentLandlordId": "5e4b072f-2978-48b4-9ac9-bd85a3c7f2f6",
+          "roomId": "ec9e91ce-9085-4295-a630-a74e59542db3"
+        }
+      ],
+      "duplicateRooms": [],
+      "excelRentRoll": 4440000,
+      "supabaseRentRoll": 3020000,
+      "difference": -1420000,
+      "commissionNetSource": {
+        "landlordNetPayable": 3790000,
+        "source": "LANDLORD'S CUT.xlsx#88"
+      },
+      "correctedNetPayableTemporaryRule": 3996000,
+      "proposedAction": "15 missing source room(s) need import or reassignment; 3 room(s) appear attached to another landlord and can be moved if approved"
+    },
+    {
+      "landlordName": "Ssenyonga",
+      "matchedLandlord": "Ssenyonga",
+      "matchCount": 1,
+      "excelRoomCount": 34,
+      "supabaseRoomCount": 24,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "A10",
+          "rent": 120000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#576"
+        },
+        {
+          "room": "A11",
+          "rent": 120000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#577"
+        },
+        {
+          "room": "A12",
+          "rent": 120000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#578"
+        },
+        {
+          "room": "A13",
+          "rent": 120000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#579"
+        },
+        {
+          "room": "A14",
+          "rent": 0,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#580"
+        },
+        {
+          "room": "A15",
+          "rent": 120000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#581"
+        },
+        {
+          "room": "A16",
+          "rent": 120000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#582"
+        },
+        {
+          "room": "A7",
+          "rent": 150000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#583"
+        },
+        {
+          "room": "A8",
+          "rent": 120000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#584"
+        },
+        {
+          "room": "A9",
+          "rent": 120000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#585"
+        }
+      ],
+      "wrongLandlordCandidates": [
+        {
+          "room": "A14",
+          "expectedLandlord": "Ssenyonga",
+          "currentLandlordId": "dfd98ea9-1d8e-4d46-be80-975c9eb7b16b",
+          "roomId": "c867b7fe-9619-46fa-9d3f-08c5e8ccdc14"
+        },
+        {
+          "room": "A15",
+          "expectedLandlord": "Ssenyonga",
+          "currentLandlordId": "dfd98ea9-1d8e-4d46-be80-975c9eb7b16b",
+          "roomId": "0ad264fa-d9a0-48b7-904d-69b5c80a6f0f"
+        },
+        {
+          "room": "A16",
+          "expectedLandlord": "Ssenyonga",
+          "currentLandlordId": "dfd98ea9-1d8e-4d46-be80-975c9eb7b16b",
+          "roomId": "4a49bfa2-647a-4264-bc75-cae82c9bdb00"
+        }
+      ],
+      "duplicateRooms": [],
+      "excelRentRoll": 3560000,
+      "supabaseRentRoll": 2450000,
+      "difference": -1110000,
+      "commissionNetSource": {
+        "landlordNetPayable": 1949999.999885,
+        "source": "LANDLORD'S CUT.xlsx#89"
+      },
+      "correctedNetPayableTemporaryRule": 2833468,
+      "proposedAction": "10 missing source room(s) need import or reassignment; 3 room(s) appear attached to another landlord and can be moved if approved"
+    },
+    {
+      "landlordName": "NALONGO ABBAS",
+      "matchedLandlord": "NALONGO ABBAS",
+      "matchCount": 1,
+      "excelRoomCount": 11,
+      "supabaseRoomCount": 4,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "Z112",
+          "rent": 120000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#652"
+        },
+        {
+          "room": "Z118",
+          "rent": 120000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#653"
+        },
+        {
+          "room": "Z138",
+          "rent": 90000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#657"
+        },
+        {
+          "room": "Z125",
+          "rent": 120000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#658"
+        },
+        {
+          "room": "Z156",
+          "rent": 120000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#659"
+        },
+        {
+          "room": "Z186",
+          "rent": 120000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#660"
+        },
+        {
+          "room": "Z190",
+          "rent": 130000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#661"
+        }
+      ],
+      "wrongLandlordCandidates": [
+        {
+          "room": "Z112",
+          "expectedLandlord": "NALONGO ABBAS",
+          "currentLandlordId": "dc4aeb41-acfc-4948-9f53-f57547cea47e",
+          "roomId": "e7764961-1d15-497e-854c-2cfc040de153"
+        },
+        {
+          "room": "Z118",
+          "expectedLandlord": "NALONGO ABBAS",
+          "currentLandlordId": "dc4aeb41-acfc-4948-9f53-f57547cea47e",
+          "roomId": "a14e667a-b278-4535-abf1-6fdabff63e74"
+        },
+        {
+          "room": "Z138",
+          "expectedLandlord": "NALONGO ABBAS",
+          "currentLandlordId": "202fe492-6f2e-4fa4-aaf1-4349d782e0ff",
+          "roomId": "d970be4d-885e-40c4-87b1-5c04a8fd315d"
+        },
+        {
+          "room": "Z125",
+          "expectedLandlord": "NALONGO ABBAS",
+          "currentLandlordId": "dc4aeb41-acfc-4948-9f53-f57547cea47e",
+          "roomId": "4427af00-85fd-4964-8fc6-7a7fca694b05"
+        },
+        {
+          "room": "Z156",
+          "expectedLandlord": "NALONGO ABBAS",
+          "currentLandlordId": "c903bdcc-3c64-492f-9b08-93f4563c2994",
+          "roomId": "84e8f760-396a-45fc-869b-a2513d6404ff"
+        },
+        {
+          "room": "Z186",
+          "expectedLandlord": "NALONGO ABBAS",
+          "currentLandlordId": "c903bdcc-3c64-492f-9b08-93f4563c2994",
+          "roomId": "e985bd08-d12d-437f-b523-ed22cf225a02"
+        },
+        {
+          "room": "Z190",
+          "expectedLandlord": "NALONGO ABBAS",
+          "currentLandlordId": "c903bdcc-3c64-492f-9b08-93f4563c2994",
+          "roomId": "f02945ab-61f3-4c9d-9cb4-b69102462c2a"
+        }
+      ],
+      "duplicateRooms": [],
+      "excelRentRoll": 1160000,
+      "supabaseRentRoll": 340000,
+      "difference": -820000,
+      "commissionNetSource": {
+        "landlordNetPayable": 278800,
+        "source": "LANDLORD'S CUT.xlsx#67"
+      },
+      "correctedNetPayableTemporaryRule": 951200,
+      "proposedAction": "7 missing source room(s) need import or reassignment; 7 room(s) appear attached to another landlord and can be moved if approved"
+    },
+    {
+      "landlordName": "TONY",
+      "matchedLandlord": null,
+      "matchCount": 0,
+      "excelRoomCount": 1,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "FAZA",
+          "rent": 800000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#621"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 800000,
+      "supabaseRentRoll": 0,
+      "difference": -800000,
+      "commissionNetSource": null,
+      "correctedNetPayableTemporaryRule": 720000,
+      "proposedAction": "1 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "ASAD",
+      "matchedLandlord": "ASAD",
+      "matchCount": 1,
+      "excelRoomCount": 8,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "F69",
+          "rent": 100000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1086"
+        },
+        {
+          "room": "F70",
+          "rent": 30000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1087"
+        },
+        {
+          "room": "F71",
+          "rent": 100000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1088"
+        },
+        {
+          "room": "F72",
+          "rent": 100000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1089"
+        },
+        {
+          "room": "F73",
+          "rent": 200000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1090"
+        },
+        {
+          "room": "F74",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1091"
+        },
+        {
+          "room": "F75",
+          "rent": 100000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1092"
+        },
+        {
+          "room": "F76",
+          "rent": 30000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1093"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 720000,
+      "supabaseRentRoll": 0,
+      "difference": -720000,
+      "commissionNetSource": {
+        "landlordNetPayable": 576000,
+        "source": "LANDLORD'S CUT.xlsx#107"
+      },
+      "correctedNetPayableTemporaryRule": 648000,
+      "proposedAction": "8 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Umar Kawooya",
+      "matchedLandlord": "Umar Kawooya",
+      "matchCount": 1,
+      "excelRoomCount": 16,
+      "supabaseRoomCount": 14,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "F60",
+          "rent": 130000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#631"
+        },
+        {
+          "room": "F62",
+          "rent": 220000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#633"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 2760000,
+      "supabaseRentRoll": 2050000,
+      "difference": -710000,
+      "commissionNetSource": {
+        "landlordNetPayable": 2890000,
+        "source": "LANDLORD'S CUT.xlsx#91"
+      },
+      "correctedNetPayableTemporaryRule": 2484000,
+      "proposedAction": "2 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "MATIA 2",
+      "matchedLandlord": "MATIA 2",
+      "matchCount": 1,
+      "excelRoomCount": 17,
+      "supabaseRoomCount": 9,
+      "extraRooms": [
+        {
+          "id": "de9a1c3c-b2bb-4d81-80cc-b2414f739193",
+          "room": "E201-2",
+          "rent": 70000,
+          "status": "occupied",
+          "property": "KAPEEKA",
+          "office": "Kapeeka Office",
+          "highConfidenceArchive": false
+        }
+      ],
+      "missingRooms": [
+        {
+          "room": "E204",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1059"
+        },
+        {
+          "room": "E205",
+          "rent": 70000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1060"
+        },
+        {
+          "room": "E206",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1061"
+        },
+        {
+          "room": "E212",
+          "rent": 100000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1067"
+        },
+        {
+          "room": "E213",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1068"
+        },
+        {
+          "room": "E214",
+          "rent": 70000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1069"
+        },
+        {
+          "room": "E215",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1070"
+        },
+        {
+          "room": "E216",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1071"
+        },
+        {
+          "room": "E217",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1072"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 2200000,
+      "supabaseRentRoll": 1530000,
+      "difference": -670000,
+      "commissionNetSource": {
+        "landlordNetPayable": 1861400,
+        "source": "LANDLORD'S CUT.xlsx#105"
+      },
+      "correctedNetPayableTemporaryRule": 1980000,
+      "proposedAction": "9 missing source room(s) need import or reassignment; 1 extra Supabase room(s) should be unassigned/archived if not in Excel"
+    },
+    {
+      "landlordName": "NAKIZINDA",
+      "matchedLandlord": "NAKIZINDA",
+      "matchCount": 1,
+      "excelRoomCount": 7,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "E701",
+          "rent": 100000,
+          "location": "KIGUNGU",
+          "source": "Master file.xlsx:HOUSES#982"
+        },
+        {
+          "room": "E702",
+          "rent": 100000,
+          "location": "KIGUNGU",
+          "source": "Master file.xlsx:HOUSES#983"
+        },
+        {
+          "room": "E703",
+          "rent": 100000,
+          "location": "KIGUNGU",
+          "source": "Master file.xlsx:HOUSES#984"
+        },
+        {
+          "room": "E704",
+          "rent": 100000,
+          "location": "KIGUNGU",
+          "source": "Master file.xlsx:HOUSES#985"
+        },
+        {
+          "room": "E705",
+          "rent": 100000,
+          "location": "KIGUNGU",
+          "source": "Master file.xlsx:HOUSES#986"
+        },
+        {
+          "room": "E706",
+          "rent": 90000,
+          "location": "KIGUNGU",
+          "source": "Master file.xlsx:HOUSES#987"
+        },
+        {
+          "room": "E707",
+          "rent": 60000,
+          "location": "KIGUNGU",
+          "source": "Master file.xlsx:HOUSES#988"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 650000,
+      "supabaseRentRoll": 0,
+      "difference": -650000,
+      "commissionNetSource": {
+        "landlordNetPayable": 568000,
+        "source": "LANDLORD'S CUT.xlsx#95"
+      },
+      "correctedNetPayableTemporaryRule": 585000,
+      "proposedAction": "7 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "ALINAITWE NICHOLAS",
+      "matchedLandlord": "ALINAITWE NICHOLAS",
+      "matchCount": 1,
+      "excelRoomCount": 23,
+      "supabaseRoomCount": 15,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "E108",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#916"
+        },
+        {
+          "room": "E110",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#917"
+        },
+        {
+          "room": "E112",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#919"
+        },
+        {
+          "room": "E113",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#920"
+        },
+        {
+          "room": "E115",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#922"
+        },
+        {
+          "room": "E116",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#923"
+        },
+        {
+          "room": "E120",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#927"
+        },
+        {
+          "room": "E121",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#928"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1840000,
+      "supabaseRentRoll": 1200000,
+      "difference": -640000,
+      "commissionNetSource": {
+        "landlordNetPayable": 1632000,
+        "source": "LANDLORD'S CUT.xlsx#97"
+      },
+      "correctedNetPayableTemporaryRule": 1632001,
+      "proposedAction": "8 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "MOSES",
+      "matchedLandlord": "MOSES",
+      "matchCount": 1,
+      "excelRoomCount": 8,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "F61A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1078"
+        },
+        {
+          "room": "F62A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1079"
+        },
+        {
+          "room": "F63A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1080"
+        },
+        {
+          "room": "F64A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1081"
+        },
+        {
+          "room": "F65A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1082"
+        },
+        {
+          "room": "F66A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1083"
+        },
+        {
+          "room": "F67A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1084"
+        },
+        {
+          "room": "F68A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1085"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 480000,
+      "supabaseRentRoll": 0,
+      "difference": -480000,
+      "commissionNetSource": {
+        "landlordNetPayable": 384000,
+        "source": "LANDLORD'S CUT.xlsx#108"
+      },
+      "correctedNetPayableTemporaryRule": 432000,
+      "proposedAction": "8 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Alex Costa",
+      "matchedLandlord": "Alex Costa",
+      "matchCount": 1,
+      "excelRoomCount": 7,
+      "supabaseRoomCount": 9,
+      "extraRooms": [
+        {
+          "id": "5b33ca87-6712-46f4-a5c0-65125afe5ced",
+          "room": "QA-START-VAC-1782144137277",
+          "rent": 350000,
+          "status": "occupied",
+          "property": "Kigungu",
+          "office": "Kigungu Main Office",
+          "highConfidenceArchive": true
+        },
+        {
+          "id": "690932e6-247b-4a89-a137-fad4fb423eb4",
+          "room": "QA-START-OCC-1782144137277",
+          "rent": 120000,
+          "status": "occupied",
+          "property": "Kigungu",
+          "office": "Kigungu Main Office",
+          "highConfidenceArchive": true
+        }
+      ],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 450000,
+      "supabaseRentRoll": 920000,
+      "difference": 470000,
+      "commissionNetSource": {
+        "landlordNetPayable": 360000,
+        "source": "LANDLORD'S CUT.xlsx#4"
+      },
+      "correctedNetPayableTemporaryRule": 360000,
+      "proposedAction": "2 extra Supabase room(s) should be unassigned/archived if not in Excel"
+    },
+    {
+      "landlordName": "Sentamu",
+      "matchedLandlord": null,
+      "matchCount": 0,
+      "excelRoomCount": 6,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "S72",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#539"
+        },
+        {
+          "room": "S73",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#540"
+        },
+        {
+          "room": "S74",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#541"
+        },
+        {
+          "room": "S75",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#542"
+        },
+        {
+          "room": "S76",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#543"
+        },
+        {
+          "room": "S77",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#544"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 420000,
+      "supabaseRentRoll": 0,
+      "difference": -420000,
+      "commissionNetSource": null,
+      "correctedNetPayableTemporaryRule": 378000,
+      "proposedAction": "6 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Bryan Sabwe",
+      "matchedLandlord": "Bryan Sabwe",
+      "matchCount": 1,
+      "excelRoomCount": 13,
+      "supabaseRoomCount": 9,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "  B714B",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#7"
+        },
+        {
+          "room": "B40",
+          "rent": 100000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#8"
+        },
+        {
+          "room": "B41",
+          "rent": 100000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#492"
+        },
+        {
+          "room": "B42",
+          "rent": 100000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#493"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1190000,
+      "supabaseRentRoll": 810000,
+      "difference": -380000,
+      "commissionNetSource": {
+        "landlordNetPayable": 888000,
+        "source": "LANDLORD'S CUT.xlsx#10"
+      },
+      "correctedNetPayableTemporaryRule": 863852,
+      "proposedAction": "4 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Bulegeya",
+      "matchedLandlord": "Bulegeya",
+      "matchCount": 1,
+      "excelRoomCount": 20,
+      "supabaseRoomCount": 16,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "T195",
+          "rent": 100000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#40"
+        },
+        {
+          "room": "T196",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#41"
+        },
+        {
+          "room": "T197",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#42"
+        },
+        {
+          "room": "T198",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#43"
+        }
+      ],
+      "wrongLandlordCandidates": [
+        {
+          "room": "T195",
+          "expectedLandlord": "Bulegeya",
+          "currentLandlordId": "220ae272-8914-4a6c-8dbc-af275b103c8f",
+          "roomId": "470146e4-9c7f-418a-967b-9b8230322e80"
+        },
+        {
+          "room": "T196",
+          "expectedLandlord": "Bulegeya",
+          "currentLandlordId": "220ae272-8914-4a6c-8dbc-af275b103c8f",
+          "roomId": "a35a25bf-1b04-4191-84a8-24ccf69b1def"
+        },
+        {
+          "room": "T197",
+          "expectedLandlord": "Bulegeya",
+          "currentLandlordId": "220ae272-8914-4a6c-8dbc-af275b103c8f",
+          "roomId": "998a12c4-051b-4fc1-850b-c64d4dbeac01"
+        },
+        {
+          "room": "T198",
+          "expectedLandlord": "Bulegeya",
+          "currentLandlordId": "220ae272-8914-4a6c-8dbc-af275b103c8f",
+          "roomId": "47a9d325-4934-4644-8c4e-c9b90b6a459d"
+        }
+      ],
+      "duplicateRooms": [],
+      "excelRentRoll": 1850000,
+      "supabaseRentRoll": 1510000,
+      "difference": -340000,
+      "commissionNetSource": {
+        "landlordNetPayable": 1283500,
+        "source": "LANDLORD'S CUT.xlsx#11"
+      },
+      "correctedNetPayableTemporaryRule": 1572500,
+      "proposedAction": "4 missing source room(s) need import or reassignment; 4 room(s) appear attached to another landlord and can be moved if approved"
+    },
+    {
+      "landlordName": "MUGERWA",
+      "matchedLandlord": "MUGERWA",
+      "matchCount": 1,
+      "excelRoomCount": 14,
+      "supabaseRoomCount": 8,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "F42A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#972"
+        },
+        {
+          "room": "F43",
+          "rent": 40000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#973"
+        },
+        {
+          "room": "F45",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#975"
+        },
+        {
+          "room": "F46",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#976"
+        },
+        {
+          "room": "F47",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#977"
+        },
+        {
+          "room": "F48",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#978"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1120000,
+      "supabaseRentRoll": 780000,
+      "difference": -340000,
+      "commissionNetSource": {
+        "landlordNetPayable": 896000,
+        "source": "LANDLORD'S CUT.xlsx#101"
+      },
+      "correctedNetPayableTemporaryRule": 1008000,
+      "proposedAction": "6 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "MZEE LUMU",
+      "matchedLandlord": "MZEE LUMU",
+      "matchCount": 1,
+      "excelRoomCount": 5,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "F56",
+          "rent": 80000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1073"
+        },
+        {
+          "room": "F57",
+          "rent": 80000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1074"
+        },
+        {
+          "room": "F58",
+          "rent": 35000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1075"
+        },
+        {
+          "room": "F59",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1076"
+        },
+        {
+          "room": "F60A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1077"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 315000,
+      "supabaseRentRoll": 0,
+      "difference": -315000,
+      "commissionNetSource": {
+        "landlordNetPayable": 252000,
+        "source": "LANDLORD'S CUT.xlsx#106"
+      },
+      "correctedNetPayableTemporaryRule": 283500,
+      "proposedAction": "5 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "SSERUWAGI",
+      "matchedLandlord": "SSERUWAGI",
+      "matchCount": 1,
+      "excelRoomCount": 2,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "F15",
+          "rent": 200000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#980"
+        },
+        {
+          "room": "F16",
+          "rent": 80000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#981"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 280000,
+      "supabaseRentRoll": 0,
+      "difference": -280000,
+      "commissionNetSource": {
+        "landlordNetPayable": 680000,
+        "source": "LANDLORD'S CUT.xlsx#102"
+      },
+      "correctedNetPayableTemporaryRule": 252000,
+      "proposedAction": "2 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Nakazzi",
+      "matchedLandlord": "Nakazzi",
+      "matchCount": 1,
+      "excelRoomCount": 52,
+      "supabaseRoomCount": 49,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "K48",
+          "rent": 60000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#373"
+        },
+        {
+          "room": "T166",
+          "rent": 100000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#383"
+        },
+        {
+          "room": "Z146",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#399"
+        }
+      ],
+      "wrongLandlordCandidates": [
+        {
+          "room": "Z146",
+          "expectedLandlord": "Nakazzi",
+          "currentLandlordId": "539e6d40-79a7-45f9-9301-22c4f798735e",
+          "roomId": "ff8e24b8-28f8-47ec-99b2-ccee61718c5d"
+        }
+      ],
+      "duplicateRooms": [],
+      "excelRentRoll": 4070000,
+      "supabaseRentRoll": 3830000,
+      "difference": -240000,
+      "commissionNetSource": {
+        "landlordNetPayable": 2000000,
+        "source": "LANDLORD'S CUT.xlsx#65"
+      },
+      "correctedNetPayableTemporaryRule": 2125326,
+      "proposedAction": "3 missing source room(s) need import or reassignment; 1 room(s) appear attached to another landlord and can be moved if approved"
+    },
+    {
+      "landlordName": "Frank",
+      "matchedLandlord": null,
+      "matchCount": 0,
+      "excelRoomCount": 3,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "NEW",
+          "rent": 120000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#56"
+        },
+        {
+          "room": "R127",
+          "rent": 100000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#57"
+        },
+        {
+          "room": "R129",
+          "rent": 0,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#58"
+        }
+      ],
+      "wrongLandlordCandidates": [
+        {
+          "room": "NEW",
+          "expectedLandlord": "Frank",
+          "currentLandlordId": "93018d40-185c-4403-a386-4c9f5cfaeaa3",
+          "roomId": "5265c83f-d7a6-40fc-bab1-6c9039d47125"
+        }
+      ],
+      "duplicateRooms": [],
+      "excelRentRoll": 220000,
+      "supabaseRentRoll": 0,
+      "difference": -220000,
+      "commissionNetSource": null,
+      "correctedNetPayableTemporaryRule": 198000,
+      "proposedAction": "3 missing source room(s) need import or reassignment; 1 room(s) appear attached to another landlord and can be moved if approved"
+    },
+    {
+      "landlordName": "Sebulime Deo",
+      "matchedLandlord": "Sebulime Deo",
+      "matchCount": 1,
+      "excelRoomCount": 5,
+      "supabaseRoomCount": 1,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "B701",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#497"
+        },
+        {
+          "room": "B703",
+          "rent": 40000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#499"
+        },
+        {
+          "room": "B704",
+          "rent": 40000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#500"
+        },
+        {
+          "room": "B708",
+          "rent": 40000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#501"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 235000,
+      "supabaseRentRoll": 35000,
+      "difference": -200000,
+      "commissionNetSource": {
+        "landlordNetPayable": 188000,
+        "source": "LANDLORD'S CUT.xlsx#81"
+      },
+      "correctedNetPayableTemporaryRule": 211500,
+      "proposedAction": "4 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "MEDDY KAYIDALI",
+      "matchedLandlord": "MEDDY KAYIDALI",
+      "matchCount": 1,
+      "excelRoomCount": 8,
+      "supabaseRoomCount": 6,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "Z141",
+          "rent": 110000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#639"
+        },
+        {
+          "room": "Z105",
+          "rent": 60000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#643"
+        }
+      ],
+      "wrongLandlordCandidates": [
+        {
+          "room": "Z141",
+          "expectedLandlord": "MEDDY KAYIDALI",
+          "currentLandlordId": "539e6d40-79a7-45f9-9301-22c4f798735e",
+          "roomId": "1b7dc99e-6c82-495b-a5f9-c967371c293f"
+        }
+      ],
+      "duplicateRooms": [],
+      "excelRentRoll": 660000,
+      "supabaseRentRoll": 490000,
+      "difference": -170000,
+      "commissionNetSource": {
+        "landlordNetPayable": 440000,
+        "source": "LANDLORD'S CUT.xlsx#51"
+      },
+      "correctedNetPayableTemporaryRule": 592653,
+      "proposedAction": "2 missing source room(s) need import or reassignment; 1 room(s) appear attached to another landlord and can be moved if approved"
+    },
+    {
+      "landlordName": "Nantume",
+      "matchedLandlord": "Nantume",
+      "matchCount": 1,
+      "excelRoomCount": 13,
+      "supabaseRoomCount": 11,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "A352",
+          "rent": 100000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#446"
+        },
+        {
+          "room": "A354",
+          "rent": 60000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#448"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1010000,
+      "supabaseRentRoll": 850000,
+      "difference": -160000,
+      "commissionNetSource": {
+        "landlordNetPayable": 700000,
+        "source": "LANDLORD'S CUT.xlsx#71"
+      },
+      "correctedNetPayableTemporaryRule": 831764,
+      "proposedAction": "2 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "AMINA",
+      "matchedLandlord": "AMINA",
+      "matchCount": 1,
+      "excelRoomCount": 4,
+      "supabaseRoomCount": 2,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "B516",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#30"
+        },
+        {
+          "room": "B519",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#33"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 290000,
+      "supabaseRentRoll": 140000,
+      "difference": -150000,
+      "commissionNetSource": {
+        "landlordNetPayable": 232000,
+        "source": "LANDLORD'S CUT.xlsx#6"
+      },
+      "correctedNetPayableTemporaryRule": 261000,
+      "proposedAction": "2 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Kayiwa Brendah",
+      "matchedLandlord": "Kayiwa Brendah",
+      "matchCount": 1,
+      "excelRoomCount": 12,
+      "supabaseRoomCount": 11,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "B922/B921",
+          "rent": 160000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#106"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1000000,
+      "supabaseRentRoll": 850000,
+      "difference": -150000,
+      "commissionNetSource": {
+        "landlordNetPayable": 700000,
+        "source": "LANDLORD'S CUT.xlsx#24"
+      },
+      "correctedNetPayableTemporaryRule": 823529,
+      "proposedAction": "1 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "LAWRENCE",
+      "matchedLandlord": null,
+      "matchCount": 0,
+      "excelRoomCount": 2,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "E416",
+          "rent": 70000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#676"
+        },
+        {
+          "room": "E417",
+          "rent": 70000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#677"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 140000,
+      "supabaseRentRoll": 0,
+      "difference": -140000,
+      "commissionNetSource": {
+        "landlordNetPayable": 100000.00000200002,
+        "source": "LANDLORD'S CUT.xlsx#34"
+      },
+      "correctedNetPayableTemporaryRule": 126000,
+      "proposedAction": "2 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Martin Lutaakome Salongo",
+      "matchedLandlord": "Martin Lutaakome Salongo",
+      "matchCount": 1,
+      "excelRoomCount": 22,
+      "supabaseRoomCount": 20,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "C2019",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#283"
+        },
+        {
+          "room": "C2020",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#284"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 2020000,
+      "supabaseRentRoll": 1890000,
+      "difference": -130000,
+      "commissionNetSource": {
+        "landlordNetPayable": 1674500,
+        "source": "LANDLORD'S CUT.xlsx#46"
+      },
+      "correctedNetPayableTemporaryRule": 1789678,
+      "proposedAction": "2 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "MZEE AKIM",
+      "matchedLandlord": "MZEE AKIM",
+      "matchCount": 1,
+      "excelRoomCount": 6,
+      "supabaseRoomCount": 3,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "F50",
+          "rent": 70000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#989"
+        },
+        {
+          "room": "F51",
+          "rent": 30000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#990"
+        },
+        {
+          "room": "F54",
+          "rent": 30000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#993"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 290000,
+      "supabaseRentRoll": 160000,
+      "difference": -130000,
+      "commissionNetSource": {
+        "landlordNetPayable": 232000,
+        "source": "LANDLORD'S CUT.xlsx#103"
+      },
+      "correctedNetPayableTemporaryRule": 261000,
+      "proposedAction": "3 missing source room(s) need import or reassignment"
+    }
+  ],
+  "all": [
+    {
+      "landlordName": "Nansamba Agnes (Mama Benitha)",
+      "matchedLandlord": null,
+      "matchCount": 0,
+      "excelRoomCount": 28,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "A113/A117",
+          "rent": 150000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#417"
+        },
+        {
+          "room": "A114",
+          "rent": 150000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#418"
+        },
+        {
+          "room": "A118",
+          "rent": 90000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#419"
+        },
+        {
+          "room": "A119",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#420"
+        },
+        {
+          "room": "B601",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#421"
+        },
+        {
+          "room": "B602",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#422"
+        },
+        {
+          "room": "B603",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#423"
+        },
+        {
+          "room": "B604",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#424"
+        },
+        {
+          "room": "B605",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#425"
+        },
+        {
+          "room": "B614",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#426"
+        },
+        {
+          "room": "B615",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#427"
+        },
+        {
+          "room": "B616",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#428"
+        },
+        {
+          "room": "B617",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#429"
+        },
+        {
+          "room": "B618",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#430"
+        },
+        {
+          "room": "MUSIRAMU",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#431"
+        },
+        {
+          "room": "TEACHER",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#432"
+        },
+        {
+          "room": "Y59/Z121",
+          "rent": 160000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#433"
+        },
+        {
+          "room": "Y60",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#434"
+        },
+        {
+          "room": "Z62",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#435"
+        },
+        {
+          "room": "Z64",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#436"
+        },
+        {
+          "room": "Z65",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#437"
+        },
+        {
+          "room": "Z66",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#438"
+        },
+        {
+          "room": "Z67",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#439"
+        },
+        {
+          "room": "Z68",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#440"
+        },
+        {
+          "room": "Z69",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#441"
+        },
+        {
+          "room": "Z70B",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#442"
+        },
+        {
+          "room": "Z71B",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#443"
+        },
+        {
+          "room": "Z72B",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#444"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 2150000,
+      "supabaseRentRoll": 0,
+      "difference": -2150000,
+      "commissionNetSource": null,
+      "correctedNetPayableTemporaryRule": 1935000,
+      "proposedAction": "28 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "SALONGO",
+      "matchedLandlord": "SALONGO",
+      "matchCount": 1,
+      "excelRoomCount": 60,
+      "supabaseRoomCount": 41,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "E176",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1030"
+        },
+        {
+          "room": "E177",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1031"
+        },
+        {
+          "room": "E178",
+          "rent": 100000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1032"
+        },
+        {
+          "room": "E179",
+          "rent": 100000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1033"
+        },
+        {
+          "room": "E180",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1034"
+        },
+        {
+          "room": "E181",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1035"
+        },
+        {
+          "room": "E182",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1036"
+        },
+        {
+          "room": "E183",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1037"
+        },
+        {
+          "room": "E184",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1038"
+        },
+        {
+          "room": "E185",
+          "rent": 70000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1039"
+        },
+        {
+          "room": "E186",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1040"
+        },
+        {
+          "room": "E187",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1041"
+        },
+        {
+          "room": "E188",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1042"
+        },
+        {
+          "room": "E189",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1043"
+        },
+        {
+          "room": "E190",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1044"
+        },
+        {
+          "room": "E191",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1045"
+        },
+        {
+          "room": "E192",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1046"
+        },
+        {
+          "room": "E193",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1047"
+        },
+        {
+          "room": "E194",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1048"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 5110000,
+      "supabaseRentRoll": 3470000,
+      "difference": -1640000,
+      "commissionNetSource": {
+        "landlordNetPayable": 4343500,
+        "source": "LANDLORD'S CUT.xlsx#104"
+      },
+      "correctedNetPayableTemporaryRule": 4599000,
+      "proposedAction": "19 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "TUMWETE ROBERT",
+      "matchedLandlord": "TUMWETE ROBERT",
+      "matchCount": 1,
+      "excelRoomCount": 19,
+      "supabaseRoomCount": 1,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "E122",
+          "rent": 100000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#929"
+        },
+        {
+          "room": "E123",
+          "rent": 100000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#930"
+        },
+        {
+          "room": "E124",
+          "rent": 100000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#931"
+        },
+        {
+          "room": "E126",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#933"
+        },
+        {
+          "room": "E127",
+          "rent": 100000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#934"
+        },
+        {
+          "room": "E128",
+          "rent": 100000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#935"
+        },
+        {
+          "room": "E129",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#936"
+        },
+        {
+          "room": "E130",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#937"
+        },
+        {
+          "room": "E131",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#938"
+        },
+        {
+          "room": "E132",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#939"
+        },
+        {
+          "room": "E133",
+          "rent": 100000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#940"
+        },
+        {
+          "room": "E134",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#941"
+        },
+        {
+          "room": "E135",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#942"
+        },
+        {
+          "room": "E136",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#943"
+        },
+        {
+          "room": "E137",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#944"
+        },
+        {
+          "room": "E138",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#945"
+        },
+        {
+          "room": "E139",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#946"
+        },
+        {
+          "room": "E140",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#947"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1660000,
+      "supabaseRentRoll": 100000,
+      "difference": -1560000,
+      "commissionNetSource": {
+        "landlordNetPayable": 1411000,
+        "source": "LANDLORD'S CUT.xlsx#98"
+      },
+      "correctedNetPayableTemporaryRule": 1494000,
+      "proposedAction": "18 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Ssegujja Anthony",
+      "matchedLandlord": "Ssegujja Anthony",
+      "matchCount": 1,
+      "excelRoomCount": 33,
+      "supabaseRoomCount": 18,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "B94",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#554"
+        },
+        {
+          "room": "B95",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#555"
+        },
+        {
+          "room": "B96",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#556"
+        },
+        {
+          "room": "B97",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#557"
+        },
+        {
+          "room": "LYDIA",
+          "rent": 340000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#559"
+        },
+        {
+          "room": "R101",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#561"
+        },
+        {
+          "room": "R101B",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#562"
+        },
+        {
+          "room": "T40",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#563"
+        },
+        {
+          "room": "T41",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#564"
+        },
+        {
+          "room": "T43",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#565"
+        },
+        {
+          "room": "T44B",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#567"
+        },
+        {
+          "room": "T45A",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#568"
+        },
+        {
+          "room": "T46",
+          "rent": 140000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#569"
+        },
+        {
+          "room": "T48",
+          "rent": 90000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#571"
+        },
+        {
+          "room": "T51",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#574"
+        }
+      ],
+      "wrongLandlordCandidates": [
+        {
+          "room": "T40",
+          "expectedLandlord": "Ssegujja Anthony",
+          "currentLandlordId": "5e4b072f-2978-48b4-9ac9-bd85a3c7f2f6",
+          "roomId": "291fa5d7-1185-48bf-917a-742b386e141b"
+        },
+        {
+          "room": "T41",
+          "expectedLandlord": "Ssegujja Anthony",
+          "currentLandlordId": "5e4b072f-2978-48b4-9ac9-bd85a3c7f2f6",
+          "roomId": "586895e6-ed36-4c93-93c3-09d147367027"
+        },
+        {
+          "room": "T46",
+          "expectedLandlord": "Ssegujja Anthony",
+          "currentLandlordId": "5e4b072f-2978-48b4-9ac9-bd85a3c7f2f6",
+          "roomId": "ec9e91ce-9085-4295-a630-a74e59542db3"
+        }
+      ],
+      "duplicateRooms": [],
+      "excelRentRoll": 4440000,
+      "supabaseRentRoll": 3020000,
+      "difference": -1420000,
+      "commissionNetSource": {
+        "landlordNetPayable": 3790000,
+        "source": "LANDLORD'S CUT.xlsx#88"
+      },
+      "correctedNetPayableTemporaryRule": 3996000,
+      "proposedAction": "15 missing source room(s) need import or reassignment; 3 room(s) appear attached to another landlord and can be moved if approved"
+    },
+    {
+      "landlordName": "Ssenyonga",
+      "matchedLandlord": "Ssenyonga",
+      "matchCount": 1,
+      "excelRoomCount": 34,
+      "supabaseRoomCount": 24,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "A10",
+          "rent": 120000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#576"
+        },
+        {
+          "room": "A11",
+          "rent": 120000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#577"
+        },
+        {
+          "room": "A12",
+          "rent": 120000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#578"
+        },
+        {
+          "room": "A13",
+          "rent": 120000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#579"
+        },
+        {
+          "room": "A14",
+          "rent": 0,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#580"
+        },
+        {
+          "room": "A15",
+          "rent": 120000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#581"
+        },
+        {
+          "room": "A16",
+          "rent": 120000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#582"
+        },
+        {
+          "room": "A7",
+          "rent": 150000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#583"
+        },
+        {
+          "room": "A8",
+          "rent": 120000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#584"
+        },
+        {
+          "room": "A9",
+          "rent": 120000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#585"
+        }
+      ],
+      "wrongLandlordCandidates": [
+        {
+          "room": "A14",
+          "expectedLandlord": "Ssenyonga",
+          "currentLandlordId": "dfd98ea9-1d8e-4d46-be80-975c9eb7b16b",
+          "roomId": "c867b7fe-9619-46fa-9d3f-08c5e8ccdc14"
+        },
+        {
+          "room": "A15",
+          "expectedLandlord": "Ssenyonga",
+          "currentLandlordId": "dfd98ea9-1d8e-4d46-be80-975c9eb7b16b",
+          "roomId": "0ad264fa-d9a0-48b7-904d-69b5c80a6f0f"
+        },
+        {
+          "room": "A16",
+          "expectedLandlord": "Ssenyonga",
+          "currentLandlordId": "dfd98ea9-1d8e-4d46-be80-975c9eb7b16b",
+          "roomId": "4a49bfa2-647a-4264-bc75-cae82c9bdb00"
+        }
+      ],
+      "duplicateRooms": [],
+      "excelRentRoll": 3560000,
+      "supabaseRentRoll": 2450000,
+      "difference": -1110000,
+      "commissionNetSource": {
+        "landlordNetPayable": 1949999.999885,
+        "source": "LANDLORD'S CUT.xlsx#89"
+      },
+      "correctedNetPayableTemporaryRule": 2833468,
+      "proposedAction": "10 missing source room(s) need import or reassignment; 3 room(s) appear attached to another landlord and can be moved if approved"
+    },
+    {
+      "landlordName": "NALONGO ABBAS",
+      "matchedLandlord": "NALONGO ABBAS",
+      "matchCount": 1,
+      "excelRoomCount": 11,
+      "supabaseRoomCount": 4,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "Z112",
+          "rent": 120000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#652"
+        },
+        {
+          "room": "Z118",
+          "rent": 120000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#653"
+        },
+        {
+          "room": "Z138",
+          "rent": 90000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#657"
+        },
+        {
+          "room": "Z125",
+          "rent": 120000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#658"
+        },
+        {
+          "room": "Z156",
+          "rent": 120000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#659"
+        },
+        {
+          "room": "Z186",
+          "rent": 120000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#660"
+        },
+        {
+          "room": "Z190",
+          "rent": 130000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#661"
+        }
+      ],
+      "wrongLandlordCandidates": [
+        {
+          "room": "Z112",
+          "expectedLandlord": "NALONGO ABBAS",
+          "currentLandlordId": "dc4aeb41-acfc-4948-9f53-f57547cea47e",
+          "roomId": "e7764961-1d15-497e-854c-2cfc040de153"
+        },
+        {
+          "room": "Z118",
+          "expectedLandlord": "NALONGO ABBAS",
+          "currentLandlordId": "dc4aeb41-acfc-4948-9f53-f57547cea47e",
+          "roomId": "a14e667a-b278-4535-abf1-6fdabff63e74"
+        },
+        {
+          "room": "Z138",
+          "expectedLandlord": "NALONGO ABBAS",
+          "currentLandlordId": "202fe492-6f2e-4fa4-aaf1-4349d782e0ff",
+          "roomId": "d970be4d-885e-40c4-87b1-5c04a8fd315d"
+        },
+        {
+          "room": "Z125",
+          "expectedLandlord": "NALONGO ABBAS",
+          "currentLandlordId": "dc4aeb41-acfc-4948-9f53-f57547cea47e",
+          "roomId": "4427af00-85fd-4964-8fc6-7a7fca694b05"
+        },
+        {
+          "room": "Z156",
+          "expectedLandlord": "NALONGO ABBAS",
+          "currentLandlordId": "c903bdcc-3c64-492f-9b08-93f4563c2994",
+          "roomId": "84e8f760-396a-45fc-869b-a2513d6404ff"
+        },
+        {
+          "room": "Z186",
+          "expectedLandlord": "NALONGO ABBAS",
+          "currentLandlordId": "c903bdcc-3c64-492f-9b08-93f4563c2994",
+          "roomId": "e985bd08-d12d-437f-b523-ed22cf225a02"
+        },
+        {
+          "room": "Z190",
+          "expectedLandlord": "NALONGO ABBAS",
+          "currentLandlordId": "c903bdcc-3c64-492f-9b08-93f4563c2994",
+          "roomId": "f02945ab-61f3-4c9d-9cb4-b69102462c2a"
+        }
+      ],
+      "duplicateRooms": [],
+      "excelRentRoll": 1160000,
+      "supabaseRentRoll": 340000,
+      "difference": -820000,
+      "commissionNetSource": {
+        "landlordNetPayable": 278800,
+        "source": "LANDLORD'S CUT.xlsx#67"
+      },
+      "correctedNetPayableTemporaryRule": 951200,
+      "proposedAction": "7 missing source room(s) need import or reassignment; 7 room(s) appear attached to another landlord and can be moved if approved"
+    },
+    {
+      "landlordName": "TONY",
+      "matchedLandlord": null,
+      "matchCount": 0,
+      "excelRoomCount": 1,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "FAZA",
+          "rent": 800000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#621"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 800000,
+      "supabaseRentRoll": 0,
+      "difference": -800000,
+      "commissionNetSource": null,
+      "correctedNetPayableTemporaryRule": 720000,
+      "proposedAction": "1 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "ASAD",
+      "matchedLandlord": "ASAD",
+      "matchCount": 1,
+      "excelRoomCount": 8,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "F69",
+          "rent": 100000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1086"
+        },
+        {
+          "room": "F70",
+          "rent": 30000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1087"
+        },
+        {
+          "room": "F71",
+          "rent": 100000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1088"
+        },
+        {
+          "room": "F72",
+          "rent": 100000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1089"
+        },
+        {
+          "room": "F73",
+          "rent": 200000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1090"
+        },
+        {
+          "room": "F74",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1091"
+        },
+        {
+          "room": "F75",
+          "rent": 100000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1092"
+        },
+        {
+          "room": "F76",
+          "rent": 30000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1093"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 720000,
+      "supabaseRentRoll": 0,
+      "difference": -720000,
+      "commissionNetSource": {
+        "landlordNetPayable": 576000,
+        "source": "LANDLORD'S CUT.xlsx#107"
+      },
+      "correctedNetPayableTemporaryRule": 648000,
+      "proposedAction": "8 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Umar Kawooya",
+      "matchedLandlord": "Umar Kawooya",
+      "matchCount": 1,
+      "excelRoomCount": 16,
+      "supabaseRoomCount": 14,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "F60",
+          "rent": 130000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#631"
+        },
+        {
+          "room": "F62",
+          "rent": 220000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#633"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 2760000,
+      "supabaseRentRoll": 2050000,
+      "difference": -710000,
+      "commissionNetSource": {
+        "landlordNetPayable": 2890000,
+        "source": "LANDLORD'S CUT.xlsx#91"
+      },
+      "correctedNetPayableTemporaryRule": 2484000,
+      "proposedAction": "2 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "MATIA 2",
+      "matchedLandlord": "MATIA 2",
+      "matchCount": 1,
+      "excelRoomCount": 17,
+      "supabaseRoomCount": 9,
+      "extraRooms": [
+        {
+          "id": "de9a1c3c-b2bb-4d81-80cc-b2414f739193",
+          "room": "E201-2",
+          "rent": 70000,
+          "status": "occupied",
+          "property": "KAPEEKA",
+          "office": "Kapeeka Office",
+          "highConfidenceArchive": false
+        }
+      ],
+      "missingRooms": [
+        {
+          "room": "E204",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1059"
+        },
+        {
+          "room": "E205",
+          "rent": 70000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1060"
+        },
+        {
+          "room": "E206",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1061"
+        },
+        {
+          "room": "E212",
+          "rent": 100000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1067"
+        },
+        {
+          "room": "E213",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1068"
+        },
+        {
+          "room": "E214",
+          "rent": 70000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1069"
+        },
+        {
+          "room": "E215",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1070"
+        },
+        {
+          "room": "E216",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1071"
+        },
+        {
+          "room": "E217",
+          "rent": 90000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#1072"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 2200000,
+      "supabaseRentRoll": 1530000,
+      "difference": -670000,
+      "commissionNetSource": {
+        "landlordNetPayable": 1861400,
+        "source": "LANDLORD'S CUT.xlsx#105"
+      },
+      "correctedNetPayableTemporaryRule": 1980000,
+      "proposedAction": "9 missing source room(s) need import or reassignment; 1 extra Supabase room(s) should be unassigned/archived if not in Excel"
+    },
+    {
+      "landlordName": "NAKIZINDA",
+      "matchedLandlord": "NAKIZINDA",
+      "matchCount": 1,
+      "excelRoomCount": 7,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "E701",
+          "rent": 100000,
+          "location": "KIGUNGU",
+          "source": "Master file.xlsx:HOUSES#982"
+        },
+        {
+          "room": "E702",
+          "rent": 100000,
+          "location": "KIGUNGU",
+          "source": "Master file.xlsx:HOUSES#983"
+        },
+        {
+          "room": "E703",
+          "rent": 100000,
+          "location": "KIGUNGU",
+          "source": "Master file.xlsx:HOUSES#984"
+        },
+        {
+          "room": "E704",
+          "rent": 100000,
+          "location": "KIGUNGU",
+          "source": "Master file.xlsx:HOUSES#985"
+        },
+        {
+          "room": "E705",
+          "rent": 100000,
+          "location": "KIGUNGU",
+          "source": "Master file.xlsx:HOUSES#986"
+        },
+        {
+          "room": "E706",
+          "rent": 90000,
+          "location": "KIGUNGU",
+          "source": "Master file.xlsx:HOUSES#987"
+        },
+        {
+          "room": "E707",
+          "rent": 60000,
+          "location": "KIGUNGU",
+          "source": "Master file.xlsx:HOUSES#988"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 650000,
+      "supabaseRentRoll": 0,
+      "difference": -650000,
+      "commissionNetSource": {
+        "landlordNetPayable": 568000,
+        "source": "LANDLORD'S CUT.xlsx#95"
+      },
+      "correctedNetPayableTemporaryRule": 585000,
+      "proposedAction": "7 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "ALINAITWE NICHOLAS",
+      "matchedLandlord": "ALINAITWE NICHOLAS",
+      "matchCount": 1,
+      "excelRoomCount": 23,
+      "supabaseRoomCount": 15,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "E108",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#916"
+        },
+        {
+          "room": "E110",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#917"
+        },
+        {
+          "room": "E112",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#919"
+        },
+        {
+          "room": "E113",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#920"
+        },
+        {
+          "room": "E115",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#922"
+        },
+        {
+          "room": "E116",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#923"
+        },
+        {
+          "room": "E120",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#927"
+        },
+        {
+          "room": "E121",
+          "rent": 80000,
+          "location": "KAPEEKA",
+          "source": "Master file.xlsx:HOUSES#928"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1840000,
+      "supabaseRentRoll": 1200000,
+      "difference": -640000,
+      "commissionNetSource": {
+        "landlordNetPayable": 1632000,
+        "source": "LANDLORD'S CUT.xlsx#97"
+      },
+      "correctedNetPayableTemporaryRule": 1632001,
+      "proposedAction": "8 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "MOSES",
+      "matchedLandlord": "MOSES",
+      "matchCount": 1,
+      "excelRoomCount": 8,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "F61A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1078"
+        },
+        {
+          "room": "F62A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1079"
+        },
+        {
+          "room": "F63A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1080"
+        },
+        {
+          "room": "F64A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1081"
+        },
+        {
+          "room": "F65A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1082"
+        },
+        {
+          "room": "F66A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1083"
+        },
+        {
+          "room": "F67A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1084"
+        },
+        {
+          "room": "F68A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1085"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 480000,
+      "supabaseRentRoll": 0,
+      "difference": -480000,
+      "commissionNetSource": {
+        "landlordNetPayable": 384000,
+        "source": "LANDLORD'S CUT.xlsx#108"
+      },
+      "correctedNetPayableTemporaryRule": 432000,
+      "proposedAction": "8 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Alex Costa",
+      "matchedLandlord": "Alex Costa",
+      "matchCount": 1,
+      "excelRoomCount": 7,
+      "supabaseRoomCount": 9,
+      "extraRooms": [
+        {
+          "id": "5b33ca87-6712-46f4-a5c0-65125afe5ced",
+          "room": "QA-START-VAC-1782144137277",
+          "rent": 350000,
+          "status": "occupied",
+          "property": "Kigungu",
+          "office": "Kigungu Main Office",
+          "highConfidenceArchive": true
+        },
+        {
+          "id": "690932e6-247b-4a89-a137-fad4fb423eb4",
+          "room": "QA-START-OCC-1782144137277",
+          "rent": 120000,
+          "status": "occupied",
+          "property": "Kigungu",
+          "office": "Kigungu Main Office",
+          "highConfidenceArchive": true
+        }
+      ],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 450000,
+      "supabaseRentRoll": 920000,
+      "difference": 470000,
+      "commissionNetSource": {
+        "landlordNetPayable": 360000,
+        "source": "LANDLORD'S CUT.xlsx#4"
+      },
+      "correctedNetPayableTemporaryRule": 360000,
+      "proposedAction": "2 extra Supabase room(s) should be unassigned/archived if not in Excel"
+    },
+    {
+      "landlordName": "Sentamu",
+      "matchedLandlord": null,
+      "matchCount": 0,
+      "excelRoomCount": 6,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "S72",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#539"
+        },
+        {
+          "room": "S73",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#540"
+        },
+        {
+          "room": "S74",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#541"
+        },
+        {
+          "room": "S75",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#542"
+        },
+        {
+          "room": "S76",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#543"
+        },
+        {
+          "room": "S77",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#544"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 420000,
+      "supabaseRentRoll": 0,
+      "difference": -420000,
+      "commissionNetSource": null,
+      "correctedNetPayableTemporaryRule": 378000,
+      "proposedAction": "6 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Bryan Sabwe",
+      "matchedLandlord": "Bryan Sabwe",
+      "matchCount": 1,
+      "excelRoomCount": 13,
+      "supabaseRoomCount": 9,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "  B714B",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#7"
+        },
+        {
+          "room": "B40",
+          "rent": 100000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#8"
+        },
+        {
+          "room": "B41",
+          "rent": 100000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#492"
+        },
+        {
+          "room": "B42",
+          "rent": 100000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#493"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1190000,
+      "supabaseRentRoll": 810000,
+      "difference": -380000,
+      "commissionNetSource": {
+        "landlordNetPayable": 888000,
+        "source": "LANDLORD'S CUT.xlsx#10"
+      },
+      "correctedNetPayableTemporaryRule": 863852,
+      "proposedAction": "4 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Bulegeya",
+      "matchedLandlord": "Bulegeya",
+      "matchCount": 1,
+      "excelRoomCount": 20,
+      "supabaseRoomCount": 16,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "T195",
+          "rent": 100000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#40"
+        },
+        {
+          "room": "T196",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#41"
+        },
+        {
+          "room": "T197",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#42"
+        },
+        {
+          "room": "T198",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#43"
+        }
+      ],
+      "wrongLandlordCandidates": [
+        {
+          "room": "T195",
+          "expectedLandlord": "Bulegeya",
+          "currentLandlordId": "220ae272-8914-4a6c-8dbc-af275b103c8f",
+          "roomId": "470146e4-9c7f-418a-967b-9b8230322e80"
+        },
+        {
+          "room": "T196",
+          "expectedLandlord": "Bulegeya",
+          "currentLandlordId": "220ae272-8914-4a6c-8dbc-af275b103c8f",
+          "roomId": "a35a25bf-1b04-4191-84a8-24ccf69b1def"
+        },
+        {
+          "room": "T197",
+          "expectedLandlord": "Bulegeya",
+          "currentLandlordId": "220ae272-8914-4a6c-8dbc-af275b103c8f",
+          "roomId": "998a12c4-051b-4fc1-850b-c64d4dbeac01"
+        },
+        {
+          "room": "T198",
+          "expectedLandlord": "Bulegeya",
+          "currentLandlordId": "220ae272-8914-4a6c-8dbc-af275b103c8f",
+          "roomId": "47a9d325-4934-4644-8c4e-c9b90b6a459d"
+        }
+      ],
+      "duplicateRooms": [],
+      "excelRentRoll": 1850000,
+      "supabaseRentRoll": 1510000,
+      "difference": -340000,
+      "commissionNetSource": {
+        "landlordNetPayable": 1283500,
+        "source": "LANDLORD'S CUT.xlsx#11"
+      },
+      "correctedNetPayableTemporaryRule": 1572500,
+      "proposedAction": "4 missing source room(s) need import or reassignment; 4 room(s) appear attached to another landlord and can be moved if approved"
+    },
+    {
+      "landlordName": "MUGERWA",
+      "matchedLandlord": "MUGERWA",
+      "matchCount": 1,
+      "excelRoomCount": 14,
+      "supabaseRoomCount": 8,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "F42A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#972"
+        },
+        {
+          "room": "F43",
+          "rent": 40000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#973"
+        },
+        {
+          "room": "F45",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#975"
+        },
+        {
+          "room": "F46",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#976"
+        },
+        {
+          "room": "F47",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#977"
+        },
+        {
+          "room": "F48",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#978"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1120000,
+      "supabaseRentRoll": 780000,
+      "difference": -340000,
+      "commissionNetSource": {
+        "landlordNetPayable": 896000,
+        "source": "LANDLORD'S CUT.xlsx#101"
+      },
+      "correctedNetPayableTemporaryRule": 1008000,
+      "proposedAction": "6 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "MZEE LUMU",
+      "matchedLandlord": "MZEE LUMU",
+      "matchCount": 1,
+      "excelRoomCount": 5,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "F56",
+          "rent": 80000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1073"
+        },
+        {
+          "room": "F57",
+          "rent": 80000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1074"
+        },
+        {
+          "room": "F58",
+          "rent": 35000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1075"
+        },
+        {
+          "room": "F59",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1076"
+        },
+        {
+          "room": "F60A",
+          "rent": 60000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#1077"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 315000,
+      "supabaseRentRoll": 0,
+      "difference": -315000,
+      "commissionNetSource": {
+        "landlordNetPayable": 252000,
+        "source": "LANDLORD'S CUT.xlsx#106"
+      },
+      "correctedNetPayableTemporaryRule": 283500,
+      "proposedAction": "5 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "SSERUWAGI",
+      "matchedLandlord": "SSERUWAGI",
+      "matchCount": 1,
+      "excelRoomCount": 2,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "F15",
+          "rent": 200000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#980"
+        },
+        {
+          "room": "F16",
+          "rent": 80000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#981"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 280000,
+      "supabaseRentRoll": 0,
+      "difference": -280000,
+      "commissionNetSource": {
+        "landlordNetPayable": 680000,
+        "source": "LANDLORD'S CUT.xlsx#102"
+      },
+      "correctedNetPayableTemporaryRule": 252000,
+      "proposedAction": "2 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Nakazzi",
+      "matchedLandlord": "Nakazzi",
+      "matchCount": 1,
+      "excelRoomCount": 52,
+      "supabaseRoomCount": 49,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "K48",
+          "rent": 60000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#373"
+        },
+        {
+          "room": "T166",
+          "rent": 100000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#383"
+        },
+        {
+          "room": "Z146",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#399"
+        }
+      ],
+      "wrongLandlordCandidates": [
+        {
+          "room": "Z146",
+          "expectedLandlord": "Nakazzi",
+          "currentLandlordId": "539e6d40-79a7-45f9-9301-22c4f798735e",
+          "roomId": "ff8e24b8-28f8-47ec-99b2-ccee61718c5d"
+        }
+      ],
+      "duplicateRooms": [],
+      "excelRentRoll": 4070000,
+      "supabaseRentRoll": 3830000,
+      "difference": -240000,
+      "commissionNetSource": {
+        "landlordNetPayable": 2000000,
+        "source": "LANDLORD'S CUT.xlsx#65"
+      },
+      "correctedNetPayableTemporaryRule": 2125326,
+      "proposedAction": "3 missing source room(s) need import or reassignment; 1 room(s) appear attached to another landlord and can be moved if approved"
+    },
+    {
+      "landlordName": "Frank",
+      "matchedLandlord": null,
+      "matchCount": 0,
+      "excelRoomCount": 3,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "NEW",
+          "rent": 120000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#56"
+        },
+        {
+          "room": "R127",
+          "rent": 100000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#57"
+        },
+        {
+          "room": "R129",
+          "rent": 0,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#58"
+        }
+      ],
+      "wrongLandlordCandidates": [
+        {
+          "room": "NEW",
+          "expectedLandlord": "Frank",
+          "currentLandlordId": "93018d40-185c-4403-a386-4c9f5cfaeaa3",
+          "roomId": "5265c83f-d7a6-40fc-bab1-6c9039d47125"
+        }
+      ],
+      "duplicateRooms": [],
+      "excelRentRoll": 220000,
+      "supabaseRentRoll": 0,
+      "difference": -220000,
+      "commissionNetSource": null,
+      "correctedNetPayableTemporaryRule": 198000,
+      "proposedAction": "3 missing source room(s) need import or reassignment; 1 room(s) appear attached to another landlord and can be moved if approved"
+    },
+    {
+      "landlordName": "Sebulime Deo",
+      "matchedLandlord": "Sebulime Deo",
+      "matchCount": 1,
+      "excelRoomCount": 5,
+      "supabaseRoomCount": 1,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "B701",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#497"
+        },
+        {
+          "room": "B703",
+          "rent": 40000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#499"
+        },
+        {
+          "room": "B704",
+          "rent": 40000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#500"
+        },
+        {
+          "room": "B708",
+          "rent": 40000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#501"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 235000,
+      "supabaseRentRoll": 35000,
+      "difference": -200000,
+      "commissionNetSource": {
+        "landlordNetPayable": 188000,
+        "source": "LANDLORD'S CUT.xlsx#81"
+      },
+      "correctedNetPayableTemporaryRule": 211500,
+      "proposedAction": "4 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "MEDDY KAYIDALI",
+      "matchedLandlord": "MEDDY KAYIDALI",
+      "matchCount": 1,
+      "excelRoomCount": 8,
+      "supabaseRoomCount": 6,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "Z141",
+          "rent": 110000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#639"
+        },
+        {
+          "room": "Z105",
+          "rent": 60000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#643"
+        }
+      ],
+      "wrongLandlordCandidates": [
+        {
+          "room": "Z141",
+          "expectedLandlord": "MEDDY KAYIDALI",
+          "currentLandlordId": "539e6d40-79a7-45f9-9301-22c4f798735e",
+          "roomId": "1b7dc99e-6c82-495b-a5f9-c967371c293f"
+        }
+      ],
+      "duplicateRooms": [],
+      "excelRentRoll": 660000,
+      "supabaseRentRoll": 490000,
+      "difference": -170000,
+      "commissionNetSource": {
+        "landlordNetPayable": 440000,
+        "source": "LANDLORD'S CUT.xlsx#51"
+      },
+      "correctedNetPayableTemporaryRule": 592653,
+      "proposedAction": "2 missing source room(s) need import or reassignment; 1 room(s) appear attached to another landlord and can be moved if approved"
+    },
+    {
+      "landlordName": "Nantume",
+      "matchedLandlord": "Nantume",
+      "matchCount": 1,
+      "excelRoomCount": 13,
+      "supabaseRoomCount": 11,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "A352",
+          "rent": 100000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#446"
+        },
+        {
+          "room": "A354",
+          "rent": 60000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#448"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1010000,
+      "supabaseRentRoll": 850000,
+      "difference": -160000,
+      "commissionNetSource": {
+        "landlordNetPayable": 700000,
+        "source": "LANDLORD'S CUT.xlsx#71"
+      },
+      "correctedNetPayableTemporaryRule": 831764,
+      "proposedAction": "2 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "AMINA",
+      "matchedLandlord": "AMINA",
+      "matchCount": 1,
+      "excelRoomCount": 4,
+      "supabaseRoomCount": 2,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "B516",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#30"
+        },
+        {
+          "room": "B519",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#33"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 290000,
+      "supabaseRentRoll": 140000,
+      "difference": -150000,
+      "commissionNetSource": {
+        "landlordNetPayable": 232000,
+        "source": "LANDLORD'S CUT.xlsx#6"
+      },
+      "correctedNetPayableTemporaryRule": 261000,
+      "proposedAction": "2 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Kayiwa Brendah",
+      "matchedLandlord": "Kayiwa Brendah",
+      "matchCount": 1,
+      "excelRoomCount": 12,
+      "supabaseRoomCount": 11,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "B922/B921",
+          "rent": 160000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#106"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1000000,
+      "supabaseRentRoll": 850000,
+      "difference": -150000,
+      "commissionNetSource": {
+        "landlordNetPayable": 700000,
+        "source": "LANDLORD'S CUT.xlsx#24"
+      },
+      "correctedNetPayableTemporaryRule": 823529,
+      "proposedAction": "1 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "LAWRENCE",
+      "matchedLandlord": null,
+      "matchCount": 0,
+      "excelRoomCount": 2,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "E416",
+          "rent": 70000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#676"
+        },
+        {
+          "room": "E417",
+          "rent": 70000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#677"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 140000,
+      "supabaseRentRoll": 0,
+      "difference": -140000,
+      "commissionNetSource": {
+        "landlordNetPayable": 100000.00000200002,
+        "source": "LANDLORD'S CUT.xlsx#34"
+      },
+      "correctedNetPayableTemporaryRule": 126000,
+      "proposedAction": "2 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Martin Lutaakome Salongo",
+      "matchedLandlord": "Martin Lutaakome Salongo",
+      "matchCount": 1,
+      "excelRoomCount": 22,
+      "supabaseRoomCount": 20,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "C2019",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#283"
+        },
+        {
+          "room": "C2020",
+          "rent": 50000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#284"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 2020000,
+      "supabaseRentRoll": 1890000,
+      "difference": -130000,
+      "commissionNetSource": {
+        "landlordNetPayable": 1674500,
+        "source": "LANDLORD'S CUT.xlsx#46"
+      },
+      "correctedNetPayableTemporaryRule": 1789678,
+      "proposedAction": "2 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "MZEE AKIM",
+      "matchedLandlord": "MZEE AKIM",
+      "matchCount": 1,
+      "excelRoomCount": 6,
+      "supabaseRoomCount": 3,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "F50",
+          "rent": 70000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#989"
+        },
+        {
+          "room": "F51",
+          "rent": 30000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#990"
+        },
+        {
+          "room": "F54",
+          "rent": 30000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#993"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 290000,
+      "supabaseRentRoll": 160000,
+      "difference": -130000,
+      "commissionNetSource": {
+        "landlordNetPayable": 232000,
+        "source": "LANDLORD'S CUT.xlsx#103"
+      },
+      "correctedNetPayableTemporaryRule": 261000,
+      "proposedAction": "3 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "MAHORO",
+      "matchedLandlord": "MAHORO",
+      "matchCount": 1,
+      "excelRoomCount": 8,
+      "supabaseRoomCount": 7,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "T156",
+          "rent": 100000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#647"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 670000,
+      "supabaseRentRoll": 570000,
+      "difference": -100000,
+      "commissionNetSource": {
+        "landlordNetPayable": 569500,
+        "source": "LANDLORD'S CUT.xlsx#40"
+      },
+      "correctedNetPayableTemporaryRule": 669412,
+      "proposedAction": "1 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Kisitu Charlse",
+      "matchedLandlord": "Kisitu Charlse",
+      "matchCount": 1,
+      "excelRoomCount": 13,
+      "supabaseRoomCount": 12,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "A702",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#153"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1240000,
+      "supabaseRentRoll": 1160000,
+      "difference": -80000,
+      "commissionNetSource": {
+        "landlordNetPayable": 928000,
+        "source": "LANDLORD'S CUT.xlsx#29"
+      },
+      "correctedNetPayableTemporaryRule": 992000,
+      "proposedAction": "1 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Maganda God",
+      "matchedLandlord": "Maganda God",
+      "matchCount": 1,
+      "excelRoomCount": 29,
+      "supabaseRoomCount": 26,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "H296",
+          "rent": 40000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#207"
+        },
+        {
+          "room": "H297",
+          "rent": 40000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#208"
+        },
+        {
+          "room": "H298",
+          "rent": 0,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#209"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 2310000,
+      "supabaseRentRoll": 2230000,
+      "difference": -80000,
+      "commissionNetSource": {
+        "landlordNetPayable": 1860000,
+        "source": "LANDLORD'S CUT.xlsx#39"
+      },
+      "correctedNetPayableTemporaryRule": 1926727,
+      "proposedAction": "3 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Rashidah",
+      "matchedLandlord": "Rashidah",
+      "matchCount": 1,
+      "excelRoomCount": 10,
+      "supabaseRoomCount": 9,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "S18B",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#485"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1180000,
+      "supabaseRentRoll": 1100000,
+      "difference": -80000,
+      "commissionNetSource": {
+        "landlordNetPayable": 935000,
+        "source": "LANDLORD'S CUT.xlsx#79"
+      },
+      "correctedNetPayableTemporaryRule": 1003000,
+      "proposedAction": "1 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Sekabembe",
+      "matchedLandlord": "Sekabembe",
+      "matchCount": 1,
+      "excelRoomCount": 34,
+      "supabaseRoomCount": 33,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "Z70",
+          "rent": 80000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#535"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 2520000,
+      "supabaseRentRoll": 2440000,
+      "difference": -80000,
+      "commissionNetSource": {
+        "landlordNetPayable": 2020000,
+        "source": "LANDLORD'S CUT.xlsx#85"
+      },
+      "correctedNetPayableTemporaryRule": 2086230,
+      "proposedAction": "1 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "SENTONGO",
+      "matchedLandlord": "SENTONGO",
+      "matchCount": 1,
+      "excelRoomCount": 5,
+      "supabaseRoomCount": 5,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 530000,
+      "supabaseRentRoll": 450000,
+      "difference": -80000,
+      "commissionNetSource": {
+        "landlordNetPayable": 382500,
+        "source": "LANDLORD'S CUT.xlsx#87"
+      },
+      "correctedNetPayableTemporaryRule": 450500,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "KYAGULANYI",
+      "matchedLandlord": "KYAGULANYI",
+      "matchCount": 1,
+      "excelRoomCount": 9,
+      "supabaseRoomCount": 8,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "E410",
+          "rent": 70000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#670"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 630000,
+      "supabaseRentRoll": 560000,
+      "difference": -70000,
+      "commissionNetSource": {
+        "landlordNetPayable": 504000,
+        "source": "LANDLORD'S CUT.xlsx#32"
+      },
+      "correctedNetPayableTemporaryRule": 567000,
+      "proposedAction": "1 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Maama Derrick",
+      "matchedLandlord": "Maama Derrick",
+      "matchCount": 1,
+      "excelRoomCount": 9,
+      "supabaseRoomCount": 8,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "B911",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#178"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 680000,
+      "supabaseRentRoll": 610000,
+      "difference": -70000,
+      "commissionNetSource": {
+        "landlordNetPayable": 544000,
+        "source": "LANDLORD'S CUT.xlsx#35"
+      },
+      "correctedNetPayableTemporaryRule": 606426,
+      "proposedAction": "1 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Ricky",
+      "matchedLandlord": "Ricky",
+      "matchCount": 1,
+      "excelRoomCount": 5,
+      "supabaseRoomCount": 4,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "R36",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#487"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 360000,
+      "supabaseRentRoll": 290000,
+      "difference": -70000,
+      "commissionNetSource": {
+        "landlordNetPayable": 280000.000008,
+        "source": "LANDLORD'S CUT.xlsx#80"
+      },
+      "correctedNetPayableTemporaryRule": 347586,
+      "proposedAction": "1 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "YUSUF",
+      "matchedLandlord": "YUSUF",
+      "matchCount": 1,
+      "excelRoomCount": 14,
+      "supabaseRoomCount": 13,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "F01",
+          "rent": 40000,
+          "location": "KIYINDI",
+          "source": "Master file.xlsx:HOUSES#948"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 830000,
+      "supabaseRentRoll": 790000,
+      "difference": -40000,
+      "commissionNetSource": {
+        "landlordNetPayable": 664000,
+        "source": "LANDLORD'S CUT.xlsx#99"
+      },
+      "correctedNetPayableTemporaryRule": 697620,
+      "proposedAction": "1 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Kusambira",
+      "matchedLandlord": "Kusambira",
+      "matchCount": 1,
+      "excelRoomCount": 13,
+      "supabaseRoomCount": 13,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1350000,
+      "supabaseRentRoll": 1380000,
+      "difference": 30000,
+      "commissionNetSource": {
+        "landlordNetPayable": 1080000,
+        "source": "LANDLORD'S CUT.xlsx#31"
+      },
+      "correctedNetPayableTemporaryRule": 1056522,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Alionzi",
+      "matchedLandlord": "Alionzi",
+      "matchCount": 1,
+      "excelRoomCount": 15,
+      "supabaseRoomCount": 14,
+      "extraRooms": [
+        {
+          "id": "8723ebaa-76cc-4bb5-a418-e8ee3c7f4d7d",
+          "room": "Z163",
+          "rent": 70000,
+          "status": "occupied",
+          "property": "Kigungu",
+          "office": "Kigungu Main Office",
+          "highConfidenceArchive": false
+        }
+      ],
+      "missingRooms": [
+        {
+          "room": "T33",
+          "rent": 0,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#26"
+        },
+        {
+          "room": "Z162",
+          "rent": 70000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#28"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1150000,
+      "supabaseRentRoll": 1130000,
+      "difference": -20000,
+      "commissionNetSource": {
+        "landlordNetPayable": 960500,
+        "source": "LANDLORD'S CUT.xlsx#5"
+      },
+      "correctedNetPayableTemporaryRule": 977500,
+      "proposedAction": "2 missing source room(s) need import or reassignment; 1 extra Supabase room(s) should be unassigned/archived if not in Excel"
+    },
+    {
+      "landlordName": "Gimmy",
+      "matchedLandlord": "Gimmy",
+      "matchCount": 1,
+      "excelRoomCount": 5,
+      "supabaseRoomCount": 5,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 620000,
+      "supabaseRentRoll": 600000,
+      "difference": -20000,
+      "commissionNetSource": {
+        "landlordNetPayable": 510000,
+        "source": "LANDLORD'S CUT.xlsx#15"
+      },
+      "correctedNetPayableTemporaryRule": 527000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Mama Bill",
+      "matchedLandlord": "Mama Bill",
+      "matchCount": 1,
+      "excelRoomCount": 10,
+      "supabaseRoomCount": 8,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "T273",
+          "rent": 0,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#234"
+        },
+        {
+          "room": "T276",
+          "rent": 0,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#237"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1010000,
+      "supabaseRentRoll": 1030000,
+      "difference": 20000,
+      "commissionNetSource": {
+        "landlordNetPayable": 830000,
+        "source": "LANDLORD'S CUT.xlsx#41"
+      },
+      "correctedNetPayableTemporaryRule": 813883,
+      "proposedAction": "2 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "MUWAYA",
+      "matchedLandlord": "MUWAYA",
+      "matchCount": 1,
+      "excelRoomCount": 4,
+      "supabaseRoomCount": 4,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 420000,
+      "supabaseRentRoll": 440000,
+      "difference": 20000,
+      "commissionNetSource": {
+        "landlordNetPayable": 352000,
+        "source": "LANDLORD'S CUT.xlsx#59"
+      },
+      "correctedNetPayableTemporaryRule": 336000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Tito",
+      "matchedLandlord": "Tito",
+      "matchCount": 1,
+      "excelRoomCount": 11,
+      "supabaseRoomCount": 10,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "B502",
+          "rent": 60000,
+          "location": "KIGUNGU",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#611"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 830000,
+      "supabaseRentRoll": 810000,
+      "difference": -20000,
+      "commissionNetSource": {
+        "landlordNetPayable": 696000,
+        "source": "LANDLORD'S CUT.xlsx#90"
+      },
+      "correctedNetPayableTemporaryRule": 713185,
+      "proposedAction": "1 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Hillary",
+      "matchedLandlord": "Hillary",
+      "matchCount": 1,
+      "excelRoomCount": 5,
+      "supabaseRoomCount": 5,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 520000,
+      "supabaseRentRoll": 510000,
+      "difference": -10000,
+      "commissionNetSource": {
+        "landlordNetPayable": 433500,
+        "source": "LANDLORD'S CUT.xlsx#20"
+      },
+      "correctedNetPayableTemporaryRule": 442000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Mama Mzee",
+      "matchedLandlord": "Mama Mzee",
+      "matchCount": 1,
+      "excelRoomCount": 15,
+      "supabaseRoomCount": 15,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1210000,
+      "supabaseRentRoll": 1220000,
+      "difference": 10000,
+      "commissionNetSource": {
+        "landlordNetPayable": 1031000,
+        "source": "LANDLORD'S CUT.xlsx#45"
+      },
+      "correctedNetPayableTemporaryRule": 1022549,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Namayanja",
+      "matchedLandlord": "Namayanja",
+      "matchCount": 1,
+      "excelRoomCount": 5,
+      "supabaseRoomCount": 5,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 360000,
+      "supabaseRentRoll": 370000,
+      "difference": 10000,
+      "commissionNetSource": {
+        "landlordNetPayable": 280000,
+        "source": "LANDLORD'S CUT.xlsx#68"
+      },
+      "correctedNetPayableTemporaryRule": 272433,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "ASUMANI KIYINJI",
+      "matchedLandlord": "ASUMANI KIYINJI",
+      "matchCount": 1,
+      "excelRoomCount": 10,
+      "supabaseRoomCount": 10,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1320000,
+      "supabaseRentRoll": 1320000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 1056000,
+        "source": "LANDLORD'S CUT.xlsx#7"
+      },
+      "correctedNetPayableTemporaryRule": 1056000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Basoga Godfrey",
+      "matchedLandlord": "Basoga Godfrey",
+      "matchCount": 1,
+      "excelRoomCount": 6,
+      "supabaseRoomCount": 6,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1200000,
+      "supabaseRentRoll": 1200000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 999999.9999599999,
+        "source": "LANDLORD'S CUT.xlsx#8"
+      },
+      "correctedNetPayableTemporaryRule": 1000000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "BAYIISE NOAH",
+      "matchedLandlord": "BAYIISE NOAH",
+      "matchCount": 1,
+      "excelRoomCount": 22,
+      "supabaseRoomCount": 22,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 2115000,
+      "supabaseRentRoll": 2115000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 1692000,
+        "source": "LANDLORD'S CUT.xlsx#9"
+      },
+      "correctedNetPayableTemporaryRule": 1692000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "BYAMUKAMA",
+      "matchedLandlord": "BYAMUKAMA",
+      "matchCount": 1,
+      "excelRoomCount": 15,
+      "supabaseRoomCount": 15,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1480000,
+      "supabaseRentRoll": 1480000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 1184000,
+        "source": "LANDLORD'S CUT.xlsx#12"
+      },
+      "correctedNetPayableTemporaryRule": 1184000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Deborah Karungi",
+      "matchedLandlord": "Deborah Karungi",
+      "matchCount": 1,
+      "excelRoomCount": 6,
+      "supabaseRoomCount": 6,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 3350000,
+      "supabaseRentRoll": 3350000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 2644999.99998,
+        "source": "LANDLORD'S CUT.xlsx#14"
+      },
+      "correctedNetPayableTemporaryRule": 2644999,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "HARUNA",
+      "matchedLandlord": "HARUNA",
+      "matchCount": 1,
+      "excelRoomCount": 11,
+      "supabaseRoomCount": 11,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 730000,
+      "supabaseRentRoll": 730000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 584000,
+        "source": "LANDLORD'S CUT.xlsx#19"
+      },
+      "correctedNetPayableTemporaryRule": 584000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Kamya Gerald",
+      "matchedLandlord": "Kamya Gerald",
+      "matchCount": 1,
+      "excelRoomCount": 8,
+      "supabaseRoomCount": 7,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "T186",
+          "rent": 0,
+          "location": "LUGONJO",
+          "source": "Master file.xlsx:HOUSES#79"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 3450000,
+      "supabaseRentRoll": 3450000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 2450000,
+        "source": "LANDLORD'S CUT.xlsx#23"
+      },
+      "correctedNetPayableTemporaryRule": 2450000,
+      "proposedAction": "1 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Kitooke Hebert",
+      "matchedLandlord": "Kitooke Hebert",
+      "matchCount": 1,
+      "excelRoomCount": 12,
+      "supabaseRoomCount": 12,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 2230000,
+      "supabaseRentRoll": 2230000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 1719999.999932,
+        "source": "LANDLORD'S CUT.xlsx#30"
+      },
+      "correctedNetPayableTemporaryRule": 1719999,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "KYEYUNE AMUZA",
+      "matchedLandlord": "KYEYUNE AMUZA",
+      "matchCount": 1,
+      "excelRoomCount": 4,
+      "supabaseRoomCount": 4,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 790000,
+      "supabaseRentRoll": 790000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 632000,
+        "source": "LANDLORD'S CUT.xlsx#33"
+      },
+      "correctedNetPayableTemporaryRule": 632000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "MAAMA JUS",
+      "matchedLandlord": "MAAMA JUS",
+      "matchCount": 1,
+      "excelRoomCount": 4,
+      "supabaseRoomCount": 4,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 480000,
+      "supabaseRentRoll": 480000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 384000,
+        "source": "LANDLORD'S CUT.xlsx#36"
+      },
+      "correctedNetPayableTemporaryRule": 384000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "MAAMA ROBA",
+      "matchedLandlord": "MAAMA ROBA",
+      "matchCount": 1,
+      "excelRoomCount": 4,
+      "supabaseRoomCount": 4,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 370000,
+      "supabaseRentRoll": 370000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 296000,
+        "source": "LANDLORD'S CUT.xlsx#38"
+      },
+      "correctedNetPayableTemporaryRule": 296000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "MAMA DIANI",
+      "matchedLandlord": "MAMA DIANI",
+      "matchCount": 1,
+      "excelRoomCount": 7,
+      "supabaseRoomCount": 7,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 870000,
+      "supabaseRentRoll": 870000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 696000,
+        "source": "LANDLORD'S CUT.xlsx#42"
+      },
+      "correctedNetPayableTemporaryRule": 696000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "MPIMBO",
+      "matchedLandlord": "MPIMBO",
+      "matchCount": 1,
+      "excelRoomCount": 39,
+      "supabaseRoomCount": 39,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 3240000,
+      "supabaseRentRoll": 3240000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 2592000,
+        "source": "LANDLORD'S CUT.xlsx#54"
+      },
+      "correctedNetPayableTemporaryRule": 2592000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "MUKYALA MPIMBO",
+      "matchedLandlord": "MUKYALA MPIMBO",
+      "matchCount": 1,
+      "excelRoomCount": 11,
+      "supabaseRoomCount": 11,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1100000,
+      "supabaseRentRoll": 1100000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 880000,
+        "source": "LANDLORD'S CUT.xlsx#56"
+      },
+      "correctedNetPayableTemporaryRule": 880000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Nakamya Christine",
+      "matchedLandlord": "Nakamya Christine",
+      "matchCount": 1,
+      "excelRoomCount": 8,
+      "supabaseRoomCount": 8,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 700000,
+      "supabaseRentRoll": 700000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 560000,
+        "source": "LANDLORD'S CUT.xlsx#62"
+      },
+      "correctedNetPayableTemporaryRule": 560000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "NAKIBINGE",
+      "matchedLandlord": "NAKIBINGE",
+      "matchCount": 1,
+      "excelRoomCount": 12,
+      "supabaseRoomCount": 12,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1530000,
+      "supabaseRentRoll": 1530000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 1300500,
+        "source": "LANDLORD'S CUT.xlsx#66"
+      },
+      "correctedNetPayableTemporaryRule": 1300500,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "NAMWANJE ROSEMARY",
+      "matchedLandlord": "NAMWANJE ROSEMARY",
+      "matchCount": 1,
+      "excelRoomCount": 20,
+      "supabaseRoomCount": 20,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1510000,
+      "supabaseRentRoll": 1510000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 1208000,
+        "source": "LANDLORD'S CUT.xlsx#70"
+      },
+      "correctedNetPayableTemporaryRule": 1208000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "NSUBUGA DEZDERIO",
+      "matchedLandlord": "NSUBUGA DEZDERIO",
+      "matchCount": 1,
+      "excelRoomCount": 6,
+      "supabaseRoomCount": 6,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 370000,
+      "supabaseRentRoll": 370000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 296000,
+        "source": "LANDLORD'S CUT.xlsx#75"
+      },
+      "correctedNetPayableTemporaryRule": 296000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "NYANGOMA YUDAYA",
+      "matchedLandlord": "NYANGOMA YUDAYA",
+      "matchCount": 1,
+      "excelRoomCount": 1,
+      "supabaseRoomCount": 1,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 60000,
+      "supabaseRentRoll": 60000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 48000,
+        "source": "LANDLORD'S CUT.xlsx#76"
+      },
+      "correctedNetPayableTemporaryRule": 48000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Sebyabwe",
+      "matchedLandlord": "Sebyabwe",
+      "matchCount": 1,
+      "excelRoomCount": 26,
+      "supabaseRoomCount": 26,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 6020000,
+      "supabaseRentRoll": 6020000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 5117000,
+        "source": "LANDLORD'S CUT.xlsx#82"
+      },
+      "correctedNetPayableTemporaryRule": 5117000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "SECURITY",
+      "matchedLandlord": null,
+      "matchCount": 0,
+      "excelRoomCount": 1,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "SECURITY",
+          "rent": 0,
+          "location": "LUGONJO",
+          "source": "Master file.xlsx:HOUSES#873"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 0,
+      "supabaseRentRoll": 0,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 0,
+        "source": "LANDLORD'S CUT.xlsx#83"
+      },
+      "correctedNetPayableTemporaryRule": 0,
+      "proposedAction": "1 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "NABUUMA TUMUSINZE NALONGO",
+      "matchedLandlord": "NABUUMA TUMUSINZE NALONGO",
+      "matchCount": 1,
+      "excelRoomCount": 8,
+      "supabaseRoomCount": 8,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 810000,
+      "supabaseRentRoll": 810000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 648000,
+        "source": "LANDLORD'S CUT.xlsx#61"
+      },
+      "correctedNetPayableTemporaryRule": 648000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "MUKIIBI VICENT",
+      "matchedLandlord": "MUKIIBI VICENT",
+      "matchCount": 1,
+      "excelRoomCount": 6,
+      "supabaseRoomCount": 6,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1500000,
+      "supabaseRentRoll": 1500000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 1250000,
+        "source": "LANDLORD'S CUT.xlsx#13"
+      },
+      "correctedNetPayableTemporaryRule": 1250000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "NATUKUNDA",
+      "matchedLandlord": "NATUKUNDA",
+      "matchCount": 1,
+      "excelRoomCount": 4,
+      "supabaseRoomCount": 4,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 340000,
+      "supabaseRentRoll": 340000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 289000,
+        "source": "LANDLORD'S CUT.xlsx#72"
+      },
+      "correctedNetPayableTemporaryRule": 289000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "God Mulokole",
+      "matchedLandlord": "God Mulokole",
+      "matchCount": 1,
+      "excelRoomCount": 20,
+      "supabaseRoomCount": 16,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "A28",
+          "rent": 0,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#64"
+        },
+        {
+          "room": "A29",
+          "rent": 0,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#65"
+        },
+        {
+          "room": "C202",
+          "rent": 0,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#67"
+        },
+        {
+          "room": "C209B",
+          "rent": 0,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#75"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1290000,
+      "supabaseRentRoll": 1290000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 1032000,
+        "source": "LANDLORD'S CUT.xlsx#16"
+      },
+      "correctedNetPayableTemporaryRule": 1032000,
+      "proposedAction": "4 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Harman Bbosa",
+      "matchedLandlord": "Harman Bbosa",
+      "matchCount": 1,
+      "excelRoomCount": 6,
+      "supabaseRoomCount": 6,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 480000,
+      "supabaseRentRoll": 480000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 380000,
+        "source": "LANDLORD'S CUT.xlsx#18"
+      },
+      "correctedNetPayableTemporaryRule": 380000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Kamya",
+      "matchedLandlord": "Kamya",
+      "matchCount": 1,
+      "excelRoomCount": 11,
+      "supabaseRoomCount": 11,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1350000,
+      "supabaseRentRoll": 1350000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 949999.999995,
+        "source": "LANDLORD'S CUT.xlsx#22"
+      },
+      "correctedNetPayableTemporaryRule": 950000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Kazibwe",
+      "matchedLandlord": "Kazibwe",
+      "matchCount": 1,
+      "excelRoomCount": 5,
+      "supabaseRoomCount": 2,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "A330",
+          "rent": 0,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#116"
+        },
+        {
+          "room": "A332",
+          "rent": 0,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#118"
+        },
+        {
+          "room": "A333",
+          "rent": 0,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#119"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 140000,
+      "supabaseRentRoll": 140000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 112000,
+        "source": "LANDLORD'S CUT.xlsx#25"
+      },
+      "correctedNetPayableTemporaryRule": 112000,
+      "proposedAction": "3 missing source room(s) need import or reassignment"
+    },
+    {
+      "landlordName": "Kiberu",
+      "matchedLandlord": "Kiberu",
+      "matchCount": 1,
+      "excelRoomCount": 16,
+      "supabaseRoomCount": 16,
+      "extraRooms": [
+        {
+          "id": "d395fc99-8989-41d3-8593-19e82d020067",
+          "room": "B214",
+          "rent": 60000,
+          "status": "vacant",
+          "property": "Kigungu",
+          "office": "Kigungu Main Office",
+          "highConfidenceArchive": false
+        }
+      ],
+      "missingRooms": [
+        {
+          "room": "B214A",
+          "rent": 60000,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#134"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 990000,
+      "supabaseRentRoll": 990000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 792000,
+        "source": "LANDLORD'S CUT.xlsx#26"
+      },
+      "correctedNetPayableTemporaryRule": 792000,
+      "proposedAction": "1 missing source room(s) need import or reassignment; 1 extra Supabase room(s) should be unassigned/archived if not in Excel"
+    },
+    {
+      "landlordName": "Kigongo",
+      "matchedLandlord": "Kigongo",
+      "matchCount": 1,
+      "excelRoomCount": 12,
+      "supabaseRoomCount": 12,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1030000,
+      "supabaseRentRoll": 1030000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 782000,
+        "source": "LANDLORD'S CUT.xlsx#27"
+      },
+      "correctedNetPayableTemporaryRule": 875500,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Kisenyi",
+      "matchedLandlord": "Kisenyi",
+      "matchCount": 1,
+      "excelRoomCount": 5,
+      "supabaseRoomCount": 5,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 500000,
+      "supabaseRentRoll": 500000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 400000,
+        "source": "LANDLORD'S CUT.xlsx#28"
+      },
+      "correctedNetPayableTemporaryRule": 400000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Maama Mulindwa",
+      "matchedLandlord": "Maama Mulindwa",
+      "matchCount": 1,
+      "excelRoomCount": 8,
+      "supabaseRoomCount": 8,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 720000,
+      "supabaseRentRoll": 720000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 576000,
+        "source": "LANDLORD'S CUT.xlsx#37"
+      },
+      "correctedNetPayableTemporaryRule": 576000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Mama Eddie",
+      "matchedLandlord": "Mama Eddie",
+      "matchCount": 1,
+      "excelRoomCount": 5,
+      "supabaseRoomCount": 5,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 330000,
+      "supabaseRentRoll": 330000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 264000,
+        "source": "LANDLORD'S CUT.xlsx#43"
+      },
+      "correctedNetPayableTemporaryRule": 264000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Mama Faith",
+      "matchedLandlord": "Mama Faith",
+      "matchCount": 1,
+      "excelRoomCount": 6,
+      "supabaseRoomCount": 6,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 360000,
+      "supabaseRentRoll": 360000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 288000,
+        "source": "LANDLORD'S CUT.xlsx#44"
+      },
+      "correctedNetPayableTemporaryRule": 288000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Matovu Ronie",
+      "matchedLandlord": "Matovu Ronie",
+      "matchCount": 1,
+      "excelRoomCount": 4,
+      "supabaseRoomCount": 4,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 240000,
+      "supabaseRentRoll": 240000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 190000.000008,
+        "source": "LANDLORD'S CUT.xlsx#48"
+      },
+      "correctedNetPayableTemporaryRule": 190000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "MAWANDA",
+      "matchedLandlord": "MAWANDA",
+      "matchCount": 1,
+      "excelRoomCount": 8,
+      "supabaseRoomCount": 8,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 800000,
+      "supabaseRentRoll": 800000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 680000,
+        "source": "LANDLORD'S CUT.xlsx#49"
+      },
+      "correctedNetPayableTemporaryRule": 680000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Mawejje",
+      "matchedLandlord": "Mawejje",
+      "matchCount": 1,
+      "excelRoomCount": 13,
+      "supabaseRoomCount": 13,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1030000,
+      "supabaseRentRoll": 1030000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 875500,
+        "source": "LANDLORD'S CUT.xlsx#50"
+      },
+      "correctedNetPayableTemporaryRule": 875500,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "MKLYA UMARU",
+      "matchedLandlord": "MKLYA UMARU",
+      "matchCount": 1,
+      "excelRoomCount": 3,
+      "supabaseRoomCount": 3,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 440000,
+      "supabaseRentRoll": 440000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 352000,
+        "source": "LANDLORD'S CUT.xlsx#52"
+      },
+      "correctedNetPayableTemporaryRule": 352000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Mky Kusambira",
+      "matchedLandlord": "Mky Kusambira",
+      "matchCount": 1,
+      "excelRoomCount": 1,
+      "supabaseRoomCount": 1,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 70000,
+      "supabaseRentRoll": 70000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 59999.999997,
+        "source": "LANDLORD'S CUT.xlsx#53"
+      },
+      "correctedNetPayableTemporaryRule": 60000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "MUBIRU",
+      "matchedLandlord": "MUBIRU",
+      "matchCount": 1,
+      "excelRoomCount": 3,
+      "supabaseRoomCount": 3,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 210000,
+      "supabaseRentRoll": 210000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 168000,
+        "source": "LANDLORD'S CUT.xlsx#55"
+      },
+      "correctedNetPayableTemporaryRule": 168000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Mukyala Mubiru",
+      "matchedLandlord": "Mukyala Mubiru",
+      "matchCount": 1,
+      "excelRoomCount": 10,
+      "supabaseRoomCount": 10,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 500000,
+      "supabaseRentRoll": 500000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 400000,
+        "source": "LANDLORD'S CUT.xlsx#57"
+      },
+      "correctedNetPayableTemporaryRule": 400000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Musomesa",
+      "matchedLandlord": "Musomesa",
+      "matchCount": 1,
+      "excelRoomCount": 5,
+      "supabaseRoomCount": 5,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 350000,
+      "supabaseRentRoll": 350000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 280000,
+        "source": "LANDLORD'S CUT.xlsx#58"
+      },
+      "correctedNetPayableTemporaryRule": 280000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Muwonge",
+      "matchedLandlord": "Muwonge",
+      "matchCount": 1,
+      "excelRoomCount": 3,
+      "supabaseRoomCount": 3,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 450000,
+      "supabaseRentRoll": 450000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 360000,
+        "source": "LANDLORD'S CUT.xlsx#60"
+      },
+      "correctedNetPayableTemporaryRule": 360000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Nakayiwa Ruth",
+      "matchedLandlord": "Nakayiwa Ruth",
+      "matchCount": 1,
+      "excelRoomCount": 8,
+      "supabaseRoomCount": 8,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 560000,
+      "supabaseRentRoll": 560000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 450000.000016,
+        "source": "LANDLORD'S CUT.xlsx#63"
+      },
+      "correctedNetPayableTemporaryRule": 450000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "NAKAZI 2",
+      "matchedLandlord": "NAKAZI 2",
+      "matchCount": 1,
+      "excelRoomCount": 5,
+      "supabaseRoomCount": 5,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 380000,
+      "supabaseRentRoll": 380000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 304000,
+        "source": "LANDLORD'S CUT.xlsx#64"
+      },
+      "correctedNetPayableTemporaryRule": 304000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "ISA",
+      "matchedLandlord": "ISA",
+      "matchCount": 1,
+      "excelRoomCount": 3,
+      "supabaseRoomCount": 3,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 360000,
+      "supabaseRentRoll": 360000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 295200,
+        "source": "LANDLORD'S CUT.xlsx#21"
+      },
+      "correctedNetPayableTemporaryRule": 295200,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "WASWA",
+      "matchedLandlord": "WASWA",
+      "matchCount": 1,
+      "excelRoomCount": 3,
+      "supabaseRoomCount": 3,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 370000,
+      "supabaseRentRoll": 370000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 303400,
+        "source": "LANDLORD'S CUT.xlsx#93"
+      },
+      "correctedNetPayableTemporaryRule": 303400,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Nambiro",
+      "matchedLandlord": "Nambiro",
+      "matchCount": 1,
+      "excelRoomCount": 9,
+      "supabaseRoomCount": 9,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 980000,
+      "supabaseRentRoll": 980000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 779999.999954,
+        "source": "LANDLORD'S CUT.xlsx#69"
+      },
+      "correctedNetPayableTemporaryRule": 780000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Nsamba Ponsiano",
+      "matchedLandlord": "Nsamba Ponsiano",
+      "matchCount": 1,
+      "excelRoomCount": 7,
+      "supabaseRoomCount": 7,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 510000,
+      "supabaseRentRoll": 510000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 408000,
+        "source": "LANDLORD'S CUT.xlsx#74"
+      },
+      "correctedNetPayableTemporaryRule": 408000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Otto Peter Sengoba",
+      "matchedLandlord": "Otto Peter Sengoba",
+      "matchCount": 1,
+      "excelRoomCount": 4,
+      "supabaseRoomCount": 4,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 200000,
+      "supabaseRentRoll": 200000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 160000,
+        "source": "LANDLORD'S CUT.xlsx#77"
+      },
+      "correctedNetPayableTemporaryRule": 160000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Peter",
+      "matchedLandlord": "Peter",
+      "matchCount": 1,
+      "excelRoomCount": 8,
+      "supabaseRoomCount": 8,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 560000,
+      "supabaseRentRoll": 560000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 439999.999992,
+        "source": "LANDLORD'S CUT.xlsx#78"
+      },
+      "correctedNetPayableTemporaryRule": 440000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Segawa",
+      "matchedLandlord": "Segawa",
+      "matchCount": 1,
+      "excelRoomCount": 3,
+      "supabaseRoomCount": 3,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 300000,
+      "supabaseRentRoll": 300000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 240000,
+        "source": "LANDLORD'S CUT.xlsx#84"
+      },
+      "correctedNetPayableTemporaryRule": 240000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "NOAH BAYISE",
+      "matchedLandlord": "NOAH BAYISE",
+      "matchCount": 1,
+      "excelRoomCount": 34,
+      "supabaseRoomCount": 34,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 2380000,
+      "supabaseRentRoll": 2380000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 1904000,
+        "source": "LANDLORD'S CUT.xlsx#73"
+      },
+      "correctedNetPayableTemporaryRule": 1904000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "MATIA TIBESIGWA",
+      "matchedLandlord": "MATIA TIBESIGWA",
+      "matchCount": 1,
+      "excelRoomCount": 13,
+      "supabaseRoomCount": 13,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1000000,
+      "supabaseRentRoll": 1000000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 800000,
+        "source": "LANDLORD'S CUT.xlsx#47"
+      },
+      "correctedNetPayableTemporaryRule": 800000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "VENENSIO AINEMBABAZI",
+      "matchedLandlord": "VENENSIO AINEMBABAZI",
+      "matchCount": 1,
+      "excelRoomCount": 5,
+      "supabaseRoomCount": 5,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 260000,
+      "supabaseRentRoll": 260000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 208000,
+        "source": "LANDLORD'S CUT.xlsx#92"
+      },
+      "correctedNetPayableTemporaryRule": 208000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "GRACE KEMIREMBE",
+      "matchedLandlord": "GRACE KEMIREMBE",
+      "matchCount": 1,
+      "excelRoomCount": 14,
+      "supabaseRoomCount": 14,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1160000,
+      "supabaseRentRoll": 1160000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 928000,
+        "source": "LANDLORD'S CUT.xlsx#17"
+      },
+      "correctedNetPayableTemporaryRule": 928000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "SENGOBA ANTONY",
+      "matchedLandlord": "SENGOBA ANTONY",
+      "matchCount": 1,
+      "excelRoomCount": 2,
+      "supabaseRoomCount": 2,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 2000000,
+      "supabaseRentRoll": 2000000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 1700000,
+        "source": "LANDLORD'S CUT.xlsx#86"
+      },
+      "correctedNetPayableTemporaryRule": 1700000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "NSIKO",
+      "matchedLandlord": "NSIKO",
+      "matchCount": 1,
+      "excelRoomCount": 13,
+      "supabaseRoomCount": 13,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 1045000,
+      "supabaseRentRoll": 1045000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 836000,
+        "source": "LANDLORD'S CUT.xlsx#94"
+      },
+      "correctedNetPayableTemporaryRule": 836000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "SENTAMU  MOSES",
+      "matchedLandlord": "SENTAMU MOSES",
+      "matchCount": 1,
+      "excelRoomCount": 3,
+      "supabaseRoomCount": 3,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 520000,
+      "supabaseRentRoll": 520000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 442000,
+        "source": "LANDLORD'S CUT.xlsx#96"
+      },
+      "correctedNetPayableTemporaryRule": 442000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "NOAH 2",
+      "matchedLandlord": "NOAH 2",
+      "matchCount": 1,
+      "excelRoomCount": 4,
+      "supabaseRoomCount": 4,
+      "extraRooms": [],
+      "missingRooms": [],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 320000,
+      "supabaseRentRoll": 320000,
+      "difference": 0,
+      "commissionNetSource": {
+        "landlordNetPayable": 256000,
+        "source": "LANDLORD'S CUT.xlsx#100"
+      },
+      "correctedNetPayableTemporaryRule": 256000,
+      "proposedAction": "No landlord-room assignment change"
+    },
+    {
+      "landlordName": "Lydia",
+      "matchedLandlord": null,
+      "matchCount": 0,
+      "excelRoomCount": 1,
+      "supabaseRoomCount": 0,
+      "extraRooms": [],
+      "missingRooms": [
+        {
+          "room": "LYDIA Check",
+          "rent": 0,
+          "location": "Kigungu",
+          "source": "KIGUNGU 2024.xlsx:Tenants Masterfile#177"
+        }
+      ],
+      "wrongLandlordCandidates": [],
+      "duplicateRooms": [],
+      "excelRentRoll": 0,
+      "supabaseRentRoll": 0,
+      "difference": 0,
+      "commissionNetSource": null,
+      "correctedNetPayableTemporaryRule": 0,
+      "proposedAction": "1 missing source room(s) need import or reassignment"
+    }
+  ]
+}
