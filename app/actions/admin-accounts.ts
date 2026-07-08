@@ -53,6 +53,10 @@ function assertPin(pin: string) {
     }
 }
 
+function isPendingLockoutSchemaError(error: { message?: string } | null) {
+    return Boolean(error?.message?.match(/admin_visible_pin|locked_at|reset_at|reset_by_admin|schema cache/i));
+}
+
 async function setPinCredential(userId: string, pin: string, status = "active", resetByAdmin?: string | null) {
     const supabase = await createSupabaseServerClient();
     const rpc = supabase.rpc.bind(supabase) as unknown as SetPinRpc;
@@ -78,7 +82,7 @@ async function setPinCredential(userId: string, pin: string, status = "active", 
             updated_at: now,
         })
         .eq("user_id", userId);
-    if (metadataError) throw new Error(metadataError.message);
+    if (metadataError && !isPendingLockoutSchemaError(metadataError)) throw new Error(metadataError.message);
 }
 
 async function roleScope(supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>, roleId: string) {
@@ -319,17 +323,27 @@ export async function reactivateOfficeAccount(userId: string) {
 
     if (error) throw new Error(error.message);
 
-    await admin
+    const now = new Date().toISOString();
+    const { error: basePinError } = await admin
         .from("pin_credentials")
         .update({
             failed_attempts: 0,
-            locked_at: null,
-            reset_by_admin: context.profile?.id ?? null,
-            reset_at: new Date().toISOString(),
             status: "active",
-            updated_at: new Date().toISOString(),
+            updated_at: now,
         })
         .eq("user_id", userId);
+    if (basePinError) throw new Error(basePinError.message);
+
+    const { error: metadataError } = await admin
+        .from("pin_credentials")
+        .update({
+            locked_at: null,
+            reset_by_admin: context.profile?.id ?? null,
+            reset_at: now,
+            updated_at: now,
+        })
+        .eq("user_id", userId);
+    if (metadataError && !isPendingLockoutSchemaError(metadataError)) throw new Error(metadataError.message);
 
     await logUserAction({
         action: "office_account_reactivated",
