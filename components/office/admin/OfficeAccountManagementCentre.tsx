@@ -13,6 +13,7 @@ import {
     updateOffice,
     updateOfficeAccount,
 } from "@/app/actions/admin-accounts";
+import { createFieldCollectorAccount } from "@/app/actions/collectors";
 import { EmptyState, StatusChip } from "@/components/office/shared/EnterpriseUI";
 import type { AdminCentreData } from "@/lib/admin-centre/types";
 
@@ -88,6 +89,13 @@ export default function OfficeAccountManagementCentre({ company, raw, serviceRol
                 roleId: String(formData.get("roleId") ?? ""),
             }),
             "Office account created.",
+        );
+    }
+
+    function createCollector(formData: FormData) {
+        run(
+            () => createFieldCollectorAccount(formData),
+            "Field Collector account created.",
         );
     }
 
@@ -311,6 +319,18 @@ export default function OfficeAccountManagementCentre({ company, raw, serviceRol
                         <Input name="pin" placeholder="PIN" type="password" maxLength={12} />
                         <SubmitButton disabled={isPending || !serviceRoleConfigured} label={serviceRoleConfigured ? "Create Account" : "Service Key Required"} />
                     </form>
+
+                    <div className="mt-6 rounded-3xl border border-cyan-200 bg-cyan-50 p-5">
+                        <PanelTitle icon={<UsersRound size={18} />} title="Create Field Collector" />
+                        <p className="mt-2 text-sm font-bold text-cyan-900">Collectors are all-rounders across all offices and use the dedicated Collector workspace.</p>
+                        <form action={createCollector} className="mt-4 space-y-3">
+                            <Input name="collectorName" placeholder="Collector name" />
+                            <Input name="collectorPhone" placeholder="Phone number" />
+                            <Input name="collectorEmail" placeholder="Email" type="email" />
+                            <Input name="collectorPin" placeholder="PIN" type="password" maxLength={12} />
+                            <SubmitButton disabled={isPending || !serviceRoleConfigured} label={serviceRoleConfigured ? "Create Collector" : "Service Key Required"} />
+                        </form>
+                    </div>
                 </div>
 
                 <div className="p-6 xl:col-span-8">

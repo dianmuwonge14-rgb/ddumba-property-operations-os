@@ -12,7 +12,7 @@ type LoginIdentity = {
     full_name: string | null;
     office_name?: string | null;
     is_company_admin: boolean;
-    auth_mode: "admin" | "office" | null;
+    auth_mode: "admin" | "office" | "collector" | null;
     redirect_to: string | null;
     login_status?: "success" | "invalid" | "invalid_limit" | "locked";
     attempts_remaining?: number | null;
@@ -186,19 +186,20 @@ export async function POST(request: Request) {
     }
 
     const isAdmin = identity.auth_mode === "admin";
+    const isCollector = identity.auth_mode === "collector";
 
     return NextResponse.json({
         ok: true,
-        message: isAdmin ? "Logged into Admin Account" : `Logged into ${identity.office_name ?? "Office"}`,
+        message: isAdmin ? "Logged into Admin Account" : isCollector ? `Logged into ${identity.full_name ?? "Field Collector"}` : `Logged into ${identity.office_name ?? "Office"}`,
         user: {
             id: identity.user_id,
-            name: isAdmin ? "Admin Account" : (identity.full_name ?? "Office Account"),
+            name: isAdmin ? "Admin Account" : (identity.full_name ?? (isCollector ? "Field Collector" : "Office Account")),
             isCompanyAdmin: isAdmin || identity.is_company_admin,
         },
         office: {
             id: identity.office_id,
             name: identity.office_name ?? "Office",
         },
-        redirectTo: identity.redirect_to ?? (isAdmin ? "/office/admin" : "/office"),
+        redirectTo: identity.redirect_to ?? (isAdmin ? "/office/admin" : isCollector ? "/office/collector" : "/office"),
     });
 }

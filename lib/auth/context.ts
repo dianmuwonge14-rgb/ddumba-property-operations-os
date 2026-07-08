@@ -32,7 +32,11 @@ export const getAuthContext = cache(async (): Promise<AuthContext> => {
     const authUser = userResult.user;
     const requestedOfficeId = cookieStore.get(ACTIVE_OFFICE_COOKIE)?.value;
     const authModeCookie = cookieStore.get(AUTH_MODE_COOKIE)?.value;
-    const requestedAuthMode = authModeCookie === "office" || (!authModeCookie && requestedOfficeId) ? "office" : "admin";
+    const requestedAuthMode = authModeCookie === "collector"
+        ? "collector"
+        : authModeCookie === "office" || (!authModeCookie && requestedOfficeId)
+            ? "office"
+            : "admin";
 
     if (!authUser) {
         return emptyAuthContext();
@@ -124,7 +128,7 @@ export const getAuthContext = cache(async (): Promise<AuthContext> => {
     ]);
 
     let offices: Office[] = [];
-    if (activeCompany && requestedAuthMode === "admin" && (rawCanAccessAllOffices || requestedAdminWideAccess)) {
+    if (activeCompany && (requestedAuthMode === "collector" || (requestedAuthMode === "admin" && (rawCanAccessAllOffices || requestedAdminWideAccess)))) {
         const { data } = await supabase
             .from("offices")
             .select("*")
@@ -149,8 +153,9 @@ export const getAuthContext = cache(async (): Promise<AuthContext> => {
         null;
 
     const isOfficeMode = requestedAuthMode === "office";
+    const isCollectorMode = requestedAuthMode === "collector";
     const canAccessAllOffices = !isOfficeMode && (rawCanAccessAllOffices || rawIsCompanyAdmin);
-    const isCompanyAdmin = !isOfficeMode && rawIsCompanyAdmin;
+    const isCompanyAdmin = !isOfficeMode && !isCollectorMode && rawIsCompanyAdmin;
     const permissionKeys = isOfficeMode
         ? rawPermissionKeys.filter((permission) => !["settings.view", "settings.manage", "reports.manage"].includes(permission))
         : rawPermissionKeys;

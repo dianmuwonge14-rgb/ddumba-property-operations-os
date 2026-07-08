@@ -125,7 +125,23 @@ const officeSections = [
     },
 ];
 
+const collectorSections = [
+    {
+        label: "Field Collector",
+        items: [
+            { href: "/office/collector", label: "Dashboard", icon: Home },
+            { href: "/office/collector/payments", label: "Payments Entry", icon: Banknote },
+            { href: "/office/collector/promises", label: "Promise Entry", icon: CalendarCheck },
+            { href: "/office/collector/daily", label: "Daily Collections", icon: HandCoins },
+            { href: "/office/collector/submissions", label: "Money Submission", icon: WalletCards },
+            { href: "/office/collector/instructions", label: "Instructions", icon: ClipboardCheck },
+            { href: "/office/notifications", label: "Notifications", icon: Bell },
+        ],
+    },
+];
+
 type Props = {
+    isCollector?: boolean;
     isAdmin: boolean;
     officeName: string | null;
     attendance: AttendanceGateStatus;
@@ -133,6 +149,7 @@ type Props = {
 };
 
 function themeForPath(pathname: string) {
+    if (pathname.startsWith("/office/collector")) return "collections";
     if (pathname.startsWith("/office/admin")) return "admin";
     if (pathname.includes("/collections")) return "collections";
     if (pathname.includes("/payments")) return "payments";
@@ -153,10 +170,10 @@ function themeForPath(pathname: string) {
     return "admin";
 }
 
-export default function OfficeSidebar({ isAdmin, officeName, attendance, notificationCount }: Props) {
+export default function OfficeSidebar({ isAdmin, isCollector = false, officeName, attendance, notificationCount }: Props) {
     const pathname = usePathname();
     const moduleTheme = themeForPath(pathname);
-    const sections = isAdmin ? adminSections : officeSections;
+    const sections = isCollector ? collectorSections : isAdmin ? adminSections : officeSections;
     const activeItem = sections.flatMap((section) => section.items).find((item) => pathname === item.href || (item.href !== "/office" && pathname.startsWith(item.href)));
     const checkInTime = attendance.firstCheckIn
         ? new Intl.DateTimeFormat("en-UG", { timeZone: "Africa/Kampala", hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(attendance.firstCheckIn))
@@ -191,7 +208,7 @@ export default function OfficeSidebar({ isAdmin, officeName, attendance, notific
                             <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
                                 <p className="whitespace-nowrap text-xs font-black tracking-wide text-white sm:text-sm">DDUMBA OS</p>
                                 <span className="mobile-nowrap rounded-full border border-white/10 bg-white/10 px-2 py-0.5 text-[9px] font-black uppercase text-cyan-100 sm:px-2.5 sm:py-1 sm:text-[10px]">
-                                    {isAdmin ? "Admin" : "Office"}
+                                    {isAdmin ? "Admin" : isCollector ? "Collector" : "Office"}
                                 </span>
                             </div>
                             <p className="max-w-[58vw] truncate text-[11px] font-bold text-slate-400 sm:max-w-none sm:text-xs">{activeItem?.label ?? "Enterprise"} · {officeName ?? "Company"}</p>
@@ -226,7 +243,7 @@ export default function OfficeSidebar({ isAdmin, officeName, attendance, notific
                         </div>
                         <div>
                             <h2 className="text-lg font-black">DDUMBA OS</h2>
-                            <p className="text-xs text-slate-300">{isAdmin ? "Property Operations" : officeName ?? "Office Operations"}</p>
+                            <p className="text-xs text-slate-300">{isAdmin ? "Property Operations" : isCollector ? "Field Collections" : officeName ?? "Office Operations"}</p>
                         </div>
                     </div>
                     <div className="mt-5 flex items-center justify-between rounded-2xl bg-white/10 px-4 py-3">

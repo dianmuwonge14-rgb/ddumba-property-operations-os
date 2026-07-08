@@ -2192,6 +2192,7 @@ export type Database = {
       }
       collections: {
         Row: {
+          account_type: string | null
           amount: number | null
           amount_paid: number | null
           balance: number | null
@@ -2200,6 +2201,8 @@ export type Database = {
           company_id: string | null
           created_at: string | null
           due_date: string | null
+          entered_by_account_id: string | null
+          entered_by_name: string | null
           expected_amount: number | null
           id: string
           landlord_id: string | null
@@ -2219,6 +2222,7 @@ export type Database = {
           updated_at: string | null
         }
         Insert: {
+          account_type?: string | null
           amount?: number | null
           amount_paid?: number | null
           balance?: number | null
@@ -2227,6 +2231,8 @@ export type Database = {
           company_id?: string | null
           created_at?: string | null
           due_date?: string | null
+          entered_by_account_id?: string | null
+          entered_by_name?: string | null
           expected_amount?: number | null
           id?: string
           landlord_id?: string | null
@@ -2246,6 +2252,7 @@ export type Database = {
           updated_at?: string | null
         }
         Update: {
+          account_type?: string | null
           amount?: number | null
           amount_paid?: number | null
           balance?: number | null
@@ -2254,6 +2261,8 @@ export type Database = {
           company_id?: string | null
           created_at?: string | null
           due_date?: string | null
+          entered_by_account_id?: string | null
+          entered_by_name?: string | null
           expected_amount?: number | null
           id?: string
           landlord_id?: string | null
@@ -7718,11 +7727,14 @@ export type Database = {
       }
       promises: {
         Row: {
+          account_type: string | null
           amount: number | null
           assigned_staff: string | null
           company_id: string | null
           created_at: string | null
           created_by: string | null
+          entered_by_account_id: string | null
+          entered_by_name: string | null
           fulfilled_at: string | null
           id: string
           lease_id: string | null
@@ -7737,11 +7749,14 @@ export type Database = {
           updated_at: string | null
         }
         Insert: {
+          account_type?: string | null
           amount?: number | null
           assigned_staff?: string | null
           company_id?: string | null
           created_at?: string | null
           created_by?: string | null
+          entered_by_account_id?: string | null
+          entered_by_name?: string | null
           fulfilled_at?: string | null
           id?: string
           lease_id?: string | null
@@ -7756,11 +7771,14 @@ export type Database = {
           updated_at?: string | null
         }
         Update: {
+          account_type?: string | null
           amount?: number | null
           assigned_staff?: string | null
           company_id?: string | null
           created_at?: string | null
           created_by?: string | null
+          entered_by_account_id?: string | null
+          entered_by_name?: string | null
           fulfilled_at?: string | null
           id?: string
           lease_id?: string | null
@@ -9711,6 +9729,7 @@ export type Database = {
       }
       users: {
         Row: {
+          account_type: string
           company_id: string
           created_at: string
           default_office_id: string | null
@@ -9723,6 +9742,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          account_type?: string
           company_id: string
           created_at?: string
           default_office_id?: string | null
@@ -9735,6 +9755,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          account_type?: string
           company_id?: string
           created_at?: string
           default_office_id?: string | null

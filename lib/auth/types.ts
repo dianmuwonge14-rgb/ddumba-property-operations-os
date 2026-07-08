@@ -16,7 +16,7 @@ export type RoleAssignment = UserOfficeRole & {
 export type AuthContext = {
     authUser: User | null;
     profile: UserProfile | null;
-    authMode: "admin" | "office";
+    authMode: "admin" | "office" | "collector";
     activeCompany: Company | null;
     activeOffice: Office | null;
     companies: Company[];
