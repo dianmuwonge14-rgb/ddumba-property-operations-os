@@ -44,6 +44,10 @@ function clearSupabaseAuthCookies(cookieStore: Awaited<ReturnType<typeof cookies
     }
 }
 
+function isLockoutSchemaLag(error: { message?: string } | null) {
+    return Boolean(error?.message?.match(/failed_login_attempts|is_locked|locked_at|reset_at|reset_by_admin|schema cache/i));
+}
+
 async function recordIdentifiedAuthFailure(identity: LoginIdentity, userAgent: string | null) {
     if (!identity.user_id || !identity.company_id) return 2;
 
@@ -59,15 +63,28 @@ async function recordIdentifiedAuthFailure(identity: LoginIdentity, userAgent: s
     const now = new Date().toISOString();
 
     if (pin?.id) {
-        await admin
+        const { error: baseUpdateError } = await admin
             .from("pin_credentials")
             .update({
                 failed_attempts: nextAttempts,
                 status: shouldLock ? "locked" : (pin.status ?? "active"),
+                updated_at: now,
+            })
+            .eq("id", pin.id);
+        if (baseUpdateError) throw new Error(baseUpdateError.message);
+
+        const { error: lockoutUpdateError } = await admin
+            .from("pin_credentials")
+            .update({
+                failed_login_attempts: nextAttempts,
+                is_locked: shouldLock,
                 locked_at: shouldLock ? now : null,
                 updated_at: now,
             })
             .eq("id", pin.id);
+        if (lockoutUpdateError && !isLockoutSchemaLag(lockoutUpdateError)) {
+            throw new Error(lockoutUpdateError.message);
+        }
     }
 
     await admin.from("security_events").insert({

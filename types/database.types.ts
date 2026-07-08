@@ -7611,7 +7611,9 @@ export type Database = {
           admin_visible_pin: string | null
           expires_at: string | null
           failed_attempts: number
+          failed_login_attempts: number
           id: string
+          is_locked: boolean
           last_used_at: string | null
           locked_at: string | null
           pin_hash: string
@@ -7627,7 +7629,9 @@ export type Database = {
           admin_visible_pin?: string | null
           expires_at?: string | null
           failed_attempts?: number
+          failed_login_attempts?: number
           id?: string
+          is_locked?: boolean
           last_used_at?: string | null
           locked_at?: string | null
           pin_hash: string
@@ -7643,7 +7647,9 @@ export type Database = {
           admin_visible_pin?: string | null
           expires_at?: string | null
           failed_attempts?: number
+          failed_login_attempts?: number
           id?: string
+          is_locked?: boolean
           last_used_at?: string | null
           locked_at?: string | null
           pin_hash?: string

@@ -54,7 +54,7 @@ function assertPin(pin: string) {
 }
 
 function isPendingLockoutSchemaError(error: { message?: string } | null) {
-    return Boolean(error?.message?.match(/admin_visible_pin|locked_at|reset_at|reset_by_admin|schema cache/i));
+    return Boolean(error?.message?.match(/admin_visible_pin|failed_login_attempts|is_locked|locked_at|reset_at|reset_by_admin|schema cache/i));
 }
 
 async function setPinCredential(userId: string, pin: string, status = "active", resetByAdmin?: string | null) {
@@ -75,6 +75,8 @@ async function setPinCredential(userId: string, pin: string, status = "active", 
         .update({
             admin_visible_pin: pin,
             failed_attempts: 0,
+            failed_login_attempts: 0,
+            is_locked: status === "locked",
             locked_at: status === "locked" ? now : null,
             reset_at: now,
             reset_by_admin: resetByAdmin ?? null,
@@ -337,6 +339,8 @@ export async function reactivateOfficeAccount(userId: string) {
     const { error: metadataError } = await admin
         .from("pin_credentials")
         .update({
+            failed_login_attempts: 0,
+            is_locked: false,
             locked_at: null,
             reset_by_admin: context.profile?.id ?? null,
             reset_at: now,

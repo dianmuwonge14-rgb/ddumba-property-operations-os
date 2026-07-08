@@ -21,6 +21,10 @@ function assertAmount(value: number, label: string) {
     if (!Number.isFinite(value) || value <= 0) throw new Error(`${label} must be greater than zero.`);
 }
 
+function isPendingLockoutSchemaError(error: { message?: string } | null) {
+    return Boolean(error?.message?.match(/admin_visible_pin|failed_login_attempts|is_locked|locked_at|reset_at|reset_by_admin|schema cache/i));
+}
+
 function today() {
     return new Date().toISOString().slice(0, 10);
 }
@@ -34,11 +38,13 @@ async function setPinCredential(userId: string, pin: string, adminUserId: string
     }) as { data: unknown; error: { message: string } | null };
     if (error) throw new Error(error.message);
 
-    await (createSupabaseAdminClient() as unknown as DynamicDb)
+    const { error: metadataError } = await (createSupabaseAdminClient() as unknown as DynamicDb)
         .from("pin_credentials")
         .update({
             admin_visible_pin: pin,
             failed_attempts: 0,
+            failed_login_attempts: 0,
+            is_locked: false,
             locked_at: null,
             reset_at: new Date().toISOString(),
             reset_by_admin: adminUserId,
@@ -46,6 +52,7 @@ async function setPinCredential(userId: string, pin: string, adminUserId: string
             updated_at: new Date().toISOString(),
         })
         .eq("user_id", userId);
+    if (metadataError && !isPendingLockoutSchemaError(metadataError)) throw new Error(metadataError.message);
 }
 
 export async function createFieldCollectorAccount(formData: FormData) {
