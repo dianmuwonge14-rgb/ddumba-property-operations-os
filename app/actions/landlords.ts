@@ -5,6 +5,7 @@ import { requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissio
 import { logUserAction } from "@/lib/auth/audit";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getLandlordInCompany, getPropertyForLandlordAssignment } from "@/lib/landlords/data";
+import { getMoveInPayableDecision } from "@/lib/landlords/payable-cutoff";
 import { scheduledAdvanceDeductionForMonth, splitAdvanceDeductionPortions } from "@/lib/landlord-advances/calculator";
 import type {
     ArchiveLandlordInput,
@@ -2450,7 +2451,7 @@ async function refreshCurrentMonthPayablesForLandlord({
         { data: advances, error: advancesError },
     ] = await Promise.all([
         db.from("landlords").select("*").eq("company_id", companyId).eq("id", landlordId).maybeSingle!(),
-        db.from("rooms").select("id,company_id,office_id,landlord_id,monthly_rent,status,room_number").eq("company_id", companyId).eq("landlord_id", landlordId),
+        db.from("rooms").select("id,company_id,office_id,landlord_id,monthly_rent,status,room_number,effective_start_date,explicitly_payable,payable_notes").eq("company_id", companyId).eq("landlord_id", landlordId),
         db.from("offices").select("id,name,office_name").eq("company_id", companyId),
         db.from("company_settings").select("*").eq("company_id", companyId).eq("key", "default_landlord_commission_rate"),
         db.from("landlord_debt_deductions").select("*").eq("company_id", companyId).eq("landlord_id", landlordId),
@@ -2480,13 +2481,40 @@ async function refreshCurrentMonthPayablesForLandlord({
 
     const refreshed: Array<{ officeId: string; netPayable: number; unpaidBalance: number }> = [];
     for (const [officeId, officeRooms] of groupedRooms) {
+        const existing = await db
+            .from("landlord_monthly_payables")
+            .select("amount_paid,last_paid_at,reasons_notes,status")
+            .eq("company_id", companyId)
+            .eq("office_id", officeId)
+            .eq("landlord_id", landlordId)
+            .eq("settlement_month", settlementMonth)
+            .maybeSingle!();
+        if (existing.error) throw new Error(existing.error.message);
+        const roomDecisions = officeRooms.map((room) => ({
+            decision: getMoveInPayableDecision({
+                landlordPayment: {
+                    amountPaid: existing.data?.amount_paid,
+                    lastPaidAt: existing.data?.last_paid_at,
+                    status: existing.data?.status,
+                },
+                room,
+                settlementMonth,
+                tenantActive: !isVacantCommissionRoom(room),
+            }),
+            room,
+        }));
         const fullRentRoll = officeRooms.reduce((total, room) => total + Number(room.monthly_rent ?? 0), 0);
-        const occupiedPayableRent = officeRooms
-            .filter((room) => !isVacantCommissionRoom(room))
-            .reduce((total, room) => total + Number(room.monthly_rent ?? 0), 0);
-        const vacantRoomDeductions = officeRooms
-            .filter((room) => isVacantCommissionRoom(room))
-            .reduce((total, room) => total + Number(room.monthly_rent ?? 0), 0);
+        const occupiedPayableRent = roomDecisions
+            .filter(({ decision }) => decision.payableThisMonth)
+            .reduce((total, { room }) => total + Number(room.monthly_rent ?? 0), 0);
+        const vacantRoomDeductions = roomDecisions
+            .filter(({ decision }) => !decision.payableThisMonth)
+            .reduce((total, { room }) => total + Number(room.monthly_rent ?? 0), 0);
+        const companyExtraProfit = roomDecisions.reduce((total, { decision }) => total + decision.companyExtraProfitAmount, 0);
+        const cutoffNotes = roomDecisions
+            .filter(({ decision }) => decision.cutoffDecision !== "standard" && decision.cutoffDecision !== "vacant" && decision.cutoffDecision !== "archived")
+            .map(({ room, decision }) => `${String(room.room_number ?? room.id)}=${decision.reason}`)
+            .join("; ");
         const commissionMode = parseCommissionCalculationMode(
             landlordRecord.commission_calculation_mode
             ?? parseCommissionMetadata(landlordRecord.commission_notes).commissionCalculationMode,
@@ -2515,15 +2543,6 @@ async function refreshCurrentMonthPayablesForLandlord({
         const requestedAdvance = activeAdvances.reduce((total, advance) => total + scheduledAdvanceDeductionForMonth(advance, settlementMonth), 0);
         const advanceDeduction = Math.min(requestedAdvance, Math.max(0, landlordPortfolioNet - recoveryDeduction));
         const netPayable = Math.max(0, landlordPortfolioNet - recoveryDeduction - advanceDeduction);
-        const existing = await db
-            .from("landlord_monthly_payables")
-            .select("amount_paid,reasons_notes")
-            .eq("company_id", companyId)
-            .eq("office_id", officeId)
-            .eq("landlord_id", landlordId)
-            .eq("settlement_month", settlementMonth)
-            .maybeSingle!();
-        if (existing.error) throw new Error(existing.error.message);
         const clearedMonth = extractPaymentMarkerFromNotes(existing.data?.reasons_notes)
             || await getImportedPaymentMarker({
                 companyId,
@@ -2569,8 +2588,8 @@ async function refreshCurrentMonthPayablesForLandlord({
             closing_arrears: unpaidBalance,
             status: overpaidAmount > 0 ? "overpaid" : unpaidBalance > 0 ? "unpaid" : "paid",
             reasons_notes: clearedMonth
-                ? `cleared_month=${clearedMonth}; Live refresh after commission change. Recovery pending ${requestedRecovery}. Advance pending ${requestedAdvance}.`
-                : `Live refresh after commission change. Recovery pending ${requestedRecovery}. Advance pending ${requestedAdvance}.`,
+                ? `cleared_month=${clearedMonth}; Live refresh after commission change. Recovery pending ${requestedRecovery}. Advance pending ${requestedAdvance}. move_in_cutoff=${cutoffNotes || "none"}; company_extra_profit=${companyExtraProfit}.`
+                : `Live refresh after commission change. Recovery pending ${requestedRecovery}. Advance pending ${requestedAdvance}. move_in_cutoff=${cutoffNotes || "none"}; company_extra_profit=${companyExtraProfit}.`,
             created_by: createdBy,
             updated_at: new Date().toISOString(),
         };

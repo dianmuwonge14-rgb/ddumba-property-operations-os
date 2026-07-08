@@ -3,6 +3,7 @@ import { hasPermission, requireAuth, requirePermission } from "@/lib/auth/permis
 import { getScopedSupabase } from "@/lib/auth/query";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { scheduledAdvanceDeductionForMonth } from "@/lib/landlord-advances/calculator";
+import { getMoveInPayableDecision } from "@/lib/landlords/payable-cutoff";
 import type {
     CollectionRow,
     ExpenseRow,
@@ -708,7 +709,7 @@ export const getLandlordsPageData = cache(async function getLandlordsPageData(in
             const collectedThisMonth = sumCollections(
                 landlordCollections.filter((collection) => collection.room_id === room.id && isThisMonth(collection.paid_at ?? collection.created_at)),
             );
-            const payable = getRoomPayableState({ room, tenant: null });
+            const payable = getRoomPayableState({ currentMonthPayable: currentMonthRow, room, settlementMonth: currentSettlementMonth(), tenant: null });
 
             return {
                 room,
@@ -725,6 +726,9 @@ export const getLandlordsPageData = cache(async function getLandlordsPageData(in
                 startDate: payable.startDate,
                 payableThisMonth: payable.payableThisMonth,
                 payableReason: payable.reason,
+                companyExtraProfitAmount: payable.companyExtraProfitAmount,
+                includedPayableAmount: payable.includedPayableAmount,
+                landlordAlreadyPaid: payable.landlordAlreadyPaid,
                 paymentStatus: payable.payableThisMonth ? "unpaid" as const : "vacant" as const,
             };
         });
@@ -740,7 +744,7 @@ export const getLandlordsPageData = cache(async function getLandlordsPageData(in
                 landlordCollections.filter((collection) => collection.room_id === room.id && isThisMonth(collection.paid_at ?? collection.created_at)),
             );
             const unpaidBalance = totalOutstandingBalance;
-            const payable = getRoomPayableState({ room, tenant });
+            const payable = getRoomPayableState({ currentMonthPayable: currentMonthRow, leaseStartDate: lease?.start_date ?? null, room, settlementMonth: currentSettlementMonth(), tenant });
 
             return {
                 room,
@@ -757,6 +761,9 @@ export const getLandlordsPageData = cache(async function getLandlordsPageData(in
                 startDate: payable.startDate,
                 payableThisMonth: payable.payableThisMonth,
                 payableReason: payable.reason,
+                companyExtraProfitAmount: payable.companyExtraProfitAmount,
+                includedPayableAmount: payable.includedPayableAmount,
+                landlordAlreadyPaid: payable.landlordAlreadyPaid,
                 paymentStatus: getPaymentStatus({ tenant, monthlyRent, outstandingBalance, collectedThisMonth }),
             };
         }) : [];
@@ -1722,38 +1729,34 @@ function getPaymentStatus({
     return "unpaid" as const;
 }
 
-function getRoomPayableState({ room, tenant }: { room: RoomRow; tenant: TenantRow | null }) {
+function getRoomPayableState({
+    currentMonthPayable,
+    leaseStartDate,
+    room,
+    settlementMonth,
+    tenant,
+}: {
+    currentMonthPayable: LandlordMonthlyPayableRow | null;
+    leaseStartDate?: string | null;
+    room: RoomRow;
+    settlementMonth: string;
+    tenant: TenantRow | null;
+}) {
     const extra = room as RoomRow & {
         effective_start_date?: string | null;
         explicitly_payable?: boolean | null;
-        payable_notes?: string | null;
     };
-    const status = String(room.status ?? "active").toLowerCase();
-    const startDate = extra.effective_start_date ?? null;
-    const explicitlyPayable = Boolean(extra.explicitly_payable);
-
-    if (status === "archived") {
-        return { startDate, payableThisMonth: false, reason: "No - Archived." };
-    }
-    if (status === "vacant" || status === "empty") {
-        return { startDate, payableThisMonth: false, reason: "No - Vacant room." };
-    }
-    const statusIndicatesOccupied = status === "occupied" || status === "active";
-    if (!startDate) {
-        return {
-            startDate,
-            payableThisMonth: Boolean(tenant || statusIndicatesOccupied || explicitlyPayable),
-            reason: tenant || statusIndicatesOccupied || explicitlyPayable
-                ? "Yes - Active occupied room."
-                : "No - Not occupied.",
-        };
-    }
-
-    const start = new Date(`${startDate}T00:00:00`);
-    if (Number.isNaN(start.getTime())) {
-        return { startDate, payableThisMonth: false, reason: "No - Invalid start date." };
-    }
-    return { startDate, payableThisMonth: Boolean(tenant || statusIndicatesOccupied || explicitlyPayable), reason: explicitlyPayable ? "Yes - Admin marked payable." : "Yes - Occupied and effective for settlement period." };
+    return getMoveInPayableDecision({
+        landlordPayment: currentMonthPayable ? {
+            amountPaid: currentMonthPayable.amount_paid,
+            lastPaidAt: currentMonthPayable.last_paid_at,
+            status: currentMonthPayable.status,
+        } : null,
+        leaseStartDate,
+        room: extra,
+        settlementMonth,
+        tenantActive: Boolean(tenant),
+    });
 }
 
 function isCurrentMonthDate(date: Date) {
@@ -1789,8 +1792,11 @@ function buildSettlementEstimate({
             tenantName: item.tenant?.full_name ?? "Active tenant",
             tenantPhone: item.tenant?.phone ?? null,
             monthlyRent: item.monthlyRent,
-            payableAmount: item.monthlyRent,
+            payableAmount: item.includedPayableAmount,
             status: "occupied" as const,
+            companyExtraProfitAmount: item.companyExtraProfitAmount,
+            includedPayableAmount: item.includedPayableAmount,
+            landlordAlreadyPaid: item.landlordAlreadyPaid,
             reason: item.payableReason,
         }));
     const vacantRoomLines = roomPortfolio
@@ -1804,11 +1810,14 @@ function buildSettlementEstimate({
             monthlyRent: item.monthlyRent,
             payableAmount: 0,
             status: "vacant" as const,
+            companyExtraProfitAmount: item.companyExtraProfitAmount,
+            includedPayableAmount: item.includedPayableAmount,
+            landlordAlreadyPaid: item.landlordAlreadyPaid,
             reason: item.payableReason,
         }));
     const expectedGrossRent = roomPortfolio.reduce((total, item) => total + item.monthlyRent, 0);
     const roomRentById = new Map(roomPortfolio.map((item) => [item.room.id, item.monthlyRent]));
-    const occupiedPayableRent = occupiedRoomLines.reduce((total, line) => total + line.monthlyRent, 0);
+    const occupiedPayableRent = occupiedRoomLines.reduce((total, line) => total + line.payableAmount, 0);
     const emptyRoomDeductions = vacantRoomLines.reduce((total, line) => total + line.monthlyRent, 0);
     const commissionBaseAmount = commissionCalculationMode === "occupied_room_based" ? occupiedPayableRent : expectedGrossRent;
     const companyCommissionAmount = Math.round(commissionBaseAmount * (commissionRate / 100));

@@ -154,6 +154,9 @@ export type LandlordSettlementRoomLine = {
     payableAmount: number;
     status: "occupied" | "vacant";
     reason: string;
+    companyExtraProfitAmount: number;
+    includedPayableAmount: number;
+    landlordAlreadyPaid: boolean;
 };
 
 export type LandlordSettlementRecoveryLine = {
@@ -290,6 +293,9 @@ export type LandlordRoomPortfolioItem = {
     startDate: string | null;
     payableThisMonth: boolean;
     payableReason: string;
+    companyExtraProfitAmount: number;
+    includedPayableAmount: number;
+    landlordAlreadyPaid: boolean;
     paymentStatus: LandlordRoomPaymentStatus;
 };
 

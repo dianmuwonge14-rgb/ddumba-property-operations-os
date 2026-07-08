@@ -593,6 +593,19 @@ function LandlordProfile({
                             <ReportRoomList title="Occupied Rooms" roomNumbers={estimate.occupiedRoomLines.map((line) => line.roomNumber)} tone="green" />
                             <ReportRoomList title="Vacant Rooms" roomNumbers={estimate.vacantRoomLines.map((line) => line.roomNumber)} tone="amber" />
                             <ReportBox
+                                title="Move-in payable decisions"
+                                lines={[...estimate.occupiedRoomLines, ...estimate.vacantRoomLines]
+                                    .filter((line) => /Included: tenant entered before cutoff|Excluded: tenant entered after cutoff|Company extra profit: landlord already paid/i.test(line.reason))
+                                    .map((line) => {
+                                        const amountLabel = line.companyExtraProfitAmount > 0
+                                            ? `Company extra profit ${money(line.companyExtraProfitAmount)}`
+                                            : line.includedPayableAmount > 0
+                                                ? `Included payable ${money(line.includedPayableAmount)}`
+                                                : "Not included in landlord payable";
+                                        return `Room ${line.roomNumber} · ${line.reason} · ${amountLabel}`;
+                                    })}
+                            />
+                            <ReportBox
                                 title="Vacated tenant recovery deductions"
                                 lines={estimate.recoveryLines.map((line) =>
                                     `${line.tenantName} · Room ${line.roomNumber} · Room rent ${money(line.roomRent)} · Outstanding left ${money(line.amount)} · Deducted ${money(line.appliedInEstimate)} · ${line.reason}`,
@@ -1325,7 +1338,7 @@ function ReportBox({ title, lines }: { title: string; lines: string[] }) {
             {lines.length === 0 ? (
                 <p className="mt-3 text-sm font-bold text-slate-600">None.</p>
             ) : (
-                <div className="mt-3 max-h-48 space-y-2 overflow-auto">
+                <div className="mt-3 max-h-48 space-y-2 overflow-auto print:max-h-none print:overflow-visible">
                     {lines.slice(0, 30).map((line, index) => (
                         <p key={`${line}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-800">
                             {line}

@@ -7,7 +7,9 @@ import { recordCollectionLedgerAndCash } from "@/lib/collections/payment-ledger"
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { recalculateTenantScore } from "@/lib/tenants/scoring";
 import { recordCollection } from "@/app/actions/collections";
+import { refreshAffectedLandlordPayable } from "@/app/actions/room-rent";
 import { vacateTenant } from "@/app/actions/tenants";
+import { getMoveInPayableDecision, type LandlordPaymentState } from "@/lib/landlords/payable-cutoff";
 import type { Database } from "@/types/database.types";
 
 type Json = Database["public"]["Tables"]["audit_logs"]["Insert"]["after_data"];
@@ -60,6 +62,35 @@ function assertDate(value: string) {
 
 function collectionNumber() {
     return `MOVEIN-${Date.now()}`;
+}
+
+async function getLandlordPaymentState(supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>, input: {
+    companyId: string;
+    landlordId: string | null;
+    officeId: string | null;
+    settlementMonth: string;
+}): Promise<LandlordPaymentState | null> {
+    if (!input.landlordId || !input.officeId) return null;
+    const db = supabase as unknown as { from: (table: string) => any };
+    const { data, error } = await db
+        .from("landlord_monthly_payables")
+        .select("amount_paid,last_paid_at,status")
+        .eq("company_id", input.companyId)
+        .eq("office_id", input.officeId)
+        .eq("landlord_id", input.landlordId)
+        .eq("settlement_month", input.settlementMonth)
+        .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) return null;
+    return {
+        amountPaid: data.amount_paid,
+        lastPaidAt: data.last_paid_at,
+        status: data.status,
+    };
+}
+
+function settlementMonthFromDate(value: string) {
+    return `${value.slice(0, 7)}-01`;
 }
 
 export async function replaceTenantFromPaymentsEntry(input: ReplaceTenantFromPaymentsInput) {
@@ -193,6 +224,28 @@ export async function replaceTenantFromPaymentsEntry(input: ReplaceTenantFromPay
         .single();
     if (roomUpdateError) throw new Error(roomUpdateError.message);
 
+    const settlementMonth = settlementMonthFromDate(moveInDate);
+    const landlordPaymentState = await getLandlordPaymentState(supabase, {
+        companyId,
+        landlordId: roomBefore.landlord_id,
+        officeId,
+        settlementMonth,
+    });
+    const moveInPayableDecision = getMoveInPayableDecision({
+        landlordPayment: landlordPaymentState,
+        leaseStartDate: moveInDate,
+        room: updatedRoom,
+        settlementMonth,
+        tenantActive: true,
+    });
+    const refreshedPayable = await refreshAffectedLandlordPayable(roomDb, {
+        companyId,
+        landlordId: roomBefore.landlord_id,
+        officeId,
+        settlementMonth,
+        userId: actorId,
+    });
+
     await supabase.from("room_status_history").insert({
         changed_by: actorId,
         company_id: companyId,
@@ -207,7 +260,7 @@ export async function replaceTenantFromPaymentsEntry(input: ReplaceTenantFromPay
         action_type: "tenant_replaced",
         company_id: companyId,
         lease_id: newLease.id,
-        notes: `Old tenant ${oldTenant.full_name ?? "Unnamed tenant"} vacated with debt UGX ${Math.round(vacateResult.finalOutstanding).toLocaleString("en-UG")}; new tenant ${newTenant.full_name ?? newTenantName} started with UGX 0 outstanding. ${input.notes ?? ""}`.trim(),
+        notes: `Old tenant ${oldTenant.full_name ?? "Unnamed tenant"} vacated with debt UGX ${Math.round(vacateResult.finalOutstanding).toLocaleString("en-UG")}; new tenant ${newTenant.full_name ?? newTenantName} started with UGX 0 outstanding. Landlord payable rule: ${moveInPayableDecision.reason}; included ${moveInPayableDecision.includedPayableAmount}; company extra profit ${moveInPayableDecision.companyExtraProfitAmount}. ${input.notes ?? ""}`.trim(),
         office_id: officeId,
         outcome: "new_tenant_added",
         performed_by: actorId,
@@ -242,6 +295,8 @@ export async function replaceTenantFromPaymentsEntry(input: ReplaceTenantFromPay
             newTenant,
             room: updatedRoom,
             vacateResult,
+            landlordPayableCutoff: moveInPayableDecision,
+            refreshedPayable,
         }),
     });
 
@@ -368,6 +423,28 @@ export async function markRoomOccupied(input: MarkRoomOccupiedInput) {
         .single();
     if (roomUpdateError) throw new Error(roomUpdateError.message);
 
+    const settlementMonth = settlementMonthFromDate(moveInDate);
+    const landlordPaymentState = await getLandlordPaymentState(supabase, {
+        companyId,
+        landlordId: room.landlord_id,
+        officeId: room.office_id,
+        settlementMonth,
+    });
+    const moveInPayableDecision = getMoveInPayableDecision({
+        landlordPayment: landlordPaymentState,
+        leaseStartDate: moveInDate,
+        room: updatedRoom,
+        settlementMonth,
+        tenantActive: true,
+    });
+    const refreshedPayable = await refreshAffectedLandlordPayable(roomDb, {
+        companyId,
+        landlordId: room.landlord_id,
+        officeId: room.office_id,
+        settlementMonth,
+        userId: actorId,
+    });
+
     let collection: Record<string, unknown> | null = null;
     if (moneyCollected > 0) {
         const { data, error } = await supabase
@@ -417,7 +494,7 @@ export async function markRoomOccupied(input: MarkRoomOccupiedInput) {
         action_type: "visit",
         company_id: companyId,
         lease_id: lease.id,
-        notes: `Room marked occupied. Balance demanded ${balanceDemanded}; collected ${moneyCollected}; outstanding ${openingBalance}. ${input.notes ?? ""}`.trim(),
+        notes: `Room marked occupied. Balance demanded ${balanceDemanded}; collected ${moneyCollected}; outstanding ${openingBalance}. Landlord payable rule: ${moveInPayableDecision.reason}; included ${moveInPayableDecision.includedPayableAmount}; company extra profit ${moveInPayableDecision.companyExtraProfitAmount}. ${input.notes ?? ""}`.trim(),
         office_id: room.office_id,
         outcome: "room_occupied",
         performed_by: actorId,
@@ -446,6 +523,8 @@ export async function markRoomOccupied(input: MarkRoomOccupiedInput) {
             tenant,
             lease,
             collection,
+            landlordPayableCutoff: moveInPayableDecision,
+            refreshedPayable,
             money_collected: moneyCollected,
             balance_demanded: balanceDemanded,
             opening_balance: openingBalance,

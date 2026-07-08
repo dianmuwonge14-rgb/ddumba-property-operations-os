@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { logUserAction } from "@/lib/auth/audit";
 import { hasAnyPermission, requireAuth, requireCompanyAdminMode } from "@/lib/auth/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getMoveInPayableDecision } from "@/lib/landlords/payable-cutoff";
 
 type Db = {
     from: (table: string) => any;
@@ -232,14 +233,15 @@ async function updateRoomTenantLeaseRent(db: Db, input: {
     }
 }
 
-async function refreshAffectedLandlordPayable(db: Db, input: {
+export async function refreshAffectedLandlordPayable(db: Db, input: {
     companyId: string;
     officeId: string | null;
     landlordId: string | null;
+    settlementMonth?: string | null;
     userId: string | null;
 }) {
     if (!input.officeId || !input.landlordId) return null;
-    const settlementMonth = currentSettlementMonth();
+    const settlementMonth = input.settlementMonth?.slice(0, 10) || currentSettlementMonth();
     const now = new Date().toISOString();
     const [
         landlordResult,
@@ -276,14 +278,33 @@ async function refreshAffectedLandlordPayable(db: Db, input: {
     const office = officeResult.data as Record<string, unknown> | null;
     if (!landlord || !office) return null;
 
+    const existing = existingResult.data as Record<string, unknown> | null;
     const rooms = ((roomsResult.data ?? []) as Record<string, unknown>[]).filter((room) => !isArchivedRoom(room));
+    const payableRoomDecisions = rooms.map((room) => ({
+        decision: getMoveInPayableDecision({
+            landlordPayment: {
+                amountPaid: existing?.amount_paid as number | string | null | undefined,
+                lastPaidAt: existing?.last_paid_at as string | null | undefined,
+                status: existing?.status as string | null | undefined,
+            },
+            room,
+            settlementMonth,
+            tenantActive: !isVacantCommissionRoom(room),
+        }),
+        room,
+    }));
     const fullRentRoll = rooms.reduce((total, room) => total + amount(room.monthly_rent), 0);
-    const occupiedPayableRent = rooms
-        .filter((room) => !isVacantCommissionRoom(room))
-        .reduce((total, room) => total + amount(room.monthly_rent), 0);
-    const vacantRoomDeductions = rooms
-        .filter((room) => isVacantCommissionRoom(room))
-        .reduce((total, room) => total + amount(room.monthly_rent), 0);
+    const occupiedPayableRent = payableRoomDecisions
+        .filter(({ decision }) => decision.payableThisMonth)
+        .reduce((total, { room }) => total + amount(room.monthly_rent), 0);
+    const vacantRoomDeductions = payableRoomDecisions
+        .filter(({ decision }) => !decision.payableThisMonth)
+        .reduce((total, { room }) => total + amount(room.monthly_rent), 0);
+    const companyExtraProfit = payableRoomDecisions.reduce((total, { decision }) => total + decision.companyExtraProfitAmount, 0);
+    const cutoffNotes = payableRoomDecisions
+        .filter(({ decision }) => decision.cutoffDecision !== "standard" && decision.cutoffDecision !== "vacant" && decision.cutoffDecision !== "archived")
+        .map(({ room, decision }) => `${String(room.room_number ?? room.id)}=${decision.reason}`)
+        .join("; ");
     const commissionMode = parseCommissionMode(landlord.commission_calculation_mode);
     const defaultCommissionRate = parseDefaultCommissionRate((settingsResult.data ?? [])[0]?.value);
     const commissionRate = landlord.commission_rate !== null
@@ -305,7 +326,6 @@ async function refreshAffectedLandlordPayable(db: Db, input: {
     const requestedAdvance = activeAdvances.reduce((total, advance) => total + landlordAdvanceRemaining(advance), 0);
     const advanceDeduction = Math.min(requestedAdvance, Math.max(0, landlordPortfolioNet - recoveryDeduction));
     const netPayable = Math.max(0, landlordPortfolioNet - recoveryDeduction - advanceDeduction);
-    const existing = existingResult.data as Record<string, unknown> | null;
     const clearedMonth = extractClearedMonth(existing?.reasons_notes)
         || await getImportedPaymentMarker(db, {
             companyId: input.companyId,
@@ -346,8 +366,8 @@ async function refreshAffectedLandlordPayable(db: Db, input: {
         unpaid_balance: unpaidBalance,
         status,
         reasons_notes: clearedMonth
-            ? `cleared_month=${clearedMonth}; room_source=live_rooms; refreshed_after_room_rent_change=${now}`
-            : `room_source=live_rooms; refreshed_after_room_rent_change=${now}`,
+            ? `cleared_month=${clearedMonth}; room_source=live_rooms; move_in_cutoff=${cutoffNotes || "none"}; company_extra_profit=${companyExtraProfit}; refreshed_after_room_rent_change=${now}`
+            : `room_source=live_rooms; move_in_cutoff=${cutoffNotes || "none"}; company_extra_profit=${companyExtraProfit}; refreshed_after_room_rent_change=${now}`,
         created_by: input.userId,
         updated_at: now,
     };
