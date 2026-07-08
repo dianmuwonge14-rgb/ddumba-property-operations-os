@@ -13,11 +13,14 @@ body {
 
 html {
   scroll-behavior: smooth;
+  scroll-padding-top: var(--app-header-offset);
 }
 
 :root {
   --font-geist-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-geist-mono: "SFMono-Regular", "Roboto Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  --app-header-offset: 9rem;
+  --sticky-header-bg: rgba(15, 23, 42, 0.98);
 }
 
 * {
@@ -162,6 +165,25 @@ th {
   z-index: 10;
 }
 
+table thead th,
+.enterprise-table thead th,
+.overflow-x-auto table thead th,
+.overflow-auto table thead th,
+[data-table-scroll] table thead th,
+.table-responsive table thead th,
+.enterprise-table-wrapper table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 22;
+  background: var(--sticky-header-bg);
+  color: #e2e8f0;
+  box-shadow:
+    0 1px 0 rgba(226, 232, 240, 0.18),
+    0 10px 22px rgba(2, 6, 23, 0.18);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
 .enterprise-table th {
   background: rgba(15, 23, 42, 0.96);
   color: #e2e8f0;
@@ -243,6 +265,16 @@ th {
 .table-responsive table,
 .enterprise-table-wrapper table {
   min-width: max-content;
+}
+
+.overflow-x-auto,
+.overflow-auto,
+[data-table-scroll],
+.table-responsive,
+.enterprise-table-wrapper {
+  scrollbar-gutter: stable;
+  scroll-padding-top: 0;
+  -webkit-overflow-scrolling: touch;
 }
 
 .overflow-x-auto table th,
@@ -372,6 +404,10 @@ textarea:focus {
 }
 
 @media (max-width: 768px) {
+  :root {
+    --app-header-offset: 8.75rem;
+  }
+
   body {
     overflow-x: hidden;
   }
@@ -407,6 +443,24 @@ textarea:focus {
   .status-chip {
     min-height: 2.25rem;
   }
+
+  table thead th,
+  .enterprise-table thead th,
+  .overflow-x-auto table thead th,
+  .overflow-auto table thead th,
+  [data-table-scroll] table thead th,
+  .table-responsive table thead th,
+  .enterprise-table-wrapper table thead th {
+    font-size: 0.6875rem;
+    line-height: 1rem;
+    padding: 9px 10px;
+  }
+}
+
+@supports (padding-top: max(0px)) {
+  .app-sticky-header {
+    padding-top: max(0.625rem, env(safe-area-inset-top));
+  }
 }
 
 .statement-print-preview,
@@ -429,6 +483,19 @@ button {
   overflow-wrap: normal;
   word-break: normal;
   transition: transform 160ms ease, box-shadow 160ms ease, background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.app-sticky-header {
+  background:
+    radial-gradient(circle at 14% 0%, rgba(59, 130, 246, 0.28), transparent 28%),
+    radial-gradient(circle at 86% 0%, rgba(20, 184, 166, 0.18), transparent 26%),
+    rgba(2, 6, 23, 0.92);
+  isolation: isolate;
+}
+
+.app-top-nav {
+  position: relative;
+  z-index: 2;
 }
 
 .mobile-nav-scroll {
@@ -537,6 +604,21 @@ button:not(:disabled):active {
   body {
     background: #ffffff !important;
     color: #020617 !important;
+  }
+
+  .app-sticky-header,
+  .enterprise-table thead,
+  table thead th,
+  .enterprise-table thead th,
+  .overflow-x-auto table thead th,
+  .overflow-auto table thead th,
+  [data-table-scroll] table thead th,
+  .table-responsive table thead th,
+  .enterprise-table-wrapper table thead th {
+    position: static !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
   }
 
   #landlord-payment-report {
