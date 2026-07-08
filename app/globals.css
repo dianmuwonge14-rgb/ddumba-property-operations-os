@@ -20,7 +20,9 @@ html {
   --font-geist-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-geist-mono: "SFMono-Regular", "Roboto Mono", Consolas, "Liberation Mono", Menlo, monospace;
   --app-header-offset: 9rem;
-  --sticky-header-bg: rgba(15, 23, 42, 0.98);
+  --sticky-header-bg:
+    linear-gradient(135deg, rgba(2, 6, 23, 0.99) 0%, rgba(15, 23, 42, 0.98) 48%, rgba(17, 24, 39, 0.98) 100%);
+  --sticky-header-border: rgba(148, 163, 184, 0.28);
 }
 
 * {
@@ -159,10 +161,17 @@ th {
   overscroll-behavior-inline: contain;
 }
 
+table thead,
 .enterprise-table thead {
   position: sticky;
   top: 0;
   z-index: 10;
+  background: var(--sticky-header-bg) !important;
+}
+
+table thead tr,
+.enterprise-table thead tr {
+  background: var(--sticky-header-bg) !important;
 }
 
 table thead th,
@@ -175,13 +184,17 @@ table thead th,
   position: sticky;
   top: 0;
   z-index: 22;
-  background: var(--sticky-header-bg);
-  color: #e2e8f0;
+  background: var(--sticky-header-bg) !important;
+  color: #f8fafc !important;
+  border-bottom: 1px solid var(--sticky-header-border) !important;
   box-shadow:
-    0 1px 0 rgba(226, 232, 240, 0.18),
-    0 10px 22px rgba(2, 6, 23, 0.18);
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 1px 0 rgba(15, 23, 42, 0.9),
+    0 12px 26px rgba(2, 6, 23, 0.24);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
+  font-weight: 700;
+  text-shadow: 0 1px 0 rgba(2, 6, 23, 0.35);
 }
 
 .enterprise-table th {
