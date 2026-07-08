@@ -829,6 +829,7 @@ export async function lookupPaymentRoom(roomNumber: string, paymentDate?: string
 
     const escapedTerm = escapeSupabaseLike(term);
     const roomColumns = "id, company_id, office_id, property_id, landlord_id, room_number, monthly_rent, outstanding_balance, status";
+    const tenantColumns = "id, company_id, office_id, property_id, room_id, full_name, phone, monthly_rent, balance, status";
     let roomQuery = supabase
         .from("rooms")
         .select(roomColumns)
@@ -841,30 +842,53 @@ export async function lookupPaymentRoom(roomNumber: string, paymentDate?: string
         roomQuery = roomQuery.eq("office_id", officeId);
     }
 
-    const { data: rooms, error: roomError } = await roomQuery;
-    if (roomError) throw new Error(roomError.message);
-    if (!rooms?.length) return [];
+    let tenantQuery = supabase
+        .from("tenants")
+        .select(tenantColumns)
+        .eq("company_id", companyId)
+        .eq("status", "active")
+        .or(`full_name.ilike.%${escapedTerm}%,phone.ilike.%${escapedTerm}%,tenant_code.ilike.%${escapedTerm}%`)
+        .limit(searchAllOffices ? 20 : 10);
 
-    const roomIds = rooms.map((room) => room.id);
+    if (!searchAllOffices) {
+        tenantQuery = tenantQuery.eq("office_id", officeId);
+    }
+
+    const [{ data: rooms, error: roomError }, { data: directTenants, error: directTenantError }] = await Promise.all([
+        roomQuery,
+        tenantQuery,
+    ]);
+    if (roomError) throw new Error(roomError.message);
+    if (directTenantError) throw new Error(directTenantError.message);
+
+    const roomIds = uniqueIds([
+        ...(rooms ?? []).map((room) => room.id),
+        ...(directTenants ?? []).map((tenant) => tenant.room_id),
+    ]);
+    if (!roomIds.length && !directTenants?.length) return [];
+
     const [{ data: tenants, error: tenantError }, { data: leases, error: leaseError }] = await Promise.all([
-        supabase
+        roomIds.length ? supabase
             .from("tenants")
-            .select("id, company_id, office_id, property_id, room_id, full_name, phone, monthly_rent, balance, status")
+            .select(tenantColumns)
             .eq("company_id", companyId)
             .eq("status", "active")
-            .in("room_id", roomIds),
-        supabase
+            .in("room_id", roomIds) : { data: [] as TenantRow[], error: null },
+        roomIds.length ? supabase
             .from("leases")
             .select("id, company_id, office_id, property_id, room_id, tenant_id, monthly_rent, status")
             .eq("company_id", companyId)
             .eq("status", "active")
-            .in("room_id", roomIds),
+            .in("room_id", roomIds) : { data: [] as LeaseRow[], error: null },
     ]);
 
     if (tenantError) throw new Error(tenantError.message);
     if (leaseError) throw new Error(leaseError.message);
 
     const tenantById = new Map<string, TenantRow>();
+    for (const tenant of directTenants ?? []) {
+        tenantById.set(tenant.id, tenant as TenantRow);
+    }
     for (const tenant of tenants ?? []) {
         tenantById.set(tenant.id, tenant as TenantRow);
     }
@@ -874,7 +898,7 @@ export async function lookupPaymentRoom(roomNumber: string, paymentDate?: string
     if (missingLeaseTenantIds.length) {
         const { data: leaseTenants, error: leaseTenantError } = await supabase
             .from("tenants")
-            .select("id, company_id, office_id, property_id, room_id, full_name, phone, monthly_rent, balance, status")
+            .select(tenantColumns)
             .eq("company_id", companyId)
             .eq("status", "active")
             .in("id", missingLeaseTenantIds);
@@ -884,24 +908,22 @@ export async function lookupPaymentRoom(roomNumber: string, paymentDate?: string
         }
     }
 
+    const normalizedTerm = normalizeSearchValue(term);
     const tenantsForRooms = [...tenantById.values()]
         .filter((tenant) => tenant.room_id && roomIds.includes(tenant.room_id))
         .sort((left, right) => String(left.full_name ?? "").localeCompare(String(right.full_name ?? "")));
 
     const hydrated = await hydrateFastPaymentTenantResults(tenantsForRooms, companyId, searchAllOffices ? null : officeId, paymentDate);
     return hydrated
-        .filter((result) => normalizeSearchValue(result.room?.room_number).startsWith(normalizeSearchValue(term)))
-        .filter((result) => searchAllOffices || tenantResultBelongsToOffice(result, officeId))
-        .sort((left, right) => {
-            const leftRoom = normalizeSearchValue(left.room?.room_number);
-            const rightRoom = normalizeSearchValue(right.room?.room_number);
-            const normalizedTerm = normalizeSearchValue(term);
-            const leftExact = leftRoom === normalizedTerm ? 0 : 1;
-            const rightExact = rightRoom === normalizedTerm ? 0 : 1;
-            if (leftExact !== rightExact) return leftExact - rightExact;
-            return leftRoom.localeCompare(rightRoom);
+        .filter((result) => {
+            const room = normalizeSearchValue(result.room?.room_number);
+            const name = normalizeSearchValue(result.tenant.full_name);
+            const phone = normalizeSearchValue(result.tenant.phone);
+            return room.startsWith(normalizedTerm) || room.includes(normalizedTerm) || name.includes(normalizedTerm) || phone.includes(normalizedTerm);
         })
-        .slice(0, searchAllOffices ? 20 : 5);
+        .filter((result) => searchAllOffices || tenantResultBelongsToOffice(result, officeId))
+        .sort((left, right) => scoreTenantSearchResult(left, term) - scoreTenantSearchResult(right, term))
+        .slice(0, searchAllOffices ? 20 : 10);
 }
 
 function fastPaymentRpcRowToTenantResult(row: Record<string, unknown>, paymentMonth: string): CollectionTenantResult {

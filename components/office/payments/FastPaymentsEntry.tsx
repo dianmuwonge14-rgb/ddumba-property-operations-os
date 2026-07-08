@@ -5,6 +5,7 @@ import { AlertTriangle, Banknote, BrainCircuit, CalendarDays, CheckCircle2, Cred
 import type { LucideIcon } from "lucide-react";
 import { adminCorrectPayment, recordCollection, requestPaymentCorrection, requestTenantOutstandingBalanceAdjustment } from "@/app/actions/collections";
 import { replaceTenantFromPaymentsEntry } from "@/app/actions/room-occupancy";
+import TenantContactCard from "@/components/office/shared/TenantContactCard";
 import type { AdvanceRentAssistantItem, CollectionTenantResult, FastPaymentRecentItem, FastPaymentRecentTotals } from "@/lib/collections/types";
 import type { Company, Office, UserProfile } from "@/lib/auth/types";
 
@@ -262,6 +263,15 @@ export default function FastPaymentsEntry({
         setRoomMatchesOpen(false);
         setMessage(null);
         requestAnimationFrame(() => amountInputRef.current?.focus());
+    }
+
+    function handleTenantContactSaved(tenant: { id: string; full_name: string | null; phone: string | null }) {
+        setSelectedTenant((current) => current?.tenant.id === tenant.id
+            ? { ...current, tenant: { ...current.tenant, full_name: tenant.full_name, phone: tenant.phone } }
+            : current);
+        setResults((currentResults) => currentResults.map((result) => result.tenant.id === tenant.id
+            ? { ...result, tenant: { ...result.tenant, full_name: tenant.full_name, phone: tenant.phone } }
+            : result));
     }
 
     async function loadRecentPayments(date: string, page = ledgerPage, pageSize = ledgerPageSize, search = ledgerSearch, method = ledgerMethod) {
@@ -668,7 +678,7 @@ export default function FastPaymentsEntry({
                 <section className="mx-auto mt-5 max-w-6xl rounded-[30px] border border-white/70 bg-white p-5 shadow-2xl shadow-slate-950/20">
                     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
                         <label className="block">
-                            <span className="text-xs font-black uppercase tracking-wide text-slate-500">Room number</span>
+                            <span className="text-xs font-black uppercase tracking-wide text-slate-500">Room / tenant / phone</span>
                             <div className="relative mt-1">
                                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={19} />
 	                                <input
@@ -679,7 +689,7 @@ export default function FastPaymentsEntry({
 	                                        setSelectedTenant(null);
 	                                        setRoomMatchesOpen(true);
 	                                    }}
-	                                    placeholder="Type room number"
+	                                    placeholder="Type room, tenant name, or phone"
 	                                    className="h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-12 pr-4 text-2xl font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
 	                                />
 	                                {searching ? <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 animate-spin text-blue-600" size={20} /> : null}
@@ -721,6 +731,7 @@ export default function FastPaymentsEntry({
 	                                            </span>
 	                                        </span>
 	                                        <span className="mt-1 block text-slate-700">{result.tenant.full_name ?? "Unnamed tenant"}</span>
+                                            <span className="mt-0.5 block text-xs text-slate-500">{result.tenant.phone ?? "No phone recorded"}</span>
 	                                        <span className="mt-1 block text-xs text-slate-500">
 	                                            {result.landlord?.full_name ?? "No landlord"} · Balance {money(liveOutstandingBalance(result))}
 	                                            {isAdmin ? ` · ${result.office?.office_name ?? result.office?.name ?? "No office"}` : ""}
@@ -732,6 +743,20 @@ export default function FastPaymentsEntry({
 	                    ) : null}
 
                     <TenantBalance isAdmin={isAdmin} onEditOutstanding={openBalanceAdjustmentModal} tenant={selectedTenant} />
+
+                    {selectedTenant ? (
+                        <div className="mt-4">
+                            <TenantContactCard
+                                landlordName={selectedTenant.landlord?.full_name}
+                                officeName={selectedTenant.office?.office_name ?? selectedTenant.office?.name}
+                                onSaved={handleTenantContactSaved}
+                                roomNumber={selectedTenant.room?.room_number}
+                                tenantId={selectedTenant.tenant.id}
+                                tenantName={selectedTenant.tenant.full_name}
+                                tenantPhone={selectedTenant.tenant.phone}
+                            />
+                        </div>
+                    ) : null}
 
                     {selectedTenant ? (
                         <div className="mt-4 flex flex-col gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">

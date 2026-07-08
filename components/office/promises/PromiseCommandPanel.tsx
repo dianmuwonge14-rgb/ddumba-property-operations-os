@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Search, Send } from "lucide-react";
 import { createPromise, editPromise, reschedulePromise } from "@/app/actions/promises";
+import TenantContactCard from "@/components/office/shared/TenantContactCard";
 import type { PromiseItem, PromiseTenantOption } from "@/lib/promises/types";
 
 type Props = {
@@ -84,6 +85,16 @@ export default function PromiseCommandPanel({ selectedPromise, canManage, onSave
         setTenantQuery(tenant.roomNumber ?? tenant.fullName);
         setTenantResults([]);
         setMessage(null);
+    }
+
+    function handleTenantContactSaved(tenant: { id: string; full_name: string | null; phone: string | null }) {
+        setSelectedTenant((current) => current?.id === tenant.id
+            ? { ...current, fullName: tenant.full_name ?? "Unnamed tenant", phone: tenant.phone }
+            : current);
+        setTenantResults((currentResults) => currentResults.map((result) => result.id === tenant.id
+            ? { ...result, fullName: tenant.full_name ?? "Unnamed tenant", phone: tenant.phone }
+            : result));
+        onSaved();
     }
 
     function searchTenants(query: string) {
@@ -192,7 +203,7 @@ export default function PromiseCommandPanel({ selectedPromise, canManage, onSave
 
             <div className="mt-4 grid gap-3 xl:grid-cols-[1.2fr_0.75fr_0.75fr_0.9fr]">
                 <div className="relative">
-                    <label className="text-xs font-black uppercase text-slate-400">Room number / tenant</label>
+                    <label className="text-xs font-black uppercase text-slate-400">Room / tenant / phone</label>
                     <div className="mt-1 flex gap-2">
                         <input
                             value={tenantQuery}
@@ -201,7 +212,7 @@ export default function PromiseCommandPanel({ selectedPromise, canManage, onSave
                                 setSelectedTenant(null);
                                 onClearSelection();
                             }}
-                            placeholder="Type K35, K35A, tenant name..."
+                            placeholder="Type room, tenant name, or phone..."
                             className="h-11 min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm font-bold text-white outline-none placeholder:text-slate-500 focus:border-cyan-300"
                         />
                         <button type="button" onClick={() => searchTenants(tenantQuery)} className="grid h-11 w-11 place-items-center rounded-xl bg-cyan-300 text-slate-950">
@@ -216,7 +227,7 @@ export default function PromiseCommandPanel({ selectedPromise, canManage, onSave
                                         <p className="text-sm font-black text-white">{tenant.roomNumber ? `Room ${tenant.roomNumber}` : tenant.fullName}</p>
                                         <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-black uppercase text-slate-300">{tenant.roomStatus ?? "active"}</span>
                                     </div>
-                                    <p className="mt-1 text-xs font-semibold text-slate-400">{tenant.fullName} · {money(tenant.balance)}</p>
+                                    <p className="mt-1 text-xs font-semibold text-slate-400">{tenant.fullName} · {tenant.phone ?? "No phone"} · {money(tenant.balance)}</p>
                                 </button>
                             ))}
                         </div>
@@ -228,15 +239,27 @@ export default function PromiseCommandPanel({ selectedPromise, canManage, onSave
             </div>
 
             {(selectedTenant || selectedPromise) && (
-                <div className="mt-3 rounded-2xl border border-cyan-300/20 bg-cyan-300/10 p-3">
-                    <div className="grid gap-2 text-sm md:grid-cols-2 xl:grid-cols-6">
+                <div className="mt-3 grid gap-3 xl:grid-cols-[1fr_1.1fr]">
+                    <div className="rounded-2xl border border-cyan-300/20 bg-cyan-300/10 p-3">
+                        <div className="grid gap-2 text-sm md:grid-cols-2 xl:grid-cols-3">
                         <Info label="Room" value={selectedTenant?.roomNumber ?? selectedPromise?.roomNumber ?? "No room"} />
                         <Info label="Tenant" value={selectedTenant?.fullName ?? selectedPromise?.tenantName ?? "Tenant"} />
                         <Info label="Phone" value={selectedTenant?.phone ?? selectedPromise?.tenantPhone ?? "No phone"} />
                         <Info label="Landlord" value={selectedTenant?.landlordName ?? "Landlord"} />
                         <Info label="Outstanding" value={money(selectedTenant?.balance ?? 0)} />
                         <Info label="Existing promises" value={selectedPromise ? selectedPromise.status ?? "selected" : "Check ledger"} />
+                        </div>
                     </div>
+                    <TenantContactCard
+                        landlordName={selectedTenant?.landlordName ?? null}
+                        officeName={selectedTenant?.officeName ?? selectedPromise?.officeName ?? null}
+                        onSaved={handleTenantContactSaved}
+                        roomNumber={selectedTenant?.roomNumber ?? selectedPromise?.roomNumber ?? null}
+                        tenantId={selectedTenant?.id ?? selectedPromise?.tenant_id ?? null}
+                        tenantName={selectedTenant?.fullName ?? selectedPromise?.tenantName ?? null}
+                        tenantPhone={selectedTenant?.phone ?? selectedPromise?.tenantPhone ?? null}
+                        variant="dark"
+                    />
                 </div>
             )}
 
