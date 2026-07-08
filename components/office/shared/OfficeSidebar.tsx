@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -131,8 +132,30 @@ type Props = {
     notificationCount: number;
 };
 
+function themeForPath(pathname: string) {
+    if (pathname.startsWith("/office/admin")) return "admin";
+    if (pathname.includes("/collections")) return "collections";
+    if (pathname.includes("/payments")) return "payments";
+    if (pathname.includes("/cash-banking")) return "cash";
+    if (pathname.includes("/defaulters")) return "defaulters";
+    if (pathname.includes("/promises")) return "promises";
+    if (pathname.includes("/expenses")) return "expenses";
+    if (pathname.includes("/attendance")) return "attendance";
+    if (pathname.includes("/employees")) return "employees";
+    if (pathname.includes("/properties")) return "properties";
+    if (pathname.includes("/vacant-rooms")) return "vacant";
+    if (pathname.includes("/tenant-relocation")) return "relocation";
+    if (pathname.includes("/landlord-payments")) return "landlord-payments";
+    if (pathname.includes("/landlords")) return "landlords";
+    if (pathname.includes("/notifications")) return "notifications";
+    if (pathname.includes("/reports") || pathname.includes("/spreadsheet") || pathname.includes("/statements")) return "reports";
+    if (pathname === "/office" || pathname.includes("/dashboard") || pathname.includes("/ceo") || pathname.includes("/excellence")) return "dashboard";
+    return "admin";
+}
+
 export default function OfficeSidebar({ isAdmin, officeName, attendance, notificationCount }: Props) {
     const pathname = usePathname();
+    const moduleTheme = themeForPath(pathname);
     const sections = isAdmin ? adminSections : officeSections;
     const activeItem = sections.flatMap((section) => section.items).find((item) => pathname === item.href || (item.href !== "/office" && pathname.startsWith(item.href)));
     const checkInTime = attendance.firstCheckIn
@@ -148,11 +171,18 @@ export default function OfficeSidebar({ isAdmin, officeName, attendance, notific
                 ? "border-red-400/30 bg-red-400/10 text-red-100"
                 : "border-emerald-400/30 bg-emerald-400/10 text-emerald-100";
 
+    useEffect(() => {
+        document.documentElement.dataset.moduleTheme = moduleTheme;
+        return () => {
+            delete document.documentElement.dataset.moduleTheme;
+        };
+    }, [moduleTheme]);
+
     return (
         <>
             <header className="app-sticky-header fixed inset-x-0 top-0 z-[80] border-b border-white/10 bg-slate-950/88 px-3 py-2.5 text-white shadow-2xl shadow-black/40 backdrop-blur-2xl sm:px-4 sm:py-3">
                 <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_14%_0%,rgba(59,130,246,0.28),transparent_28%),radial-gradient(circle_at_86%_0%,rgba(20,184,166,0.18),transparent_26%)]" />
-                <div className="relative mx-auto flex max-w-[1800px] flex-wrap items-center justify-between gap-2 sm:flex-nowrap sm:gap-3">
+                <div className="app-header-main relative mx-auto grid max-w-[1800px] grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-3">
                     <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
                         <div className="grid h-9 w-9 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-blue-500 via-cyan-400 to-emerald-400 text-white shadow-lg shadow-cyan-500/20 ring-1 ring-white/20 sm:h-11 sm:w-11">
                             <WalletCards size={19} />
@@ -167,8 +197,8 @@ export default function OfficeSidebar({ isAdmin, officeName, attendance, notific
                             <p className="max-w-[58vw] truncate text-[11px] font-bold text-slate-400 sm:max-w-none sm:text-xs">{activeItem?.label ?? "Enterprise"} · {officeName ?? "Company"}</p>
                         </div>
                     </div>
-                    <div className="flex shrink-0 items-center justify-end gap-1.5 sm:gap-2">
-                        <span className={`mobile-nowrap inline-flex max-w-[48vw] items-center gap-1 overflow-hidden rounded-full border px-2 py-1 text-[11px] font-black shadow-sm sm:max-w-none sm:px-3 sm:text-xs ${attendanceClass}`}>
+                    <div className="app-header-controls flex min-w-0 items-center gap-1.5 overflow-x-auto pb-0.5 sm:justify-end sm:gap-2 sm:overflow-visible sm:pb-0">
+                        <span className={`mobile-nowrap inline-flex max-w-[52vw] shrink-0 items-center gap-1 overflow-hidden rounded-full border px-2 py-1 text-[11px] font-black shadow-sm sm:max-w-none sm:px-3 sm:text-xs ${attendanceClass}`}>
                             <ShieldCheck className="shrink-0" size={13} />
                             <span className="truncate">{attendanceLabel}</span>
                         </span>

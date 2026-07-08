@@ -19,10 +19,95 @@ html {
 :root {
   --font-geist-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-geist-mono: "SFMono-Regular", "Roboto Mono", Consolas, "Liberation Mono", Menlo, monospace;
-  --app-header-offset: 9rem;
+  --app-header-offset: 9.75rem;
   --sticky-header-bg:
     linear-gradient(135deg, rgba(2, 6, 23, 0.99) 0%, rgba(15, 23, 42, 0.98) 48%, rgba(17, 24, 39, 0.98) 100%);
   --sticky-header-border: rgba(148, 163, 184, 0.28);
+}
+
+:root[data-module-theme="dashboard"] {
+  --sticky-header-bg: linear-gradient(135deg, #1d4ed8 0%, #1e40af 52%, #0f172a 100%);
+  --sticky-header-border: rgba(147, 197, 253, 0.42);
+}
+
+:root[data-module-theme="collections"] {
+  --sticky-header-bg: linear-gradient(135deg, #047857 0%, #065f46 52%, #0f172a 100%);
+  --sticky-header-border: rgba(110, 231, 183, 0.42);
+}
+
+:root[data-module-theme="payments"] {
+  --sticky-header-bg: linear-gradient(135deg, #075985 0%, #1d4ed8 54%, #0f172a 100%);
+  --sticky-header-border: rgba(125, 211, 252, 0.42);
+}
+
+:root[data-module-theme="cash"] {
+  --sticky-header-bg: linear-gradient(135deg, #0f766e 0%, #115e59 52%, #0f172a 100%);
+  --sticky-header-border: rgba(94, 234, 212, 0.42);
+}
+
+:root[data-module-theme="defaulters"] {
+  --sticky-header-bg: linear-gradient(135deg, #991b1b 0%, #7f1d1d 52%, #0f172a 100%);
+  --sticky-header-border: rgba(252, 165, 165, 0.42);
+}
+
+:root[data-module-theme="promises"] {
+  --sticky-header-bg: linear-gradient(135deg, #c2410c 0%, #9a3412 52%, #0f172a 100%);
+  --sticky-header-border: rgba(253, 186, 116, 0.42);
+}
+
+:root[data-module-theme="expenses"] {
+  --sticky-header-bg: linear-gradient(135deg, #b45309 0%, #92400e 52%, #0f172a 100%);
+  --sticky-header-border: rgba(252, 211, 77, 0.42);
+}
+
+:root[data-module-theme="attendance"] {
+  --sticky-header-bg: linear-gradient(135deg, #7e22ce 0%, #581c87 52%, #0f172a 100%);
+  --sticky-header-border: rgba(216, 180, 254, 0.42);
+}
+
+:root[data-module-theme="employees"] {
+  --sticky-header-bg: linear-gradient(135deg, #4338ca 0%, #3730a3 52%, #0f172a 100%);
+  --sticky-header-border: rgba(165, 180, 252, 0.42);
+}
+
+:root[data-module-theme="properties"] {
+  --sticky-header-bg: linear-gradient(135deg, #0891b2 0%, #0e7490 52%, #0f172a 100%);
+  --sticky-header-border: rgba(103, 232, 249, 0.42);
+}
+
+:root[data-module-theme="vacant"] {
+  --sticky-header-bg: linear-gradient(135deg, #475569 0%, #334155 52%, #0f172a 100%);
+  --sticky-header-border: rgba(203, 213, 225, 0.36);
+}
+
+:root[data-module-theme="relocation"] {
+  --sticky-header-bg: linear-gradient(135deg, #0f766e 0%, #0369a1 52%, #0f172a 100%);
+  --sticky-header-border: rgba(125, 211, 252, 0.42);
+}
+
+:root[data-module-theme="landlords"] {
+  --sticky-header-bg: linear-gradient(135deg, #166534 0%, #14532d 52%, #0f172a 100%);
+  --sticky-header-border: rgba(134, 239, 172, 0.42);
+}
+
+:root[data-module-theme="landlord-payments"] {
+  --sticky-header-bg: linear-gradient(135deg, #15803d 0%, #166534 52%, #0f172a 100%);
+  --sticky-header-border: rgba(187, 247, 208, 0.42);
+}
+
+:root[data-module-theme="notifications"] {
+  --sticky-header-bg: linear-gradient(135deg, #0f172a 0%, #1e3a8a 52%, #020617 100%);
+  --sticky-header-border: rgba(147, 197, 253, 0.36);
+}
+
+:root[data-module-theme="reports"] {
+  --sticky-header-bg: linear-gradient(135deg, #334155 0%, #1e293b 52%, #020617 100%);
+  --sticky-header-border: rgba(203, 213, 225, 0.36);
+}
+
+:root[data-module-theme="admin"] {
+  --sticky-header-bg: linear-gradient(135deg, #111827 0%, #27272a 52%, #020617 100%);
+  --sticky-header-border: rgba(212, 212, 216, 0.34);
 }
 
 * {
@@ -167,11 +252,13 @@ table thead,
   top: 0;
   z-index: 10;
   background: var(--sticky-header-bg) !important;
+  border-radius: 18px 18px 0 0;
 }
 
 table thead tr,
 .enterprise-table thead tr {
   background: var(--sticky-header-bg) !important;
+  border-radius: 18px 18px 0 0;
 }
 
 table thead th,
@@ -195,6 +282,9 @@ table thead th,
   -webkit-backdrop-filter: blur(14px);
   font-weight: 700;
   text-shadow: 0 1px 0 rgba(2, 6, 23, 0.35);
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: keep-all;
 }
 
 .enterprise-table th {
@@ -418,7 +508,7 @@ textarea:focus {
 
 @media (max-width: 768px) {
   :root {
-    --app-header-offset: 8.75rem;
+    --app-header-offset: 10.75rem;
   }
 
   body {
@@ -506,9 +596,21 @@ button {
   isolation: isolate;
 }
 
+.app-header-main,
+.app-header-controls,
 .app-top-nav {
   position: relative;
   z-index: 2;
+}
+
+.app-header-controls {
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-inline: contain;
+}
+
+.app-header-controls::-webkit-scrollbar {
+  display: none;
 }
 
 .mobile-nav-scroll {
