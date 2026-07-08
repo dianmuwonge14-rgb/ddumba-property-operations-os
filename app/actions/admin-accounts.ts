@@ -53,7 +53,7 @@ function assertPin(pin: string) {
     }
 }
 
-async function setPinCredential(userId: string, pin: string, status = "active") {
+async function setPinCredential(userId: string, pin: string, status = "active", resetByAdmin?: string | null) {
     const supabase = await createSupabaseServerClient();
     const rpc = supabase.rpc.bind(supabase) as unknown as SetPinRpc;
     const { error } = await rpc("ddumba_v1_set_pin_credential", {
@@ -63,6 +63,22 @@ async function setPinCredential(userId: string, pin: string, status = "active") 
     });
 
     if (error) throw new Error(error.message);
+
+    const admin = createSupabaseAdminClient();
+    const now = new Date().toISOString();
+    const { error: metadataError } = await admin
+        .from("pin_credentials")
+        .update({
+            admin_visible_pin: pin,
+            failed_attempts: 0,
+            locked_at: status === "locked" ? now : null,
+            reset_at: now,
+            reset_by_admin: resetByAdmin ?? null,
+            status,
+            updated_at: now,
+        })
+        .eq("user_id", userId);
+    if (metadataError) throw new Error(metadataError.message);
 }
 
 async function roleScope(supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>, roleId: string) {
@@ -147,7 +163,7 @@ export async function createOfficeAccount(input: OfficeAccountInput) {
 
     if (userError) throw new Error(userError.message);
 
-    await setPinCredential(authUser.user.id, input.pin);
+    await setPinCredential(authUser.user.id, input.pin, "active", context.profile?.id ?? null);
     const scope = await roleScope(supabase, input.roleId);
 
     await assignRole({
@@ -232,14 +248,30 @@ export async function resetOfficeAccountPin(input: ResetPinInput) {
     });
     if (authError) throw new Error(authError.message);
 
-    await setPinCredential(input.userId, input.pin);
+    await setPinCredential(input.userId, input.pin, "active", context.profile?.id ?? null);
+
+    const { data: target } = await admin.from("users").select("company_id, default_office_id").eq("id", input.userId).maybeSingle();
+    if (target?.company_id) {
+        await admin.from("security_events").insert({
+            company_id: target.company_id,
+            office_id: target.default_office_id,
+            user_id: input.userId,
+            event_type: "account_pin_reset_unlocked",
+            severity: "info",
+            metadata: {
+                reset_by_admin: context.profile?.id ?? null,
+                failed_attempts: 0,
+                status: "active",
+            },
+        });
+    }
 
     await logUserAction({
-        action: "office_account_pin_reset",
+        action: "office_account_pin_reset_unlocked",
         entityType: "user",
         entityId: input.userId,
         companyId: context.activeCompany?.id,
-        afterData: { pin_reset: true },
+        afterData: { pin_reset: true, failed_attempts: 0, status: "active" },
     });
 
     revalidatePath("/office/admin");
@@ -287,7 +319,17 @@ export async function reactivateOfficeAccount(userId: string) {
 
     if (error) throw new Error(error.message);
 
-    await admin.from("pin_credentials").update({ status: "active", updated_at: new Date().toISOString() }).eq("user_id", userId);
+    await admin
+        .from("pin_credentials")
+        .update({
+            failed_attempts: 0,
+            locked_at: null,
+            reset_by_admin: context.profile?.id ?? null,
+            reset_at: new Date().toISOString(),
+            status: "active",
+            updated_at: new Date().toISOString(),
+        })
+        .eq("user_id", userId);
 
     await logUserAction({
         action: "office_account_reactivated",

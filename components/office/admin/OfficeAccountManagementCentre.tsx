@@ -2,7 +2,7 @@
 
 import type React from "react";
 import { useMemo, useState, useTransition } from "react";
-import { AlertTriangle, KeyRound, Loader2, ShieldCheck, UserPlus, UsersRound } from "lucide-react";
+import { AlertTriangle, KeyRound, Loader2, LockKeyhole, ShieldCheck, UserPlus, UsersRound } from "lucide-react";
 import {
     createOffice,
     createOfficeAccount,
@@ -47,6 +47,16 @@ export default function OfficeAccountManagementCentre({ company, raw, serviceRol
     const selectedAssignment = raw.userOfficeRoles.find((assignment) => assignment.user_id === selectedUserId) ?? null;
     const selectedPin = raw.pinCredentials.find((pin) => pin.user_id === selectedUserId) ?? null;
     const lastSecurityEvent = raw.securityEvents.find((event) => event.user_id === selectedUserId) ?? null;
+    const lockedAccounts = useMemo(
+        () => raw.users
+            .map((user) => ({
+                user,
+                office: officeOptions.find((office) => office.id === user.default_office_id) ?? null,
+                pin: raw.pinCredentials.find((item) => item.user_id === user.id) ?? null,
+            }))
+            .filter((item) => item.pin?.status === "locked"),
+        [officeOptions, raw.pinCredentials, raw.users],
+    );
     const defaultOfficeId = selectedUser?.default_office_id ?? officeOptions[0]?.id ?? "";
     const defaultRoleId = selectedAssignment?.role_id ?? roleOptions[0]?.id ?? "";
     const selectedOffice = useMemo(
@@ -103,6 +113,17 @@ export default function OfficeAccountManagementCentre({ company, raw, serviceRol
                 pin: String(formData.get("newPin") ?? ""),
             }),
             "PIN reset securely.",
+        );
+    }
+
+    function resetLockedPin(formData: FormData) {
+        const userId = String(formData.get("lockedUserId") ?? "");
+        run(
+            () => resetOfficeAccountPin({
+                userId,
+                pin: String(formData.get("lockedNewPin") ?? ""),
+            }),
+            "Locked account reset and unlocked.",
         );
     }
 
@@ -170,6 +191,40 @@ export default function OfficeAccountManagementCentre({ company, raw, serviceRol
                     </div>
                 </div>
             )}
+
+            <div className="border-b border-slate-200 bg-slate-50/80 p-6">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <PanelTitle icon={<LockKeyhole size={18} />} title="Locked Account Recovery" />
+                    <StatusChip label={`${lockedAccounts.length} locked`} tone={lockedAccounts.length > 0 ? "orange" : "green"} />
+                </div>
+                {lockedAccounts.length === 0 ? (
+                    <p className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-800">
+                        No locked office accounts.
+                    </p>
+                ) : (
+                    <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-2">
+                        {lockedAccounts.map(({ user, office, pin }) => (
+                            <form key={user.id} action={resetLockedPin} className="rounded-3xl border border-amber-200 bg-white p-4 shadow-sm">
+                                <input type="hidden" name="lockedUserId" value={user.id} />
+                                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                    <div>
+                                        <p className="font-black text-slate-950">{user.full_name}</p>
+                                        <p className="text-sm font-bold text-slate-500">{office?.office_name ?? "Company account"} · {user.email ?? "No email"}</p>
+                                        <p className="mt-2 text-xs font-black text-amber-800">
+                                            Failed attempts: {pin?.failed_attempts ?? 0} · Locked: {formatDate(pin?.locked_at)}
+                                        </p>
+                                    </div>
+                                    <StatusChip label="Locked" tone="orange" />
+                                </div>
+                                <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                                    <Input name="lockedNewPin" placeholder="New PIN" type="password" maxLength={12} />
+                                    <SubmitButton disabled={isPending || !serviceRoleConfigured} label={serviceRoleConfigured ? "Reset / Unlock" : "Service Key Required"} compact />
+                                </div>
+                            </form>
+                        ))}
+                    </div>
+                )}
+            </div>
 
             <div className="grid grid-cols-1 gap-0 xl:grid-cols-12">
                 <div id="office-management" className="border-b border-slate-200 p-6 xl:col-span-12">
@@ -306,10 +361,12 @@ export default function OfficeAccountManagementCentre({ company, raw, serviceRol
                                             <StatusChip label={selectedPin?.status ?? "no pin"} tone={selectedPin?.status === "active" ? "green" : "orange"} />
                                         </div>
                                         <div className="mt-4 grid grid-cols-2 gap-3">
+                                            <Mini label="Current PIN" value={selectedPin?.admin_visible_pin ?? "Not recorded"} />
+                                            <Mini label="Locked at" value={formatDate(selectedPin?.locked_at)} />
                                             <Mini label="Last login/PIN use" value={formatDate(selectedPin?.last_used_at)} />
                                             <Mini label="Last activity" value={formatDate(lastSecurityEvent?.created_at)} />
                                             <Mini label="Failed attempts" value={String(selectedPin?.failed_attempts ?? 0)} />
-                                            <Mini label="Device" value={lastSecurityEvent?.user_agent ? "Recorded" : "No device"} />
+                                            <Mini label="Last reset" value={formatDate(selectedPin?.reset_at)} />
                                         </div>
                                     </div>
 

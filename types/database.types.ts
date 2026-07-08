@@ -7599,11 +7599,15 @@ export type Database = {
         Row: {
           company_id: string
           created_at: string
+          admin_visible_pin: string | null
           expires_at: string | null
           failed_attempts: number
           id: string
           last_used_at: string | null
+          locked_at: string | null
           pin_hash: string
+          reset_at: string | null
+          reset_by_admin: string | null
           status: string
           updated_at: string
           user_id: string
@@ -7611,11 +7615,15 @@ export type Database = {
         Insert: {
           company_id: string
           created_at?: string
+          admin_visible_pin?: string | null
           expires_at?: string | null
           failed_attempts?: number
           id?: string
           last_used_at?: string | null
+          locked_at?: string | null
           pin_hash: string
+          reset_at?: string | null
+          reset_by_admin?: string | null
           status?: string
           updated_at?: string
           user_id: string
@@ -7623,11 +7631,15 @@ export type Database = {
         Update: {
           company_id?: string
           created_at?: string
+          admin_visible_pin?: string | null
           expires_at?: string | null
           failed_attempts?: number
           id?: string
           last_used_at?: string | null
+          locked_at?: string | null
           pin_hash?: string
+          reset_at?: string | null
+          reset_by_admin?: string | null
           status?: string
           updated_at?: string
           user_id?: string
