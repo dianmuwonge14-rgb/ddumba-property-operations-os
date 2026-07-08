@@ -41,6 +41,15 @@ textarea {
   max-width: 100%;
 }
 
+button,
+[role="button"],
+a[href],
+.mobile-nowrap,
+.status-chip {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
 pre,
 code,
 kbd,
@@ -181,6 +190,53 @@ th {
   word-break: normal;
 }
 
+.mobile-nowrap,
+.status-chip,
+[class*="badge"],
+[class*="chip"],
+.enterprise-table button,
+.enterprise-table a,
+.enterprise-table .rounded-full,
+.enterprise-table [class*="rounded-full"],
+.overflow-x-auto table button,
+.overflow-x-auto table a,
+.overflow-x-auto table .rounded-full,
+.overflow-x-auto table [class*="rounded-full"],
+.table-responsive table button,
+.table-responsive table a,
+.table-responsive table .rounded-full,
+.table-responsive table [class*="rounded-full"],
+[data-table-scroll] table button,
+[data-table-scroll] table a,
+[data-table-scroll] table .rounded-full,
+[data-table-scroll] table [class*="rounded-full"] {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
+}
+
+[class*="badge"],
+[class*="chip"] {
+  width: max-content;
+  max-width: 100%;
+}
+
+.enterprise-table button,
+.enterprise-table a,
+.overflow-x-auto table button,
+.overflow-x-auto table a,
+.table-responsive table button,
+.table-responsive table a,
+[data-table-scroll] table button,
+[data-table-scroll] table a {
+  display: inline-flex;
+  width: max-content;
+  max-width: none;
+  flex-shrink: 0;
+  align-items: center;
+}
+
 .overflow-x-auto table,
 .overflow-auto table,
 [data-table-scroll] table,
@@ -222,6 +278,7 @@ th {
   font-size: 0.75rem;
   font-weight: 800;
   text-transform: capitalize;
+  white-space: nowrap;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.48);
 }
 
@@ -343,7 +400,7 @@ textarea:focus {
 
   .status-chip {
     max-width: 100%;
-    white-space: normal;
+    white-space: nowrap;
   }
 
   button,
@@ -368,7 +425,30 @@ textarea:focus {
 }
 
 button {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
   transition: transform 160ms ease, box-shadow 160ms ease, background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.mobile-nav-scroll {
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-inline: contain;
+}
+
+.mobile-nav-scroll a,
+.mobile-nav-scroll span {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.enterprise-page .flex.justify-between > span,
+.enterprise-page .flex.justify-between > p {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 button:not(:disabled):active {

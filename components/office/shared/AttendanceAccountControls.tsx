@@ -108,7 +108,7 @@ export default function AttendanceAccountControls({ attendance, compact = false 
 
     if (!attendance.required) {
         return (
-            <a href="/api/auth/logout" className={compact ? "mt-3 flex w-full items-center justify-center gap-2 rounded-2xl bg-white/10 px-4 py-3 text-sm font-black text-slate-200 transition hover:bg-white/15" : "grid h-9 w-9 place-items-center rounded-2xl border border-white/10 bg-white/10 text-slate-200 ring-1 ring-white/5 hover:bg-white hover:text-slate-950"} title="Logout" aria-label="Logout">
+            <a href="/api/auth/logout" className={compact ? "mobile-nowrap mt-3 flex w-full items-center justify-center gap-2 rounded-2xl bg-white/10 px-4 py-3 text-sm font-black text-slate-200 transition hover:bg-white/15" : "grid h-9 w-9 shrink-0 place-items-center rounded-2xl border border-white/10 bg-white/10 text-slate-200 ring-1 ring-white/5 hover:bg-white hover:text-slate-950"} title="Logout" aria-label="Logout">
                 <LogOut size={16} />
                 {compact ? "Logout" : null}
             </a>
@@ -125,22 +125,22 @@ export default function AttendanceAccountControls({ attendance, compact = false 
                     type="button"
                     onClick={checkOut}
                     disabled={isPending}
-                    className={compact ? "flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-4 py-3 text-sm font-black text-white transition hover:bg-emerald-400 disabled:opacity-60" : "inline-flex h-9 items-center gap-2 rounded-2xl border border-emerald-300/30 bg-emerald-400/12 px-3 text-xs font-black text-emerald-100 hover:bg-emerald-400/20 disabled:opacity-60"}
+                    className={compact ? "mobile-nowrap flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-4 py-3 text-sm font-black text-white transition hover:bg-emerald-400 disabled:opacity-60" : "mobile-nowrap inline-flex h-9 shrink-0 items-center gap-1.5 rounded-2xl border border-emerald-300/30 bg-emerald-400/12 px-2.5 text-[11px] font-black text-emerald-100 hover:bg-emerald-400/20 disabled:opacity-60 sm:gap-2 sm:px-3 sm:text-xs"}
                 >
                     {isPending ? <Loader2 className="animate-spin" size={15} /> : <CheckCircle2 size={15} />}
                     Check Out
                 </button>
             ) : checkedOutLabel ? (
-                <span className={compact ? "flex w-full items-center justify-center gap-2 rounded-2xl bg-sky-400/12 px-4 py-3 text-xs font-black text-sky-100" : "inline-flex h-9 items-center gap-2 rounded-2xl border border-sky-300/30 bg-sky-400/12 px-3 text-xs font-black text-sky-100"}>
-                    <Clock3 size={14} />
-                    {checkedOutLabel}
+                <span className={compact ? "mobile-nowrap flex w-full items-center justify-center gap-2 rounded-2xl bg-sky-400/12 px-4 py-3 text-xs font-black text-sky-100" : "mobile-nowrap inline-flex h-9 max-w-[42vw] shrink-0 items-center gap-1.5 overflow-hidden rounded-2xl border border-sky-300/30 bg-sky-400/12 px-2.5 text-[11px] font-black text-sky-100 sm:max-w-none sm:gap-2 sm:px-3 sm:text-xs"}>
+                    <Clock3 className="shrink-0" size={14} />
+                    <span className="truncate">{checkedOutLabel}</span>
                 </span>
             ) : null}
 
             <button
                 type="button"
                 onClick={() => setOpen((value) => !value)}
-                className={compact ? "flex w-full items-center justify-center gap-2 rounded-2xl bg-white/10 px-4 py-3 text-sm font-black text-slate-200 transition hover:bg-white/15" : "grid h-9 w-9 place-items-center rounded-2xl border border-white/10 bg-white/10 text-slate-200 ring-1 ring-white/5 hover:bg-white hover:text-slate-950"}
+                className={compact ? "mobile-nowrap flex w-full items-center justify-center gap-2 rounded-2xl bg-white/10 px-4 py-3 text-sm font-black text-slate-200 transition hover:bg-white/15" : "grid h-9 w-9 shrink-0 place-items-center rounded-2xl border border-white/10 bg-white/10 text-slate-200 ring-1 ring-white/5 hover:bg-white hover:text-slate-950"}
                 title="Office Attendance History"
                 aria-label="Office Attendance History"
             >
@@ -149,7 +149,7 @@ export default function AttendanceAccountControls({ attendance, compact = false 
                 {compact ? <ChevronDown size={14} /> : null}
             </button>
 
-            <a href="/api/auth/logout" className={compact ? "flex w-full items-center justify-center gap-2 rounded-2xl bg-white/10 px-4 py-3 text-sm font-black text-slate-200 transition hover:bg-white/15" : "grid h-9 w-9 place-items-center rounded-2xl border border-white/10 bg-white/10 text-slate-200 ring-1 ring-white/5 hover:bg-white hover:text-slate-950"} title="Logout" aria-label="Logout">
+            <a href="/api/auth/logout" className={compact ? "mobile-nowrap flex w-full items-center justify-center gap-2 rounded-2xl bg-white/10 px-4 py-3 text-sm font-black text-slate-200 transition hover:bg-white/15" : "grid h-9 w-9 shrink-0 place-items-center rounded-2xl border border-white/10 bg-white/10 text-slate-200 ring-1 ring-white/5 hover:bg-white hover:text-slate-950"} title="Logout" aria-label="Logout">
                 <LogOut size={16} />
                 {compact ? "Logout" : null}
             </a>
@@ -165,7 +165,7 @@ export default function AttendanceAccountControls({ attendance, compact = false 
                         </div>
                         <div className="flex rounded-2xl bg-white/10 p-1">
                             {(["today", "week", "month"] as const).map((item) => (
-                                <button key={item} type="button" onClick={() => setPeriod(item)} className={`rounded-xl px-2.5 py-1 text-[11px] font-black uppercase ${period === item ? "bg-white text-slate-950" : "text-slate-300"}`}>
+                                <button key={item} type="button" onClick={() => setPeriod(item)} className={`mobile-nowrap rounded-xl px-2.5 py-1 text-[11px] font-black uppercase ${period === item ? "bg-white text-slate-950" : "text-slate-300"}`}>
                                     {item}
                                 </button>
                             ))}
