@@ -1321,7 +1321,7 @@ export async function runMonthlyLandlordPayableSnapshot(input: MonthlyLandlordPa
             });
             const amountPaid = clearedMonth === "JUNE" ? netPayable : 0;
             const openingArrears = await getLandlordOpeningArrears({ db, companyId, officeId, landlordId, beforeMonth: settlementMonth });
-            const totalDue = openingArrears + netPayable;
+            const totalDue = netPayable;
             const unpaidBalance = Math.max(0, netPayable - Math.min(amountPaid, netPayable));
             const overpaidAmount = Math.max(0, amountPaid - netPayable);
 
@@ -2566,7 +2566,7 @@ async function refreshCurrentMonthPayablesForLandlord({
                 ? 0
                 : Number(existing.data?.amount_paid ?? 0);
         const openingArrears = await getLandlordOpeningArrears({ db, companyId, officeId, landlordId, beforeMonth: settlementMonth });
-        const totalDue = openingArrears + netPayable;
+        const totalDue = netPayable;
         const unpaidBalance = Math.max(0, netPayable - Math.min(amountPaid, netPayable));
         const overpaidAmount = Math.max(0, amountPaid - netPayable);
         const row = {
@@ -2741,7 +2741,7 @@ async function allocateLandlordPaymentAcrossLedger({
         const payableId = String(row.id);
         const openingArrears = Math.max(0, Number(row.opening_arrears ?? 0));
         const monthlyNetPayable = Math.max(0, Number(row.monthly_net_payable ?? row.net_payable ?? 0));
-        const totalDue = Math.max(0, Number(row.total_due ?? 0)) || Math.max(0, openingArrears + monthlyNetPayable);
+        const totalDue = Math.max(0, Number(row.total_due ?? 0)) || monthlyNetPayable;
         const amountPaidBefore = Math.max(0, Number(row.amount_paid ?? 0));
         const currentUnpaid = monthOnlyPayableBalance(row);
         if (currentUnpaid <= 0 && payableId !== startingMonthlyPayableId) continue;

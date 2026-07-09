@@ -17,7 +17,7 @@ update public.landlord_monthly_payables
 set
     month_key = coalesce(month_key, settlement_month::date),
     monthly_net_payable = case when monthly_net_payable = 0 then coalesce(net_payable, 0) else monthly_net_payable end,
-    total_due = case when total_due = 0 then coalesce(opening_arrears, 0) + coalesce(net_payable, 0) else total_due end,
+    total_due = case when total_due = 0 then coalesce(net_payable, 0) else total_due end,
     closing_arrears = case when closing_arrears = 0 then greatest(0, coalesce(unpaid_balance, 0)) else closing_arrears end
 where month_key is null
    or monthly_net_payable = 0
