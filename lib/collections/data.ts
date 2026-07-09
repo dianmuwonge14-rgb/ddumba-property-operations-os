@@ -1106,7 +1106,7 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
         const tenantAllocations = allocationsByTenant.get(tenantId) ?? [];
         const tenantCollections = collectionsByTenant.get(tenantId) ?? [];
         const currentMonthPaid = tenantAllocations
-            .filter((allocation) => String(allocation.allocation_type) === "current_month" && String(allocation.allocation_month ?? "").slice(0, 7) === monthStart.slice(0, 7))
+            .filter((allocation) => String(allocation.allocation_month ?? "").slice(0, 7) === monthStart.slice(0, 7))
             .reduce((total, allocation) => total + Number(allocation.amount_allocated ?? 0), 0);
         const futureAllocations = tenantAllocations
             .filter((allocation) => String(allocation.allocation_type) === "advance_month" && String(allocation.allocation_month ?? "").slice(0, 10) >= nextMonth)
@@ -1116,11 +1116,36 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
         const rawCurrentMonthPaid = tenantCollections
             .filter((collection) => collectionPaymentDate(collection as CollectionRow).slice(0, 7) === monthStart.slice(0, 7))
             .reduce((total, collection) => total + Number(collection.amount_paid ?? collection.amount ?? 0), 0);
-        const hasOverpaymentWithoutAllocation = tenantCollections.some((collection) => {
+        const resolvedOverpayments: Array<{ amount: number; months: string[] }> = [];
+        const unresolvedOverpayments: Array<{ amount: number; missing: number }> = [];
+        for (const collection of tenantCollections) {
             const paid = Number(collection.amount_paid ?? collection.amount ?? 0);
-            const totalDueBeforePayment = Number(collection.expected_amount ?? 0);
-            return paid > totalDueBeforePayment && advanceRentBalance <= 0;
-        });
+            const totalDueBeforePayment = Number(collection.balance_before_payment ?? collection.expected_amount ?? 0);
+            const excess = Math.max(0, paid - totalDueBeforePayment);
+            if (excess <= 0) continue;
+
+            const paymentDate = collectionPaymentDate(collection as CollectionRow);
+            const paymentMonth = selectedMonthStart(paymentDate);
+            const followOnAllocations = tenantAllocations.filter((allocation) => String(allocation.allocation_month ?? "").slice(0, 10) > paymentMonth);
+            const exactFollowOn = followOnAllocations
+                .filter((allocation) => String(allocation.payment_id ?? "") === String(collection.id ?? ""))
+                .reduce((total, allocation) => total + Number(allocation.amount_allocated ?? 0), 0);
+            const anyFollowOn = followOnAllocations
+                .reduce((total, allocation) => total + Number(allocation.amount_allocated ?? 0), 0);
+            const recordedNextMonth = Number(collection.allocated_to_next_month ?? 0);
+            const covered = Math.max(exactFollowOn, Math.min(anyFollowOn, excess), recordedNextMonth);
+
+            if (covered + 0.004 >= excess) {
+                const months = [...new Set(followOnAllocations
+                    .filter((allocation) => exactFollowOn > 0 ? String(allocation.payment_id ?? "") === String(collection.id ?? "") : true)
+                    .map((allocation) => monthLabelFromDate(String(allocation.allocation_month ?? "")))
+                    .filter((value): value is string => Boolean(value)))];
+                resolvedOverpayments.push({ amount: excess, months });
+            } else {
+                unresolvedOverpayments.push({ amount: excess, missing: Math.max(0, excess - covered) });
+            }
+        }
+        const hasOverpaymentWithoutAllocation = unresolvedOverpayments.length > 0;
 
         if (advanceRentBalance > 0) {
             items.push({
@@ -1140,7 +1165,28 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
             continue;
         }
 
+        if (resolvedOverpayments.length && !hasOverpaymentWithoutAllocation) {
+            const resolvedAmount = resolvedOverpayments.reduce((total, item) => total + item.amount, 0);
+            const resolvedMonths = [...new Set(resolvedOverpayments.flatMap((item) => item.months))];
+            items.push({
+                id: `resolved-${tenantId}`,
+                type: "resolved",
+                severity: "success",
+                roomNumber,
+                tenantName,
+                officeName,
+                monthlyRent,
+                currentMonthPaid,
+                outstandingBalance,
+                advanceRentBalance,
+                monthsCovered: resolvedMonths,
+                message: `Room ${roomNumber} overpayment of UGX ${Math.round(resolvedAmount).toLocaleString()} is resolved and allocated to ${resolvedMonths.join(", ") || "the correct rent month"}.`,
+            });
+            continue;
+        }
+
         if (hasOverpaymentWithoutAllocation) {
+            const missingAmount = unresolvedOverpayments.reduce((total, item) => total + item.missing, 0);
             items.push({
                 id: `missing-allocation-${tenantId}`,
                 type: "allocation_mismatch",
@@ -1153,12 +1199,12 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
                 outstandingBalance,
                 advanceRentBalance,
                 monthsCovered: [],
-                message: `Room ${roomNumber} has overpayment history but no future-month allocation record.`,
+                message: `Room ${roomNumber} has UGX ${Math.round(missingAmount).toLocaleString()} of overpayment history that still needs a rent-month allocation.`,
             });
             continue;
         }
 
-        if (outstandingBalance === 0 && monthlyRent > 0 && rawCurrentMonthPaid > 0 && rawCurrentMonthPaid < monthlyRent) {
+        if (outstandingBalance === 0 && monthlyRent > 0 && currentMonthPaid > 0 && currentMonthPaid < monthlyRent) {
             items.push({
                 id: `coverage-mismatch-${tenantId}`,
                 type: "coverage_mismatch",
@@ -1167,7 +1213,7 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
                 tenantName,
                 officeName,
                 monthlyRent,
-                currentMonthPaid: rawCurrentMonthPaid,
+                currentMonthPaid,
                 outstandingBalance,
                 advanceRentBalance,
                 monthsCovered: [],

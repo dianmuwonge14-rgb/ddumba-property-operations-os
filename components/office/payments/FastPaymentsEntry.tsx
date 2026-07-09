@@ -1300,6 +1300,7 @@ function TenantBalance({ isAdmin, onEditOutstanding, tenant }: { isAdmin: boolea
 
 function AdvanceRentAssistantPanel({ items, loading }: { items: AdvanceRentAssistantItem[]; loading: boolean }) {
     const advanceCount = items.filter((item) => item.type === "advance_rent" || item.type === "prepaid_multiple_months").length;
+    const resolvedCount = items.filter((item) => item.type === "resolved").length;
     const mismatchCount = items.filter((item) => item.type === "allocation_mismatch" || item.type === "coverage_mismatch").length;
 
     return (
@@ -1316,6 +1317,7 @@ function AdvanceRentAssistantPanel({ items, loading }: { items: AdvanceRentAssis
                 </div>
                 <div className="flex flex-wrap gap-2 text-xs font-black">
                     <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-800">{advanceCount} advance rooms</span>
+                    <span className="rounded-full bg-sky-100 px-3 py-1 text-sky-800">{resolvedCount} resolved</span>
                     <span className="rounded-full bg-amber-100 px-3 py-1 text-amber-900">{mismatchCount} review items</span>
                 </div>
             </div>
