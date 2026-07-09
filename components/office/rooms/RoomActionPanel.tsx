@@ -146,11 +146,15 @@ export default function RoomActionPanel({ isAdmin = false, onSaved, room }: Prop
                 }) as { status?: string } | null;
                 setMessage(result?.status === "approved"
                     ? "Admin rent change applied immediately. Landlord portfolio and payment totals were refreshed."
-                    : "Rent change request sent for admin approval. Current rent has not changed.");
+                    : "Rent change request sent to admin.");
                 setShowRentRequest(false);
-                await onSaved();
+                try {
+                    await onSaved();
+                } catch {
+                    router.refresh();
+                }
             } catch (caught) {
-                setError(caught instanceof Error ? caught.message : "Unable to request rent change.");
+                setError(caught instanceof Error ? caught.message : "Rent change request failed.");
             }
         });
     }

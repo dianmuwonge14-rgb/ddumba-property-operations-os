@@ -185,9 +185,13 @@ export default function TenantSnapshot({ tenantContext, canEdit = true, isAdmin 
                 }) as { status?: string } | null;
                 setMessage(result?.status === "approved"
                     ? "Admin changed room rent directly. Tenant, landlord, and dashboard calculations were refreshed."
-                    : "Rent change request sent for admin approval. Current rent has not changed.");
+                    : "Rent change request sent to admin.");
                 setIsRequestingRentChange(false);
-                await onTenantUpdated?.();
+                try {
+                    await onTenantUpdated?.();
+                } catch {
+                    router.refresh();
+                }
                 router.refresh();
             } catch (error) {
                 setMessage(error instanceof Error ? error.message : "Rent change request failed.");

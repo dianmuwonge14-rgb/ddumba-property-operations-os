@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { logUserAction } from "@/lib/auth/audit";
-import { hasAnyPermission, requireAuth, requireCompanyAdminMode } from "@/lib/auth/permissions";
+import { requireAuth, requireCompanyAdminMode } from "@/lib/auth/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getMoveInPayableDecision } from "@/lib/landlords/payable-cutoff";
 
@@ -389,21 +389,15 @@ export async function requestRoomRentChange(input: {
     effectiveDate: string;
 }) {
     const context = await requireAuth();
-    if (!hasAnyPermission(context, ["properties.manage", "collections.manage", "landlords.manage"])) {
-        throw new Error("You do not have permission to request room rent changes.");
-    }
-    if (!context.activeCompany?.id || !context.activeOffice?.id) throw new Error("Active company and office are required.");
+    if (!context.activeCompany?.id) throw new Error("Active company is required.");
     const db = await createSupabaseServerClient() as unknown as Db;
     const newRent = Number(input.proposedRent);
     assertPositiveRent(newRent);
     assertReason(input.reason);
     assertDate(input.effectiveDate);
     const { room, lease, tenant } = await getRoomContext(db, context.activeCompany.id, input.roomId);
-    const roomOfficeId = room.office_id ?? lease?.office_id ?? context.activeOffice.id;
-    if (!(context.isCompanyAdmin || context.canAccessAllOffices) && roomOfficeId !== context.activeOffice.id) {
-        throw new Error("Room is not in your active office.");
-    }
-    if (context.isCompanyAdmin && !context.isOfficeMode) {
+    const roomOfficeId = room.office_id ?? lease?.office_id ?? context.activeOffice?.id ?? null;
+    if (context.isCompanyAdmin) {
         return adminDirectRoomRentChange({
             effectiveDate: input.effectiveDate,
             newRent,
@@ -411,7 +405,16 @@ export async function requestRoomRentChange(input: {
             roomId: input.roomId,
         });
     }
+    if (context.authMode !== "office") {
+        throw new Error("Only office accounts can send room rent changes for Admin approval.");
+    }
+    if (!context.activeOffice?.id) throw new Error("Active office is required.");
+    if (!roomOfficeId || roomOfficeId !== context.activeOffice.id) {
+        throw new Error("Room is not in your active office.");
+    }
 
+    const now = new Date().toISOString();
+    const oldRent = Number(room.monthly_rent ?? lease?.monthly_rent ?? tenant?.monthly_rent ?? 0);
     const { data, error } = await db
         .from("room_rent_change_requests")
         .insert({
@@ -420,7 +423,7 @@ export async function requestRoomRentChange(input: {
             landlord_id: room.landlord_id ?? null,
             new_rent: newRent,
             office_id: roomOfficeId,
-            old_rent: Number(room.monthly_rent ?? lease?.monthly_rent ?? tenant?.monthly_rent ?? 0),
+            old_rent: oldRent,
             property_id: room.property_id ?? null,
             reason: input.reason,
             requested_by: context.profile?.id ?? null,
@@ -435,7 +438,7 @@ export async function requestRoomRentChange(input: {
     await notify(db, {
         companyId: context.activeCompany.id,
         entityId: data.id,
-        message: `Room ${room.room_number ?? "Unnumbered"} rent change requested from ${money(Number(room.monthly_rent ?? 0))} to ${money(newRent)}. Reason: ${input.reason}`,
+        message: `Room ${room.room_number ?? "Unnumbered"} rent change requested from ${money(oldRent)} to ${money(newRent)}. Reason: ${input.reason}`,
         officeId: roomOfficeId,
         recipientType: "admin",
         severity: "warning",
@@ -448,7 +451,12 @@ export async function requestRoomRentChange(input: {
         entityId: data.id,
         companyId: context.activeCompany.id,
         officeId: roomOfficeId,
-        afterData: data,
+        afterData: {
+            ...data,
+            requested_at: now,
+            requested_by: context.profile?.id ?? null,
+            room_number: room.room_number ?? null,
+        },
     });
 
     revalidateRentPages();
@@ -535,7 +543,8 @@ export async function adminDirectRoomRentChange(input: {
     reason: string;
     effectiveDate: string;
 }) {
-    const context = await requireCompanyAdminMode();
+    const context = await requireAuth();
+    if (!context.isCompanyAdmin) throw new Error("Only Admin can change room rent directly.");
     if (!context.activeCompany?.id) throw new Error("Active company is required.");
     const db = await createSupabaseServerClient() as unknown as Db;
     const newRent = Number(input.newRent);
