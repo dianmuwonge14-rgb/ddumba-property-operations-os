@@ -2,7 +2,7 @@
 
 import type React from "react";
 import { useEffect, useState, useTransition } from "react";
-import { Banknote, CheckCircle2, Loader2, MessageSquareText, Search, SendHorizonal } from "lucide-react";
+import { AlertTriangle, Banknote, BrainCircuit, CheckCircle2, Clock3, FileCheck2, Landmark, Loader2, MessageSquareText, ReceiptText, Search, SendHorizonal, ShieldAlert, Sparkles, Split, WalletCards } from "lucide-react";
 import { recordCollectorPayment, recordCollectorPromise, sendCollectorMessage, submitCollectorMoney } from "@/app/actions/collectors";
 
 type SearchResult = {
@@ -35,12 +35,24 @@ type Props = {
 const money = (value: unknown) => `UGX ${Math.round(Number(value ?? 0)).toLocaleString()}`;
 
 export default function CollectorConsole({ data, mode }: Props) {
+    const pendingCount = data.submissions.filter((row) => String(row.status ?? "pending") === "pending").length;
+    const rejectedAmount = data.totals.rejectedSubmissions ?? 0;
     return (
-        <main className="mx-auto max-w-7xl px-4 py-6 text-white">
-            <section className="rounded-3xl border border-white/10 bg-slate-950/80 p-5 shadow-2xl shadow-black/30">
-                <p className="text-xs font-black uppercase tracking-wide text-cyan-300">Field Collector</p>
-                <h1 className="mt-2 text-3xl font-black">{titleForMode(mode)}</h1>
-                <p className="mt-2 text-sm font-bold text-slate-400">All-rounder collector workspace. Every record is live and attached to the correct office, tenant, landlord, and room.</p>
+        <main className="mx-auto max-w-7xl px-3 py-5 text-white sm:px-4 sm:py-6">
+            <section className="sticky top-[calc(var(--app-header-offset,0px)+0.5rem)] z-20 overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-slate-950 via-cyan-950 to-slate-900 p-5 shadow-2xl shadow-black/30">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                    <div>
+                        <p className="text-xs font-black uppercase tracking-wide text-cyan-200">Field Collector</p>
+                        <h1 className="mt-2 text-3xl font-black sm:text-4xl">{titleForMode(mode)}</h1>
+                        <p className="mt-2 max-w-3xl text-sm font-bold leading-6 text-slate-300">Live collector cash control, office split, daily reconciliation, and submission approvals.</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs font-black sm:grid-cols-4">
+                        <MiniStatus label="Pending" value={pendingCount} tone="amber" />
+                        <MiniStatus label="Rejected" value={money(rejectedAmount)} tone="red" />
+                        <MiniStatus label="Offices" value={data.collectionsByOffice.length} tone="cyan" />
+                        <MiniStatus label="Rows" value={data.collections.length} tone="slate" />
+                    </div>
+                </div>
             </section>
 
             <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -52,12 +64,12 @@ export default function CollectorConsole({ data, mode }: Props) {
 
             {mode === "payments" && <CollectorPaymentEntry />}
             {mode === "promises" && <CollectorPromiseEntry />}
-            {mode === "submissions" && <CollectorSubmissionEntry offices={data.offices} />}
+            {mode === "submissions" && <CollectorSubmissionEnterprise data={data} />}
             {mode === "instructions" && <CollectorMessages data={data} />}
-            {mode === "daily" && <DailyBreakdown data={data} />}
+            {mode === "daily" && <CollectorDailyEnterprise data={data} />}
             {mode === "dashboard" && (
                 <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-2">
-                    <DailyBreakdown data={data} />
+                    <CollectorDailyEnterprise data={data} compact />
                     <CollectorMessages data={data} compact />
                 </div>
             )}
@@ -87,6 +99,16 @@ function Kpi({ label, tone, value }: { label: string; tone: string; value: strin
             <p className="mt-2 text-2xl font-black">{value}</p>
         </div>
     );
+}
+
+function MiniStatus({ label, tone, value }: { label: string; tone: "amber" | "cyan" | "red" | "slate"; value: string | number }) {
+    const styles = {
+        amber: "border-amber-300/20 bg-amber-300/10 text-amber-100",
+        cyan: "border-cyan-300/20 bg-cyan-300/10 text-cyan-100",
+        red: "border-red-300/20 bg-red-300/10 text-red-100",
+        slate: "border-slate-300/20 bg-white/10 text-slate-100",
+    };
+    return <div className={`rounded-2xl border px-3 py-2 text-center ${styles[tone]}`}><p className="text-[10px] uppercase tracking-wide opacity-80">{label}</p><p className="mt-1 whitespace-nowrap">{value}</p></div>;
 }
 
 function useTenantSearch() {
@@ -233,6 +255,98 @@ function CollectorSubmissionEntry({ offices }: { offices: Props["data"]["offices
     );
 }
 
+function CollectorSubmissionEnterprise({ data }: { data: Props["data"] }) {
+    const pendingRows = data.submissions.filter((row) => String(row.status ?? "pending") === "pending");
+    const approvedRows = data.submissions.filter((row) => String(row.status ?? "") === "approved");
+    const rejectedRows = data.submissions.filter((row) => String(row.status ?? "") === "rejected");
+    const recentRows = data.submissions.slice(0, 12);
+
+    return (
+        <div className="mt-5 grid gap-5">
+            <section className="grid gap-4 lg:grid-cols-5">
+                <EnterpriseCard icon={<WalletCards size={20} />} label="Money in hand" tone="amber" value={money(data.totals.remainingInHand)} />
+                <EnterpriseCard icon={<Banknote size={20} />} label="Collected today" tone="green" value={money(data.totals.totalCollectedToday)} />
+                <EnterpriseCard icon={<Clock3 size={20} />} label="Submitted pending" tone="purple" value={money(data.totals.pendingSubmissions)} />
+                <EnterpriseCard icon={<FileCheck2 size={20} />} label="Submitted approved" tone="blue" value={money(data.totals.approvedSubmissions)} />
+                <EnterpriseCard icon={<ShieldAlert size={20} />} label="Rejected submissions" tone="red" value={money(data.totals.rejectedSubmissions)} />
+            </section>
+
+            <section className="grid gap-5 xl:grid-cols-[1fr_1.05fr]">
+                <div className="rounded-3xl border border-cyan-300/20 bg-slate-950/80 p-5 shadow-2xl shadow-black/20">
+                    <StickyTitle icon={<SendHorizonal size={18} />} subtitle="Submit cash to the receiving office for approval." title="Submit Money to Office" />
+                    <CollectorSubmissionEntry offices={data.offices} />
+                    <AiCashAssistant data={data} />
+                </div>
+
+                <div className="rounded-3xl border border-white/10 bg-slate-950/80 p-5 shadow-2xl shadow-black/20">
+                    <StickyTitle icon={<Landmark size={18} />} subtitle="Live split by the offices connected to today’s collections." title="Office Breakdown" />
+                    <Breakdown title="Collected by office" rows={data.collectionsByOffice} />
+                    <Breakdown title="Submission approvals" rows={[
+                        { label: `${pendingRows.length} pending request${pendingRows.length === 1 ? "" : "s"}`, value: Number(data.totals.pendingSubmissions ?? 0) },
+                        { label: `${approvedRows.length} approved request${approvedRows.length === 1 ? "" : "s"}`, value: Number(data.totals.approvedSubmissions ?? 0) },
+                        { label: `${rejectedRows.length} rejected request${rejectedRows.length === 1 ? "" : "s"}`, value: Number(data.totals.rejectedSubmissions ?? 0) },
+                    ]} />
+                </div>
+            </section>
+
+            <section className="overflow-hidden rounded-3xl border border-white/10 bg-slate-950/80 shadow-2xl shadow-black/20">
+                <div className="sticky top-[calc(var(--app-header-offset,0px)+0.5rem)] z-10 border-b border-white/10 bg-gradient-to-r from-teal-900 via-slate-950 to-cyan-950 px-5 py-4 shadow-lg">
+                    <h2 className="text-lg font-black">Recent Submission History</h2>
+                    <p className="text-xs font-bold text-slate-300">Pending, approved, and rejected office receipts.</p>
+                </div>
+                <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
+                    {recentRows.length ? recentRows.map((row) => <SubmissionCard key={String(row.id ?? `${row.created_at}-${row.amount}`)} row={row} offices={data.offices} />) : <EmptyPanel text="No money submissions have been recorded yet." />}
+                </div>
+            </section>
+
+            <ApprovalTimeline rows={recentRows} />
+        </div>
+    );
+}
+
+function CollectorDailyEnterprise({ compact = false, data }: { compact?: boolean; data: Props["data"] }) {
+    const remaining = Number(data.totals.remainingInHand ?? 0);
+    const submitted = Number(data.totals.approvedSubmissions ?? 0) + Number(data.totals.pendingSubmissions ?? 0);
+    const rows = data.collections.slice(0, compact ? 6 : 30);
+
+    return (
+        <div className="mt-5 grid gap-5">
+            <section className="grid gap-4 lg:grid-cols-4">
+                <EnterpriseCard icon={<ReceiptText size={20} />} label="Daily total collected" tone="green" value={money(data.totals.totalCollectedToday)} />
+                <EnterpriseCard icon={<SendHorizonal size={20} />} label="Submitted vs collected" tone="blue" value={money(submitted)} />
+                <EnterpriseCard icon={<WalletCards size={20} />} label="Remaining balance" tone="amber" value={money(remaining)} />
+                <EnterpriseCard icon={<Split size={20} />} label="Office splits" tone="purple" value={String(data.collectionsByOffice.length)} />
+            </section>
+
+            <section className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
+                <div className="rounded-3xl border border-white/10 bg-slate-950/80 p-5">
+                    <StickyTitle icon={<BrainCircuit size={18} />} subtitle="Cash risk, split mismatch, and end-of-day suggestions." title="AI End-of-Day Summary" />
+                    <AiCashAssistant data={data} />
+                    <EndOfDayReconciliation data={data} />
+                </div>
+                <div className="rounded-3xl border border-white/10 bg-slate-950/80 p-5">
+                    <StickyTitle icon={<Landmark size={18} />} subtitle="Live breakdown of today’s collector-entered payments." title="Daily Collection Breakdown" />
+                    <div className="grid gap-4 lg:grid-cols-3">
+                        <Breakdown title="By office" rows={data.collectionsByOffice} />
+                        <Breakdown title="By landlord" rows={data.collectionsByLandlord} />
+                        <Breakdown title="By method" rows={data.collectionsByMethod} />
+                    </div>
+                </div>
+            </section>
+
+            <section className="overflow-hidden rounded-3xl border border-white/10 bg-slate-950/80">
+                <div className="sticky top-[calc(var(--app-header-offset,0px)+0.5rem)] z-10 border-b border-white/10 bg-gradient-to-r from-cyan-900 via-slate-950 to-blue-950 px-5 py-4 shadow-lg">
+                    <h2 className="text-lg font-black">Tenant / Room Collections</h2>
+                    <p className="text-xs font-bold text-slate-300">Every row is live from collector-entered Supabase collections.</p>
+                </div>
+                <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
+                    {rows.length ? rows.map((row) => <CollectionCard key={String(row.id ?? `${row.tenant_id}-${row.created_at}`)} row={row} />) : <EmptyPanel text="No collector payments have been recorded today." />}
+                </div>
+            </section>
+        </div>
+    );
+}
+
 function CollectorMessages({ compact, data }: { compact?: boolean; data: Props["data"] }) {
     const [subject, setSubject] = useState("");
     const [body, setBody] = useState("");
@@ -274,6 +388,92 @@ function DailyBreakdown({ data }: { data: Props["data"] }) {
             <Breakdown title="Submissions" rows={data.submissions.slice(0, 8).map((row) => ({ label: `${row.status ?? "pending"} · ${row.reference ?? "No ref"}`, value: Number(row.amount ?? 0) }))} />
         </section>
     );
+}
+
+function AiCashAssistant({ data }: { data: Props["data"] }) {
+    const collected = Number(data.totals.totalCollectedToday ?? 0);
+    const pending = Number(data.totals.pendingSubmissions ?? 0);
+    const approved = Number(data.totals.approvedSubmissions ?? 0);
+    const inHand = Number(data.totals.remainingInHand ?? 0);
+    const submissions = pending + approved;
+    const alerts = [
+        inHand > 0 ? { icon: <WalletCards size={15} />, title: "AI Missing Submission Detector", detail: `${money(inHand)} is still in collector hand. Submit or explain before close of day.`, tone: "amber" } : null,
+        collected > 0 && submissions < collected ? { icon: <AlertTriangle size={15} />, title: "AI Cash Reconciliation Assistant", detail: `Submitted ${money(submissions)} against ${money(collected)} collected today.`, tone: "red" } : null,
+        data.collectionsByOffice.length > 1 && pending > 0 ? { icon: <Split size={15} />, title: "AI Office Split Checker", detail: "Multiple offices collected today. Confirm each submission goes to the correct receiving office.", tone: "cyan" } : null,
+        pending > 0 ? { icon: <Clock3 size={15} />, title: "AI Risk Alerts", detail: `${money(pending)} pending office approval. Follow up before end of day.`, tone: "purple" } : null,
+        collected > 0 ? { icon: <Sparkles size={15} />, title: "AI Suggested Action", detail: inHand > 0 ? "Submit remaining money to the correct office now." : "Daily collector cash is reconciled for now.", tone: "green" } : null,
+    ].filter(Boolean) as Array<{ detail: string; icon: React.ReactNode; title: string; tone: string }>;
+
+    return (
+        <div className="mt-4 rounded-3xl border border-cyan-300/20 bg-cyan-300/10 p-4">
+            <p className="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-cyan-100"><BrainCircuit size={15} /> AI Cash Assistant</p>
+            <div className="mt-3 grid gap-2">
+                {alerts.length ? alerts.map((alert) => <AiAlert key={alert.title} {...alert} />) : <p className="rounded-2xl bg-white/10 px-3 py-2 text-sm font-bold text-cyan-50">No collector cash risks detected.</p>}
+            </div>
+        </div>
+    );
+}
+
+function AiAlert({ detail, icon, title, tone }: { detail: string; icon: React.ReactNode; title: string; tone: string }) {
+    const tones: Record<string, string> = {
+        amber: "border-amber-300/25 bg-amber-300/10 text-amber-50",
+        cyan: "border-cyan-300/25 bg-cyan-300/10 text-cyan-50",
+        green: "border-emerald-300/25 bg-emerald-300/10 text-emerald-50",
+        purple: "border-purple-300/25 bg-purple-300/10 text-purple-50",
+        red: "border-red-300/25 bg-red-300/10 text-red-50",
+    };
+    return <article className={`rounded-2xl border px-3 py-2 ${tones[tone] ?? tones.cyan}`}><p className="flex items-center gap-2 text-sm font-black">{icon}{title}</p><p className="mt-1 text-xs font-bold opacity-85">{detail}</p></article>;
+}
+
+function EnterpriseCard({ icon, label, tone, value }: { icon: React.ReactNode; label: string; tone: string; value: string }) {
+    const tones: Record<string, string> = {
+        amber: "from-amber-500/20 to-slate-950 text-amber-100",
+        blue: "from-blue-500/20 to-slate-950 text-blue-100",
+        green: "from-emerald-500/20 to-slate-950 text-emerald-100",
+        purple: "from-purple-500/20 to-slate-950 text-purple-100",
+        red: "from-red-500/20 to-slate-950 text-red-100",
+    };
+    return <div className={`rounded-3xl border border-white/10 bg-gradient-to-br p-4 shadow-xl shadow-black/20 ${tones[tone] ?? tones.blue}`}><div className="flex items-center gap-2 text-xs font-black uppercase tracking-wide opacity-80">{icon}{label}</div><p className="mt-3 whitespace-nowrap text-2xl font-black">{value}</p></div>;
+}
+
+function StickyTitle({ icon, subtitle, title }: { icon: React.ReactNode; subtitle: string; title: string }) {
+    return <div className="sticky top-[calc(var(--app-header-offset,0px)+0.5rem)] z-10 -mx-5 -mt-5 mb-4 border-b border-white/10 bg-gradient-to-r from-slate-950 via-teal-950 to-cyan-950 px-5 py-4 shadow-lg"><p className="flex items-center gap-2 text-lg font-black text-white">{icon}{title}</p><p className="mt-1 text-xs font-bold text-slate-300">{subtitle}</p></div>;
+}
+
+function officeNameFor(offices: Props["data"]["offices"], officeId: unknown) {
+    const office = offices.find((item) => item.id === String(officeId ?? ""));
+    return office?.office_name ?? office?.name ?? "Office";
+}
+
+function SubmissionCard({ offices, row }: { offices: Props["data"]["offices"]; row: Record<string, unknown> }) {
+    const status = String(row.status ?? "pending");
+    return <article className="rounded-3xl border border-white/10 bg-white/[0.06] p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-black text-white">{money(row.amount)}</p><p className="mt-1 text-xs font-bold text-slate-400">{officeNameFor(offices, row.office_id)} · {String(row.reference ?? "No reference")}</p></div><StatusPill status={status} /></div><p className="mt-3 text-xs font-bold text-slate-400">{String(row.notes ?? "No notes")}</p><p className="mt-2 text-[11px] font-black uppercase text-slate-500">{String(row.created_at ?? "").slice(0, 16).replace("T", " ")}</p></article>;
+}
+
+function CollectionCard({ row }: { row: Record<string, unknown> }) {
+    return <article className="rounded-3xl border border-white/10 bg-white/[0.06] p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-black text-white">Room {String(row.roomNumber ?? "No room")}</p><p className="mt-1 text-sm font-bold text-slate-300">{String(row.tenantName ?? "Tenant")}</p></div><p className="whitespace-nowrap font-black text-emerald-100">{money(row.amount_paid ?? row.amount)}</p></div><div className="mt-3 grid grid-cols-2 gap-2 text-xs font-bold text-slate-400"><span>{String(row.officeName ?? "Office")}</span><span>{String(row.landlordName ?? "Landlord")}</span><span>{String(row.payment_method ?? "cash").replace(/_/g, " ")}</span><span>{String(row.payment_date ?? "").slice(0, 10)}</span></div></article>;
+}
+
+function StatusPill({ status }: { status: string }) {
+    const tone = status === "approved" ? "bg-emerald-300/15 text-emerald-100 border-emerald-300/25" : status === "rejected" ? "bg-red-300/15 text-red-100 border-red-300/25" : "bg-amber-300/15 text-amber-100 border-amber-300/25";
+    return <span className={`whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-black uppercase ${tone}`}>{status}</span>;
+}
+
+function ApprovalTimeline({ rows }: { rows: Record<string, unknown>[] }) {
+    return <section className="rounded-3xl border border-white/10 bg-slate-950/80 p-5"><StickyTitle icon={<Clock3 size={18} />} subtitle="Latest approval statuses from office receipt workflow." title="Approval Status Timeline" /><div className="space-y-3">{rows.length ? rows.slice(0, 8).map((row) => <div key={String(row.id ?? row.created_at)} className="flex items-start gap-3 rounded-2xl bg-white/[0.06] p-3"><span className="mt-1 h-3 w-3 rounded-full bg-cyan-300" /><div className="min-w-0 flex-1"><p className="font-black text-white">{money(row.amount)} · {String(row.status ?? "pending")}</p><p className="text-xs font-bold text-slate-400">{String(row.created_at ?? "").slice(0, 16).replace("T", " ")} · {String(row.notes ?? "No notes")}</p></div></div>) : <EmptyPanel text="No submission timeline yet." />}</div></section>;
+}
+
+function EndOfDayReconciliation({ data }: { data: Props["data"] }) {
+    const collected = Number(data.totals.totalCollectedToday ?? 0);
+    const approved = Number(data.totals.approvedSubmissions ?? 0);
+    const pending = Number(data.totals.pendingSubmissions ?? 0);
+    const remaining = Number(data.totals.remainingInHand ?? 0);
+    const variance = collected - approved - pending - remaining;
+    return <div className="mt-4 rounded-3xl border border-white/10 bg-white/[0.06] p-4"><p className="flex items-center gap-2 text-sm font-black text-white"><FileCheck2 size={16} /> End-of-day reconciliation</p><div className="mt-3 grid gap-2 text-sm font-bold text-slate-300 sm:grid-cols-2"><span>Collected: {money(collected)}</span><span>Approved: {money(approved)}</span><span>Pending: {money(pending)}</span><span>Remaining: {money(remaining)}</span></div><p className={`mt-3 rounded-2xl px-3 py-2 text-xs font-black ${Math.abs(variance) < 1 ? "bg-emerald-300/10 text-emerald-100" : "bg-amber-300/10 text-amber-100"}`}>Reconciliation variance: {money(variance)}</p></div>;
+}
+
+function EmptyPanel({ text }: { text: string }) {
+    return <p className="rounded-3xl border border-white/10 bg-white/[0.06] p-5 text-sm font-bold text-slate-400">{text}</p>;
 }
 
 function Breakdown({ rows, title }: { rows: Array<{ label: string; value: number }>; title: string }) {

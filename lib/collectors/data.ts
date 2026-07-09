@@ -40,14 +40,31 @@ export async function getCollectorDashboardData() {
 
     const officeIds = [...new Set((collectionsResult.data ?? []).map((row: Record<string, unknown>) => String(row.office_id ?? "")).filter(Boolean))];
     const landlordIds = [...new Set((collectionsResult.data ?? []).map((row: Record<string, unknown>) => String(row.landlord_id ?? "")).filter(Boolean))];
-    const [officeResult, landlordResult] = await Promise.all([
+    const tenantIds = [...new Set((collectionsResult.data ?? []).map((row: Record<string, unknown>) => String(row.tenant_id ?? "")).filter(Boolean))];
+    const roomIds = [...new Set((collectionsResult.data ?? []).map((row: Record<string, unknown>) => String(row.room_id ?? "")).filter(Boolean))];
+    const [officeResult, landlordResult, tenantResult, roomResult] = await Promise.all([
         officeIds.length ? db.from("offices").select("id, office_name, name").in("id", officeIds) : Promise.resolve({ data: [] }),
         landlordIds.length ? db.from("landlords").select("id, full_name").in("id", landlordIds) : Promise.resolve({ data: [] }),
+        tenantIds.length ? db.from("tenants").select("id, full_name, phone").in("id", tenantIds) : Promise.resolve({ data: [] }),
+        roomIds.length ? db.from("rooms").select("id, room_number").in("id", roomIds) : Promise.resolve({ data: [] }),
     ]);
     const officeById = new Map(((officeResult.data ?? []) as Row[]).map((row) => [String(row.id), String(row.office_name ?? row.name ?? "Office")]));
     const landlordById = new Map(((landlordResult.data ?? []) as Row[]).map((row) => [String(row.id), String(row.full_name ?? "Landlord")]));
+    const tenantById = new Map(((tenantResult.data ?? []) as Row[]).map((row) => [String(row.id), row]));
+    const roomById = new Map(((roomResult.data ?? []) as Row[]).map((row) => [String(row.id), row]));
 
-    const collections = (collectionsResult.data ?? []) as Row[];
+    const collections = ((collectionsResult.data ?? []) as Row[]).map((row) => {
+        const tenant = tenantById.get(String(row.tenant_id ?? ""));
+        const room = roomById.get(String(row.room_id ?? ""));
+        return {
+            ...row,
+            landlordName: landlordById.get(String(row.landlord_id ?? "")) ?? "No landlord",
+            officeName: officeById.get(String(row.office_id ?? "")) ?? "Office",
+            roomNumber: String(room?.room_number ?? row.room_number ?? "No room"),
+            tenantName: String(tenant?.full_name ?? row.tenant_name ?? "Tenant"),
+            tenantPhone: String(tenant?.phone ?? row.tenant_phone ?? "No phone"),
+        };
+    });
     const submissions = (submissionsResult.data ?? []) as Row[];
     return {
         collections,
