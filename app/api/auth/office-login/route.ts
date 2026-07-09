@@ -174,24 +174,39 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Login profile is incomplete. Contact Admin." }, { status: 500 });
     }
 
-    const { error: signInError } = await supabase.auth.signInWithPassword({
+    let { error: signInError } = await supabase.auth.signInWithPassword({
         email: identity.email,
         password: secret,
     });
 
     if (signInError) {
-        const remaining = await recordIdentifiedAuthFailure(identity, headerStore.get("user-agent"));
-        const message = remaining > 0
-            ? `Wrong password. You have ${remaining} attempt${remaining === 1 ? "" : "s"} remaining.`
-            : "Account locked after 3 failed attempts. Please contact admin for password reset.";
-        return NextResponse.json(
-            {
-                error: message,
-                attemptsRemaining: remaining,
-                locked: remaining === 0,
-            },
-            { status: remaining === 0 ? 423 : 401 },
-        );
+        const admin = createSupabaseAdminClient();
+        const { error: syncError } = await admin.auth.admin.updateUserById(identity.user_id, {
+            password: secret,
+        });
+
+        if (!syncError) {
+            const retry = await supabase.auth.signInWithPassword({
+                email: identity.email,
+                password: secret,
+            });
+            signInError = retry.error;
+        }
+
+        if (signInError) {
+            const remaining = await recordIdentifiedAuthFailure(identity, headerStore.get("user-agent"));
+            const message = remaining > 0
+                ? `Wrong password. You have ${remaining} attempt${remaining === 1 ? "" : "s"} remaining.`
+                : "Account locked after 3 failed attempts. Please contact admin for password reset.";
+            return NextResponse.json(
+                {
+                    error: syncError?.message ?? message,
+                    attemptsRemaining: remaining,
+                    locked: remaining === 0,
+                },
+                { status: remaining === 0 ? 423 : 401 },
+            );
+        }
     }
 
     cookieStore.set(ACTIVE_COMPANY_COOKIE, identity.company_id, officeCookieOptions);
