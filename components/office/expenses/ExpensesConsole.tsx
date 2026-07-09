@@ -1128,8 +1128,12 @@ function LandlordPaymentRequestLedger({ requests }: { requests: ExpensesPageData
 function EmployeeExpenseRequestLedger({ isAdmin, requests }: { isAdmin: boolean; requests: ExpensesPageData["employeeExpenseRequests"] }) {
     const [comments, setComments] = useState<Record<string, string>>({});
     const [message, setMessage] = useState<string | null>(null);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [bulkModal, setBulkModal] = useState<null | { decision: "approved" | "rejected"; ids: string[] }>(null);
+    const [bulkComment, setBulkComment] = useState("");
     const [isPending, startTransition] = useTransition();
     if (!requests.length) return null;
+    const pendingRequests = requests.filter((request) => request.status === "pending");
 
     function decide(requestId: string, decision: "approved" | "rejected") {
         setMessage(null);
@@ -1147,17 +1151,67 @@ function EmployeeExpenseRequestLedger({ isAdmin, requests }: { isAdmin: boolean;
         });
     }
 
+    function openBulk(decision: "approved" | "rejected", ids: string[]) {
+        const uniqueIds = Array.from(new Set(ids)).filter(Boolean);
+        if (!uniqueIds.length) {
+            setMessage("Select at least one pending employee expense request first.");
+            return;
+        }
+        setBulkComment("");
+        setBulkModal({ decision, ids: uniqueIds });
+    }
+
+    function runBulk() {
+        if (!bulkModal) return;
+        if (bulkModal.decision === "rejected" && !bulkComment.trim()) {
+            setMessage("Rejection reason is required.");
+            return;
+        }
+        startTransition(async () => {
+            try {
+                for (const requestId of bulkModal.ids) {
+                    await decideEmployeeExpenseRequest({
+                        requestId,
+                        decision: bulkModal.decision,
+                        comment: bulkComment.trim(),
+                    });
+                }
+                setMessage(`${bulkModal.ids.length} employee expense request(s) ${bulkModal.decision}.`);
+                setSelectedIds([]);
+                setBulkModal(null);
+                setBulkComment("");
+            } catch (error) {
+                setMessage(error instanceof Error ? error.message : "Bulk employee expense review failed.");
+            }
+        });
+    }
+
     return (
         <section className="mx-auto mt-5 max-w-6xl overflow-hidden rounded-[26px] border border-white/70 bg-white shadow-2xl shadow-slate-950/15">
             <div className="border-b border-slate-200 px-4 py-3">
                 <p className="text-xs font-black uppercase tracking-wide text-blue-600">Employee expense approval queue</p>
                 <h2 className="text-lg font-black text-slate-950">Above-Allowance Employee Expenses</h2>
                 {message ? <p className="mt-2 text-sm font-bold text-slate-600">{message}</p> : null}
+                {isAdmin && pendingRequests.length > 0 ? (
+                    <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                        <label className="inline-flex items-center gap-2 text-xs font-black text-slate-700">
+                            <input checked={pendingRequests.every((request) => selectedIds.includes(request.id))} disabled={isPending} type="checkbox" onChange={(event) => setSelectedIds(event.target.checked ? pendingRequests.map((request) => request.id) : [])} className="h-4 w-4 rounded border-slate-300 text-blue-700" />
+                            Select All Pending ({pendingRequests.length})
+                        </label>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                            <button disabled={isPending || selectedIds.length === 0} onClick={() => openBulk("approved", selectedIds)} className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-black text-white disabled:opacity-40">Approve Selected</button>
+                            <button disabled={isPending || selectedIds.length === 0} onClick={() => openBulk("rejected", selectedIds)} className="rounded-xl bg-red-700 px-3 py-2 text-xs font-black text-white disabled:opacity-40">Reject Selected</button>
+                            <button disabled={isPending} onClick={() => openBulk("approved", pendingRequests.map((request) => request.id))} className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-black text-emerald-800 disabled:opacity-40">Approve All Pending</button>
+                            <button disabled={isPending} onClick={() => openBulk("rejected", pendingRequests.map((request) => request.id))} className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-black text-red-800 disabled:opacity-40">Reject All Pending</button>
+                        </div>
+                    </div>
+                ) : null}
             </div>
             <div className="overflow-auto">
                 <table className="w-full min-w-[1040px] text-left text-sm">
                     <thead className="bg-slate-950 text-xs uppercase text-slate-200">
                         <tr>
+                            {isAdmin ? <th className="px-4 py-3">Select</th> : null}
                             <th className="px-4 py-3">Date</th>
                             <th className="px-4 py-3">Employee</th>
                             <th className="px-4 py-3">Item</th>
@@ -1172,6 +1226,13 @@ function EmployeeExpenseRequestLedger({ isAdmin, requests }: { isAdmin: boolean;
                     <tbody>
                         {requests.map((request) => (
                             <tr key={`employee-expense-request:${request.id}`} className="border-b border-slate-100 align-top">
+                                {isAdmin ? (
+                                    <td className="px-4 py-3">
+                                        {request.status === "pending" ? (
+                                            <input checked={selectedIds.includes(request.id)} disabled={isPending} type="checkbox" onChange={() => setSelectedIds((current) => current.includes(request.id) ? current.filter((id) => id !== request.id) : [...current, request.id])} className="h-4 w-4 rounded border-slate-300 text-blue-700" />
+                                        ) : null}
+                                    </td>
+                                ) : null}
                                 <td className="px-4 py-3 font-bold text-slate-500">{request.expenseDate}</td>
                                 <td className="px-4 py-3 font-black text-slate-950">{request.employeeName}</td>
                                 <td className="px-4 py-3 font-bold text-slate-700">{request.itemName}</td>
@@ -1200,6 +1261,24 @@ function EmployeeExpenseRequestLedger({ isAdmin, requests }: { isAdmin: boolean;
                     </tbody>
                 </table>
             </div>
+            {bulkModal ? (
+                <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/60 p-4">
+                    <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
+                        <h2 className="text-xl font-black text-slate-950">Confirm Bulk {bulkModal.decision === "approved" ? "Approval" : "Rejection"}</h2>
+                        <p className="mt-2 text-sm font-semibold text-slate-600">You are about to {bulkModal.decision === "approved" ? "approve" : "reject"} {bulkModal.ids.length} pending requests. Continue?</p>
+                        <label className="mt-4 block text-sm font-bold text-slate-700">
+                            {bulkModal.decision === "rejected" ? "Rejection reason" : "Admin note optional"}
+                            <textarea value={bulkComment} onChange={(event) => setBulkComment(event.target.value)} className="mt-2 min-h-28 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm font-semibold" />
+                        </label>
+                        <div className="mt-5 flex flex-wrap justify-end gap-2">
+                            <button disabled={isPending} onClick={() => setBulkModal(null)} className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 disabled:opacity-40">Cancel</button>
+                            <button disabled={isPending} onClick={runBulk} className={`rounded-xl px-4 py-2 text-sm font-black text-white disabled:opacity-40 ${bulkModal.decision === "approved" ? "bg-emerald-700" : "bg-red-700"}`}>
+                                {isPending ? "Processing..." : bulkModal.decision === "approved" ? "Approve Requests" : "Reject Requests"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
         </section>
     );
 }

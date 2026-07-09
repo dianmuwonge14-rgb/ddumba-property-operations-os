@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 import {
     AlertTriangle,
     Banknote,
@@ -443,15 +443,54 @@ function PayrollItemPanel({ selectedEmployee, itemType, title, description }: { 
 
 function AdvanceRequestsPanel({ data, selectedEmployee }: { data: EmployeeManagementData; selectedEmployee: EmployeeProfile | null }) {
     const requests = selectedEmployee ? data.advanceRequests.filter((request) => request.employeeId === selectedEmployee.id) : data.advanceRequests;
+    const pendingRequests = requests.filter((request) => request.status === "pending");
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [bulkModal, setBulkModal] = useState<null | { decision: "approved" | "rejected"; ids: string[] }>(null);
+    const [bulkComment, setBulkComment] = useState("");
+    const [message, setMessage] = useState("");
+    const [isPending, startTransition] = useTransition();
+    function runBulk() {
+        if (!bulkModal) return;
+        if (bulkModal.decision === "rejected" && !bulkComment.trim()) {
+            setMessage("Rejection reason is required.");
+            return;
+        }
+        startTransition(async () => {
+            try {
+                for (const id of bulkModal.ids) {
+                    const formData = new FormData();
+                    formData.set("requestId", id);
+                    formData.set("decision", bulkModal.decision);
+                    formData.set("adminComment", bulkComment.trim());
+                    await decideEmployeeAdvanceRequest(formData);
+                }
+                setMessage(`${bulkModal.ids.length} employee advance request(s) ${bulkModal.decision}.`);
+                setSelectedIds([]);
+                setBulkModal(null);
+                setBulkComment("");
+            } catch (error) {
+                setMessage(error instanceof Error ? error.message : "Bulk advance review failed.");
+            }
+        });
+    }
     return (
         <div className="grid gap-4 2xl:grid-cols-[1fr_420px]">
             <GlassPanel title="Advance Approval Queue" icon={<Banknote size={18} />}>
                 <p className="mb-4 text-sm text-slate-300">Office accounts request advances. Admin approval is required before an advance becomes a payroll deduction.</p>
+                {message ? <p className="mb-3 rounded-2xl bg-white/10 px-4 py-3 text-sm font-black text-cyan-100">{message}</p> : null}
+                <EmployeeBulkControls
+                    disabled={isPending}
+                    pendingIds={pendingRequests.map((request) => request.id)}
+                    selectedIds={selectedIds}
+                    onBulk={(decision, ids) => setBulkModal({ decision, ids })}
+                    onChangeSelected={setSelectedIds}
+                />
                 <div className="space-y-3">
                     {requests.length ? requests.map((request) => (
-                        <RequestCard key={request.id} request={request} type="advance" />
+                        <RequestCard key={request.id} request={request} selected={selectedIds.includes(request.id)} type="advance" onToggleSelected={() => setSelectedIds((current) => current.includes(request.id) ? current.filter((id) => id !== request.id) : [...current, request.id])} />
                     )) : <Empty label="No employee advance requests found." />}
                 </div>
+                <EmployeeBulkModal comment={bulkComment} isPending={isPending} modal={bulkModal} onChangeComment={setBulkComment} onClose={() => setBulkModal(null)} onConfirm={runBulk} />
             </GlassPanel>
             <EmployeeSnapshot employee={selectedEmployee} />
         </div>
@@ -487,6 +526,36 @@ function ExpenseReviewPanel({ data, selectedEmployee }: { data: EmployeeManageme
 
 function OffDaysPanel({ data, selectedEmployee }: { data: EmployeeManagementData; selectedEmployee: EmployeeProfile | null }) {
     const requests = selectedEmployee ? data.offDayRequests.filter((request) => request.employeeId === selectedEmployee.id) : data.offDayRequests;
+    const pendingRequests = requests.filter((request) => request.status === "pending");
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [bulkModal, setBulkModal] = useState<null | { decision: "approved" | "rejected"; ids: string[] }>(null);
+    const [bulkComment, setBulkComment] = useState("");
+    const [message, setMessage] = useState("");
+    const [isPending, startTransition] = useTransition();
+    function runBulk() {
+        if (!bulkModal) return;
+        if (bulkModal.decision === "rejected" && !bulkComment.trim()) {
+            setMessage("Rejection reason is required.");
+            return;
+        }
+        startTransition(async () => {
+            try {
+                for (const id of bulkModal.ids) {
+                    const formData = new FormData();
+                    formData.set("requestId", id);
+                    formData.set("decision", bulkModal.decision);
+                    formData.set("adminComment", bulkComment.trim());
+                    await decideEmployeeOffDayRequest(formData);
+                }
+                setMessage(`${bulkModal.ids.length} off-day request(s) ${bulkModal.decision}.`);
+                setSelectedIds([]);
+                setBulkModal(null);
+                setBulkComment("");
+            } catch (error) {
+                setMessage(error instanceof Error ? error.message : "Bulk off-day review failed.");
+            }
+        });
+    }
     return (
         <GlassPanel title="Off Days & Attendance Control" icon={<CalendarDays size={18} />}>
             <div className="mb-4 rounded-2xl border border-cyan-300/20 bg-cyan-300/10 p-4 text-sm text-cyan-50">
@@ -523,8 +592,17 @@ function OffDaysPanel({ data, selectedEmployee }: { data: EmployeeManagementData
             ) : <Empty label="Select an employee first." />}
             <div className="mt-4 space-y-3">
                 <p className="text-xs font-black uppercase text-slate-400">Off-day approval requests</p>
-                {requests.length ? requests.map((request) => <RequestCard key={request.id} request={request} type="off_day" />) : <Empty label="No off-day requests found." />}
+                {message ? <p className="rounded-2xl bg-white/10 px-4 py-3 text-sm font-black text-cyan-100">{message}</p> : null}
+                <EmployeeBulkControls
+                    disabled={isPending}
+                    pendingIds={pendingRequests.map((request) => request.id)}
+                    selectedIds={selectedIds}
+                    onBulk={(decision, ids) => setBulkModal({ decision, ids })}
+                    onChangeSelected={setSelectedIds}
+                />
+                {requests.length ? requests.map((request) => <RequestCard key={request.id} request={request} selected={selectedIds.includes(request.id)} type="off_day" onToggleSelected={() => setSelectedIds((current) => current.includes(request.id) ? current.filter((id) => id !== request.id) : [...current, request.id])} />) : <Empty label="No off-day requests found." />}
             </div>
+            <EmployeeBulkModal comment={bulkComment} isPending={isPending} modal={bulkModal} onChangeComment={setBulkComment} onClose={() => setBulkModal(null)} onConfirm={runBulk} />
             <div className="mt-4 grid gap-2 md:grid-cols-3">
                 {data.employees.slice(0, 9).map((employee) => (
                     <div key={employee.id} className="rounded-2xl border border-white/10 bg-white/[0.045] p-3">
@@ -698,10 +776,16 @@ function EmployeeSnapshot({ employee }: { employee: EmployeeProfile | null }) {
     );
 }
 
-function RequestCard({ request, type }: { request: EmployeeManagementData["advanceRequests"][number]; type: "advance" | "off_day" }) {
+function RequestCard({ onToggleSelected, request, selected = false, type }: { onToggleSelected?: () => void; request: EmployeeManagementData["advanceRequests"][number]; selected?: boolean; type: "advance" | "off_day" }) {
     const action = type === "advance" ? decideEmployeeAdvanceRequest : decideEmployeeOffDayRequest;
     return (
         <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-4">
+            {request.status === "pending" && onToggleSelected ? (
+                <label className="mb-3 inline-flex items-center gap-2 text-xs font-black text-cyan-100">
+                    <input checked={selected} type="checkbox" onChange={onToggleSelected} className="h-4 w-4 rounded border-cyan-200 text-cyan-700" />
+                    Select request
+                </label>
+            ) : null}
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -733,6 +817,74 @@ function RequestCard({ request, type }: { request: EmployeeManagementData["advan
                         </form>
                     </div>
                 ) : null}
+            </div>
+        </div>
+    );
+}
+
+function EmployeeBulkControls({
+    disabled,
+    pendingIds,
+    selectedIds,
+    onBulk,
+    onChangeSelected,
+}: {
+    disabled: boolean;
+    pendingIds: string[];
+    selectedIds: string[];
+    onBulk: (decision: "approved" | "rejected", ids: string[]) => void;
+    onChangeSelected: (ids: string[]) => void;
+}) {
+    if (!pendingIds.length) return null;
+    const selectedPendingIds = selectedIds.filter((id) => pendingIds.includes(id));
+    const allSelected = pendingIds.every((id) => selectedIds.includes(id));
+    return (
+        <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.055] p-3">
+            <label className="inline-flex items-center gap-2 text-xs font-black text-cyan-100">
+                <input checked={allSelected} disabled={disabled} type="checkbox" onChange={(event) => onChangeSelected(event.target.checked ? pendingIds : [])} className="h-4 w-4 rounded border-cyan-200 text-cyan-700" />
+                Select All Pending ({pendingIds.length})
+            </label>
+            <div className="mt-3 flex flex-wrap gap-2">
+                <button disabled={disabled || selectedPendingIds.length === 0} onClick={() => onBulk("approved", selectedPendingIds)} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white disabled:opacity-40">Approve Selected</button>
+                <button disabled={disabled || selectedPendingIds.length === 0} onClick={() => onBulk("rejected", selectedPendingIds)} className="rounded-xl bg-red-600 px-3 py-2 text-xs font-black text-white disabled:opacity-40">Reject Selected</button>
+                <button disabled={disabled} onClick={() => onBulk("approved", pendingIds)} className="rounded-xl border border-emerald-200/40 bg-white/10 px-3 py-2 text-xs font-black text-emerald-100 disabled:opacity-40">Approve All Pending</button>
+                <button disabled={disabled} onClick={() => onBulk("rejected", pendingIds)} className="rounded-xl border border-red-200/40 bg-white/10 px-3 py-2 text-xs font-black text-red-100 disabled:opacity-40">Reject All Pending</button>
+            </div>
+        </div>
+    );
+}
+
+function EmployeeBulkModal({
+    comment,
+    isPending,
+    modal,
+    onChangeComment,
+    onClose,
+    onConfirm,
+}: {
+    comment: string;
+    isPending: boolean;
+    modal: null | { decision: "approved" | "rejected"; ids: string[] };
+    onChangeComment: (value: string) => void;
+    onClose: () => void;
+    onConfirm: () => void;
+}) {
+    if (!modal) return null;
+    return (
+        <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/70 p-4 text-slate-950">
+            <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
+                <h2 className="text-xl font-black">Confirm Bulk {modal.decision === "approved" ? "Approval" : "Rejection"}</h2>
+                <p className="mt-2 text-sm font-semibold text-slate-600">You are about to {modal.decision === "approved" ? "approve" : "reject"} {modal.ids.length} pending requests. Continue?</p>
+                <label className="mt-4 block text-sm font-bold text-slate-700">
+                    {modal.decision === "rejected" ? "Rejection reason" : "Admin note optional"}
+                    <textarea value={comment} onChange={(event) => onChangeComment(event.target.value)} className="mt-2 min-h-28 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm font-semibold" />
+                </label>
+                <div className="mt-5 flex flex-wrap justify-end gap-2">
+                    <button disabled={isPending} onClick={onClose} className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 disabled:opacity-40">Cancel</button>
+                    <button disabled={isPending} onClick={onConfirm} className={`rounded-xl px-4 py-2 text-sm font-black text-white disabled:opacity-40 ${modal.decision === "approved" ? "bg-emerald-700" : "bg-red-700"}`}>
+                        {isPending ? "Processing..." : modal.decision === "approved" ? "Approve Requests" : "Reject Requests"}
+                    </button>
+                </div>
             </div>
         </div>
     );

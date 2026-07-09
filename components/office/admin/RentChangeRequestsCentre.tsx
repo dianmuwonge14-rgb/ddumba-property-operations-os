@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { CheckCircle2, Clock3, History, XCircle } from "lucide-react";
 import { decideRoomRentChange } from "@/app/actions/room-rent";
 import { PageHero, StatusChip } from "@/components/office/shared/EnterpriseUI";
@@ -25,9 +26,13 @@ function formatDate(value: string | null | undefined) {
 }
 
 export default function RentChangeRequestsCentre({ data }: Props) {
+    const router = useRouter();
     const [filter, setFilter] = useState<Filter>("pending");
     const [historyRoomId, setHistoryRoomId] = useState<string | null>(null);
     const [message, setMessage] = useState<string | null>(null);
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [bulkModal, setBulkModal] = useState<null | { decision: "approved" | "rejected"; ids: string[] }>(null);
+    const [bulkComment, setBulkComment] = useState("");
     const [isPending, startTransition] = useTransition();
 
     const lookups = useMemo(() => ({
@@ -57,8 +62,42 @@ export default function RentChangeRequestsCentre({ data }: Props) {
                 setMessage(null);
                 await decideRoomRentChange({ requestId: request.id, decision, comment });
                 setMessage(decision === "approved" ? "Rent change approved and applied." : "Rent change rejected. Old rent was kept.");
+                router.refresh();
             } catch (error) {
                 setMessage(error instanceof Error ? error.message : "Unable to decide rent request.");
+            }
+        });
+    }
+
+    function openBulk(decision: "approved" | "rejected", ids: string[]) {
+        const uniqueIds = Array.from(new Set(ids)).filter(Boolean);
+        if (!uniqueIds.length) {
+            setMessage("Select at least one pending rent request first.");
+            return;
+        }
+        setBulkComment("");
+        setBulkModal({ decision, ids: uniqueIds });
+    }
+
+    function runBulk() {
+        if (!bulkModal) return;
+        if (bulkModal.decision === "rejected" && !bulkComment.trim()) {
+            setMessage("Rejection reason is required.");
+            return;
+        }
+        startTransition(async () => {
+            try {
+                setMessage(null);
+                for (const id of bulkModal.ids) {
+                    await decideRoomRentChange({ requestId: id, decision: bulkModal.decision, comment: bulkComment.trim() });
+                }
+                setMessage(`${bulkModal.ids.length} rent change request(s) ${bulkModal.decision === "approved" ? "approved" : "rejected"}.`);
+                setSelectedIds([]);
+                setBulkModal(null);
+                setBulkComment("");
+                router.refresh();
+            } catch (error) {
+                setMessage(error instanceof Error ? error.message : "Unable to complete bulk rent decision.");
             }
         });
     }
@@ -93,10 +132,18 @@ export default function RentChangeRequestsCentre({ data }: Props) {
                         {message ? <p className="mt-4 rounded-2xl bg-blue-50 px-4 py-3 text-sm font-black text-blue-800">{message}</p> : null}
                     </div>
 
+                    <BulkRentControls
+                        disabled={isPending}
+                        pendingIds={allRequests.filter((request) => request.status === "pending").map((request) => request.id)}
+                        selectedIds={selectedIds}
+                        onBulk={openBulk}
+                        onChangeSelected={setSelectedIds}
+                    />
                     <div className="overflow-x-auto">
                         <table className="enterprise-table">
                             <thead>
                                 <tr>
+                                    <th className="text-left">Select</th>
                                     <th className="text-left">Tenant</th>
                                     <th className="text-left">Room</th>
                                     <th className="text-left">Landlord</th>
@@ -113,7 +160,7 @@ export default function RentChangeRequestsCentre({ data }: Props) {
                             <tbody>
                                 {visibleRequests.length === 0 ? (
                                     <tr>
-                                        <td colSpan={11} className="p-6 text-sm font-bold text-slate-500">No {filter} rent change requests.</td>
+                                        <td colSpan={12} className="p-6 text-sm font-bold text-slate-500">No {filter} rent change requests.</td>
                                     </tr>
                                 ) : visibleRequests.map((request) => {
                                     const room = lookups.rooms.get(request.room_id);
@@ -123,6 +170,11 @@ export default function RentChangeRequestsCentre({ data }: Props) {
                                     const requester = request.requested_by ? lookups.users.get(request.requested_by) : null;
                                     return (
                                         <tr key={request.id}>
+                                            <td>
+                                                {request.status === "pending" ? (
+                                                    <input checked={selectedIds.includes(request.id)} type="checkbox" onChange={() => setSelectedIds((current) => current.includes(request.id) ? current.filter((id) => id !== request.id) : [...current, request.id])} className="h-4 w-4 rounded border-slate-300 text-blue-700" />
+                                                ) : null}
+                                            </td>
                                             <td><p className="font-black">{tenant ?? "Vacant / no tenant"}</p><p className="text-xs text-slate-500">{request.reason}</p></td>
                                             <td>{room?.room_number ?? "Unnumbered"}</td>
                                             <td>{landlord ?? "No landlord"}</td>
@@ -182,8 +234,57 @@ export default function RentChangeRequestsCentre({ data }: Props) {
                         </div>
                     </section>
                 ) : null}
+                {bulkModal ? (
+                    <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/60 p-4">
+                        <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
+                            <h2 className="text-xl font-black text-slate-950">Confirm Bulk {bulkModal.decision === "approved" ? "Approval" : "Rejection"}</h2>
+                            <p className="mt-2 text-sm font-semibold text-slate-600">You are about to {bulkModal.decision === "approved" ? "approve" : "reject"} {bulkModal.ids.length} pending requests. Continue?</p>
+                            <label className="mt-4 block text-sm font-bold text-slate-700">
+                                {bulkModal.decision === "rejected" ? "Rejection reason" : "Admin note optional"}
+                                <textarea value={bulkComment} onChange={(event) => setBulkComment(event.target.value)} className="mt-2 min-h-28 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm font-semibold" />
+                            </label>
+                            <div className="mt-5 flex flex-wrap justify-end gap-2">
+                                <button disabled={isPending} onClick={() => setBulkModal(null)} className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 disabled:opacity-40">Cancel</button>
+                                <button disabled={isPending} onClick={runBulk} className={`rounded-xl px-4 py-2 text-sm font-black text-white disabled:opacity-40 ${bulkModal.decision === "approved" ? "bg-emerald-700" : "bg-red-700"}`}>
+                                    {isPending ? "Processing..." : bulkModal.decision === "approved" ? "Approve Requests" : "Reject Requests"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                ) : null}
             </div>
         </main>
+    );
+}
+
+function BulkRentControls({
+    disabled,
+    pendingIds,
+    selectedIds,
+    onBulk,
+    onChangeSelected,
+}: {
+    disabled: boolean;
+    pendingIds: string[];
+    selectedIds: string[];
+    onBulk: (decision: "approved" | "rejected", ids: string[]) => void;
+    onChangeSelected: (ids: string[]) => void;
+}) {
+    const selectedPendingIds = selectedIds.filter((id) => pendingIds.includes(id));
+    const allSelected = pendingIds.length > 0 && pendingIds.every((id) => selectedIds.includes(id));
+    return (
+        <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+            <label className="inline-flex items-center gap-3 text-sm font-black text-slate-700">
+                <input checked={allSelected} disabled={disabled || pendingIds.length === 0} type="checkbox" onChange={(event) => onChangeSelected(event.target.checked ? pendingIds : [])} className="h-4 w-4 rounded border-slate-300 text-blue-700" />
+                Select All Pending <span className="text-slate-400">({pendingIds.length})</span>
+            </label>
+            <div className="flex flex-wrap gap-2">
+                <button disabled={disabled || selectedPendingIds.length === 0} onClick={() => onBulk("approved", selectedPendingIds)} className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-black text-white disabled:opacity-40">Approve Selected</button>
+                <button disabled={disabled || selectedPendingIds.length === 0} onClick={() => onBulk("rejected", selectedPendingIds)} className="rounded-xl bg-red-700 px-3 py-2 text-xs font-black text-white disabled:opacity-40">Reject Selected</button>
+                <button disabled={disabled || pendingIds.length === 0} onClick={() => onBulk("approved", pendingIds)} className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-black text-emerald-800 disabled:opacity-40">Approve All Pending</button>
+                <button disabled={disabled || pendingIds.length === 0} onClick={() => onBulk("rejected", pendingIds)} className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-black text-red-800 disabled:opacity-40">Reject All Pending</button>
+            </div>
+        </div>
     );
 }
 

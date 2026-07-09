@@ -16,6 +16,19 @@ type Props = {
 };
 
 type Filter = "pending" | "approved" | "rejected";
+type ApprovalQueue =
+    | "rent"
+    | "payment"
+    | "balance"
+    | "landlordPayment"
+    | "landlordPaymentDetail"
+    | "landlordBulkRoom";
+type BulkModalState = {
+    decision: "approved" | "rejected";
+    ids: string[];
+    queue: ApprovalQueue;
+    queueLabel: string;
+} | null;
 type ModalState =
     | { type: "reject"; request: NotificationRentRequest }
     | { type: "reason"; request: NotificationRentRequest }
@@ -117,6 +130,14 @@ export default function NotificationsCentre({ data }: Props) {
     const [landlordBulkRoomDecisionNote, setLandlordBulkRoomDecisionNote] = useState("");
     const [message, setMessage] = useState<string | null>(null);
     const [actionLabel, setActionLabel] = useState<string | null>(null);
+    const [bulkModal, setBulkModal] = useState<BulkModalState>(null);
+    const [bulkComment, setBulkComment] = useState("");
+    const [selectedRentRequestIds, setSelectedRentRequestIds] = useState<string[]>([]);
+    const [selectedPaymentRequestIds, setSelectedPaymentRequestIds] = useState<string[]>([]);
+    const [selectedBalanceRequestIds, setSelectedBalanceRequestIds] = useState<string[]>([]);
+    const [selectedLandlordPaymentRequestIds, setSelectedLandlordPaymentRequestIds] = useState<string[]>([]);
+    const [selectedLandlordPaymentDetailRequestIds, setSelectedLandlordPaymentDetailRequestIds] = useState<string[]>([]);
+    const [selectedLandlordBulkRoomRequestIds, setSelectedLandlordBulkRoomRequestIds] = useState<string[]>([]);
     const [localLandlordPaymentStatuses, setLocalLandlordPaymentStatuses] = useState<Record<string, "approved" | "rejected">>({});
     const [isPending, startTransition] = useTransition();
 
@@ -417,6 +438,73 @@ export default function NotificationsCentre({ data }: Props) {
         executeLandlordBulkRoomDecision(landlordBulkRoomModal.request, "rejected", landlordBulkRoomDecisionNote);
     }
 
+    function openBulkDecision(queue: ApprovalQueue, queueLabel: string, decision: "approved" | "rejected", ids: string[]) {
+        const uniqueIds = Array.from(new Set(ids)).filter(Boolean);
+        if (uniqueIds.length === 0) {
+            setMessage("Select at least one pending request first.");
+            return;
+        }
+        setBulkComment("");
+        setBulkModal({ queue, queueLabel, decision, ids: uniqueIds });
+    }
+
+    function clearBulkSelection(queue: ApprovalQueue) {
+        if (queue === "rent") setSelectedRentRequestIds([]);
+        if (queue === "payment") setSelectedPaymentRequestIds([]);
+        if (queue === "balance") setSelectedBalanceRequestIds([]);
+        if (queue === "landlordPayment") setSelectedLandlordPaymentRequestIds([]);
+        if (queue === "landlordPaymentDetail") setSelectedLandlordPaymentDetailRequestIds([]);
+        if (queue === "landlordBulkRoom") setSelectedLandlordBulkRoomRequestIds([]);
+    }
+
+    function runBulkDecision() {
+        if (!bulkModal) return;
+        if (bulkModal.decision === "rejected" && !bulkComment.trim()) {
+            setMessage("Rejection reason is required for bulk rejection.");
+            return;
+        }
+
+        startTransition(async () => {
+            try {
+                setMessage(null);
+                setActionLabel(`${bulkModal.decision === "approved" ? "Approving" : "Rejecting"} ${bulkModal.ids.length} ${bulkModal.queueLabel.toLowerCase()}...`);
+                const comment = bulkModal.decision === "approved" ? bulkComment.trim() : bulkComment.trim();
+                if (bulkModal.queue === "rent") {
+                    for (const id of bulkModal.ids) await decideRoomRentChange({ requestId: id, decision: bulkModal.decision, comment });
+                }
+                if (bulkModal.queue === "payment") {
+                    for (const id of bulkModal.ids) await decidePaymentCorrection({ requestId: id, decision: bulkModal.decision, comment });
+                }
+                if (bulkModal.queue === "balance") {
+                    for (const id of bulkModal.ids) await decideTenantOutstandingBalanceAdjustment({ adjustmentId: id, decision: bulkModal.decision, comment });
+                }
+                if (bulkModal.queue === "landlordPayment") {
+                    for (const id of bulkModal.ids) await decideLandlordPaidExpenseRequest({ requestId: id, decision: bulkModal.decision, comment });
+                    setLocalLandlordPaymentStatuses((current) => {
+                        const next = { ...current };
+                        for (const id of bulkModal.ids) next[id] = bulkModal.decision;
+                        return next;
+                    });
+                }
+                if (bulkModal.queue === "landlordPaymentDetail") {
+                    for (const id of bulkModal.ids) await decideLandlordPaymentDetails({ detailId: id, decision: bulkModal.decision, comment });
+                }
+                if (bulkModal.queue === "landlordBulkRoom") {
+                    for (const id of bulkModal.ids) await reviewLandlordBulkRoomRequest({ requestId: id, decision: bulkModal.decision, adminComment: comment });
+                }
+                setMessage(`${bulkModal.ids.length} ${bulkModal.queueLabel.toLowerCase()} ${bulkModal.decision === "approved" ? "approved" : "rejected"}.`);
+                clearBulkSelection(bulkModal.queue);
+                setBulkModal(null);
+                setBulkComment("");
+                router.refresh();
+            } catch (error) {
+                setMessage(error instanceof Error ? error.message : "Unable to complete bulk action.");
+            } finally {
+                setActionLabel(null);
+            }
+        });
+    }
+
     return (
         <main className="enterprise-page">
             <div className="enterprise-shell">
@@ -456,10 +544,20 @@ export default function NotificationsCentre({ data }: Props) {
                             {message ? <p className="mt-4 rounded-2xl bg-blue-50 px-4 py-3 text-sm font-black text-blue-800">{message}</p> : null}
                             {actionLabel ? <p className="mt-3 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white">{actionLabel}</p> : null}
                         </div>
+                        <BulkApprovalControls
+                            disabled={isPending}
+                            label="Rent change requests"
+                            pendingIds={pendingRequests.map((request) => request.id)}
+                            selectedIds={selectedRentRequestIds}
+                            onChangeSelected={setSelectedRentRequestIds}
+                            onBulk={(decision, ids) => openBulkDecision("rent", "Rent change requests", decision, ids)}
+                        />
                         <ApprovalTable
                             data={safeData}
                             isPending={isPending}
+                            selectedIds={selectedRentRequestIds}
                             requests={visibleRequests}
+                            onToggleSelected={(id) => toggleSelectedId(selectedRentRequestIds, setSelectedRentRequestIds, id)}
                             onApprove={(request) => executeDecision(request, "approved", "")}
                             onReject={(request) => openRejectModal(request)}
                             onReason={(request) => setModal({ type: "reason", request })}
@@ -471,10 +569,20 @@ export default function NotificationsCentre({ data }: Props) {
                             <h2 className="text-xl font-black text-slate-950">Payment Correction Requests</h2>
                             <p className="text-sm font-semibold text-slate-500">Approve date, amount, and room corrections only after reviewing the office explanation.</p>
                         </div>
+                        <BulkApprovalControls
+                            disabled={isPending}
+                            label="Payment correction requests"
+                            pendingIds={pendingPaymentDateRequests.map((request) => request.id)}
+                            selectedIds={selectedPaymentRequestIds}
+                            onChangeSelected={setSelectedPaymentRequestIds}
+                            onBulk={(decision, ids) => openBulkDecision("payment", "Payment correction requests", decision, ids)}
+                        />
                         <PaymentDateApprovalTable
                             data={safeData}
                             isPending={isPending}
+                            selectedIds={selectedPaymentRequestIds}
                             requests={visiblePaymentDateRequests}
+                            onToggleSelected={(id) => toggleSelectedId(selectedPaymentRequestIds, setSelectedPaymentRequestIds, id)}
                             onApprove={(request) => executePaymentDateDecision(request, "approved", "")}
                             onReject={(request) => openPaymentRejectModal(request)}
                             onReason={(request) => setPaymentModal({ type: "reason", request })}
@@ -486,10 +594,20 @@ export default function NotificationsCentre({ data }: Props) {
                             <h2 className="text-xl font-black text-slate-950">Outstanding Balance Adjustment Requests</h2>
                             <p className="text-sm font-semibold text-slate-500">Approve office-requested tenant outstanding balance changes without deleting payment history.</p>
                         </div>
+                        <BulkApprovalControls
+                            disabled={isPending}
+                            label="Outstanding balance requests"
+                            pendingIds={pendingBalanceAdjustmentRequests.map((request) => request.id)}
+                            selectedIds={selectedBalanceRequestIds}
+                            onChangeSelected={setSelectedBalanceRequestIds}
+                            onBulk={(decision, ids) => openBulkDecision("balance", "Outstanding balance requests", decision, ids)}
+                        />
                         <BalanceAdjustmentApprovalTable
                             data={safeData}
                             isPending={isPending}
+                            selectedIds={selectedBalanceRequestIds}
                             requests={visibleBalanceAdjustmentRequests}
+                            onToggleSelected={(id) => toggleSelectedId(selectedBalanceRequestIds, setSelectedBalanceRequestIds, id)}
                             onApprove={(request) => executeBalanceAdjustmentDecision(request, "approved", "")}
                             onReject={(request) => openBalanceAdjustmentRejectModal(request)}
                             onReason={(request) => setBalanceAdjustmentModal({ type: "reason", request })}
@@ -500,10 +618,20 @@ export default function NotificationsCentre({ data }: Props) {
                             <h2 className="text-xl font-black text-slate-950">Landlord Payment Approval Queue</h2>
                             <p className="text-sm font-semibold text-slate-500">Office-submitted landlord payments from Expenses are approved here before they affect landlord ledgers.</p>
                         </div>
+                        <BulkApprovalControls
+                            disabled={isPending}
+                            label="Landlord payment requests"
+                            pendingIds={pendingLandlordPaymentRequests.map((request) => request.id)}
+                            selectedIds={selectedLandlordPaymentRequestIds}
+                            onChangeSelected={setSelectedLandlordPaymentRequestIds}
+                            onBulk={(decision, ids) => openBulkDecision("landlordPayment", "Landlord payment requests", decision, ids)}
+                        />
                         <LandlordPaymentApprovalTable
                             data={safeData}
                             isPending={isPending}
+                            selectedIds={selectedLandlordPaymentRequestIds}
                             requests={visibleLandlordPaymentRequests}
+                            onToggleSelected={(id) => toggleSelectedId(selectedLandlordPaymentRequestIds, setSelectedLandlordPaymentRequestIds, id)}
                             onApprove={(request) => executeLandlordPaymentDecision(request, "approved", "")}
                             onReject={(request) => openLandlordPaymentRejectModal(request)}
                             onReason={(request) => setLandlordPaymentModal({ type: "reason", request })}
@@ -515,10 +643,20 @@ export default function NotificationsCentre({ data }: Props) {
                             <h2 className="text-xl font-black text-slate-950">New Landlord & Room Inventory Approval Queue</h2>
                             <p className="text-sm font-semibold text-slate-500">Review office-submitted landlords, rooms, occupied tenants, vacant rooms, and opening balances before they become live.</p>
                         </div>
+                        <BulkApprovalControls
+                            disabled={isPending}
+                            label="Landlord inventory requests"
+                            pendingIds={pendingLandlordBulkRoomRequests.map((request) => request.id)}
+                            selectedIds={selectedLandlordBulkRoomRequestIds}
+                            onChangeSelected={setSelectedLandlordBulkRoomRequestIds}
+                            onBulk={(decision, ids) => openBulkDecision("landlordBulkRoom", "Landlord inventory requests", decision, ids)}
+                        />
                         <LandlordBulkRoomApprovalTable
                             data={safeData}
                             isPending={isPending}
+                            selectedIds={selectedLandlordBulkRoomRequestIds}
                             requests={visibleLandlordBulkRoomRequests}
+                            onToggleSelected={(id) => toggleSelectedId(selectedLandlordBulkRoomRequestIds, setSelectedLandlordBulkRoomRequestIds, id)}
                             onApprove={(request) => executeLandlordBulkRoomDecision(request, "approved", "")}
                             onReject={(request) => openLandlordBulkRoomRejectModal(request)}
                             onViewDetails={(request) => setLandlordBulkRoomModal({ type: "details", request })}
@@ -529,10 +667,20 @@ export default function NotificationsCentre({ data }: Props) {
                             <h2 className="text-xl font-black text-slate-950">Landlord Payment Details Approval Queue</h2>
                             <p className="text-sm font-semibold text-slate-500">Approve mobile money or bank details before they become active on landlord payment forms.</p>
                         </div>
+                        <BulkApprovalControls
+                            disabled={isPending}
+                            label="Landlord payment detail requests"
+                            pendingIds={pendingLandlordPaymentDetailRequests.map((request) => request.id)}
+                            selectedIds={selectedLandlordPaymentDetailRequestIds}
+                            onChangeSelected={setSelectedLandlordPaymentDetailRequestIds}
+                            onBulk={(decision, ids) => openBulkDecision("landlordPaymentDetail", "Landlord payment detail requests", decision, ids)}
+                        />
                         <LandlordPaymentDetailApprovalTable
                             data={safeData}
                             isPending={isPending}
+                            selectedIds={selectedLandlordPaymentDetailRequestIds}
                             requests={visibleLandlordPaymentDetailRequests}
+                            onToggleSelected={(id) => toggleSelectedId(selectedLandlordPaymentDetailRequestIds, setSelectedLandlordPaymentDetailRequestIds, id)}
                             onApprove={(request) => executeLandlordPaymentDetailDecision(request, "approved", "")}
                             onReject={(request) => openLandlordPaymentDetailRejectModal(request)}
                             onReason={(request) => setLandlordPaymentDetailModal({ type: "reason", request })}
@@ -656,15 +804,125 @@ export default function NotificationsCentre({ data }: Props) {
                     onReject={(request) => openLandlordBulkRoomRejectModal(request)}
                     onSubmitRejectDecision={submitLandlordBulkRoomRejectDecision}
                 />
+                <BulkDecisionModal
+                    comment={bulkComment}
+                    isPending={isPending}
+                    modal={bulkModal}
+                    onChangeComment={setBulkComment}
+                    onClose={() => {
+                        if (!isPending) setBulkModal(null);
+                    }}
+                    onConfirm={runBulkDecision}
+                />
             </div>
         </main>
+    );
+}
+
+function toggleSelectedId(selectedIds: string[], onChange: (ids: string[]) => void, id: string) {
+    onChange(selectedIds.includes(id) ? selectedIds.filter((selectedId) => selectedId !== id) : [...selectedIds, id]);
+}
+
+function BulkApprovalControls({
+    disabled,
+    label,
+    pendingIds,
+    selectedIds,
+    onBulk,
+    onChangeSelected,
+}: {
+    disabled: boolean;
+    label: string;
+    pendingIds: string[];
+    selectedIds: string[];
+    onBulk: (decision: "approved" | "rejected", ids: string[]) => void;
+    onChangeSelected: (ids: string[]) => void;
+}) {
+    const pendingSet = new Set(pendingIds);
+    const selectedPendingIds = selectedIds.filter((id) => pendingSet.has(id));
+    const allSelected = pendingIds.length > 0 && pendingIds.every((id) => selectedIds.includes(id));
+    return (
+        <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+            <label className="inline-flex items-center gap-3 text-sm font-black text-slate-700">
+                <input
+                    checked={allSelected}
+                    disabled={disabled || pendingIds.length === 0}
+                    type="checkbox"
+                    onChange={(event) => onChangeSelected(event.target.checked ? pendingIds : [])}
+                    className="h-4 w-4 rounded border-slate-300 text-blue-700"
+                />
+                Select All Pending <span className="text-slate-400">({pendingIds.length})</span>
+            </label>
+            <div className="flex flex-wrap gap-2">
+                <button disabled={disabled || selectedPendingIds.length === 0} onClick={() => onBulk("approved", selectedPendingIds)} className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-black text-white disabled:opacity-40">
+                    Approve Selected ({selectedPendingIds.length})
+                </button>
+                <button disabled={disabled || selectedPendingIds.length === 0} onClick={() => onBulk("rejected", selectedPendingIds)} className="rounded-xl bg-red-700 px-3 py-2 text-xs font-black text-white disabled:opacity-40">
+                    Reject Selected ({selectedPendingIds.length})
+                </button>
+                <button disabled={disabled || pendingIds.length === 0} onClick={() => onBulk("approved", pendingIds)} className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-black text-emerald-800 disabled:opacity-40">
+                    Approve All Pending
+                </button>
+                <button disabled={disabled || pendingIds.length === 0} onClick={() => onBulk("rejected", pendingIds)} className="rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-black text-red-800 disabled:opacity-40">
+                    Reject All Pending
+                </button>
+            </div>
+            <p className="text-xs font-bold text-slate-500">{label} use the same logic as single Approve/Reject.</p>
+        </div>
+    );
+}
+
+function BulkDecisionModal({
+    comment,
+    isPending,
+    modal,
+    onChangeComment,
+    onClose,
+    onConfirm,
+}: {
+    comment: string;
+    isPending: boolean;
+    modal: BulkModalState;
+    onChangeComment: (value: string) => void;
+    onClose: () => void;
+    onConfirm: () => void;
+}) {
+    if (!modal) return null;
+    const action = modal.decision === "approved" ? "approve" : "reject";
+    return (
+        <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/60 p-4">
+            <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
+                <h2 className="text-xl font-black text-slate-950">Confirm Bulk {modal.decision === "approved" ? "Approval" : "Rejection"}</h2>
+                <p className="mt-2 text-sm font-semibold text-slate-600">
+                    You are about to {action} {modal.ids.length} pending requests. Continue?
+                </p>
+                <p className="mt-2 text-xs font-black uppercase tracking-wide text-slate-400">{modal.queueLabel}</p>
+                <label className="mt-4 block text-sm font-bold text-slate-700">
+                    {modal.decision === "rejected" ? "Rejection reason" : "Admin note optional"}
+                    <textarea
+                        value={comment}
+                        onChange={(event) => onChangeComment(event.target.value)}
+                        className="mt-2 min-h-28 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-900"
+                        placeholder={modal.decision === "rejected" ? "Required reason for rejecting these requests" : "Optional note for the audit trail"}
+                    />
+                </label>
+                <div className="mt-5 flex flex-wrap justify-end gap-2">
+                    <button disabled={isPending} onClick={onClose} className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 disabled:opacity-40">Cancel</button>
+                    <button disabled={isPending} onClick={onConfirm} className={`rounded-xl px-4 py-2 text-sm font-black text-white disabled:opacity-40 ${modal.decision === "approved" ? "bg-emerald-700" : "bg-red-700"}`}>
+                        {isPending ? "Processing..." : modal.decision === "approved" ? "Approve Requests" : "Reject Requests"}
+                    </button>
+                </div>
+            </div>
+        </div>
     );
 }
 
 function ApprovalTable({
     data,
     isPending,
+    selectedIds = [],
     requests,
+    onToggleSelected,
     onApprove,
     onReject,
     onReason,
@@ -672,7 +930,9 @@ function ApprovalTable({
 }: {
     data: NotificationsCentreData;
     isPending: boolean;
+    selectedIds?: string[];
     requests: NotificationRentRequest[];
+    onToggleSelected?: (id: string) => void;
     onApprove: (request: NotificationRentRequest) => void;
     onReject: (request: NotificationRentRequest) => void;
     onReason: (request: NotificationRentRequest) => void;
@@ -683,6 +943,7 @@ function ApprovalTable({
             <table className="enterprise-table">
                 <thead>
                     <tr>
+                        <th className="text-left">Select</th>
                         <th className="text-left">Tenant</th>
                         <th className="text-left">Room</th>
                         <th className="text-left">Landlord</th>
@@ -700,11 +961,16 @@ function ApprovalTable({
                 </thead>
                 <tbody>
                     {requests.length === 0 ? (
-                        <tr><td colSpan={13} className="p-6 text-sm font-bold text-slate-500">No rent change requests in this state.</td></tr>
+                        <tr><td colSpan={14} className="p-6 text-sm font-bold text-slate-500">No rent change requests in this state.</td></tr>
                     ) : requests.map((request) => {
                         const difference = Number(request.new_rent ?? 0) - Number(request.old_rent ?? 0);
                         return (
                             <tr key={request.id}>
+                                <td>
+                                    {request.status === "pending" ? (
+                                        <input checked={selectedIds.includes(request.id)} type="checkbox" onChange={() => onToggleSelected?.(request.id)} className="h-4 w-4 rounded border-slate-300 text-blue-700" />
+                                    ) : null}
+                                </td>
                                 <td>{lookup(data.lookups.tenants, request.tenant_id, "Vacant / no tenant")}</td>
                                 <td>{lookup(data.lookups.rooms, request.room_id, "Unnumbered")}</td>
                                 <td>{lookup(data.lookups.landlords, request.landlord_id, "No landlord")}</td>
@@ -753,7 +1019,9 @@ function ApprovalTable({
 function PaymentDateApprovalTable({
     data,
     isPending,
+    selectedIds = [],
     requests,
+    onToggleSelected,
     onApprove,
     onReject,
     onReason,
@@ -761,7 +1029,9 @@ function PaymentDateApprovalTable({
 }: {
     data: NotificationsCentreData;
     isPending: boolean;
+    selectedIds?: string[];
     requests: NotificationPaymentDateRequest[];
+    onToggleSelected?: (id: string) => void;
     onApprove: (request: NotificationPaymentDateRequest) => void;
     onReject: (request: NotificationPaymentDateRequest) => void;
     onReason: (request: NotificationPaymentDateRequest) => void;
@@ -772,6 +1042,7 @@ function PaymentDateApprovalTable({
             <table className="enterprise-table">
                 <thead>
                     <tr>
+                        <th className="text-left">Select</th>
                         <th className="text-left">Tenant</th>
                         <th className="text-left">Room</th>
                         <th className="text-left">Office</th>
@@ -788,11 +1059,16 @@ function PaymentDateApprovalTable({
                 </thead>
                 <tbody>
                     {requests.length === 0 ? (
-                        <tr><td colSpan={12} className="p-6 text-sm font-bold text-slate-500">No payment correction requests in this state.</td></tr>
+                        <tr><td colSpan={13} className="p-6 text-sm font-bold text-slate-500">No payment correction requests in this state.</td></tr>
                     ) : requests.map((request) => {
                         const payment = paymentLookup(data, request.payment_id);
                         return (
                             <tr key={request.id}>
+                                <td>
+                                    {request.status === "pending" ? (
+                                        <input checked={selectedIds.includes(request.id)} type="checkbox" onChange={() => onToggleSelected?.(request.id)} className="h-4 w-4 rounded border-slate-300 text-blue-700" />
+                                    ) : null}
+                                </td>
                                 <td>{lookup(data.lookups.tenants, request.tenant_id, "Unknown tenant")}</td>
                                 <td>{lookup(data.lookups.rooms, request.room_id, "Unknown room")}</td>
                                 <td>{lookup(data.lookups.offices, request.office_id, "Needs review")}</td>
@@ -840,14 +1116,18 @@ function PaymentDateApprovalTable({
 function BalanceAdjustmentApprovalTable({
     data,
     isPending,
+    selectedIds = [],
     requests,
+    onToggleSelected,
     onApprove,
     onReject,
     onReason,
 }: {
     data: NotificationsCentreData;
     isPending: boolean;
+    selectedIds?: string[];
     requests: NotificationTenantBalanceAdjustmentRequest[];
+    onToggleSelected?: (id: string) => void;
     onApprove: (request: NotificationTenantBalanceAdjustmentRequest) => void;
     onReject: (request: NotificationTenantBalanceAdjustmentRequest) => void;
     onReason: (request: NotificationTenantBalanceAdjustmentRequest) => void;
@@ -857,6 +1137,7 @@ function BalanceAdjustmentApprovalTable({
             <table className="enterprise-table">
                 <thead>
                     <tr>
+                        <th className="text-left">Select</th>
                         <th className="text-left">Room</th>
                         <th className="text-left">Tenant</th>
                         <th className="text-left">Office</th>
@@ -872,9 +1153,14 @@ function BalanceAdjustmentApprovalTable({
                 </thead>
                 <tbody>
                     {requests.length === 0 ? (
-                        <tr><td colSpan={11} className="p-6 text-sm font-bold text-slate-500">No outstanding balance adjustment requests in this state.</td></tr>
+                        <tr><td colSpan={12} className="p-6 text-sm font-bold text-slate-500">No outstanding balance adjustment requests in this state.</td></tr>
                     ) : requests.map((request) => (
                         <tr key={`tenant-balance-adjustment:${request.id}`}>
+                            <td>
+                                {request.status === "pending" ? (
+                                    <input checked={selectedIds.includes(request.id)} type="checkbox" onChange={() => onToggleSelected?.(request.id)} className="h-4 w-4 rounded border-slate-300 text-blue-700" />
+                                ) : null}
+                            </td>
                             <td className="font-black text-slate-950">{lookup(data.lookups.rooms, request.room_id, "Unknown room")}</td>
                             <td>{lookup(data.lookups.tenants, request.tenant_id, "Unknown tenant")}</td>
                             <td>{lookup(data.lookups.offices, request.office_id, "Needs review")}</td>
@@ -917,7 +1203,9 @@ function BalanceAdjustmentApprovalTable({
 function LandlordPaymentApprovalTable({
     data,
     isPending,
+    selectedIds = [],
     requests,
+    onToggleSelected,
     onApprove,
     onReject,
     onReason,
@@ -925,7 +1213,9 @@ function LandlordPaymentApprovalTable({
 }: {
     data: NotificationsCentreData;
     isPending: boolean;
+    selectedIds?: string[];
     requests: NotificationLandlordPaymentRequest[];
+    onToggleSelected?: (id: string) => void;
     onApprove: (request: NotificationLandlordPaymentRequest) => void;
     onReject: (request: NotificationLandlordPaymentRequest) => void;
     onReason: (request: NotificationLandlordPaymentRequest) => void;
@@ -936,6 +1226,7 @@ function LandlordPaymentApprovalTable({
             <table className="enterprise-table">
                 <thead>
                     <tr>
+                        <th className="text-left">Select</th>
                         <th className="text-left">Office</th>
                         <th className="text-left">Landlord</th>
                         <th className="text-left">Payment Date</th>
@@ -952,9 +1243,14 @@ function LandlordPaymentApprovalTable({
                 </thead>
                 <tbody>
                     {requests.length === 0 ? (
-                        <tr><td colSpan={12} className="p-6 text-sm font-bold text-slate-500">No landlord payment requests in this state.</td></tr>
+                        <tr><td colSpan={13} className="p-6 text-sm font-bold text-slate-500">No landlord payment requests in this state.</td></tr>
                     ) : requests.map((request) => (
                         <tr key={`landlord-payment-approval:${request.id}`}>
+                            <td>
+                                {request.status === "pending" ? (
+                                    <input checked={selectedIds.includes(request.id)} type="checkbox" onChange={() => onToggleSelected?.(request.id)} className="h-4 w-4 rounded border-slate-300 text-blue-700" />
+                                ) : null}
+                            </td>
                             <td>{lookup(data.lookups.offices, request.office_id, "Needs review")}</td>
                             <td className="font-black text-slate-950">{lookup(data.lookups.landlords, request.landlord_id, "Unknown landlord")}</td>
                             <td>{formatDate(request.payment_date)}</td>
@@ -1012,7 +1308,9 @@ function LandlordPaymentApprovalTable({
 function LandlordPaymentDetailApprovalTable({
     data,
     isPending,
+    selectedIds = [],
     requests,
+    onToggleSelected,
     onApprove,
     onReject,
     onReason,
@@ -1020,7 +1318,9 @@ function LandlordPaymentDetailApprovalTable({
 }: {
     data: NotificationsCentreData;
     isPending: boolean;
+    selectedIds?: string[];
     requests: NotificationLandlordPaymentDetailRequest[];
+    onToggleSelected?: (id: string) => void;
     onApprove: (request: NotificationLandlordPaymentDetailRequest) => void;
     onReject: (request: NotificationLandlordPaymentDetailRequest) => void;
     onReason: (request: NotificationLandlordPaymentDetailRequest) => void;
@@ -1031,6 +1331,7 @@ function LandlordPaymentDetailApprovalTable({
             <table className="enterprise-table">
                 <thead>
                     <tr>
+                        <th className="text-left">Select</th>
                         <th className="text-left">Office</th>
                         <th className="text-left">Landlord</th>
                         <th className="text-left">Method</th>
@@ -1044,9 +1345,14 @@ function LandlordPaymentDetailApprovalTable({
                 </thead>
                 <tbody>
                     {requests.length === 0 ? (
-                        <tr><td colSpan={9} className="p-6 text-sm font-bold text-slate-500">No landlord payment-detail requests in this state.</td></tr>
+                        <tr><td colSpan={10} className="p-6 text-sm font-bold text-slate-500">No landlord payment-detail requests in this state.</td></tr>
                     ) : requests.map((request) => (
                         <tr key={`landlord-payment-detail-approval:${request.id}`}>
+                            <td>
+                                {request.status === "pending" ? (
+                                    <input checked={selectedIds.includes(request.id)} type="checkbox" onChange={() => onToggleSelected?.(request.id)} className="h-4 w-4 rounded border-slate-300 text-blue-700" />
+                                ) : null}
+                            </td>
                             <td>{lookup(data.lookups.offices, request.office_id, "Needs review")}</td>
                             <td className="font-black text-slate-950">{lookup(data.lookups.landlords, request.landlord_id, "Unknown landlord")}</td>
                             <td>
@@ -1095,7 +1401,9 @@ function LandlordPaymentDetailApprovalTable({
 function LandlordBulkRoomApprovalTable({
     data,
     isPending,
+    selectedIds = [],
     requests,
+    onToggleSelected,
     onApprove,
     onReject,
     onViewDetails,
@@ -1103,7 +1411,9 @@ function LandlordBulkRoomApprovalTable({
 }: {
     data: NotificationsCentreData;
     isPending: boolean;
+    selectedIds?: string[];
     requests: NotificationLandlordBulkRoomRequest[];
+    onToggleSelected?: (id: string) => void;
     onApprove: (request: NotificationLandlordBulkRoomRequest) => void;
     onReject: (request: NotificationLandlordBulkRoomRequest) => void;
     onViewDetails: (request: NotificationLandlordBulkRoomRequest) => void;
@@ -1114,6 +1424,7 @@ function LandlordBulkRoomApprovalTable({
             <table className="enterprise-table">
                 <thead>
                     <tr>
+                        {!readOnly ? <th className="text-left">Select</th> : null}
                         <th className="text-left">Submitted</th>
                         <th className="text-left">Office</th>
                         <th className="text-left">Landlord</th>
@@ -1129,12 +1440,19 @@ function LandlordBulkRoomApprovalTable({
                 </thead>
                 <tbody>
                     {requests.length === 0 ? (
-                        <tr><td colSpan={11} className="p-6 text-sm font-bold text-slate-500">No new landlord and room inventory requests in this state.</td></tr>
+                        <tr><td colSpan={readOnly ? 11 : 12} className="p-6 text-sm font-bold text-slate-500">No new landlord and room inventory requests in this state.</td></tr>
                     ) : requests.map((request) => {
                         const summary = request.summary ?? {};
                         const landlordPayload = request.landlord_payload ?? {};
                         return (
                             <tr key={`landlord-bulk-room-approval:${request.id}`}>
+                                {!readOnly ? (
+                                    <td>
+                                        {request.status === "pending" ? (
+                                            <input checked={selectedIds.includes(request.id)} type="checkbox" onChange={() => onToggleSelected?.(request.id)} className="h-4 w-4 rounded border-slate-300 text-blue-700" />
+                                        ) : null}
+                                    </td>
+                                ) : null}
                                 <td>{formatDate(request.created_at)}</td>
                                 <td>{lookup(data.lookups.offices, request.office_id, "Needs review")}</td>
                                 <td className="font-black text-slate-950">{payloadText(landlordPayload, "landlordName", "New landlord")}</td>
