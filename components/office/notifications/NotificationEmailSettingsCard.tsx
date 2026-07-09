@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { MailCheck, MailWarning } from "lucide-react";
-import { updateAccountNotificationEmail, updateMyNotificationEmail } from "@/app/actions/notification-email-settings";
+import { MailCheck, MailWarning, Send } from "lucide-react";
+import { sendTestNotificationEmail, updateAccountNotificationEmail, updateMyNotificationEmail } from "@/app/actions/notification-email-settings";
 import type { AdminNotificationEmailSettingsData, MyNotificationEmailSettings } from "@/lib/notifications/email-settings";
 
 export function MyNotificationEmailSettingsCard({ settings }: { settings: MyNotificationEmailSettings | null }) {
@@ -76,7 +76,32 @@ export function AdminNotificationEmailSettingsPanel({ data }: { data: AdminNotif
                         Provider: {data.providerConfigured ? data.providerName : `not configured. Required: ${data.providerRequired}`}
                     </p>
                 </div>
-                {message ? <p className="rounded-full bg-cyan-400/10 px-3 py-2 text-xs font-black text-cyan-100">{message}</p> : null}
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    {message ? <p className="rounded-full bg-cyan-400/10 px-3 py-2 text-xs font-black text-cyan-100">{message}</p> : null}
+                    <button
+                        disabled={isPending}
+                        onClick={() => {
+                            setMessage(null);
+                            startTransition(async () => {
+                                try {
+                                    const result = await sendTestNotificationEmail();
+                                    setMessage(result.message);
+                                } catch (error) {
+                                    setMessage(error instanceof Error ? error.message : "Could not send test email notification.");
+                                }
+                            });
+                        }}
+                        className="inline-flex items-center justify-center gap-2 rounded-2xl bg-cyan-400 px-4 py-2 text-sm font-black text-slate-950 shadow-sm transition hover:bg-cyan-300 disabled:opacity-50"
+                    >
+                        <Send size={16} />
+                        {isPending ? "Sending..." : "Send Test Email Notification"}
+                    </button>
+                </div>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <EmailSignal label="Email provider" value={data.providerConfigured ? `${data.providerName} configured` : "Not configured"} tone={data.providerConfigured ? "good" : "warn"} />
+                <EmailSignal label="Last email sent" value={data.lastEmailSentAt ? new Date(data.lastEmailSentAt).toLocaleString() : "No sent email yet"} tone={data.lastEmailSentAt ? "good" : "neutral"} />
+                <EmailSignal label="Failed email count" value={String(data.failedEmailCount)} tone={data.failedEmailCount > 0 ? "warn" : "good"} />
             </div>
             <div className="mt-4 overflow-x-auto">
                 <table className="min-w-[760px] w-full text-left text-xs">
@@ -141,7 +166,27 @@ export function AdminNotificationEmailSettingsPanel({ data }: { data: AdminNotif
                         <p className="mt-1 text-[11px] font-semibold text-slate-500">{log.error_message ?? log.provider ?? "Delivery logged"}</p>
                     </div>
                 ))}
+                {!data.recentLogs.length ? (
+                    <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
+                        <p className="text-xs font-black uppercase text-slate-300">No email logs yet</p>
+                        <p className="mt-1 text-[11px] font-semibold text-slate-500">Use the test button after configuring the provider.</p>
+                    </div>
+                ) : null}
             </div>
         </section>
+    );
+}
+
+function EmailSignal({ label, tone, value }: { label: string; tone: "good" | "neutral" | "warn"; value: string }) {
+    const className = tone === "good"
+        ? "border-emerald-400/20 bg-emerald-400/10 text-emerald-50"
+        : tone === "warn"
+            ? "border-amber-400/20 bg-amber-400/10 text-amber-50"
+            : "border-slate-400/20 bg-slate-400/10 text-slate-50";
+    return (
+        <div className={`rounded-2xl border p-4 ${className}`}>
+            <p className="text-[11px] font-black uppercase tracking-wide opacity-75">{label}</p>
+            <p className="mt-1 text-sm font-black">{value}</p>
+        </div>
     );
 }

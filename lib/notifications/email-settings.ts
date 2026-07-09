@@ -20,6 +20,8 @@ export type MyNotificationEmailSettings = {
 };
 
 export type AdminNotificationEmailSettingsData = {
+    failedEmailCount: number;
+    lastEmailSentAt: string | null;
     providerConfigured: boolean;
     providerName: string;
     providerRequired: string;
@@ -43,6 +45,13 @@ export type AdminNotificationEmailSettingsData = {
         verification_status: string | null;
     }>;
 };
+
+async function optionalRows(query: Promise<{ data: unknown[] | null; error: { message: string } | null }>) {
+    const result = await query;
+    if (result.error && /does not exist|schema cache|Could not find/i.test(result.error.message ?? "")) return [];
+    if (result.error) throw new Error(result.error.message);
+    return result.data ?? [];
+}
 
 function providerSummary() {
     const status = getNotificationEmailProviderStatus();
@@ -77,17 +86,22 @@ export const getMyNotificationEmailSettings = cache(async function getMyNotifica
 export const getAdminNotificationEmailSettingsData = cache(async function getAdminNotificationEmailSettingsData(): Promise<AdminNotificationEmailSettingsData> {
     const context = await requireCompanyAdminMode();
     if (!context.activeCompany?.id) {
-        return { recentLogs: [], settings: [], ...providerSummary() };
+        return { failedEmailCount: 0, lastEmailSentAt: null, recentLogs: [], settings: [], ...providerSummary() };
     }
     const db = createSupabaseAdminClient() as unknown as Db;
-    const [usersResult, settingsResult, logsResult] = await Promise.all([
+    const [usersResult, settingsRows, logRows, failedRows, sentRows] = await Promise.all([
         db.from("users").select("id,full_name,email,account_type,status").eq("company_id", context.activeCompany.id).order("full_name").limit(200),
-        db.from("account_notification_settings").select("*").eq("company_id", context.activeCompany.id).limit(500),
-        db.from("notification_email_logs").select("account_id,account_type,notification_email,email_status,provider,error_message,created_at").eq("company_id", context.activeCompany.id).order("created_at", { ascending: false }).limit(12),
+        optionalRows(db.from("account_notification_settings").select("*").eq("company_id", context.activeCompany.id).limit(500)),
+        optionalRows(db.from("notification_email_logs").select("account_id,account_type,notification_email,email_status,provider,error_message,created_at").eq("company_id", context.activeCompany.id).order("created_at", { ascending: false }).limit(12)),
+        optionalRows(db.from("notification_email_logs").select("id").eq("company_id", context.activeCompany.id).eq("email_status", "failed").limit(1000)),
+        optionalRows(db.from("notification_email_logs").select("sent_at,created_at").eq("company_id", context.activeCompany.id).eq("email_status", "sent").order("sent_at", { ascending: false, nullsFirst: false }).limit(1)),
     ]);
-    const settingsByAccount = new Map((settingsResult.data ?? []).map((row: Record<string, unknown>) => [String(row.account_id), row]));
+    const settingsByAccount = new Map((settingsRows as Array<Record<string, unknown>>).map((row) => [String(row.account_id), row]));
+    const lastSent = (sentRows[0] ?? null) as Record<string, unknown> | null;
     return {
-        recentLogs: logsResult.data ?? [],
+        failedEmailCount: failedRows.length,
+        lastEmailSentAt: lastSent ? String(lastSent.sent_at ?? lastSent.created_at ?? "") || null : null,
+        recentLogs: logRows as AdminNotificationEmailSettingsData["recentLogs"],
         settings: (usersResult.data ?? []).map((user: Record<string, unknown>) => {
             const setting = (settingsByAccount.get(String(user.id)) ?? {}) as Record<string, unknown>;
             return {

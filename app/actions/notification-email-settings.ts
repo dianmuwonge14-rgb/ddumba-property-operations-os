@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { logUserAction } from "@/lib/auth/audit";
 import { requireAuth, requireCompanyAdminMode } from "@/lib/auth/permissions";
+import { dispatchNotificationEmail } from "@/lib/notifications/email";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type Db = {
@@ -92,4 +93,38 @@ export async function updateAccountNotificationEmail(formData: FormData) {
     });
 
     revalidatePath("/office/admin/system-health");
+}
+
+export async function sendTestNotificationEmail() {
+    const context = await requireCompanyAdminMode();
+    if (!context.activeCompany?.id || !context.profile?.id) throw new Error("Admin login required.");
+    const db = createSupabaseAdminClient() as unknown as Db;
+    const { data: notification, error } = await db.from("notifications").insert({
+        action_url: "/office/admin/system-health",
+        channel: "system",
+        company_id: context.activeCompany.id,
+        delivery_status: "delivered",
+        is_read: false,
+        message: "This is a test email notification from DDUMBA OS System Health.",
+        office_id: context.activeOffice?.id ?? null,
+        recipient_id: context.profile.id,
+        recipient_type: "admin",
+        recipient_user_id: context.profile.id,
+        severity: "info",
+        title: "DDUMBA OS test email notification",
+    }).select("*").single();
+    if (error) throw new Error(error.message);
+
+    await dispatchNotificationEmail(notification, db);
+    await logUserAction({
+        action: "test_notification_email_sent",
+        entityType: "notifications",
+        entityId: notification.id,
+        companyId: context.activeCompany.id,
+        officeId: context.activeOffice?.id ?? null,
+        afterData: { notification_id: notification.id, recipient_user_id: context.profile.id },
+    });
+
+    revalidatePath("/office/admin/system-health");
+    return { ok: true, message: "Test notification email attempted. Check the email logs for sent/failed status." };
 }
