@@ -555,6 +555,7 @@ export async function requestRoomRentChange(input: {
     assertDate(input.effectiveDate);
     const { room, lease, tenant } = await getRoomContext(db, context.activeCompany.id, input.roomId);
     const roomOfficeId = room.office_id ?? lease?.office_id ?? context.activeOffice?.id ?? null;
+    const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
     if (context.isCompanyAdmin) {
         return adminDirectRoomRentChange({
             effectiveDate: input.effectiveDate,
@@ -563,13 +564,14 @@ export async function requestRoomRentChange(input: {
             roomId: input.roomId,
         });
     }
-    if (context.authMode !== "office") {
-        throw new Error("Only office accounts can send room rent changes for Admin approval.");
+    if (context.authMode !== "office" && !isCollector) {
+        throw new Error("Only office accounts and field collectors can send room rent changes for Admin approval.");
     }
-    if (!context.activeOffice?.id) throw new Error("Active office is required.");
-    if (!roomOfficeId || roomOfficeId !== context.activeOffice.id) {
+    if (context.authMode === "office" && !context.activeOffice?.id) throw new Error("Active office is required.");
+    if (context.authMode === "office" && (!roomOfficeId || roomOfficeId !== context.activeOffice?.id)) {
         throw new Error("Room is not in your active office.");
     }
+    if (!roomOfficeId) throw new Error("This room is missing an office assignment.");
 
     const now = new Date().toISOString();
     const oldRent = Number(room.monthly_rent ?? lease?.monthly_rent ?? tenant?.monthly_rent ?? 0);

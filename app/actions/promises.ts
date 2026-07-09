@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requirePermission } from "@/lib/auth/permissions";
+import { requireAuth, requirePermission } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getTenantCollectionContext } from "@/lib/collections/data";
@@ -45,8 +45,13 @@ function revalidatePromiseWorkflow() {
 }
 
 async function activeWriteContext() {
-    const context = await requirePermission("collections.manage");
-    if (!context.activeCompany?.id || !context.activeOffice?.id) {
+    const context = await requireAuth();
+    const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
+    const canManageCollections = context.isCompanyAdmin || context.permissions.includes("collections.manage");
+    if (!isCollector && !canManageCollections) {
+        throw new Error("You do not have permission to manage promises.");
+    }
+    if (!context.activeCompany?.id || (!isCollector && !context.activeOffice?.id)) {
         throw new Error("Active company and office are required.");
     }
     return context;
@@ -175,7 +180,7 @@ export async function editPromise(input: EditPromiseInput) {
         beforeData: existing,
         afterData: data,
         companyId: context.activeCompany!.id,
-        officeId: context.activeOffice!.id,
+        officeId: data.office_id ?? existing.office_id ?? context.activeOffice?.id,
     });
 
     revalidatePromiseWorkflow();
@@ -193,7 +198,7 @@ export async function createPromiseFollowup(input: PromiseFollowupInput) {
         entityType: "promise_followup",
         entityId: followup.id,
         companyId: context.activeCompany!.id,
-        officeId: context.activeOffice!.id,
+        officeId: promise.office_id ?? context.activeOffice?.id,
         afterData: followup,
     });
 
@@ -219,7 +224,8 @@ export async function fulfilPromise(input: PromiseStateInput) {
         tenantContext.lease?.office_id ??
         tenantContext.room?.office_id ??
         tenantContext.tenant.office_id ??
-        context.activeOffice!.id;
+        context.activeOffice?.id;
+    if (!resolvedOfficeId) throw new Error("Promise is missing office assignment.");
     const balanceBefore = Math.max(0, tenantContext.outstandingBalance);
     const balance = Math.max(0, balanceBefore - amount);
     const paidAt = new Date().toISOString();
@@ -360,7 +366,7 @@ export async function reschedulePromise(input: ReschedulePromiseInput) {
         beforeData: existing,
         afterData: data,
         companyId: context.activeCompany!.id,
-        officeId: context.activeOffice!.id,
+        officeId: data.office_id ?? existing.office_id ?? context.activeOffice?.id,
     });
 
     revalidatePromiseWorkflow();
@@ -402,7 +408,7 @@ async function setPromiseStatus(input: PromiseStateInput, status: "fulfilled" | 
         beforeData: existing,
         afterData: data,
         companyId: context.activeCompany!.id,
-        officeId: context.activeOffice!.id,
+        officeId: data.office_id ?? existing.office_id ?? context.activeOffice?.id,
     });
 
     revalidatePromiseWorkflow();

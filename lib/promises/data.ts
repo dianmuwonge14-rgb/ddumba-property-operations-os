@@ -1,5 +1,5 @@
 import { getScopedSupabase } from "@/lib/auth/query";
-import { requirePermission } from "@/lib/auth/permissions";
+import { requireAuth, requirePermission } from "@/lib/auth/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type {
     CollectionActionRow,
@@ -295,10 +295,14 @@ async function searchPromiseTenantRpc(term: string): Promise<PromiseTenantOption
 }
 
 export async function getPromiseInActiveOffice(promiseId: string) {
-    const context = await requirePermission("collections.read");
+    const context = await requireAuth();
     const { supabase } = await getScopedSupabase();
+    const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
 
-    if (!context.activeCompany?.id || !context.activeOffice?.id) {
+    if (!isCollector && !(context.isCompanyAdmin || context.permissions.includes("collections.read") || context.permissions.includes("collections.manage"))) {
+        throw new Error("You do not have permission to read promises.");
+    }
+    if (!context.activeCompany?.id || (!isCollector && !context.activeOffice?.id)) {
         throw new Error("Active company and office are required.");
     }
 
@@ -308,8 +312,8 @@ export async function getPromiseInActiveOffice(promiseId: string) {
         .eq("id", promiseId)
         .eq("company_id", context.activeCompany.id);
 
-    if (!(context.canAccessAllOffices || context.isCompanyAdmin)) {
-        query.eq("office_id", context.activeOffice.id);
+    if (!(context.canAccessAllOffices || context.isCompanyAdmin || isCollector)) {
+        query.eq("office_id", context.activeOffice!.id);
     }
 
     const { data, error } = await query.maybeSingle();
@@ -326,10 +330,14 @@ export async function getPromiseInActiveOffice(promiseId: string) {
 }
 
 export async function getTenantForPromise(tenantId: string) {
-    const context = await requirePermission("collections.read");
+    const context = await requireAuth();
     const { supabase } = await getScopedSupabase();
+    const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
 
-    if (!context.activeCompany?.id || !context.activeOffice?.id) {
+    if (!isCollector && !(context.isCompanyAdmin || context.permissions.includes("collections.read") || context.permissions.includes("collections.manage"))) {
+        throw new Error("You do not have permission to read tenant promises.");
+    }
+    if (!context.activeCompany?.id || (!isCollector && !context.activeOffice?.id)) {
         throw new Error("Active company and office are required.");
     }
 
@@ -348,8 +356,8 @@ export async function getTenantForPromise(tenantId: string) {
         throw new Error("Tenant not found in the active office.");
     }
 
-    const searchAllOffices = context.canAccessAllOffices || context.isCompanyAdmin;
-    if (!searchAllOffices && data.office_id !== context.activeOffice.id) {
+    const searchAllOffices = context.canAccessAllOffices || context.isCompanyAdmin || isCollector;
+    if (!searchAllOffices && data.office_id !== context.activeOffice?.id) {
         const [{ data: room }, { data: lease }] = await Promise.all([
             data.room_id
             ? await supabase
@@ -370,7 +378,7 @@ export async function getTenantForPromise(tenantId: string) {
                 .maybeSingle(),
         ]);
 
-        if ((lease?.office_id ?? room?.office_id ?? null) !== context.activeOffice.id) {
+        if ((lease?.office_id ?? room?.office_id ?? null) !== context.activeOffice?.id) {
             throw new Error("Tenant not found in the active office.");
         }
     }
@@ -403,11 +411,15 @@ function escapePromiseLike(value: string) {
 }
 
 export async function getPromiseTenantWriteContext(tenantId: string) {
-    const context = await requirePermission("collections.read");
+    const context = await requireAuth();
     const { supabase } = await getScopedSupabase();
+    const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
     const tenant = await getTenantForPromise(tenantId);
 
-    if (!context.activeCompany?.id || !context.activeOffice?.id) {
+    if (!isCollector && !(context.isCompanyAdmin || context.permissions.includes("collections.read") || context.permissions.includes("collections.manage"))) {
+        throw new Error("You do not have permission to write tenant promises.");
+    }
+    if (!context.activeCompany?.id || (!isCollector && !context.activeOffice?.id)) {
         throw new Error("Active company and office are required.");
     }
 
@@ -431,10 +443,11 @@ export async function getPromiseTenantWriteContext(tenantId: string) {
             .maybeSingle(),
     ]);
 
-    const resolvedOfficeId = tenant.office_id ?? room?.office_id ?? lease?.office_id ?? context.activeOffice.id;
-    const searchAllOffices = context.canAccessAllOffices || context.isCompanyAdmin;
+    const resolvedOfficeId = tenant.office_id ?? room?.office_id ?? lease?.office_id ?? context.activeOffice?.id ?? null;
+    if (!resolvedOfficeId) throw new Error("Tenant is missing office assignment.");
+    const searchAllOffices = context.canAccessAllOffices || context.isCompanyAdmin || isCollector;
 
-    if (!searchAllOffices && resolvedOfficeId !== context.activeOffice.id) {
+    if (!searchAllOffices && resolvedOfficeId !== context.activeOffice?.id) {
         throw new Error("Tenant belongs to another office.");
     }
 

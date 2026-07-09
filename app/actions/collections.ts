@@ -21,6 +21,10 @@ type DynamicDb = {
     from: (table: string) => any;
 };
 
+function isFieldCollectorContext(context: Awaited<ReturnType<typeof requireAuth>>) {
+    return context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
+}
+
 function assertPositiveAmount(amount: number, label: string) {
     if (!Number.isFinite(amount) || amount <= 0) {
         throw new Error(`${label} must be greater than zero.`);
@@ -376,9 +380,13 @@ export async function requestTenantOutstandingBalanceAdjustment(input: {
     roomId: string;
     tenantId: string;
 }) {
-    const context = await requirePermission("collections.payment.post");
-    if (!context.activeCompany?.id || !context.activeOffice?.id) throw new Error("Active company and office are required.");
-    const db = (context.isCompanyAdmin && !context.isOfficeMode ? createSupabaseAdminClient() : await createSupabaseServerClient()) as unknown as DynamicDb;
+    const context = await requireAuth();
+    const isCollector = isFieldCollectorContext(context);
+    if (!isCollector && !hasPermission(context, "collections.payment.post")) {
+        throw new Error("You do not have permission to request outstanding balance changes.");
+    }
+    if (!context.activeCompany?.id || (!isCollector && !context.activeOffice?.id)) throw new Error("Active company and office are required.");
+    const db = (context.isCompanyAdmin && !context.isOfficeMode ? createSupabaseAdminClient() : isCollector ? createSupabaseAdminClient() : await createSupabaseServerClient()) as unknown as DynamicDb;
     const newBalance = Number(input.newBalance);
     if (!Number.isFinite(newBalance) || newBalance < 0) throw new Error("New outstanding balance must be zero or greater.");
     const reason = input.reason.trim();
@@ -393,7 +401,7 @@ export async function requestTenantOutstandingBalanceAdjustment(input: {
         .maybeSingle();
     if (roomError) throw new Error(roomError.message);
     if (!room) throw new Error("Room not found.");
-    if (!(context.isCompanyAdmin || context.canAccessAllOffices) && room.office_id !== context.activeOffice.id) {
+    if (!isCollector && !(context.isCompanyAdmin || context.canAccessAllOffices) && room.office_id !== context.activeOffice?.id) {
         throw new Error("You can only adjust outstanding balances for your own office.");
     }
 
@@ -416,7 +424,7 @@ export async function requestTenantOutstandingBalanceAdjustment(input: {
             effective_date: input.effectiveDate,
             new_balance: newBalance,
             notes: input.notes || null,
-            office_id: room.office_id ?? context.activeOffice.id,
+            office_id: room.office_id ?? context.activeOffice?.id ?? null,
             old_balance: oldBalance,
             reason,
             requested_by: context.profile?.id ?? null,
@@ -441,7 +449,7 @@ export async function requestTenantOutstandingBalanceAdjustment(input: {
             companyId: context.activeCompany.id,
             db,
             newBalance,
-            officeId: room.office_id ?? context.activeOffice.id,
+            officeId: room.office_id ?? context.activeOffice?.id,
             oldBalance,
             reason,
             roomId: room.id,
@@ -453,7 +461,7 @@ export async function requestTenantOutstandingBalanceAdjustment(input: {
             entityId: data.id,
             entityType: "tenant_balance_adjustment",
             message: `Outstanding balance change requested for room ${room.room_number ?? "Unknown"} from UGX ${Math.round(oldBalance).toLocaleString()} to UGX ${Math.round(newBalance).toLocaleString()}.`,
-            officeId: room.office_id ?? context.activeOffice.id,
+            officeId: room.office_id ?? context.activeOffice?.id,
             recipientType: "admin",
             severity: "warning",
             title: "Pending outstanding balance adjustment",
@@ -465,7 +473,7 @@ export async function requestTenantOutstandingBalanceAdjustment(input: {
         entityType: "tenant_balance_adjustment",
         entityId: data.id,
         companyId: context.activeCompany.id,
-        officeId: room.office_id ?? context.activeOffice.id,
+        officeId: room.office_id ?? context.activeOffice?.id,
         beforeData: { room, tenant, oldBalance },
         afterData: data,
     });
@@ -1157,10 +1165,14 @@ export async function requestPaymentCorrection(input: {
     requestedRoomNumber?: string;
     reason: string;
 }) {
-    const context = await requirePermission("collections.payment.post");
-    const supabase = await createSupabaseServerClient();
+    const context = await requireAuth();
+    const isCollector = isFieldCollectorContext(context);
+    if (!isCollector && !hasPermission(context, "collections.payment.post")) {
+        throw new Error("You do not have permission to request payment corrections.");
+    }
+    const supabase = isCollector ? createSupabaseAdminClient() : await createSupabaseServerClient();
     const db = supabase as unknown as DynamicDb;
-    if (!context.activeCompany?.id || !context.activeOffice?.id) throw new Error("Active company and office are required.");
+    if (!context.activeCompany?.id || (!isCollector && !context.activeOffice?.id)) throw new Error("Active company and office are required.");
     const correctionType = normalizeCorrectionType(input.correctionType);
     const reason = input.reason.trim();
     if (!reason) throw new Error("Reason for payment correction is required.");
@@ -1173,7 +1185,7 @@ export async function requestPaymentCorrection(input: {
         .maybeSingle();
     if (paymentError) throw new Error(paymentError.message);
     if (!payment) throw new Error("Payment record not found.");
-    if (!(context.isCompanyAdmin || context.canAccessAllOffices) && payment.office_id !== context.activeOffice.id) {
+    if (!isCollector && !(context.isCompanyAdmin || context.canAccessAllOffices) && payment.office_id !== context.activeOffice?.id) {
         throw new Error("You can only request corrections for payments in your active office.");
     }
 
@@ -1205,7 +1217,7 @@ export async function requestPaymentCorrection(input: {
             db,
             context.activeCompany.id,
             input.requestedRoomNumber ?? "",
-            context.isCompanyAdmin || context.canAccessAllOffices ? null : context.activeOffice.id,
+            context.isCompanyAdmin || context.canAccessAllOffices || isCollector ? null : context.activeOffice?.id,
         );
         requestedRoom = contextForRoom.room;
         requestedTenant = contextForRoom.tenant;
@@ -1235,7 +1247,7 @@ export async function requestPaymentCorrection(input: {
         .insert({
             company_id: context.activeCompany.id,
             correction_type: correctionType,
-            office_id: payment.office_id ?? context.activeOffice.id,
+            office_id: payment.office_id ?? context.activeOffice?.id ?? null,
             original_amount: Number(payment.amount_paid ?? payment.amount ?? 0),
             original_payment_date: paymentBusinessDate(payment) || null,
             original_room_id: payment.room_id ?? null,
@@ -1261,7 +1273,7 @@ export async function requestPaymentCorrection(input: {
         companyId: context.activeCompany.id,
         entityId: data.id,
         message: `Payment ${correctionTypeLabel(correctionType)} requested. Reason: ${reason}`,
-        officeId: payment.office_id ?? context.activeOffice.id,
+        officeId: payment.office_id ?? context.activeOffice?.id,
         recipientType: "admin",
         severity: "warning",
         title: "Pending payment correction approval",
@@ -1272,7 +1284,7 @@ export async function requestPaymentCorrection(input: {
         entityType: "payment_correction_request",
         entityId: data.id,
         companyId: context.activeCompany.id,
-        officeId: payment.office_id ?? context.activeOffice.id,
+        officeId: payment.office_id ?? context.activeOffice?.id,
         beforeData: payment,
         afterData: data,
     });

@@ -1,5 +1,4 @@
 import PromiseCentre from "@/components/office/promises/PromiseCentre";
-import { hasPermission } from "@/lib/auth/permissions";
 import { requireCollectorContext } from "@/lib/collectors/data";
 import { getPromiseCentreData } from "@/lib/promises/data";
 
@@ -11,7 +10,7 @@ export default async function CollectorPromisesPage() {
         <PromiseCentre
             activeCompany={context.activeCompany}
             activeOffice={context.activeOffice}
-            canManage={hasPermission(context, "collections.manage") || hasPermission(context, "promises.manage")}
+            canManage
             data={data}
             entryMode="collector"
         />

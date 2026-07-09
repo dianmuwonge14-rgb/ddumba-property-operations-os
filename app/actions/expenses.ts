@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissions";
+import { requireAuth, requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
 import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -33,11 +33,13 @@ async function activeWriteContext() {
 }
 
 async function expenseCorrectionContext() {
-    try {
-        return await requirePermission("expenses.manage");
-    } catch (error) {
-        return requirePermission("collector.manage");
+    const context = await requireAuth();
+    const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
+    const canManageExpenses = context.isCompanyAdmin || context.permissions.includes("expenses.manage");
+    if (!isCollector && !canManageExpenses) {
+        throw new Error("You do not have permission to request expense corrections.");
     }
+    return context;
 }
 
 function assertAmount(amount: number) {
@@ -1526,7 +1528,8 @@ async function applyExpensePatch(db: { from: (table: string) => any }, expenseId
 
 export async function submitExpenseChangeRequest(input: SubmitExpenseChangeRequestInput) {
     const context = await expenseCorrectionContext();
-    const supabase = await createSupabaseServerClient();
+    const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
+    const supabase = isCollector ? createSupabaseAdminClient() : await createSupabaseServerClient();
     const db = supabase as unknown as { from: (table: string) => any };
     const companyId = context.activeCompany?.id;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
@@ -1534,7 +1537,7 @@ export async function submitExpenseChangeRequest(input: SubmitExpenseChangeReque
     if (!input.expenseId) throw new Error("Expense id is required.");
     if (!input.reason?.trim()) throw new Error("Reason for expense correction is required.");
     const expense = await loadExpenseForCompany(db, { companyId, expenseId: input.expenseId });
-    if (!context.isCompanyAdmin && context.activeOffice?.id && String(expense.office_id ?? "") !== context.activeOffice.id) {
+    if (!isCollector && !context.isCompanyAdmin && context.activeOffice?.id && String(expense.office_id ?? "") !== context.activeOffice.id) {
         throw new Error("You can only request corrections for expenses in your active office.");
     }
     const requestOfficeId = typeof expense.office_id === "string" && expense.office_id ? expense.office_id : context.activeOffice?.id ?? null;

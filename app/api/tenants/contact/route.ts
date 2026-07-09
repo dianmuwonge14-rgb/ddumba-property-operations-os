@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getScopedSupabase } from "@/lib/auth/query";
 import { canAccessOffice, requireAuth } from "@/lib/auth/permissions";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,9 @@ function cleanText(value: unknown, maxLength: number) {
 export async function PATCH(request: NextRequest) {
     try {
         const context = await requireAuth();
-        const { supabase } = await getScopedSupabase();
+        const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
+        const scoped = await getScopedSupabase();
+        const supabase = isCollector ? createSupabaseAdminClient() : scoped.supabase;
         const body = await request.json();
         const tenantId = cleanText(body.tenantId, 80);
         const fullName = cleanText(body.fullName, 160);
@@ -45,7 +48,7 @@ export async function PATCH(request: NextRequest) {
             resolvedOfficeId = room?.office_id ?? null;
         }
 
-        if (!(context.isCompanyAdmin || context.canAccessAllOffices) && !canAccessOffice(context, resolvedOfficeId)) {
+        if (!isCollector && !(context.isCompanyAdmin || context.canAccessAllOffices) && !canAccessOffice(context, resolvedOfficeId)) {
             return NextResponse.json({ error: "Tenant is outside your office." }, { status: 403 });
         }
 
