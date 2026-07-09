@@ -1,7 +1,19 @@
-import CollectorConsole from "@/components/office/collectors/CollectorConsole";
-import { getCollectorDashboardData } from "@/lib/collectors/data";
+import PromiseCentre from "@/components/office/promises/PromiseCentre";
+import { hasPermission } from "@/lib/auth/permissions";
+import { requireCollectorContext } from "@/lib/collectors/data";
+import { getPromiseCentreData } from "@/lib/promises/data";
 
 export default async function CollectorPromisesPage() {
-    const data = await getCollectorDashboardData();
-    return <CollectorConsole data={data} mode="promises" />;
+    const context = await requireCollectorContext();
+    const data = await getPromiseCentreData();
+
+    return (
+        <PromiseCentre
+            activeCompany={context.activeCompany}
+            activeOffice={context.activeOffice}
+            canManage={hasPermission(context, "collections.manage") || hasPermission(context, "promises.manage")}
+            data={data}
+            entryMode="collector"
+        />
+    );
 }

@@ -3,12 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Search, Send } from "lucide-react";
 import { createPromise, editPromise, reschedulePromise } from "@/app/actions/promises";
+import { recordCollectorPromise } from "@/app/actions/collectors";
 import TenantContactCard from "@/components/office/shared/TenantContactCard";
 import type { PromiseItem, PromiseTenantOption } from "@/lib/promises/types";
 
 type Props = {
     selectedPromise: PromiseItem | null;
     canManage: boolean;
+    entryMode?: "office" | "collector";
     onSaved: () => void;
     onClearSelection: () => void;
 };
@@ -21,7 +23,7 @@ function promiseDate(value: string | null | undefined) {
     return value ?? "";
 }
 
-export default function PromiseCommandPanel({ selectedPromise, canManage, onSaved, onClearSelection }: Props) {
+export default function PromiseCommandPanel({ selectedPromise, canManage, entryMode = "office", onSaved, onClearSelection }: Props) {
     const [tenantQuery, setTenantQuery] = useState("");
     const [tenantResults, setTenantResults] = useState<PromiseTenantOption[]>([]);
     const [selectedTenant, setSelectedTenant] = useState<PromiseTenantOption | null>(null);
@@ -169,12 +171,21 @@ export default function PromiseCommandPanel({ selectedPromise, canManage, onSave
                 }
                 await editPromise({ promiseId: selectedPromise.id, promisedAmount, promisedDate: date, notes: combinedNotes || undefined });
             } else {
-                await createPromise({
-                    tenantId: selectedTenant!.id,
-                    promisedAmount,
-                    promisedDate: date,
-                    notes: combinedNotes || undefined,
-                });
+                if (entryMode === "collector") {
+                    await recordCollectorPromise({
+                        tenantId: selectedTenant!.id,
+                        promisedAmount,
+                        promisedDate: date,
+                        notes: combinedNotes || undefined,
+                    });
+                } else {
+                    await createPromise({
+                        tenantId: selectedTenant!.id,
+                        promisedAmount,
+                        promisedDate: date,
+                        notes: combinedNotes || undefined,
+                    });
+                }
             }
             setMessageTone("success");
             setMessage(selectedPromise ? "Promise updated." : "Promise saved.");
@@ -193,7 +204,7 @@ export default function PromiseCommandPanel({ selectedPromise, canManage, onSave
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                     <p className="text-xs font-black uppercase tracking-wide text-cyan-300">Promise Entry</p>
-                    <h2 className="text-xl font-black text-white">{selectedPromise ? "Edit selected promise" : "Fast tenant promise"}</h2>
+                    <h2 className="text-xl font-black text-white">{selectedPromise ? "Edit selected promise" : entryMode === "collector" ? "Collector tenant promise" : "Fast tenant promise"}</h2>
                 </div>
                 <span className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-1 text-xs font-black ${isPending ? "bg-amber-300 text-slate-950" : "bg-emerald-300 text-slate-950"}`}>
                     <CheckCircle2 size={14} />

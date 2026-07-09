@@ -1,7 +1,17 @@
-import CollectorConsole from "@/components/office/collectors/CollectorConsole";
-import { getCollectorDashboardData } from "@/lib/collectors/data";
+import FastPaymentsEntry from "@/components/office/payments/FastPaymentsEntry";
+import { requireCollectorContext } from "@/lib/collectors/data";
 
 export default async function CollectorPaymentsPage() {
-    const data = await getCollectorDashboardData();
-    return <CollectorConsole data={data} mode="payments" />;
+    const context = await requireCollectorContext();
+
+    return (
+        <FastPaymentsEntry
+            activeCompany={context.activeCompany}
+            activeOffice={context.activeOffice}
+            canPostPayments
+            entryMode="collector"
+            isAdmin={false}
+            profile={context.profile}
+        />
+    );
 }

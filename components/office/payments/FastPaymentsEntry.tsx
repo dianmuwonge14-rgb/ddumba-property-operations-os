@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { AlertTriangle, Banknote, BrainCircuit, CalendarDays, CheckCircle2, CreditCard, Eye, History, Home, Loader2, Pencil, ReceiptText, Search, ShieldCheck, Smartphone, Trash2, UserPlus } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { adminCorrectPayment, recordCollection, requestPaymentCorrection, requestTenantOutstandingBalanceAdjustment } from "@/app/actions/collections";
+import { recordCollectorPayment } from "@/app/actions/collectors";
 import { replaceTenantFromPaymentsEntry } from "@/app/actions/room-occupancy";
 import TenantContactCard from "@/components/office/shared/TenantContactCard";
 import type { AdvanceRentAssistantItem, CollectionTenantResult, FastPaymentRecentItem, FastPaymentRecentTotals } from "@/lib/collections/types";
@@ -14,6 +15,7 @@ type Props = {
     activeOffice: Office | null;
     profile: UserProfile | null;
     canPostPayments: boolean;
+    entryMode?: "office" | "admin" | "collector";
     isAdmin: boolean;
 };
 type CorrectionType = "date_change" | "amount_change" | "room_change" | "remove_payment";
@@ -99,7 +101,9 @@ export default function FastPaymentsEntry({
     activeCompany,
     activeOffice,
     canPostPayments,
+    entryMode = "office",
     isAdmin,
+    profile,
 }: Props) {
     const [paymentDate, setPaymentDate] = useState(today());
     const [roomQuery, setRoomQuery] = useState("");
@@ -164,9 +168,11 @@ export default function FastPaymentsEntry({
     const selectedOfficeMismatch = Boolean(
         selectedTenant &&
         !isAdmin &&
+        entryMode !== "collector" &&
         activeOffice?.id &&
         (selectedTenant.office?.id ?? selectedTenant.room?.office_id ?? selectedTenant.tenant.office_id) !== activeOffice.id,
     );
+    const actorLabel = entryMode === "collector" ? `collector ${profile?.full_name ?? "Field Collector"}` : profile?.full_name ?? "Current user";
 
     useEffect(() => {
         roomInputRef.current?.focus();
@@ -507,14 +513,21 @@ export default function FastPaymentsEntry({
                     return;
                 }
 
-                const collection = await recordCollection({
-                    tenantId: selectedTenant.tenant.id,
-                    amount: paidAmount,
-                    paymentDate,
-                    paymentMethod: "cash",
-                    paymentKind: "tenant_normal",
-                    paymentSource: "tenant",
-                });
+                const collection = entryMode === "collector"
+                    ? await recordCollectorPayment({
+                        amount: paidAmount,
+                        paymentDate,
+                        paymentMethod: "cash",
+                        tenantId: selectedTenant.tenant.id,
+                    })
+                    : await recordCollection({
+                        tenantId: selectedTenant.tenant.id,
+                        amount: paidAmount,
+                        paymentDate,
+                        paymentMethod: "cash",
+                        paymentKind: "tenant_normal",
+                        paymentSource: "tenant",
+                    });
                 const allocationSummary = (collection as typeof collection & {
                     allocationSummary?: {
                         advanceAmount?: number;
@@ -540,7 +553,7 @@ export default function FastPaymentsEntry({
                     amount: Number(collection.amount_paid ?? paidAmount),
                     method: collection.payment_method ?? "cash",
                     paymentType: collection.type ?? "rent",
-                    recordedBy: "Current user",
+                    recordedBy: entryMode === "collector" ? `Entered by ${actorLabel}` : actorLabel,
                     balanceAfter: remainingBalance,
                     dateChangeRequestId: null,
                     dateChangeRequestStatus: null,
@@ -656,11 +669,11 @@ export default function FastPaymentsEntry({
                         <div>
                             <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black uppercase text-cyan-100">
                                 <ShieldCheck size={14} />
-                                {isAdmin ? "Admin tenant payments" : "Office tenant payments"}
+                                {entryMode === "collector" ? "Collector tenant payments" : isAdmin ? "Admin tenant payments" : "Office tenant payments"}
                             </div>
                             <h1 className="mt-3 text-3xl font-black sm:text-4xl">Tenant Payments Entry</h1>
                             <p className="mt-1 text-sm font-semibold text-slate-300">
-                                {activeCompany?.name ?? "Company"} · {isAdmin ? "All offices" : activeOffice?.office_name ?? activeOffice?.name ?? "Active office"}
+                                {activeCompany?.name ?? "Company"} · {entryMode === "collector" || isAdmin ? "All offices" : activeOffice?.office_name ?? activeOffice?.name ?? "Active office"}
                             </p>
                         </div>
                         <label className="block sm:w-60">

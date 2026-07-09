@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { logUserAction } from "@/lib/auth/audit";
-import { requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissions";
+import { hasPermission, requireAuth, requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getTenantCollectionContext } from "@/lib/collections/data";
@@ -680,8 +680,12 @@ function buildTenantRentAllocations(input: {
 }
 
 export async function recordCollection(input: RecordCollectionInput) {
-    const context = await requirePermission("collections.payment.post");
-    const supabase = await createSupabaseServerClient();
+    const context = await requireAuth();
+    const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
+    if (!isCollector && !hasPermission(context, "collections.payment.post")) {
+        throw new Error("You do not have permission to post tenant payments.");
+    }
+    const supabase = isCollector ? createSupabaseAdminClient() : await createSupabaseServerClient();
     const amount = Number(input.amount);
     assertPositiveAmount(amount, "Collection amount");
 

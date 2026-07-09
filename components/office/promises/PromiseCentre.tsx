@@ -14,6 +14,7 @@ type Props = {
     activeOffice: Office | null;
     canManage: boolean;
     data: PromiseCentreData;
+    entryMode?: "office" | "collector";
 };
 
 function money(value: number) {
@@ -44,7 +45,7 @@ function statusClass(status: string) {
     return "border-cyan-300/35 bg-cyan-300/10 text-cyan-100";
 }
 
-export default function PromiseCentre({ activeCompany, activeOffice, canManage, data }: Props) {
+export default function PromiseCentre({ activeCompany, activeOffice, canManage, data, entryMode = "office" }: Props) {
     const router = useRouter();
     const [selectedPromise, setSelectedPromise] = useState<PromiseItem | null>(null);
     const [query, setQuery] = useState("");
@@ -87,8 +88,8 @@ export default function PromiseCentre({ activeCompany, activeOffice, canManage, 
             <div className="enterprise-shell">
                 <PageHero
                     title="Promise Centre"
-                    subtitle={`${activeOffice?.office_name ?? activeOffice?.name ?? "All offices"}${activeCompany ? ` · ${activeCompany.name}` : ""}`}
-                    badge="Fast Promise Desk"
+                    subtitle={`${entryMode === "collector" ? "All offices" : activeOffice?.office_name ?? activeOffice?.name ?? "All offices"}${activeCompany ? ` · ${activeCompany.name}` : ""}`}
+                    badge={entryMode === "collector" ? "Collector Promise Desk" : "Fast Promise Desk"}
                 >
                     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                         <Mini label="Due Today" value={data.kpis.dueToday} tone="text-amber-600" />
@@ -111,6 +112,7 @@ export default function PromiseCentre({ activeCompany, activeOffice, canManage, 
                     <PromiseCommandPanel
                         canManage={canManage}
                         selectedPromise={selectedPromise}
+                        entryMode={entryMode}
                         onClearSelection={() => setSelectedPromise(null)}
                         onSaved={() => router.refresh()}
                     />
