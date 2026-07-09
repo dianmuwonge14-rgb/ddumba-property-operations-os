@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireAuth, requireCompanyAdminMode, hasPermission, canAccessOffice } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
+import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { AuthContext } from "@/lib/auth/types";
 
@@ -183,7 +184,7 @@ async function notify(input: {
     title: string;
 }) {
     const db = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
-    await db.from("notifications").insert({
+    await createNotificationWithEmail(db, {
         action_url: input.actionUrl,
         channel: "in_app",
         company_id: input.companyId,

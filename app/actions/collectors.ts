@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { logUserAction } from "@/lib/auth/audit";
 import { requireAuth, requirePermission } from "@/lib/auth/permissions";
+import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { recordCollection } from "./collections";
@@ -303,7 +304,7 @@ export async function submitCollectorMoney(input: { amount: number; officeId: st
         status: "pending",
         submissionId: data.id,
     });
-    await db.from("notifications").insert({
+    await createNotificationWithEmail(db, {
         action_url: "/office/collector/submissions",
         channel: "in_app",
         company_id: context.activeCompany.id,
@@ -370,7 +371,7 @@ export async function decideCollectorMoneySubmission(input: { comment?: string; 
         }
     }
 
-    await db.from("notifications").insert({
+    await createNotificationWithEmail(db, {
         action_url: "/office/collector/submissions",
         channel: "in_app",
         company_id: context.activeCompany.id,

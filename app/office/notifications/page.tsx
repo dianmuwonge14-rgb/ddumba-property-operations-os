@@ -1,20 +1,37 @@
 import NotificationsCentre from "@/components/office/notifications/NotificationsCentre";
+import { MyNotificationEmailSettingsCard } from "@/components/office/notifications/NotificationEmailSettingsCard";
 import { getNotificationsCentreData } from "@/lib/notifications/data";
+import { getMyNotificationEmailSettings } from "@/lib/notifications/email-settings";
 
 export const dynamic = "force-dynamic";
 
 export default async function OfficeNotificationsPage() {
     let data: Awaited<ReturnType<typeof getNotificationsCentreData>> | null = null;
+    let emailSettings: Awaited<ReturnType<typeof getMyNotificationEmailSettings>> | null = null;
     let loadingError: string | null = null;
 
     try {
-        data = await getNotificationsCentreData();
+        [data, emailSettings] = await Promise.all([
+            getNotificationsCentreData(),
+            getMyNotificationEmailSettings(),
+        ]);
     } catch (error) {
         loadingError = error instanceof Error ? error.message : "Unknown notifications loading error.";
         console.error("Notifications could not load:", loadingError);
     }
 
-    if (data) return <NotificationsCentre data={data} />;
+    if (data) {
+        return (
+            <>
+                <div className="enterprise-page pb-0">
+                    <div className="enterprise-shell">
+                        <MyNotificationEmailSettingsCard settings={emailSettings} />
+                    </div>
+                </div>
+                <NotificationsCentre data={data} />
+            </>
+        );
+    }
 
     return (
         <main className="enterprise-page">

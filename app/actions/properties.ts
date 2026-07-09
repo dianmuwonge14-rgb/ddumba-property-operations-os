@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { canAccessOffice, requirePermission } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
+import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getPropertyInActiveOffice, getRoomInActiveOffice } from "@/lib/properties/data";
 import type {
@@ -86,7 +87,7 @@ async function notifyAdmin(supabase: LooseSupabase, input: {
     message: string;
     title: string;
 }) {
-    await supabase.from("notifications").insert({
+    await createNotificationWithEmail(supabase, {
         action_url: "/office/notifications",
         channel: "in_app",
         company_id: input.companyId,
@@ -110,7 +111,7 @@ async function notifyOffice(supabase: LooseSupabase, input: {
     title: string;
     severity?: string;
 }) {
-    await supabase.from("notifications").insert({
+    await createNotificationWithEmail(supabase, {
         action_url: "/office/notifications",
         channel: "in_app",
         company_id: input.companyId,

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { logUserAction } from "@/lib/auth/audit";
 import { canAccessOffice, requireAuth, requireCompanyAdminMode } from "@/lib/auth/permissions";
+import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type Db = { from: (table: string) => any };
@@ -120,7 +121,7 @@ async function notify(db: Db, input: {
     entityType?: string;
     entityId?: string | null;
 }) {
-    await db.from("notifications").insert({
+    await createNotificationWithEmail(db, {
         action_url: "/office/notifications",
         channel: "in_app",
         company_id: input.companyId,

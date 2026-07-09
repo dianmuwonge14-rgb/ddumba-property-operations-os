@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
+import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getExpenseInActiveOffice } from "@/lib/expenses/data";
@@ -444,7 +445,7 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
         throw new Error(`Approval request could not be created: ${requestError.message}`);
     }
 
-    await db.from("notifications").insert({
+    await createNotificationWithEmail(db, {
         action_url: "/office/notifications",
         channel: "in_app",
         company_id: companyId,
@@ -780,7 +781,7 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
             .single();
         if (error) throw new Error(`Employee extra approval request could not be created: ${error.message}`);
         request = data;
-        await db.from("notifications").insert({
+        await createNotificationWithEmail(db, {
             action_url: "/office/notifications",
             channel: "in_app",
             company_id: companyId,
@@ -1282,7 +1283,7 @@ async function createApprovedLandlordAdvanceFromExpenseRequest(input: {
         const scheduleInsert = await input.db.from("landlord_advance_repayment_schedule").insert(scheduleRows);
         if (scheduleInsert.error && !isMissingSchemaError(scheduleInsert.error)) throw new Error(scheduleInsert.error.message);
     }
-    await input.db.from("notifications").insert({
+    await createNotificationWithEmail(input.db, {
         action_url: "/office/landlord-payments",
         channel: "in_app",
         company_id: input.companyId,
@@ -1362,7 +1363,7 @@ async function createOfficeDecisionNotification(db: { from: (table: string) => a
     message: string;
     severity: string;
 }) {
-    await db.from("notifications").insert({
+    await createNotificationWithEmail(db, {
         action_url: `/office/expenses?request=${input.requestId}`,
         channel: "in_app",
         company_id: input.companyId,
@@ -1386,7 +1387,7 @@ async function createEmployeeExpenseDecisionNotification(db: { from: (table: str
     message: string;
     severity: string;
 }) {
-    await db.from("notifications").insert({
+    await createNotificationWithEmail(db, {
         action_url: `/office/expenses?employeeExpenseRequest=${input.requestId}`,
         channel: "in_app",
         company_id: input.companyId,

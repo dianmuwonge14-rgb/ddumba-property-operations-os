@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { logUserAction } from "@/lib/auth/audit";
 import { hasPermission, requireAuth, requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissions";
+import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getTenantCollectionContext } from "@/lib/collections/data";
@@ -304,7 +305,7 @@ async function notifyPaymentDateChange(db: DynamicDb, input: {
     severity?: string;
     entityId?: string;
 }) {
-    const { error } = await db.from("notifications").insert({
+    await createNotificationWithEmail(db, {
         action_url: "/office/notifications",
         channel: "in_app",
         company_id: input.companyId,
@@ -318,7 +319,6 @@ async function notifyPaymentDateChange(db: DynamicDb, input: {
         severity: input.severity ?? "information",
         title: input.title,
     });
-    if (error) throw new Error(error.message);
 }
 
 function isMissingSchemaError(error: { code?: string; message?: string } | null | undefined) {

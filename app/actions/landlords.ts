@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
+import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getLandlordInCompany, getPropertyForLandlordAssignment } from "@/lib/landlords/data";
 import { getMoveInPayableDecision } from "@/lib/landlords/payable-cutoff";
@@ -124,7 +125,7 @@ async function createFinanceNotification(db: LooseDb, input: {
     severity?: string;
     entityId?: string | null;
 }) {
-    const insert = await db.from("notifications").insert({
+    await createNotificationWithEmail(db, {
         action_url: "/office/landlord-payments",
         channel: "in_app",
         company_id: input.companyId,
@@ -138,7 +139,6 @@ async function createFinanceNotification(db: LooseDb, input: {
         severity: input.severity ?? "information",
         title: input.title,
     });
-    if (insert.error) throw new Error(insert.error.message);
 }
 
 export async function createLandlord(input: CreateLandlordInput) {
@@ -1819,7 +1819,7 @@ export async function submitLandlordPaymentDetails(input: LandlordPaymentDetails
         .single();
     if (error) throw new Error(error.message);
 
-    await db.from("notifications").insert({
+    await createNotificationWithEmail(db, {
         action_url: "/office/notifications",
         channel: "in_app",
         company_id: companyId,
@@ -2029,16 +2029,16 @@ function defaultPaymentDetailLabel(method: "cash" | "mobile_money" | "bank", inp
 }
 
 async function notifyPaymentDetailDecision(db: LooseDb, input: { companyId: string; detail: Record<string, unknown>; title: string; message: string; severity: string }) {
-    await db.from("notifications").insert({
+    await createNotificationWithEmail(db, {
         action_url: "/office/landlords",
         channel: "in_app",
         company_id: input.companyId,
         delivery_status: "pending",
-        entity_id: input.detail.id,
+        entity_id: input.detail.id ? String(input.detail.id) : null,
         entity_type: "landlord_payment_detail",
         is_read: false,
         message: input.message,
-        office_id: input.detail.office_id,
+        office_id: input.detail.office_id ? String(input.detail.office_id) : null,
         recipient_type: "office",
         severity: input.severity,
         title: input.title,

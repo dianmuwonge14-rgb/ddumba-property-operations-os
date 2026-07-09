@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { logUserAction } from "@/lib/auth/audit";
 import { requireAuth, requireCompanyAdminMode } from "@/lib/auth/permissions";
+import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getMoveInPayableDecision } from "@/lib/landlords/payable-cutoff";
@@ -201,7 +202,7 @@ async function notify(db: Db, input: {
     severity?: string;
     entityId?: string;
 }) {
-    const { error } = await db.from("notifications").insert({
+    await createNotificationWithEmail(db, {
         action_url: "/office/notifications",
         channel: "in_app",
         company_id: input.companyId,
@@ -215,7 +216,6 @@ async function notify(db: Db, input: {
         severity: input.severity ?? "information",
         title: input.title,
     });
-    if (error) throw new Error(error.message);
 }
 
 async function updateRoomTenantLeaseRent(db: Db, input: {

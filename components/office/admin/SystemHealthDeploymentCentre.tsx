@@ -1,7 +1,15 @@
 import { Activity, BadgeCheck, CheckCircle2, Cloud, Code2, Database, Radio, ServerCog, ShieldCheck, TimerReset } from "lucide-react";
+import { AdminNotificationEmailSettingsPanel } from "@/components/office/notifications/NotificationEmailSettingsCard";
+import type { AdminNotificationEmailSettingsData } from "@/lib/notifications/email-settings";
 import type { ProductionReadinessStatus, ReadinessCheck } from "@/lib/production-readiness/types";
 
-export default function SystemHealthDeploymentCentre({ status }: { status: ProductionReadinessStatus }) {
+export default function SystemHealthDeploymentCentre({
+    notificationEmailSettings,
+    status,
+}: {
+    notificationEmailSettings?: AdminNotificationEmailSettingsData;
+    status: ProductionReadinessStatus;
+}) {
     return (
         <main className="mx-auto flex w-full max-w-[1800px] flex-col gap-5 px-4 pb-10 text-white">
             <section className="enterprise-dark-panel rounded-[2rem] p-6">
@@ -70,6 +78,8 @@ export default function SystemHealthDeploymentCentre({ status }: { status: Produ
                     </div>
                 </div>
             </section>
+
+            {notificationEmailSettings ? <AdminNotificationEmailSettingsPanel data={notificationEmailSettings} /> : null}
         </main>
     );
 }
