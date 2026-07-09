@@ -8,9 +8,10 @@ import { updateTenantContact, vacateTenant } from "@/app/actions/tenants";
 import type { CollectionTenantResult } from "@/lib/collections/types";
 
 type Props = {
-    tenantContext: CollectionTenantResult | null;
     canEdit?: boolean;
+    isAdmin?: boolean;
     onTenantUpdated?: () => Promise<void> | void;
+    tenantContext: CollectionTenantResult | null;
 };
 
 function riskLevelFromReliability(score: number) {
@@ -46,7 +47,7 @@ function formatDate(value: string | null | undefined) {
     }).format(new Date(value));
 }
 
-export default function TenantSnapshot({ tenantContext, canEdit = true, onTenantUpdated }: Props) {
+export default function TenantSnapshot({ tenantContext, canEdit = true, isAdmin = false, onTenantUpdated }: Props) {
     const router = useRouter();
     const [isEditing, setIsEditing] = useState(false);
     const [isEditingSponsor, setIsEditingSponsor] = useState(false);
@@ -176,13 +177,15 @@ export default function TenantSnapshot({ tenantContext, canEdit = true, onTenant
             try {
                 setMessage(null);
                 if (!room?.id) throw new Error("This tenant is not linked to a room.");
-                await requestRoomRentChange({
+                const result = await requestRoomRentChange({
                     roomId: room.id,
                     proposedRent: Number(proposedRent),
                     reason: rentChangeReason,
                     effectiveDate: rentChangeEffectiveDate,
-                });
-                setMessage("Rent change request sent for admin approval. Current rent has not changed.");
+                }) as { status?: string } | null;
+                setMessage(result?.status === "approved"
+                    ? "Admin changed room rent directly. Tenant, landlord, and dashboard calculations were refreshed."
+                    : "Rent change request sent for admin approval. Current rent has not changed.");
                 setIsRequestingRentChange(false);
                 await onTenantUpdated?.();
                 router.refresh();
@@ -286,9 +289,13 @@ export default function TenantSnapshot({ tenantContext, canEdit = true, onTenant
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                     <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                         <div>
-                            <h3 className="text-sm font-black uppercase tracking-wide text-slate-700">Room Rent Approval Workflow</h3>
+                            <h3 className="text-sm font-black uppercase tracking-wide text-slate-700">
+                                {isAdmin ? "Direct Admin Rent Change" : "Room Rent Approval Workflow"}
+                            </h3>
                             <p className="mt-1 text-sm font-semibold text-slate-600">
-                                Request a rent change for this tenant&apos;s room. Rent stays unchanged until admin approves.
+                                {isAdmin
+                                    ? "Admin rent changes apply immediately and refresh tenant, landlord, and dashboard calculations."
+                                    : "Request a rent change for this tenant's room. Rent stays unchanged until admin approves."}
                             </p>
                             <div className="mt-3 grid grid-cols-1 gap-2 text-sm md:grid-cols-4">
                                 <Detail label="Tenant" value={tenant.full_name ?? "Unnamed tenant"} />
@@ -303,7 +310,7 @@ export default function TenantSnapshot({ tenantContext, canEdit = true, onTenant
                                 onClick={openRentChangeRequest}
                                 className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
                             >
-                                Request Rent Change
+                                {isAdmin ? "Update Rent Now" : "Request Rent Change"}
                             </button>
                         ) : null}
                     </div>
@@ -339,7 +346,7 @@ export default function TenantSnapshot({ tenantContext, canEdit = true, onTenant
                             </label>
                             <div className="flex flex-wrap gap-2 md:col-span-3">
                                 <button disabled={isPending} onClick={submitRentChangeRequest} className="rounded-xl bg-blue-700 px-4 py-3 text-sm font-black text-white disabled:opacity-40">
-                                    Send For Admin Approval
+                                    {isAdmin ? "Update Rent Now" : "Send for Admin Approval"}
                                 </button>
                                 <button disabled={isPending} onClick={() => setIsRequestingRentChange(false)} className="rounded-xl bg-white px-4 py-3 text-sm font-black text-slate-700 ring-1 ring-slate-200 disabled:opacity-40">
                                     Cancel

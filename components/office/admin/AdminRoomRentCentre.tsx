@@ -90,7 +90,7 @@ export default function AdminRoomRentCentre({ pendingRequests }: Props) {
                     reason,
                     effectiveDate,
                 });
-                setMessage("Admin rent change saved, rent history created, and calculations will refresh.");
+                setMessage("Admin changed room rent directly. Tenant, landlord, payment entry, and dashboard calculations will refresh.");
                 setActiveRoom(null);
                 setNewRent("");
                 setReason("");
@@ -182,7 +182,7 @@ export default function AdminRoomRentCentre({ pendingRequests }: Props) {
                                     <Mini label="Outstanding" value={money(room.outstandingBalance)} />
                                     <Mini label="Last Change" value={room.lastRentChange ? `${money(room.lastRentChange.oldRent)} → ${money(room.lastRentChange.newRent)}` : "No history"} />
                                     <button onClick={() => { setActiveRoom(room); setNewRent(String(room.currentRent)); }} className="rounded-xl bg-blue-700 px-3 py-2 text-xs font-black text-white">
-                                        Update Rent
+                                        Update Rent Now
                                     </button>
                                 </div>
                             </div>

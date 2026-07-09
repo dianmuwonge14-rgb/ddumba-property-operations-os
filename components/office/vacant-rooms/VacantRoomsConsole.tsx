@@ -210,6 +210,7 @@ export default function VacantRoomsConsole({ data }: Props) {
 
                 <section className="mx-auto mt-5 max-w-7xl">
                     <RoomActionPanel
+                        isAdmin={data.isAdmin}
                         room={selectedRoom ? {
                             id: selectedRoom.id,
                             roomNumber: selectedRoom.roomNumber,

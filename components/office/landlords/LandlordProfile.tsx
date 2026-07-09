@@ -866,6 +866,7 @@ function LandlordProfile({
                 )}
                 <div className="mt-4">
                     <RoomActionPanel
+                        isAdmin={canAdminManage}
                         room={selectedRoomAction ? {
                             id: selectedRoomAction.room.id,
                             roomNumber: selectedRoomAction.room.room_number,
@@ -977,6 +978,7 @@ function LandlordProfile({
                             <TenantSnapshot
                                 tenantContext={tenantContext}
                                 canEdit={canManageCollections}
+                                isAdmin={canAdminManage}
                                 onTenantUpdated={handleTenantSaved}
                             />
                         </div>

@@ -209,6 +209,7 @@ export default function PropertiesConsole({ data, canManage, isAdmin }: Props) {
                             </div>
                         ) : null}
                         <PropertyDetails
+                            isAdmin={isAdmin}
                             onSaved={refresh}
                             property={selectedProperty}
                             selectedRoom={selectedRoom}

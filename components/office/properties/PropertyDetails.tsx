@@ -3,6 +3,7 @@ import { EmptyState, StatusChip } from "@/components/office/shared/EnterpriseUI"
 import RoomActionPanel from "@/components/office/rooms/RoomActionPanel";
 
 type Props = {
+    isAdmin?: boolean;
     onSaved: () => void | Promise<void>;
     property: PropertyItem | null;
     selectedRoom: RoomWithOccupancy | null;
@@ -13,7 +14,7 @@ function money(value: number) {
     return `UGX ${Math.round(value).toLocaleString()}`;
 }
 
-export default function PropertyDetails({ onSaved, property, selectedRoom, onSelectRoom }: Props) {
+export default function PropertyDetails({ isAdmin = false, onSaved, property, selectedRoom, onSelectRoom }: Props) {
     if (!property) {
         return (
             <EmptyState title="Select a property" description="Choose a property from the portfolio to inspect rooms, occupancy, rent roll, and lease movement." />
@@ -110,6 +111,7 @@ export default function PropertyDetails({ onSaved, property, selectedRoom, onSel
             </div>
 
             <RoomActionPanel
+                isAdmin={isAdmin}
                 room={selectedRoom ? {
                     id: selectedRoom.id,
                     roomNumber: selectedRoom.room_number,

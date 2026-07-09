@@ -21,6 +21,7 @@ type RoomActionPanelRoom = {
 };
 
 type Props = {
+    isAdmin?: boolean;
     onSaved: () => void | Promise<void>;
     room: RoomActionPanelRoom | null;
 };
@@ -29,7 +30,7 @@ function money(value: number) {
     return `UGX ${Math.round(value).toLocaleString()}`;
 }
 
-export default function RoomActionPanel({ onSaved, room }: Props) {
+export default function RoomActionPanel({ isAdmin = false, onSaved, room }: Props) {
     const router = useRouter();
     const [isPending, startTransition] = useTransition();
     const [message, setMessage] = useState<string | null>(null);
@@ -83,6 +84,9 @@ export default function RoomActionPanel({ onSaved, room }: Props) {
     }
 
     const isVacant = String(room.status ?? "").toLowerCase() === "vacant" || !room.tenantName;
+    const rentGovernanceDescription = isAdmin
+        ? "Admin rent changes apply immediately and refresh tenant, landlord, and dashboard calculations."
+        : "Office users can request rent changes. Rent does not change until admin approval.";
     const balanceDemanded = Number(form.balanceDemanded || 0);
     const moneyCollected = Number(form.moneyCollected || 0);
     const projectedBalance = Math.max(0, balanceDemanded - moneyCollected);
@@ -223,7 +227,7 @@ export default function RoomActionPanel({ onSaved, room }: Props) {
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div>
                         <p className="text-sm font-black text-slate-950">Room Rent Governance</p>
-                        <p className="text-xs font-bold text-slate-500">Office users can request rent changes. Rent does not change until admin approval.</p>
+                        <p className="text-xs font-bold text-slate-500">{rentGovernanceDescription}</p>
                     </div>
                     <button
                         type="button"
@@ -246,7 +250,7 @@ export default function RoomActionPanel({ onSaved, room }: Props) {
                                 onClick={submitRentRequest}
                                 className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-slate-800 disabled:opacity-50"
                             >
-                                {isPending ? "Sending..." : "Send For Admin Approval"}
+                                {isPending ? (isAdmin ? "Updating..." : "Sending...") : isAdmin ? "Update Rent Now" : "Send for Admin Approval"}
                             </button>
                         </div>
                     </div>

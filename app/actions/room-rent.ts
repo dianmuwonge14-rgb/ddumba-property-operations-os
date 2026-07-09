@@ -36,6 +36,8 @@ function revalidateRentPages() {
     revalidatePath("/office/landlords");
     revalidatePath("/office/landlord-payments");
     revalidatePath("/office/collections");
+    revalidatePath("/office/payments");
+    revalidatePath("/office/admin/payments");
     revalidatePath("/office/dashboard");
     revalidatePath("/office/ceo");
     revalidatePath("/office/reports");
@@ -401,7 +403,7 @@ export async function requestRoomRentChange(input: {
     if (!(context.isCompanyAdmin || context.canAccessAllOffices) && roomOfficeId !== context.activeOffice.id) {
         throw new Error("Room is not in your active office.");
     }
-    if (context.isCompanyAdmin || context.canAccessAllOffices) {
+    if (context.isCompanyAdmin && !context.isOfficeMode) {
         return adminDirectRoomRentChange({
             effectiveDate: input.effectiveDate,
             newRent,
@@ -580,7 +582,7 @@ export async function adminDirectRoomRentChange(input: {
     if (error) throw new Error(error.message);
 
     await logUserAction({
-        action: "room_rent_changed_by_admin",
+        action: "Admin changed room rent directly",
         entityType: "room_rent_change_request",
         entityId: data.id,
         companyId: context.activeCompany.id,
