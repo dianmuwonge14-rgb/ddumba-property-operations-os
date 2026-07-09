@@ -44,10 +44,10 @@ const PROMISE_COLUMNS = "id,office_id,status,fulfilled_at,promised_date,promise_
 const PROPERTY_COLUMNS = "id,office_id,status";
 const ROOM_COLUMNS = "id,office_id,property_id,landlord_id,monthly_rent,status";
 const TENANT_COLUMNS = "id,office_id,room_id,status,balance";
-const EXPENSE_COLUMNS = "id,office_id,amount,status,approved_at,expense_date,created_at";
+const EXPENSE_COLUMNS = "id,office_id,amount,approved_at,expense_date,created_at";
 const ATTENDANCE_COLUMNS = "id,office_id,employee_id,event_type,event_time";
 const EMPLOYEE_COLUMNS = "id,office_id,status";
-const LANDLORD_COLUMNS = "id,status,commission_rate,commission_calculation_mode,landlord_name,name";
+const LANDLORD_COLUMNS = "id,status,commission_rate,commission_calculation_mode,full_name";
 const LANDLORD_PAYMENT_COLUMNS = "id,office_id,landlord_id,amount,status,paid_at,created_at";
 const LANDLORD_ADVANCE_COLUMNS = [
     "id",
@@ -58,17 +58,11 @@ const LANDLORD_ADVANCE_COLUMNS = [
     "total_repayable",
     "advance_amount",
     "principal_amount",
-    "amount",
     "deducted_amount",
-    "amount_repaid",
-    "recovered_amount",
     "remaining_total_balance",
     "remaining_balance",
-    "balance_remaining",
     "date_given",
     "created_at",
-    "landlord_name",
-    "office_name",
 ].join(",");
 
 function todayDate() {
@@ -792,11 +786,11 @@ function buildLandlordAdvanceRows(advances: LooseRow[], landlordById: Map<string
         .map((advance) => {
             const landlordId = typeof advance.landlord_id === "string" ? advance.landlord_id : null;
             const landlord = landlordId ? landlordById.get(landlordId) ?? null : null;
-            const landlordDisplay = landlord as (LandlordRow & { landlord_name?: string | null; name?: string | null }) | null;
+            const landlordDisplay = landlord as (LandlordRow & { full_name?: string | null }) | null;
             return {
                 id: String(advance.id ?? `${landlordId ?? "advance"}-${advance.date_given ?? advance.created_at ?? ""}`),
                 landlordId,
-                landlordName: String(landlordDisplay?.landlord_name ?? landlordDisplay?.name ?? advance.landlord_name ?? "Landlord"),
+                landlordName: String(landlordDisplay?.full_name ?? "Landlord"),
                 officeName: String(advance.office_name ?? "Office"),
                 amountGiven: advanceTotalAmount(advance),
                 activeBalance: advanceRemainingAmount(advance),
