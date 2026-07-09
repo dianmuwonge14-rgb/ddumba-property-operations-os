@@ -1,9 +1,13 @@
 import { AlertTriangle, ArrowDownRight, ArrowUpRight, Banknote, BarChart3, BriefcaseBusiness, Building2, Crown, Gauge, Landmark, LineChart, Radar, ShieldAlert, Sparkles, Target, TrendingUp, UsersRound, Zap } from "lucide-react";
 import { EmptyState, EnterpriseKpiCard, PageHero, StatusChip } from "@/components/office/shared/EnterpriseUI";
+import type { AdminCentreData } from "@/lib/admin-centre/types";
 import type { CashPosition, CeoCommandData, CeoSeverity, CeoTrend, ExecutiveAction, ForecastPoint, GrowthCentre, IntelligenceFeedItem, OfficeWarRoomRow, RiskHeatMapItem } from "@/lib/ceo-centre/types";
+import CeoAccountCreationCentre from "./CeoAccountCreationCentre";
 
 type Props = {
+    adminAccountData: AdminCentreData;
     data: CeoCommandData;
+    serviceRoleConfigured: boolean;
 };
 
 function money(value: number) {
@@ -18,7 +22,7 @@ function formatDate(value: string) {
     }).format(new Date(value));
 }
 
-export default function CeoCommandCentre({ data }: Props) {
+export default function CeoCommandCentre({ adminAccountData, data, serviceRoleConfigured }: Props) {
     return (
         <main className="enterprise-page">
             <div className="enterprise-shell">
@@ -49,6 +53,21 @@ export default function CeoCommandCentre({ data }: Props) {
                     <EnterpriseKpiCard title="Risk Score" value={`${data.overview.riskScore}%`} tone={data.overview.riskScore >= 60 ? "red" : data.overview.riskScore >= 35 ? "orange" : "green"} trend={data.overview.riskScore >= 50 ? "down" : "up"} trendLabel="lower is better" progress={data.overview.riskScore} status={data.overview.riskScore >= 60 ? "Critical" : "Watch"} />
                     <EnterpriseKpiCard title="Growth Score" value={`${data.overview.growthScore}%`} tone={scoreTone(data.overview.growthScore)} trend="up" trendLabel="trajectory" progress={data.overview.growthScore} />
                     <EnterpriseKpiCard title="Executive Readiness" value={`${data.overview.executiveReadinessScore}%`} tone={scoreTone(data.overview.executiveReadinessScore)} trend={trendForScore(data.overview.executiveReadinessScore)} trendLabel="board-ready" progress={data.overview.executiveReadinessScore} />
+                </section>
+
+                <section className="mt-6">
+                    <CeoAccountCreationCentre
+                        company={adminAccountData.company}
+                        raw={{
+                            offices: adminAccountData.raw.offices,
+                            roles: adminAccountData.raw.roles,
+                            users: adminAccountData.raw.users,
+                            userOfficeRoles: adminAccountData.raw.userOfficeRoles,
+                            pinCredentials: adminAccountData.raw.pinCredentials,
+                            securityEvents: adminAccountData.raw.securityEvents,
+                        }}
+                        serviceRoleConfigured={serviceRoleConfigured}
+                    />
                 </section>
 
                 <section className="mt-6 grid grid-cols-1 gap-6 2xl:grid-cols-12">
@@ -250,7 +269,7 @@ function ExecutiveIntelligenceFeed({ feed }: { feed: IntelligenceFeedItem[] }) {
     );
 }
 
-function CompanyForecastEngine({ data }: Props) {
+function CompanyForecastEngine({ data }: { data: CeoCommandData }) {
     return (
         <section className="enterprise-panel p-6">
             <PanelTitle icon={<LineChart size={21} />} title="Company Forecast Engine" description="Forecast collections, occupancy, cash flow, revenue, and risk trends." />
@@ -316,7 +335,7 @@ function ExecutiveActionCentre({ actions }: { actions: ExecutiveAction[] }) {
     );
 }
 
-function CompanyLeagueTable({ data }: Props) {
+function CompanyLeagueTable({ data }: { data: CeoCommandData }) {
     const rows = [
         ["Best office", data.league.bestOffice],
         ["Worst office", data.league.worstOffice],
@@ -342,7 +361,7 @@ function CompanyLeagueTable({ data }: Props) {
     );
 }
 
-function CeoDailyBriefing({ data }: Props) {
+function CeoDailyBriefing({ data }: { data: CeoCommandData }) {
     const sections = [
         ["What happened today", data.briefing.happenedToday],
         ["What needs attention", data.briefing.needsAttention],

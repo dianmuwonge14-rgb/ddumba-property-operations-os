@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { AlertTriangle, KeyRound, Loader2, LockKeyhole, ShieldCheck, UserPlus, UsersRound } from "lucide-react";
 import {
     createOffice,
@@ -19,6 +19,7 @@ import type { AdminCentreData } from "@/lib/admin-centre/types";
 
 type Props = {
     company: AdminCentreData["company"];
+    initialFocus?: "office" | "collector";
     raw: Pick<AdminCentreData["raw"], "offices" | "roles" | "users" | "userOfficeRoles" | "pinCredentials" | "securityEvents">;
     serviceRoleConfigured: boolean;
 };
@@ -32,9 +33,11 @@ function formatDate(value: string | null | undefined) {
     }).format(new Date(value));
 }
 
-export default function OfficeAccountManagementCentre({ company, raw, serviceRoleConfigured }: Props) {
+export default function OfficeAccountManagementCentre({ company, initialFocus, raw, serviceRoleConfigured }: Props) {
     const officeOptions = raw.offices;
     const roleOptions = raw.roles.filter((role) => !role.company_id || role.company_id === company?.id);
+    const officeCreateRef = useRef<HTMLDivElement | null>(null);
+    const collectorCreateRef = useRef<HTMLDivElement | null>(null);
     const [selectedUserId, setSelectedUserId] = useState(raw.users[0]?.id ?? "");
     const [selectedOfficeId, setSelectedOfficeId] = useState(raw.offices[0]?.id ?? "");
     const [message, setMessage] = useState<string | null>(null);
@@ -64,6 +67,13 @@ export default function OfficeAccountManagementCentre({ company, raw, serviceRol
         () => raw.offices.find((office) => office.id === selectedOfficeId) ?? null,
         [raw.offices, selectedOfficeId],
     );
+
+    useEffect(() => {
+        const target = initialFocus === "collector" ? collectorCreateRef.current : initialFocus === "office" ? officeCreateRef.current : null;
+        if (!target) return;
+        const timer = window.setTimeout(() => target.scrollIntoView({ behavior: "smooth", block: "start" }), 120);
+        return () => window.clearTimeout(timer);
+    }, [initialFocus]);
 
     function run(action: () => Promise<void>, success: string) {
         startTransition(async () => {
@@ -309,7 +319,7 @@ export default function OfficeAccountManagementCentre({ company, raw, serviceRol
                     </div>
                 </div>
 
-                <div className="border-b border-slate-200 p-6 xl:col-span-4 xl:border-b-0 xl:border-r">
+                <div ref={officeCreateRef} className={`border-b border-slate-200 p-6 xl:col-span-4 xl:border-b-0 xl:border-r ${initialFocus === "office" ? "bg-blue-50/70" : ""}`}>
                     <PanelTitle icon={<UserPlus size={18} />} title="Create Office Account" />
                     <form action={createAccount} className="mt-5 space-y-3">
                         <Input name="fullName" placeholder="Full name" />
@@ -320,7 +330,7 @@ export default function OfficeAccountManagementCentre({ company, raw, serviceRol
                         <SubmitButton disabled={isPending || !serviceRoleConfigured} label={serviceRoleConfigured ? "Create Account" : "Service Key Required"} />
                     </form>
 
-                    <div className="mt-6 rounded-3xl border border-cyan-200 bg-cyan-50 p-5">
+                    <div ref={collectorCreateRef} className={`mt-6 rounded-3xl border border-cyan-200 bg-cyan-50 p-5 ${initialFocus === "collector" ? "ring-2 ring-cyan-400" : ""}`}>
                         <PanelTitle icon={<UsersRound size={18} />} title="Create Field Collector" />
                         <p className="mt-2 text-sm font-bold text-cyan-900">Collectors are all-rounders across all offices and use the dedicated Collector workspace.</p>
                         <form action={createCollector} className="mt-4 space-y-3">
