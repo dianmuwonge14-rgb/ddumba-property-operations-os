@@ -40,6 +40,7 @@ import type {
     RiskHeatMapItem,
     RolePermissionRow,
     RoleRow,
+    RoomRentChangeRequestRow,
     RoomRow,
     SecurityEventRow,
     TenantRow,
@@ -90,7 +91,6 @@ export const getAdminCentreData = cache(async function getAdminCentreData(): Pro
     const { supabase } = await getScopedSupabase();
     const companyId = context.activeCompany?.id;
     if (!companyId) return emptyData();
-
     const startWindow = dateOffset(-30);
     const accessibleOfficeIds = new Set(context.offices.map((office) => office.id));
     const optionalWarnings: string[] = [];
@@ -427,6 +427,7 @@ export const getAdminCentreOverviewData = cache(async function getAdminCentreOve
     const { supabase } = await getScopedSupabase();
     const companyId = context.activeCompany?.id;
     if (!companyId) return emptyData();
+    const dynamicSupabase = supabase as unknown as { from: (table: string) => ReturnType<typeof supabase.from> };
 
     const startWindow = dateOffset(-30);
     const [
@@ -446,6 +447,7 @@ export const getAdminCentreOverviewData = cache(async function getAdminCentreOve
         holidaysResult,
         schedulesResult,
         attendanceResult,
+        rentChangeRequestsResult,
     ] = await Promise.all([
         supabase.from("companies").select("*").eq("id", companyId),
         supabase.from("offices").select("*").eq("company_id", companyId).order("office_name"),
@@ -463,6 +465,7 @@ export const getAdminCentreOverviewData = cache(async function getAdminCentreOve
         supabase.from("public_holidays").select("*").or(`company_id.eq.${companyId},company_id.is.null`).order("holiday_date", { ascending: true }).limit(40),
         supabase.from("work_schedules").select("*").eq("company_id", companyId).order("name").limit(40),
         supabase.from("attendance_events").select("*").eq("company_id", companyId).gte("event_time", isoStart(startWindow)).order("event_time", { ascending: false }).limit(120),
+        dynamicSupabase.from("room_rent_change_requests").select("*").eq("company_id", companyId).eq("status", "pending").order("created_at", { ascending: false }).limit(50),
     ]);
 
     for (const result of [
@@ -482,6 +485,7 @@ export const getAdminCentreOverviewData = cache(async function getAdminCentreOve
         holidaysResult,
         schedulesResult,
         attendanceResult,
+        rentChangeRequestsResult,
     ]) {
         if (result.error) throw new Error(result.error.message);
     }
@@ -501,6 +505,18 @@ export const getAdminCentreOverviewData = cache(async function getAdminCentreOve
     const publicHolidays = holidaysResult.data ?? [];
     const workSchedules = schedulesResult.data ?? [];
     const attendanceEvents = attendanceResult.data ?? [];
+    const rentChangeRequests = (rentChangeRequestsResult.data ?? []) as RoomRentChangeRequestRow[];
+    const pendingRentRoomIds = [...new Set(rentChangeRequests.map((request) => request.room_id).filter((id): id is string => typeof id === "string" && Boolean(id)))];
+    const pendingRentLandlordIds = [...new Set(rentChangeRequests.map((request) => request.landlord_id).filter((id): id is string => typeof id === "string" && Boolean(id)))];
+    const pendingRentTenantIds = [...new Set(rentChangeRequests.map((request) => request.tenant_id).filter((id): id is string => typeof id === "string" && Boolean(id)))];
+    const [pendingRoomsResult, pendingLandlordsResult, pendingTenantsResult] = await Promise.all([
+        pendingRentRoomIds.length ? supabase.from("rooms").select("*").eq("company_id", companyId).in("id", pendingRentRoomIds) : { data: [], error: null },
+        pendingRentLandlordIds.length ? supabase.from("landlords").select("*").eq("company_id", companyId).in("id", pendingRentLandlordIds) : { data: [], error: null },
+        pendingRentTenantIds.length ? supabase.from("tenants").select("*").eq("company_id", companyId).in("id", pendingRentTenantIds) : { data: [], error: null },
+    ]);
+    if (pendingRoomsResult.error) throw new Error(pendingRoomsResult.error.message);
+    if (pendingLandlordsResult.error) throw new Error(pendingLandlordsResult.error.message);
+    if (pendingTenantsResult.error) throw new Error(pendingTenantsResult.error.message);
 
     const officeGovernance = buildOfficeGovernance({ offices, employees, policies, geofences, publicHolidays, workSchedules });
     const employeeAdmin = buildEmployeeAdmin({ employees, offices, devices, attendanceEvents });
@@ -557,6 +573,10 @@ export const getAdminCentreOverviewData = cache(async function getAdminCentreOve
             auditLogs,
             pinCredentials,
             attendanceEvents,
+            rooms: pendingRoomsResult.data ?? [],
+            landlords: pendingLandlordsResult.data ?? [],
+            tenants: pendingTenantsResult.data ?? [],
+            rentChangeRequests,
         },
     };
 });

@@ -247,6 +247,10 @@ export default function RoomActionPanel({ isAdmin = false, onSaved, room }: Prop
                         <Field label="Proposed New Rent"><input inputMode="numeric" value={rentRequest.proposedRent} onChange={(event) => setRentRequest((current) => ({ ...current, proposedRent: event.target.value }))} /></Field>
                         <Field label="Reason"><input value={rentRequest.reason} onChange={(event) => setRentRequest((current) => ({ ...current, reason: event.target.value }))} /></Field>
                         <Field label="Effective Date"><input type="date" value={rentRequest.effectiveDate} onChange={(event) => setRentRequest((current) => ({ ...current, effectiveDate: event.target.value }))} /></Field>
+                        <div className="md:col-span-4">
+                            {error ? <p className="rounded-2xl bg-red-50 px-4 py-3 text-sm font-black text-red-700">{error}</p> : null}
+                            {message ? <p className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-700">{message}</p> : null}
+                        </div>
                         <div className="md:col-span-4 flex justify-end">
                             <button
                                 type="button"
@@ -257,6 +261,12 @@ export default function RoomActionPanel({ isAdmin = false, onSaved, room }: Prop
                                 {isPending ? (isAdmin ? "Updating..." : "Sending...") : isAdmin ? "Update Rent Now" : "Send for Admin Approval"}
                             </button>
                         </div>
+                    </div>
+                ) : null}
+                {!showRentRequest && (error || message) ? (
+                    <div className="mt-3">
+                        {error ? <p className="rounded-2xl bg-red-50 px-4 py-3 text-sm font-black text-red-700">{error}</p> : null}
+                        {message ? <p className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-700">{message}</p> : null}
                     </div>
                 ) : null}
             </div>
@@ -295,10 +305,7 @@ export default function RoomActionPanel({ isAdmin = false, onSaved, room }: Prop
                         <Field label="Notes"><input value={form.notes} onChange={(event) => update("notes", event.target.value)} /></Field>
                     </div>
                     <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                        <div>
-                            {error ? <p className="text-sm font-black text-red-700">{error}</p> : null}
-                            {message ? <p className="text-sm font-black text-emerald-700">{message}</p> : null}
-                        </div>
+                        <div />
                         <button
                             type="button"
                             onClick={submit}

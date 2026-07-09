@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { logUserAction } from "@/lib/auth/audit";
 import { requireAuth, requireCompanyAdminMode } from "@/lib/auth/permissions";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getMoveInPayableDecision } from "@/lib/landlords/payable-cutoff";
 
@@ -390,7 +391,7 @@ export async function requestRoomRentChange(input: {
 }) {
     const context = await requireAuth();
     if (!context.activeCompany?.id) throw new Error("Active company is required.");
-    const db = await createSupabaseServerClient() as unknown as Db;
+    const db = createSupabaseAdminClient() as unknown as Db;
     const newRent = Number(input.proposedRent);
     assertPositiveRent(newRent);
     assertReason(input.reason);
@@ -470,7 +471,7 @@ export async function decideRoomRentChange(input: {
 }) {
     const context = await requireCompanyAdminMode();
     if (!context.activeCompany?.id) throw new Error("Active company is required.");
-    const db = await createSupabaseServerClient() as unknown as Db;
+    const db = createSupabaseAdminClient() as unknown as Db;
     const { data: request, error } = await db
         .from("room_rent_change_requests")
         .select("*")
@@ -546,7 +547,7 @@ export async function adminDirectRoomRentChange(input: {
     const context = await requireAuth();
     if (!context.isCompanyAdmin) throw new Error("Only Admin can change room rent directly.");
     if (!context.activeCompany?.id) throw new Error("Active company is required.");
-    const db = await createSupabaseServerClient() as unknown as Db;
+    const db = createSupabaseAdminClient() as unknown as Db;
     const newRent = Number(input.newRent);
     assertPositiveRent(newRent);
     assertReason(input.reason);
