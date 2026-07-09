@@ -120,6 +120,10 @@ export default function DashboardMissionControl({ data }: Props) {
                     <ActionRequiredPanel data={data} />
                     <PromiseRecoveryPanel data={data} />
                 </section>
+
+                <footer className="mt-6 rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-center text-xs font-black text-slate-500 shadow-sm">
+                    Dashboard schema hotfix: e67206e
+                </footer>
             </div>
         </main>
     );
