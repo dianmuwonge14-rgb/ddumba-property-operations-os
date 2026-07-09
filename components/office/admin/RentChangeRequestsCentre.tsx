@@ -2,8 +2,8 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Clock3, History, XCircle } from "lucide-react";
-import { decideRoomRentChange } from "@/app/actions/room-rent";
+import { CheckCircle2, Clock3, History, Search, XCircle } from "lucide-react";
+import { adminDirectRoomRentChange, adminSearchRooms, decideRoomRentChange } from "@/app/actions/room-rent";
 import { PageHero, StatusChip } from "@/components/office/shared/EnterpriseUI";
 import type { AdminCentreData, RoomRentChangeRequestRow } from "@/lib/admin-centre/types";
 
@@ -12,6 +12,26 @@ type Props = {
 };
 
 type Filter = "pending" | "approved" | "rejected";
+
+type RoomSearchResult = {
+    id: string;
+    roomNumber: string | null;
+    status: string | null;
+    officeName: string | null;
+    propertyName: string | null;
+    landlordName: string | null;
+    landlordPhone: string | null;
+    tenantName: string | null;
+    currentRent: number;
+    outstandingBalance: number;
+    lastRentChange: null | {
+        oldRent: number;
+        newRent: number;
+        status: string;
+        effectiveDate: string;
+        createdAt: string;
+    };
+};
 
 function money(value: number | string | null | undefined) {
     return `UGX ${Math.round(Number(value ?? 0)).toLocaleString()}`;
@@ -33,6 +53,12 @@ export default function RentChangeRequestsCentre({ data }: Props) {
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [bulkModal, setBulkModal] = useState<null | { decision: "approved" | "rejected"; ids: string[] }>(null);
     const [bulkComment, setBulkComment] = useState("");
+    const [roomQuery, setRoomQuery] = useState("");
+    const [roomResults, setRoomResults] = useState<RoomSearchResult[]>([]);
+    const [activeRoom, setActiveRoom] = useState<RoomSearchResult | null>(null);
+    const [directRent, setDirectRent] = useState("");
+    const [directReason, setDirectReason] = useState("");
+    const [directEffectiveDate, setDirectEffectiveDate] = useState(new Date().toISOString().slice(0, 10));
     const [isPending, startTransition] = useTransition();
 
     const lookups = useMemo(() => ({
@@ -56,11 +82,14 @@ export default function RentChangeRequestsCentre({ data }: Props) {
         : [];
 
     function decide(request: RoomRentChangeRequestRow, decision: "approved" | "rejected") {
-        const comment = window.prompt(decision === "approved" ? "Approval note / reason?" : "Reason for rejection?") ?? "";
+        if (decision === "rejected") {
+            openBulk("rejected", [request.id]);
+            return;
+        }
         startTransition(async () => {
             try {
                 setMessage(null);
-                await decideRoomRentChange({ requestId: request.id, decision, comment });
+                await decideRoomRentChange({ requestId: request.id, decision, comment: "" });
                 setMessage(decision === "approved" ? "Rent change approved and applied." : "Rent change rejected. Old rent was kept.");
                 router.refresh();
             } catch (error) {
@@ -102,6 +131,54 @@ export default function RentChangeRequestsCentre({ data }: Props) {
         });
     }
 
+    function searchRooms() {
+        if (!roomQuery.trim()) {
+            setMessage("Enter a room number, tenant, or landlord name to search.");
+            return;
+        }
+        startTransition(async () => {
+            try {
+                setMessage(null);
+                setRoomResults(await adminSearchRooms(roomQuery) as RoomSearchResult[]);
+            } catch (error) {
+                setMessage(error instanceof Error ? error.message : "Room search failed.");
+            }
+        });
+    }
+
+    function selectRoom(room: RoomSearchResult) {
+        setActiveRoom(room);
+        setDirectRent(String(room.currentRent || ""));
+        setDirectReason("");
+        setDirectEffectiveDate(new Date().toISOString().slice(0, 10));
+    }
+
+    function directChange() {
+        if (!activeRoom) {
+            setMessage("Search and select a room before updating rent.");
+            return;
+        }
+        startTransition(async () => {
+            try {
+                setMessage(null);
+                await adminDirectRoomRentChange({
+                    effectiveDate: directEffectiveDate,
+                    newRent: Number(directRent),
+                    reason: directReason,
+                    roomId: activeRoom.id,
+                });
+                setMessage("Admin changed room rent directly. Room, tenant, lease, landlord report, and payment entry data were refreshed.");
+                setActiveRoom(null);
+                setDirectRent("");
+                setDirectReason("");
+                setRoomResults([]);
+                router.refresh();
+            } catch (error) {
+                setMessage(error instanceof Error ? error.message : "Direct rent change failed.");
+            }
+        });
+    }
+
     return (
         <main className="enterprise-page">
             <div className="enterprise-shell">
@@ -115,6 +192,91 @@ export default function RentChangeRequestsCentre({ data }: Props) {
                         <p className="mt-1 text-4xl font-black text-slate-950">{pendingCount}</p>
                     </div>
                 </PageHero>
+
+                <section className="enterprise-panel mb-6 overflow-hidden">
+                    <div className="border-b border-slate-200 p-5">
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                            <div>
+                                <h2 className="text-xl font-black text-slate-950">Direct Admin Rent Update</h2>
+                                <p className="text-sm font-semibold text-slate-500">Admin changes apply immediately and do not create approval requests.</p>
+                            </div>
+                            <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-blue-700 ring-1 ring-blue-200">Admin only</span>
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 p-5 xl:grid-cols-[1fr_1.2fr]">
+                        <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                            <label className="text-xs font-black uppercase tracking-wide text-slate-500">Search room</label>
+                            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                                <input
+                                    value={roomQuery}
+                                    onChange={(event) => setRoomQuery(event.target.value)}
+                                    onKeyDown={(event) => {
+                                        if (event.key === "Enter") searchRooms();
+                                    }}
+                                    placeholder="Room number, tenant, or landlord"
+                                    className="min-h-11 flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                                />
+                                <button
+                                    disabled={isPending}
+                                    onClick={searchRooms}
+                                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-sm font-black text-white disabled:opacity-40"
+                                >
+                                    <Search size={16} /> Search
+                                </button>
+                            </div>
+                            <div className="mt-3 space-y-2">
+                                {roomResults.length === 0 ? (
+                                    <p className="rounded-2xl bg-white p-3 text-sm font-bold text-slate-500">Search results will appear here.</p>
+                                ) : roomResults.map((room) => (
+                                    <button
+                                        key={room.id}
+                                        onClick={() => selectRoom(room)}
+                                        className={`block w-full rounded-2xl border p-3 text-left transition ${activeRoom?.id === room.id ? "border-blue-300 bg-blue-50" : "border-slate-200 bg-white hover:border-slate-300"}`}
+                                    >
+                                        <span className="text-sm font-black text-slate-950">Room {room.roomNumber ?? "Unnumbered"} · {money(room.currentRent)}</span>
+                                        <span className="mt-1 block text-xs font-bold text-slate-500">{room.officeName ?? "Office"} · {room.landlordName ?? "No landlord"} · {room.tenantName ?? "No tenant"}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="rounded-3xl border border-blue-100 bg-blue-50/60 p-4">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <p className="text-xs font-black uppercase tracking-wide text-blue-700">Selected room</p>
+                                    <p className="text-lg font-black text-slate-950">{activeRoom ? `Room ${activeRoom.roomNumber ?? "Unnumbered"}` : "No room selected"}</p>
+                                </div>
+                                {activeRoom ? <StatusChip label={activeRoom.status ?? "room"} tone={activeRoom.status === "occupied" ? "green" : "slate"} /> : null}
+                            </div>
+                            {activeRoom ? (
+                                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                                    <InfoTile label="Current Rent" value={money(activeRoom.currentRent)} />
+                                    <InfoTile label="Office" value={activeRoom.officeName ?? "Office"} />
+                                    <InfoTile label="Landlord" value={activeRoom.landlordName ?? "No landlord"} />
+                                    <InfoTile label="Tenant" value={activeRoom.tenantName ?? "No tenant"} />
+                                    <label className="text-sm font-bold text-slate-700">
+                                        New rent
+                                        <input value={directRent} onChange={(event) => setDirectRent(event.target.value)} inputMode="numeric" className="mt-2 min-h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-900" />
+                                    </label>
+                                    <label className="text-sm font-bold text-slate-700">
+                                        Effective date
+                                        <input value={directEffectiveDate} onChange={(event) => setDirectEffectiveDate(event.target.value)} type="date" className="mt-2 min-h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-900" />
+                                    </label>
+                                    <label className="md:col-span-2 text-sm font-bold text-slate-700">
+                                        Reason
+                                        <input value={directReason} onChange={(event) => setDirectReason(event.target.value)} placeholder="Reason for direct admin change" className="mt-2 min-h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-900" />
+                                    </label>
+                                    <div className="md:col-span-2 flex justify-end">
+                                        <button disabled={isPending} onClick={directChange} className="rounded-2xl bg-blue-700 px-5 py-3 text-sm font-black text-white shadow-sm disabled:opacity-40">
+                                            {isPending ? "Updating..." : "Update Rent Now"}
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <p className="mt-4 rounded-2xl bg-white p-4 text-sm font-bold text-slate-500">Select a room to update its rent immediately.</p>
+                            )}
+                        </div>
+                    </div>
+                </section>
 
                 <section className="enterprise-panel overflow-hidden">
                     <div className="border-b border-slate-200 p-5">
@@ -293,6 +455,15 @@ function FilterButton({ active, label, onClick }: { active: boolean; label: stri
         <button onClick={onClick} className={`rounded-2xl px-4 py-2 text-sm font-black transition ${active ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}>
             {label}
         </button>
+    );
+}
+
+function InfoTile({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="rounded-2xl border border-slate-200 bg-white p-3">
+            <p className="text-xs font-black uppercase tracking-wide text-slate-500">{label}</p>
+            <p className="mt-1 text-sm font-black text-slate-950">{value}</p>
+        </div>
     );
 }
 

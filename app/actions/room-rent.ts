@@ -151,7 +151,7 @@ async function getImportedPaymentMarker(db: Db, input: {
 async function getRoomContext(db: Db, companyId: string, roomId: string) {
     const { data: room, error } = await db
         .from("rooms")
-        .select("*, landlords(id, full_name, phone), properties(id, property_name, name), offices(id, office_name, name)")
+        .select("*")
         .eq("id", roomId)
         .eq("company_id", companyId)
         .maybeSingle();
@@ -608,13 +608,13 @@ export async function adminDirectRoomRentChange(input: {
 export async function adminSearchRooms(query: string) {
     const context = await requireCompanyAdminMode();
     if (!context.activeCompany?.id) throw new Error("Active company is required.");
-    const db = await createSupabaseServerClient() as unknown as Db;
+    const db = createSupabaseAdminClient() as unknown as Db;
     const term = query.trim();
     if (term.length < 1) return [];
 
     const { data: rooms, error } = await db
         .from("rooms")
-        .select("*, landlords(id, full_name, phone), properties(id, property_name, name), offices(id, office_name, name)")
+        .select("*")
         .eq("company_id", context.activeCompany.id)
         .or(`room_number.ilike.%${term}%,status.ilike.%${term}%`)
         .limit(20);
@@ -676,7 +676,7 @@ export async function adminSearchRooms(query: string) {
     const finalRooms = roomIds.size
         ? await db
             .from("rooms")
-            .select("*, landlords(id, full_name, phone), properties(id, property_name, name), offices(id, office_name, name)")
+            .select("*")
             .eq("company_id", context.activeCompany.id)
             .in("id", [...roomIds])
             .limit(50)
@@ -684,17 +684,29 @@ export async function adminSearchRooms(query: string) {
     if (finalRooms.error) throw new Error(finalRooms.error.message);
 
     const finalRoomIds = (finalRooms.data ?? []).map((room: Record<string, unknown>) => String(room.id));
-    const [leases, tenants, rentHistory] = await Promise.all([
+    const finalLandlordIds = [...new Set((finalRooms.data ?? []).map((room: Record<string, unknown>) => String(room.landlord_id ?? "")).filter(Boolean))];
+    const finalOfficeIds = [...new Set((finalRooms.data ?? []).map((room: Record<string, unknown>) => String(room.office_id ?? "")).filter(Boolean))];
+    const finalPropertyIds = [...new Set((finalRooms.data ?? []).map((room: Record<string, unknown>) => String(room.property_id ?? "")).filter(Boolean))];
+    const [leases, tenants, rentHistory, finalLandlords, finalOffices, finalProperties] = await Promise.all([
         finalRoomIds.length ? db.from("leases").select("*").eq("company_id", context.activeCompany.id).eq("status", "active").in("room_id", finalRoomIds) : { data: [], error: null },
         finalRoomIds.length ? db.from("tenants").select("*").eq("company_id", context.activeCompany.id).in("room_id", finalRoomIds) : { data: [], error: null },
         finalRoomIds.length ? db.from("room_rent_change_requests").select("*").eq("company_id", context.activeCompany.id).in("room_id", finalRoomIds).order("created_at", { ascending: false }) : { data: [], error: null },
+        finalLandlordIds.length ? db.from("landlords").select("id, full_name, phone").eq("company_id", context.activeCompany.id).in("id", finalLandlordIds) : { data: [], error: null },
+        finalOfficeIds.length ? db.from("offices").select("id, office_name, name").eq("company_id", context.activeCompany.id).in("id", finalOfficeIds) : { data: [], error: null },
+        finalPropertyIds.length ? db.from("properties").select("id, property_name, name").eq("company_id", context.activeCompany.id).in("id", finalPropertyIds) : { data: [], error: null },
     ]);
     if (leases.error) throw new Error(leases.error.message);
     if (tenants.error) throw new Error(tenants.error.message);
     if (rentHistory.error) throw new Error(rentHistory.error.message);
+    if (finalLandlords.error) throw new Error(finalLandlords.error.message);
+    if (finalOffices.error) throw new Error(finalOffices.error.message);
+    if (finalProperties.error) throw new Error(finalProperties.error.message);
 
     const leaseByRoom = new Map((leases.data ?? []).map((lease: Record<string, unknown>) => [String(lease.room_id), lease]));
     const tenantByRoom = new Map((tenants.data ?? []).map((tenant: Record<string, unknown>) => [String(tenant.room_id), tenant]));
+    const landlordById = new Map((finalLandlords.data ?? []).map((landlord: Record<string, unknown>) => [String(landlord.id), landlord]));
+    const officeById = new Map((finalOffices.data ?? []).map((office: Record<string, unknown>) => [String(office.id), office]));
+    const propertyById = new Map((finalProperties.data ?? []).map((property: Record<string, unknown>) => [String(property.id), property]));
     const historyByRoom = new Map<string, Record<string, unknown>>();
     for (const history of rentHistory.data ?? []) {
         const roomId = String(history.room_id);
@@ -706,14 +718,17 @@ export async function adminSearchRooms(query: string) {
         const tenant = tenantByRoom.get(roomId) as Record<string, unknown> | undefined;
         const lease = leaseByRoom.get(roomId) as Record<string, unknown> | undefined;
         const lastChange = historyByRoom.get(roomId);
+        const landlord = landlordById.get(String(room.landlord_id ?? ""));
+        const office = officeById.get(String(room.office_id ?? ""));
+        const property = propertyById.get(String(room.property_id ?? ""));
         return {
             id: roomId,
             roomNumber: room.room_number ?? null,
             status: room.status ?? null,
-            officeName: nestedName(room.offices, ["office_name", "name"]),
-            propertyName: nestedName(room.properties, ["property_name", "name"]),
-            landlordName: nestedName(room.landlords, ["full_name"]),
-            landlordPhone: nestedName(room.landlords, ["phone"]),
+            officeName: nestedName(office, ["office_name", "name"]),
+            propertyName: nestedName(property, ["property_name", "name"]),
+            landlordName: nestedName(landlord, ["full_name"]),
+            landlordPhone: nestedName(landlord, ["phone"]),
             tenantName: tenant?.full_name ?? null,
             currentRent: Number(lease?.monthly_rent ?? tenant?.monthly_rent ?? room.monthly_rent ?? 0),
             outstandingBalance: Number(tenant?.balance ?? room.outstanding_balance ?? 0),
