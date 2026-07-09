@@ -32,7 +32,7 @@ import type {
     VacatedTenantDebtRow,
 } from "./types";
 
-const LANDLORD_PAGE_SIZE = 10;
+const LANDLORD_PAGE_SIZE = 60;
 
 function currentSettlementMonth() {
     const now = new Date();
@@ -1164,12 +1164,13 @@ async function collectLandlordSearchIds({
     const ids = new Set<string>();
     const normalizedPrefix = normalizeLandlordSearch(search);
     if (!normalizedPrefix) return ids;
-    const pattern = `${escapeSupabaseLike(normalizedPrefix)}%`;
+    const prefixPattern = `${escapeSupabaseLike(normalizedPrefix)}%`;
+    const containsPattern = `%${escapeSupabaseLike(search.trim())}%`;
     const searchIndexQuery = (supabase as unknown as { from: (table: string) => ReturnType<typeof supabase.from> })
         .from("landlord_search_index")
         .select("landlord_id,office_id")
         .eq("company_id", companyId)
-        .ilike("normalized_name", pattern)
+        .or(`normalized_name.ilike.${prefixPattern},phone.ilike.${containsPattern},office_name.ilike.${containsPattern},room_numbers_text.ilike.${containsPattern},tenant_names_text.ilike.${containsPattern},searchable_text.ilike.${containsPattern}`)
         .limit(50);
     if (officeId) searchIndexQuery.eq("office_id", officeId);
     const searchIndexResult = await searchIndexQuery;
@@ -1177,8 +1178,65 @@ async function collectLandlordSearchIds({
         for (const row of searchIndexResult.data as Array<{ landlord_id: string; office_id: string | null }>) {
             if (!officeId || row.office_id === officeId) ids.add(row.landlord_id);
         }
-        return ids;
     }
+
+    const landlordResult = await supabase
+        .from("landlords")
+        .select("id")
+        .eq("company_id", companyId)
+        .neq("status", "archived")
+        .or(`full_name.ilike.${containsPattern},phone.ilike.${containsPattern},landlord_code.ilike.${containsPattern}`)
+        .limit(100);
+    if (!landlordResult.error) {
+        for (const row of landlordResult.data ?? []) ids.add(row.id);
+    }
+
+    const roomResult = await supabase
+        .from("rooms")
+        .select("landlord_id,property_id,office_id")
+        .eq("company_id", companyId)
+        .ilike("room_number", containsPattern)
+        .limit(150);
+    if (!roomResult.error) {
+        const propertyIds = new Set<string>();
+        for (const row of roomResult.data ?? []) {
+            if (officeId && row.office_id !== officeId) continue;
+            if (row.landlord_id) ids.add(row.landlord_id);
+            if (row.property_id) propertyIds.add(row.property_id);
+        }
+        if (propertyIds.size > 0) {
+            let propertyQuery = supabase
+                .from("properties")
+                .select("landlord_id,office_id")
+                .eq("company_id", companyId)
+                .in("id", [...propertyIds])
+                .not("landlord_id", "is", null);
+            if (officeId) propertyQuery = propertyQuery.eq("office_id", officeId);
+            const propertyResult = await propertyQuery;
+            if (!propertyResult.error) {
+                for (const row of propertyResult.data ?? []) {
+                    if (row.landlord_id) ids.add(row.landlord_id);
+                }
+            }
+        }
+    }
+
+    const officeResult = await supabase
+        .from("offices")
+        .select("id")
+        .eq("company_id", companyId)
+        .or(`office_name.ilike.${containsPattern},name.ilike.${containsPattern}`)
+        .limit(50);
+    if (!officeResult.error) {
+        const matchedOfficeIds = (officeResult.data ?? [])
+            .map((office) => office.id)
+            .filter((id) => !officeId || id === officeId);
+        for (const matchedOfficeId of matchedOfficeIds) {
+            const officeLandlords = await collectOfficeLandlordIds({ supabase, companyId, officeId: matchedOfficeId });
+            for (const id of officeLandlords) ids.add(id);
+        }
+    }
+
     return ids;
 }
 

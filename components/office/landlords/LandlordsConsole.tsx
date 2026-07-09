@@ -52,6 +52,7 @@ export default function LandlordsConsole({ canAdminManage, canManage, canManageC
     const requestSeqRef = useRef(0);
     const lastUnsearchedDataRef = useRef(initialData);
     const [isSearching, setIsSearching] = useState(false);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [searchError, setSearchError] = useState("");
     const [isSnapshotPending, startSnapshotTransition] = useTransition();
     const [snapshotMessage, setSnapshotMessage] = useState<string | null>(null);
@@ -113,6 +114,7 @@ export default function LandlordsConsole({ canAdminManage, canManage, canManageC
     const selectedLandlord = data.selectedLandlordId
         ? visibleLandlords.find((landlord) => landlord.id === data.selectedLandlordId) ?? null
         : null;
+    const canLoadMoreServerLandlords = data.pagination.hasNextPage;
     const recoveryReminders = useMemo(() => {
         const landlordsWithVacantRooms = data.landlords.filter((landlord) => landlord.settlementEstimate.vacantRooms > 0);
         const landlordsWithRecovery = data.landlords.filter((landlord) => landlord.settlementEstimate.previousUnrecoveredTenantDebts > 0);
@@ -168,10 +170,12 @@ export default function LandlordsConsole({ canAdminManage, canManage, canManageC
     }, [normalizedSearch, listOfficeFilter, listPaymentFilter, listLocationFilter, listSort, viewMode]);
 
     const fetchLandlords = useCallback(async ({
+        append,
         page,
         query,
         selectedLandlordId,
     }: {
+        append?: boolean;
         page: number;
         query: string;
         selectedLandlordId?: string | null;
@@ -201,8 +205,11 @@ export default function LandlordsConsole({ canAdminManage, canManage, canManageC
             if (!response.ok) throw new Error(payload.error ?? "Landlords could not be loaded.");
             if (requestSeqRef.current !== requestSeq || controller.signal.aborted) return;
             const nextData = payload.data as LandlordsPageData;
-            setData(nextData);
-            if (!query.trim()) lastUnsearchedDataRef.current = nextData;
+            setData((current) => {
+                const updated = append ? mergeLandlordsPageData(current, nextData) : nextData;
+                if (!query.trim()) lastUnsearchedDataRef.current = updated;
+                return updated;
+            });
         } catch (error) {
             if (controller.signal.aborted) return;
             setSearchError(error instanceof Error ? error.message : "Landlords could not be loaded.");
@@ -233,12 +240,7 @@ export default function LandlordsConsole({ canAdminManage, canManage, canManageC
             return;
         }
 
-        const localMatches = rankLocalLandlordMatches(data.landlords, normalizedValue);
-        if (localMatches.length > 0) {
-            searchAbortRef.current?.abort();
-            return;
-        }
-        if (normalizedValue.length < 3) return;
+        if (normalizedValue.length < 2) return;
 
         searchSubmitTimerRef.current = setTimeout(() => {
             const submittedSearch = normalizedValue;
@@ -258,7 +260,22 @@ export default function LandlordsConsole({ canAdminManage, canManage, canManageC
         void fetchLandlords({ page: data.pagination.page, query: search, selectedLandlordId: landlord.id });
     }, [data.pagination.page, fetchLandlords, search]);
 
+    async function loadMoreLandlords(targetPage?: number) {
+        if (!data.pagination.hasNextPage || isLoadingMore) return;
+        setIsLoadingMore(true);
+        try {
+            await fetchLandlords({ append: true, page: data.pagination.page + 1, query: search });
+            if (targetPage) setListPage(targetPage);
+        } finally {
+            setIsLoadingMore(false);
+        }
+    }
+
     function goToPage(nextPage: number) {
+        if (nextPage > totalLocalPages && data.pagination.hasNextPage) {
+            void loadMoreLandlords(nextPage);
+            return;
+        }
         setListPage(Math.max(1, Math.min(totalLocalPages, nextPage)));
     }
 
@@ -393,11 +410,11 @@ export default function LandlordsConsole({ canAdminManage, canManage, canManageC
                             <div>
                                 <h2 className="text-xl font-black text-slate-950">Landlord Search</h2>
                                 <p className="mt-1 text-sm font-semibold text-slate-500">
-                                    Type the first letters of a landlord name.
+                                    Search by landlord name, room number, phone number, or office.
                                 </p>
                             </div>
                             <div className="w-full lg:max-w-xl">
-                                <SearchBox value={search} onChange={handleSearchChange} placeholder="Search landlord by name..." />
+                                <SearchBox value={search} onChange={handleSearchChange} placeholder="Search landlord, room, phone, or office..." />
                                 <div className="mt-2 min-h-5">
                                     {isSearching ? (
                                         <p className="text-xs font-bold text-blue-600">Checking full register...</p>
@@ -458,6 +475,9 @@ export default function LandlordsConsole({ canAdminManage, canManage, canManageC
                         <div className="flex flex-wrap gap-2">
                             <SummaryBadge label="Showing" value={`${showingStart}-${showingEnd} of ${visibleLandlords.length}`} />
                             <SummaryBadge label="Page" value={`${safeListPage} of ${totalLocalPages}`} />
+                            {data.pagination.totalLandlords > visibleLandlords.length ? (
+                                <SummaryBadge label="Loaded" value={`${data.landlords.length} of ${data.pagination.totalLandlords}`} />
+                            ) : null}
                             <SummaryBadge label="Rooms" value={landlordCards.reduce((total, landlord) => total + landlord.portfolioRoomCount, 0).toLocaleString()} />
                             <SummaryBadge label="Monthly Rent Roll" value={money(landlordCards.reduce((total, landlord) => total + landlord.totalExpectedMonthlyCollection, 0))} />
                             <SummaryBadge label="Outstanding" value={money(landlordCards.reduce((total, landlord) => total + landlord.totalOutstandingBalance, 0))} tone="text-red-700" />
@@ -467,7 +487,10 @@ export default function LandlordsConsole({ canAdminManage, canManage, canManageC
                             totalPages={totalLocalPages}
                             hasPreviousPage={safeListPage > 1}
                             hasNextPage={safeListPage < totalLocalPages}
+                            canLoadMore={canLoadMoreServerLandlords}
+                            isLoadingMore={isLoadingMore}
                             onPageChange={goToPage}
+                            onLoadMore={() => void loadMoreLandlords(totalLocalPages + 1)}
                         />
                     </div>
 
@@ -505,7 +528,10 @@ export default function LandlordsConsole({ canAdminManage, canManage, canManageC
                             totalPages={totalLocalPages}
                             hasPreviousPage={safeListPage > 1}
                             hasNextPage={safeListPage < totalLocalPages}
+                            canLoadMore={canLoadMoreServerLandlords}
+                            isLoadingMore={isLoadingMore}
                             onPageChange={goToPage}
+                            onLoadMore={() => void loadMoreLandlords(totalLocalPages + 1)}
                         />
                     </div>
                 </div>
@@ -634,47 +660,55 @@ function SummaryTile({ label, value, tone = "text-slate-900" }: { label: string;
 }
 
 function PaginationControls({
+    canLoadMore,
     hasNextPage,
     hasPreviousPage,
+    isLoadingMore,
+    onLoadMore,
     onPageChange,
     page,
     totalPages,
 }: {
+    canLoadMore: boolean;
     hasNextPage: boolean;
     hasPreviousPage: boolean;
+    isLoadingMore: boolean;
+    onLoadMore: () => void;
     onPageChange: (page: number) => void;
     page: number;
     totalPages: number;
 }) {
-    if (totalPages <= 1) {
-        return (
-            <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-slate-500">
-                Page 1 of 1
-            </div>
-        );
-    }
-
     return (
-        <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
+        <div className="flex w-full flex-col gap-2 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm sm:w-auto sm:flex-row sm:items-center">
             <button
                 type="button"
                 disabled={!hasPreviousPage}
                 onClick={() => onPageChange(page - 1)}
-                className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:border-blue-300 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+                className="whitespace-nowrap rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:border-blue-300 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
                 Previous
             </button>
-            <span className="min-w-24 px-2 text-center text-xs font-black text-slate-500">
-                {page} / {totalPages}
+            <span className="min-w-28 whitespace-nowrap px-2 text-center text-xs font-black text-slate-500">
+                Page {page} of {totalPages}
             </span>
             <button
                 type="button"
-                disabled={!hasNextPage}
+                disabled={!hasNextPage && !canLoadMore}
                 onClick={() => onPageChange(page + 1)}
-                className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                className="whitespace-nowrap rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
             >
                 Next
             </button>
+            {canLoadMore ? (
+                <button
+                    type="button"
+                    disabled={isLoadingMore}
+                    onClick={onLoadMore}
+                    className="whitespace-nowrap rounded-xl bg-blue-700 px-3 py-2 text-xs font-black text-white transition hover:bg-blue-800 disabled:cursor-wait disabled:opacity-60 sm:hidden"
+                >
+                    {isLoadingMore ? "Loading..." : "Show More Landlords"}
+                </button>
+            ) : null}
         </div>
     );
 }
@@ -819,7 +853,7 @@ const LandlordCard = memo(function LandlordCard({
                     <p className="mt-1 text-xs font-bold text-slate-500">
                         {landlord.status ?? "Active"}
                     </p>
-                    <p className={`mt-1 line-clamp-2 text-[11px] font-black ${officeText.includes("Needs review") ? "text-amber-700" : "text-blue-700"}`}>
+                    <p className={`mt-1 text-[11px] font-black leading-snug break-words ${officeText.includes("Needs review") ? "text-amber-700" : "text-blue-700"}`}>
                         {officeText}
                     </p>
                 </div>
@@ -863,6 +897,15 @@ function landlordOfficeText(landlord: LandlordItem) {
     if (officeNames.length === 0) return "Office: Needs review";
     if (officeNames.length === 1) return `Office: ${officeNames[0]}`;
     return `Offices: ${officeNames.join(", ")}`;
+}
+
+function mergeLandlordsPageData(current: LandlordsPageData, next: LandlordsPageData): LandlordsPageData {
+    const landlordById = new Map(current.landlords.map((landlord) => [landlord.id, landlord]));
+    for (const landlord of next.landlords) landlordById.set(landlord.id, landlord);
+    return {
+        ...next,
+        landlords: [...landlordById.values()],
+    };
 }
 
 function CompactLine({ label, value, tone = "text-slate-900" }: { label: string; value: string; tone?: string }) {
