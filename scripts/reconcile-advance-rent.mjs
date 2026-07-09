@@ -115,6 +115,21 @@ async function fetchAll(table, columns, queryBuilder) {
   return rows;
 }
 
+async function fetchAllIn(table, columns, column, ids, queryBuilder) {
+  const uniqueIds = [...new Set(ids.filter(Boolean))];
+  const rows = [];
+  const chunkSize = 150;
+  for (let index = 0; index < uniqueIds.length; index += chunkSize) {
+    const chunk = uniqueIds.slice(index, index + chunkSize);
+    rows.push(...await fetchAll(table, columns, (query) => {
+      let nextQuery = query.in(column, chunk);
+      if (queryBuilder) nextQuery = queryBuilder(nextQuery);
+      return nextQuery;
+    }));
+  }
+  return rows;
+}
+
 function groupBy(rows, key) {
   const map = new Map();
   for (const row of rows) {
@@ -202,7 +217,7 @@ async function main() {
   const currentMonth = monthStart(new Date().toISOString());
   const activeCollections = (await fetchAll(
     "collections",
-    "id,company_id,office_id,room_id,tenant_id,amount,amount_paid,expected_amount,balance_before_payment,balance_after_payment,allocated_to_next_month,payment_date,status,created_at",
+    "id,company_id,office_id,room_id,tenant_id,amount,amount_paid,expected_amount,balance_before_payment,balance_after_payment,used_to_clear_outstanding,allocated_to_next_month,payment_date,status,created_at",
   )).filter(isActivePayment);
 
   const overpaymentCollections = activeCollections.filter((collection) => {
@@ -212,7 +227,7 @@ async function main() {
   });
 
   const candidateTenantIds = new Set(overpaymentCollections.map((collection) => collection.tenant_id));
-  const [tenantsWithOutstanding, futureAdvanceAllocations] = await Promise.all([
+  const [tenantsWithOutstanding, futureAdvanceAllocations, underCoveredRentMonths, zeroBalanceTenants, currentMonthAllocations] = await Promise.all([
     fetchAll(
       "tenants",
       "id,balance,status",
@@ -222,6 +237,21 @@ async function main() {
       "tenant_rent_allocations",
       "tenant_id,allocation_month,allocation_type,amount_allocated",
       (query) => query.eq("allocation_type", "advance_month").gt("allocation_month", currentMonth),
+    ),
+    fetchAll(
+      "tenant_rent_months",
+      "tenant_id,rent_month,rent_amount,amount_paid,outstanding_amount,status",
+      (query) => query.lte("rent_month", currentMonth).gt("outstanding_amount", 0),
+    ),
+    fetchAll(
+      "tenants",
+      "id,balance,status",
+      (query) => query.eq("status", "active").eq("balance", 0),
+    ),
+    fetchAll(
+      "tenant_rent_allocations",
+      "tenant_id,allocation_month,allocation_type,amount_allocated",
+      (query) => query.lte("allocation_month", currentMonth),
     ),
   ]);
   const tenantsWithFutureAdvance = new Set(
@@ -233,7 +263,20 @@ async function main() {
   for (const tenant of tenantsWithOutstanding) {
     if (tenantsWithFutureAdvance.has(tenant.id)) candidateTenantIds.add(tenant.id);
   }
-  const namedRooms = ["A2013", "A351", "CS10", "K29A", "R435", "T208"];
+  const zeroBalanceTenantIds = new Set(zeroBalanceTenants.map((tenant) => tenant.id).filter(Boolean));
+  const tenantsWithCurrentCoverage = new Set(
+    currentMonthAllocations
+      .filter((allocation) => numberValue(allocation.amount_allocated) > 0.004)
+      .map((allocation) => allocation.tenant_id)
+      .filter(Boolean),
+  );
+  for (const row of underCoveredRentMonths) {
+    if (zeroBalanceTenantIds.has(row.tenant_id) && tenantsWithCurrentCoverage.has(row.tenant_id)) {
+      candidateTenantIds.add(row.tenant_id);
+    }
+  }
+
+  const namedRooms = ["A2013", "A351", "CS10", "E418", "K29A", "R435", "T208"];
   const namedRoomRows = await fetchAll(
     "rooms",
     "id,room_number",
@@ -256,15 +299,15 @@ async function main() {
   }
 
   const [tenants, allocations, rentMonths] = await Promise.all([
-    fetchAll("tenants", "id,company_id,office_id,room_id,full_name,monthly_rent,balance,status", (query) => query.in("id", tenantIds)),
-    fetchAll("tenant_rent_allocations", "id,company_id,office_id,tenant_id,room_id,payment_id,allocation_month,allocation_type,amount_allocated,allocation_source,is_historical_credit,created_at", (query) => query.in("tenant_id", tenantIds)),
-    fetchAll("tenant_rent_months", "id,company_id,office_id,landlord_id,room_id,tenant_id,lease_id,rent_month,rent_amount,amount_paid,outstanding_amount,status", (query) => query.in("tenant_id", tenantIds)),
+    fetchAllIn("tenants", "id,company_id,office_id,room_id,full_name,monthly_rent,balance,status", "id", tenantIds),
+    fetchAllIn("tenant_rent_allocations", "id,company_id,office_id,tenant_id,room_id,payment_id,allocation_month,allocation_type,amount_allocated,allocation_source,is_historical_credit,created_at", "tenant_id", tenantIds),
+    fetchAllIn("tenant_rent_months", "id,company_id,office_id,landlord_id,room_id,tenant_id,lease_id,rent_month,rent_amount,amount_paid,outstanding_amount,status,source", "tenant_id", tenantIds),
   ]);
 
   const roomIds = [...new Set(tenants.map((tenant) => tenant.room_id).filter(Boolean))];
   const [rooms, leases] = await Promise.all([
-    roomIds.length ? fetchAll("rooms", "id,company_id,office_id,landlord_id,room_number,monthly_rent,outstanding_balance,status", (query) => query.in("id", roomIds)) : [],
-    tenantIds.length ? fetchAll("leases", "id,company_id,office_id,room_id,tenant_id,monthly_rent,status", (query) => query.in("tenant_id", tenantIds).eq("status", "active")) : [],
+    roomIds.length ? fetchAllIn("rooms", "id,company_id,office_id,landlord_id,room_number,monthly_rent,outstanding_balance,status", "id", roomIds) : [],
+    tenantIds.length ? fetchAllIn("leases", "id,company_id,office_id,room_id,tenant_id,monthly_rent,status", "tenant_id", tenantIds, (query) => query.eq("status", "active")) : [],
   ]);
 
   const tenantsById = new Map(tenants.map((tenant) => [tenant.id, tenant]));
@@ -346,12 +389,22 @@ async function main() {
 
       const nextMonth = addMonths(paymentMonth, 1);
       const desiredNextMonth = desiredByMonth.get(nextMonth) ?? 0;
-      if (desiredNextMonth > numberValue(collection.allocated_to_next_month) + 0.004) {
-        const { error } = await supabase
-          .from("collections")
-          .update({ allocated_to_next_month: desiredNextMonth })
-          .eq("id", collection.id);
+      const balanceAfterPayment = Math.max(0, dueBefore - paid);
+      const usedToClearOutstanding = Math.min(paid, dueBefore);
+      const collectionSnapshotPatch = {};
+      if (Math.abs(numberValue(collection.allocated_to_next_month) - desiredNextMonth) > 0.004) {
+        collectionSnapshotPatch.allocated_to_next_month = desiredNextMonth;
+      }
+      if (Math.abs(numberValue(collection.balance_after_payment) - balanceAfterPayment) > 0.004) {
+        collectionSnapshotPatch.balance_after_payment = balanceAfterPayment;
+      }
+      if (Math.abs(numberValue(collection.used_to_clear_outstanding) - usedToClearOutstanding) > 0.004) {
+        collectionSnapshotPatch.used_to_clear_outstanding = usedToClearOutstanding;
+      }
+      if (Object.keys(collectionSnapshotPatch).length) {
+        const { error } = await supabase.from("collections").update(collectionSnapshotPatch).eq("id", collection.id);
         if (error) throw error;
+        Object.assign(collection, collectionSnapshotPatch);
       }
     }
 
@@ -365,9 +418,23 @@ async function main() {
     for (const month of [...monthsToReconcile].sort()) {
       const paidForMonth = allocationTotal(tenantAllocations, month, "coverage");
       const existing = rentMonthByMonth.get(month);
+      if (!existing && month < currentMonth && paidForMonth < monthlyRent - 0.004) continue;
       if (!existing && paidForMonth <= 0.004 && month !== currentMonth) continue;
       const updated = await upsertRentMonth({ tenant, room, lease, month, monthlyRent, paidForMonth, existing });
       rentMonthByMonth.set(month, updated);
+    }
+
+    for (const [month, existing] of [...rentMonthByMonth.entries()]) {
+      const paidForMonth = allocationTotal(tenantAllocations, month, "coverage");
+      const source = String(existing.source ?? "");
+      const isSyntheticUnderCoveredPastMonth = month < currentMonth
+        && source === "advance_reconciliation"
+        && paidForMonth < monthlyRent - 0.004
+        && numberValue(existing.outstanding_amount) > 0.004;
+      if (!isSyntheticUnderCoveredPastMonth) continue;
+      const { error } = await supabase.from("tenant_rent_months").delete().eq("id", existing.id);
+      if (error) throw error;
+      rentMonthByMonth.delete(month);
     }
 
     let outstanding = [...rentMonthByMonth.values()]
