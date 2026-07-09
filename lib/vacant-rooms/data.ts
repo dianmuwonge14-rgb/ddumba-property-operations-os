@@ -64,8 +64,10 @@ export async function getVacantRoomsPageData(options: { admin?: boolean } = {}):
     const companyId = context.activeCompany?.id;
     const activeOfficeId = context.activeOffice?.id;
     const isAdmin = Boolean(options.admin && context.isCompanyAdmin && !context.isOfficeMode);
+    const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
+    const canViewAllOffices = isAdmin || isCollector;
 
-    if (!companyId || (!isAdmin && !activeOfficeId)) {
+    if (!companyId || (!canViewAllOffices && !activeOfficeId)) {
         return emptyData(isAdmin);
     }
 
@@ -82,7 +84,7 @@ export async function getVacantRoomsPageData(options: { admin?: boolean } = {}):
         .select("*")
         .eq("company_id", companyId)
         .order("room_number", { ascending: true, nullsFirst: false });
-    if (!isAdmin && activeOfficeId) {
+    if (!canViewAllOffices && activeOfficeId) {
         roomQuery = roomQuery.eq("office_id", activeOfficeId);
     }
 
@@ -168,7 +170,8 @@ export async function getVacantRoomsPageData(options: { admin?: boolean } = {}):
         company: context.activeCompany,
         activeOffice: context.activeOffice,
         isAdmin,
-        canManageOccupancy: context.isCompanyAdmin || hasPermission(context, "properties.manage") || hasPermission(context, "collections.manage") || hasPermission(context, "landlords.manage"),
+        canFilterOffices: canViewAllOffices,
+        canManageOccupancy: !isCollector && (context.isCompanyAdmin || hasPermission(context, "properties.manage") || hasPermission(context, "collections.manage") || hasPermission(context, "landlords.manage")),
         offices: offices.map((office) => ({ id: office.id, name: officeName(office) })).sort((a, b) => a.name.localeCompare(b.name)),
         landlords: landlords.map((landlord) => ({ id: landlord.id, name: landlord.full_name ?? "No landlord" })).sort((a, b) => a.name.localeCompare(b.name)),
         locations: [...new Set(items.map((item) => item.location).filter(Boolean))].sort(),
@@ -433,6 +436,7 @@ function emptyData(isAdmin: boolean): VacantRoomsPageData {
         company: null,
         activeOffice: null,
         isAdmin,
+        canFilterOffices: isAdmin,
         canManageOccupancy: false,
         offices: [],
         landlords: [],

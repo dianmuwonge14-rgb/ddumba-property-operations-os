@@ -59,8 +59,10 @@ export async function getTenantRelocationPageData(options: { admin?: boolean } =
     const companyId = context.activeCompany?.id;
     const activeOfficeId = context.activeOffice?.id;
     const isAdmin = Boolean(options.admin && context.isCompanyAdmin && !context.isOfficeMode);
+    const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
+    const canViewAllOffices = isAdmin || isCollector;
 
-    if (!companyId || (!isAdmin && !activeOfficeId)) {
+    if (!companyId || (!canViewAllOffices && !activeOfficeId)) {
         return emptyData(context, isAdmin);
     }
 
@@ -88,7 +90,7 @@ export async function getTenantRelocationPageData(options: { admin?: boolean } =
         .order("created_at", { ascending: false })
         .limit(100);
 
-    if (!isAdmin && activeOfficeId) {
+    if (!canViewAllOffices && activeOfficeId) {
         roomQuery = roomQuery.eq("office_id", activeOfficeId);
         tenantQuery = tenantQuery.eq("office_id", activeOfficeId);
         leaseQuery = leaseQuery.eq("office_id", activeOfficeId);
@@ -181,7 +183,7 @@ export async function getTenantRelocationPageData(options: { admin?: boolean } =
         company: context.activeCompany,
         activeOffice: context.activeOffice,
         isAdmin,
-        canSubmit: isAdmin || hasPermission(context, "collections.manage") || hasPermission(context, "properties.manage"),
+        canSubmit: isAdmin || isCollector || hasPermission(context, "collections.manage") || hasPermission(context, "properties.manage"),
         canApprove: isAdmin,
         tenants: tenantItems,
         vacantRooms,

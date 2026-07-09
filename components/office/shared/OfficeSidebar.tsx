@@ -132,6 +132,8 @@ const collectorSections = [
             { href: "/office/collector", label: "Dashboard", icon: Home },
             { href: "/office/collector/payments", label: "Payments Entry", icon: Banknote },
             { href: "/office/collector/promises", label: "Promise Entry", icon: CalendarCheck },
+            { href: "/office/collector/vacant-rooms", label: "Vacant Rooms", icon: HousePlus },
+            { href: "/office/collector/tenant-relocation", label: "Tenant Relocation", icon: GitMerge },
             { href: "/office/collector/daily", label: "Daily Collections", icon: HandCoins },
             { href: "/office/collector/submissions", label: "Money Submission", icon: WalletCards },
             { href: "/office/collector/instructions", label: "Instructions", icon: ClipboardCheck },

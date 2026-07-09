@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { canAccessOffice, requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissions";
+import { canAccessOffice, hasPermission, requireAuth, requireCompanyAdminMode } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Database } from "@/types/database.types";
@@ -65,8 +65,10 @@ function billingDayFromDate(value: string) {
 function revalidateRelocationSurfaces() {
     for (const path of [
         "/office/tenant-relocation",
+        "/office/collector/tenant-relocation",
         "/office/admin/tenant-relocation",
         "/office/vacant-rooms",
+        "/office/collector/vacant-rooms",
         "/office/admin/vacant-rooms",
         "/office/landlords",
         "/office/landlord-payments",
@@ -89,7 +91,10 @@ function revalidateRelocationSurfaces() {
 }
 
 export async function submitTenantRelocation(input: SubmitRelocationInput) {
-    const context = await requirePermission("collections.manage");
+    const context = await requireAuth();
+    const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
+    const canRequestRelocation = isCollector || context.isCompanyAdmin || hasPermission(context, "collections.manage") || hasPermission(context, "properties.manage");
+    if (!canRequestRelocation) throw new Error("You do not have permission to request tenant relocation.");
     if (!context.activeCompany?.id) throw new Error("Active company is required.");
     const companyId = context.activeCompany.id;
     const tenantId = input.tenantId?.trim();
@@ -104,10 +109,10 @@ export async function submitTenantRelocation(input: SubmitRelocationInput) {
     const db = supabase as unknown as DynamicDb;
     const snapshot = await loadRelocationSnapshot({ companyId, db, newRoomId, tenantId });
 
-    if (!context.canAccessAllOffices && !context.isCompanyAdmin && !canAccessOffice(context, snapshot.officeId)) {
+    if (!isCollector && !context.canAccessAllOffices && !context.isCompanyAdmin && !canAccessOffice(context, snapshot.officeId)) {
         throw new Error("You can only relocate tenants from your assigned office.");
     }
-    if (!context.canAccessAllOffices && !context.isCompanyAdmin && !canAccessOffice(context, snapshot.newRoom.office_id)) {
+    if (!isCollector && !context.canAccessAllOffices && !context.isCompanyAdmin && !canAccessOffice(context, snapshot.newRoom.office_id)) {
         throw new Error("You can only move tenants into rooms in your assigned office.");
     }
 

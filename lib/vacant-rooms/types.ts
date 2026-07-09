@@ -59,6 +59,7 @@ export type VacantRoomsPageData = {
     company: CompanyRow | null;
     activeOffice: OfficeRow | null;
     isAdmin: boolean;
+    canFilterOffices: boolean;
     canManageOccupancy: boolean;
     offices: Array<{ id: string; name: string }>;
     landlords: Array<{ id: string; name: string }>;

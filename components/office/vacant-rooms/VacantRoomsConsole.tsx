@@ -155,7 +155,7 @@ export default function VacantRoomsConsole({ data }: Props) {
                         </label>
                         <FilterInput label="Min rent" value={minRent} onChange={setMinRent} />
                         <FilterInput label="Max rent" value={maxRent} onChange={setMaxRent} />
-                        {data.isAdmin ? (
+                        {data.canFilterOffices ? (
                             <FilterSelect label="Office" value={officeId} onChange={setOfficeId} options={[{ id: "", name: "All offices" }, ...data.offices]} />
                         ) : null}
                         <FilterSelect label="Location" value={location} onChange={setLocation} options={[{ id: "", name: "All locations" }, ...data.locations.map((item) => ({ id: item, name: item }))]} />
@@ -208,24 +208,26 @@ export default function VacantRoomsConsole({ data }: Props) {
                     ) : null}
                 </section>
 
-                <section className="mx-auto mt-5 max-w-7xl">
-                    <RoomActionPanel
-                        isAdmin={data.isAdmin}
-                        room={selectedRoom ? {
-                            id: selectedRoom.id,
-                            roomNumber: selectedRoom.roomNumber,
-                            status: selectedRoom.status,
-                            monthlyRent: selectedRoom.monthlyRent,
-                            outstandingBalance: 0,
-                            landlordName: selectedRoom.landlordName,
-                            propertyName: selectedRoom.propertyName,
-                            officeName: selectedRoom.officeName,
-                            tenantName: null,
-                            tenantPhone: null,
-                        } : null}
-                        onSaved={afterOccupied}
-                    />
-                </section>
+                {data.canManageOccupancy ? (
+                    <section className="mx-auto mt-5 max-w-7xl">
+                        <RoomActionPanel
+                            isAdmin={data.isAdmin}
+                            room={selectedRoom ? {
+                                id: selectedRoom.id,
+                                roomNumber: selectedRoom.roomNumber,
+                                status: selectedRoom.status,
+                                monthlyRent: selectedRoom.monthlyRent,
+                                outstandingBalance: 0,
+                                landlordName: selectedRoom.landlordName,
+                                propertyName: selectedRoom.propertyName,
+                                officeName: selectedRoom.officeName,
+                                tenantName: null,
+                                tenantPhone: null,
+                            } : null}
+                            onSaved={afterOccupied}
+                        />
+                    </section>
+                ) : null}
             </div>
 
             {showPrintPreview ? (
