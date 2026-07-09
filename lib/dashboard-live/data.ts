@@ -174,9 +174,9 @@ export async function getDashboardLiveData(input: DashboardQueryInput = {}): Pro
         fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("tenant_rent_sponsors").select("office_id,covered_amount,tenant_top_up_amount,status").eq("company_id", companyId).eq("status", "active"), shouldScopeOfficeQueries, officeScopeIds)),
         fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("landlord_monthly_payables").select("office_id,landlord_id,unpaid_balance,net_payable,status").eq("company_id", companyId).neq("status", "archived"), shouldScopeOfficeQueries, officeScopeIds)),
         fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("landlord_advances").select(LANDLORD_ADVANCE_COLUMNS).eq("company_id", companyId), shouldScopeOfficeQueries, officeScopeIds)),
-        fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("bank_deposits").select("office_id,amount,status").eq("company_id", companyId).gte("deposit_date", startOfMonth).lte("deposit_date", endOfPeriod), shouldScopeOfficeQueries, officeScopeIds)),
+        fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("bank_deposits").select("office_id,amount").eq("company_id", companyId).gte("deposit_date", startOfMonth).lte("deposit_date", endOfPeriod), shouldScopeOfficeQueries, officeScopeIds)),
         fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("office_cash_movements").select("office_id,amount,movement_type,source_type").eq("company_id", companyId).gte("movement_date", startOfMonth).lte("movement_date", endOfPeriod), shouldScopeOfficeQueries, officeScopeIds)),
-        fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("admin_cash_movements").select("office_id,amount,movement_type,source_type").eq("company_id", companyId).gte("movement_date", startOfMonth).lte("movement_date", endOfPeriod), shouldScopeOfficeQueries, officeScopeIds)),
+        fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("admin_cash_movements").select("office_id,amount,movement_type,source").eq("company_id", companyId).gte("movement_date", startOfMonth).lte("movement_date", endOfPeriod), shouldScopeOfficeQueries, officeScopeIds)),
         fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("tenant_rent_months").select("office_id,rent_month").eq("company_id", companyId).eq("rent_month", monthStart()), shouldScopeOfficeQueries, officeScopeIds)),
         fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("monthly_rollover_runs").select("office_id,rent_month,completed_at,created_at,status,failed_records").eq("company_id", companyId), shouldScopeOfficeQueries, officeScopeIds).order("created_at", { ascending: false }).limit(25)),
     ]);
@@ -639,7 +639,7 @@ function buildFinanceSummary(input: {
         .filter((row) => String(row.movement_type ?? row.source_type ?? "").toLowerCase().includes("bank"))
         .reduce((total, row) => total + amount(row.amount), 0) || amountBanked;
     const amountGivenToOfficeByAdmin = input.adminCashMovements
-        .filter((row) => ["money_sent_to_office", "admin_float", "office_float"].includes(String(row.movement_type ?? row.source_type ?? "").toLowerCase()))
+        .filter((row) => ["money_sent_to_office", "admin_float", "office_float"].includes(String(row.movement_type ?? row.source ?? row.source_type ?? "").toLowerCase()))
         .reduce((total, row) => total + amount(row.amount), 0);
     const amountAtOffice = collectedSoFarThisMonth + amountGivenToOfficeByAdmin - expenses - amountSentFromOfficeToBank - landlordPaymentsMade;
 
