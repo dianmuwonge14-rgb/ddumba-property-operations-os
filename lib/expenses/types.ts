@@ -157,6 +157,7 @@ export type CreateExpenseInput = {
     vendor?: string;
     description?: string;
     expenseDate?: string;
+    paymentMethod?: string;
     receiptUrl?: string;
 };
 

@@ -72,6 +72,10 @@ function isLunchItem(value: string | null | undefined) {
     return itemKey(value) === "lunch";
 }
 
+function isSalaryDeductibleExpenseItem(value: string | null | undefined) {
+    return ["other", "others"].includes(itemKey(value));
+}
+
 function advanceTotal(row: Record<string, unknown>) {
     const total = amount(row.total_repayable);
     if (total > 0) return total;
@@ -263,42 +267,82 @@ async function getLandlordPaymentPreview(input: {
 export async function createExpense(input: CreateExpenseInput) {
     const context = await activeWriteContext();
     const supabase = await createSupabaseServerClient();
+    const adminDb = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
     const amount = Number(input.amount);
     assertAmount(amount);
 
-    const { data, error } = await supabase
+    const expenseDate = input.expenseDate || new Date().toISOString().slice(0, 10);
+    const expensePayload = {
+        amount,
+        approved_at: new Date().toISOString(),
+        category: input.category || null,
+        category_id: input.categoryId || null,
+        company_id: context.activeCompany!.id,
+        description: input.description || null,
+        expense_date: expenseDate,
+        expense_number: expenseNumber(),
+        item: input.item || null,
+        office_id: context.activeOffice!.id,
+        payment_method: input.paymentMethod || null,
+        property_id: input.propertyId || null,
+        receipt_url: input.receiptUrl || null,
+        status: "approved",
+        submitted_by: context.profile?.id ?? null,
+        vendor: input.vendor || null,
+    };
+
+    let insertResult = await (supabase as unknown as { from: (table: string) => any })
         .from("expenses")
-        .insert({
-            amount,
-            category: input.category || null,
-            category_id: input.categoryId || null,
-            company_id: context.activeCompany!.id,
-            description: input.description || null,
-            expense_date: input.expenseDate || new Date().toISOString().slice(0, 10),
-            expense_number: expenseNumber(),
-            item: input.item || null,
-            office_id: context.activeOffice!.id,
-            property_id: input.propertyId || null,
-            receipt_url: input.receiptUrl || null,
-            submitted_by: context.profile?.id ?? null,
-            vendor: input.vendor || null,
-        })
+        .insert(expensePayload)
         .select("*")
         .single();
 
-    if (error) throw new Error(error.message);
+    if (insertResult.error && !isMissingSchemaError(insertResult.error)) {
+        throw new Error(`Expense could not be saved: ${insertResult.error.message}`);
+    }
+    if (insertResult.error) {
+        const fallbackPayload = { ...expensePayload };
+        delete (fallbackPayload as Partial<typeof fallbackPayload>).payment_method;
+        delete (fallbackPayload as Partial<typeof fallbackPayload>).status;
+        delete (fallbackPayload as Partial<typeof fallbackPayload>).approved_at;
+        insertResult = await adminDb
+            .from("expenses")
+            .insert(fallbackPayload)
+            .select("*")
+            .single();
+    }
 
-    await postOfficeCashOutflow({
-        amount,
-        companyId: context.activeCompany!.id,
-        db: createSupabaseAdminClient() as unknown as { from: (table: string) => any },
-        description: `Office expense recorded: ${input.item || input.category || "Expense"}`,
-        officeId: context.activeOffice!.id,
-        recordedBy: context.profile?.id ?? null,
-        sourceId: data.id,
-        sourceType: "expense",
-        transactionDate: input.expenseDate || new Date().toISOString().slice(0, 10),
-    });
+    if (insertResult.error || !insertResult.data) {
+        throw new Error(`Expense could not be saved: ${insertResult.error?.message ?? "No saved expense returned."}`);
+    }
+    const data = insertResult.data;
+
+    try {
+        await postOfficeCashOutflow({
+            amount,
+            companyId: context.activeCompany!.id,
+            db: adminDb,
+            description: `Office expense recorded: ${input.item || input.category || "Expense"}`,
+            officeId: context.activeOffice!.id,
+            recordedBy: context.profile?.id ?? null,
+            sourceId: data.id,
+            sourceType: "expense",
+            transactionDate: expenseDate,
+        });
+    } catch (error) {
+        console.error("Expense saved but office cash ledger posting failed:", error);
+        await logUserAction({
+            action: "expense_cash_ledger_warning",
+            entityType: "expense",
+            entityId: data.id,
+            companyId: context.activeCompany!.id,
+            officeId: context.activeOffice!.id,
+            afterData: {
+                expenseId: data.id,
+                warning: error instanceof Error ? error.message : "Office cash ledger posting failed.",
+            },
+        });
+    }
 
     await logUserAction({
         action: "expense_created",
@@ -575,9 +619,10 @@ async function loadEmployeeExpensePreview(input: {
     const allowanceAmount = lunchItem ? lunchBalanceBefore : amount(allowance?.allowance_amount);
     const alreadySpentAmount = ((spentResult.data ?? []) as Array<Record<string, unknown>>).reduce((total, row) => total + amount(row.amount), 0);
     const remainingAllowance = lunchItem ? lunchBalanceBefore : Math.max(0, allowanceAmount - alreadySpentAmount - pendingAmount);
-    const allowedPortion = Math.min(input.amount, remainingAllowance);
-    const extraAmount = Math.max(0, input.amount - allowedPortion);
-    const treatment = String(allowance?.treatment ?? "company_expense") === "employee_personal_expense" ? "employee_personal_expense" : "company_expense";
+    const salaryDeductible = isSalaryDeductibleExpenseItem(input.expenseItem);
+    const allowedPortion = salaryDeductible ? input.amount : Math.min(input.amount, remainingAllowance);
+    const extraAmount = salaryDeductible ? 0 : Math.max(0, input.amount - allowedPortion);
+    const treatment = salaryDeductible ? "employee_personal_expense" : "company_expense";
 
     return {
         allowanceId: allowance?.id ? String(allowance.id) : null,
@@ -594,9 +639,9 @@ async function loadEmployeeExpensePreview(input: {
         lunchBalanceAfter: Math.max(0, lunchBalanceBefore - allowedPortion),
         presentForExpenseDate,
         attendanceStatus,
-        salaryImpactAmount: lunchItem ? extraAmount : extraAmount,
+        salaryImpactAmount: salaryDeductible ? Math.max(0, input.amount) : 0,
         treatment,
-        approvalRequired: extraAmount > 0,
+        approvalRequired: salaryDeductible ? false : extraAmount > 0,
         employeeName: String(employee.full_name ?? "Employee"),
         itemName: itemName(input.expenseItem),
         monthKey: monthKeyValue,
@@ -671,6 +716,7 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
     let expenseId: string | null = null;
     let employeeExpenseId: string | null = null;
     const lunchItem = isLunchItem(input.expenseItem);
+    const salaryDeductible = isSalaryDeductibleExpenseItem(input.expenseItem);
     if (lunchItem && preview.presentForExpenseDate && preview.dailyLunchAllowance > 0) {
         const { error: earnedError } = await db
             .from("employee_lunch_ledger")
@@ -716,7 +762,7 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
             .insert({
                 active: true,
                 amount: preview.allowedPortion,
-                approved_for_payroll: lunchItem ? false : preview.treatment === "employee_personal_expense",
+                approved_for_payroll: salaryDeductible,
                 category: itemKey(input.expenseItem),
                 company_id: companyId,
                 created_by: actorId,
@@ -726,6 +772,7 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
                 note: input.note || `Allowed ${preview.itemName} expense`,
                 office_id: officeId,
                 recorded_by_office: true,
+                salary_deductible: salaryDeductible,
                 status: "approved",
                 employee_id: input.employeeId,
             })
@@ -888,6 +935,7 @@ export async function decideEmployeeExpenseRequest(input: DecideEmployeeExpenseR
     if (expenseError) throw new Error(expenseError.message);
     let approvedEmployeeExpenseId: string | null = null;
     let approvedAdvanceId: string | null = null;
+    const salaryDeductible = isSalaryDeductibleExpenseItem(String(request.requested_item_key ?? ""));
     if (String(request.requested_item_key ?? "") === "lunch") {
         const { data: advance, error: advanceError } = await db
             .from("employee_advances")
@@ -915,7 +963,7 @@ export async function decideEmployeeExpenseRequest(input: DecideEmployeeExpenseR
             .insert({
                 active: true,
                 amount: extraAmount,
-                approved_for_payroll: true,
+                approved_for_payroll: salaryDeductible,
                 category: String(request.requested_item_key ?? "other"),
                 company_id: companyId,
                 created_by: request.requested_by ?? actorId,
@@ -927,6 +975,7 @@ export async function decideEmployeeExpenseRequest(input: DecideEmployeeExpenseR
                 recorded_by_office: true,
                 reviewed_at: reviewedAt,
                 reviewed_by: actorId,
+                salary_deductible: salaryDeductible,
                 status: "approved",
                 employee_id: request.employee_id,
             })

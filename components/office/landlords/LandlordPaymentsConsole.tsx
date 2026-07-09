@@ -22,7 +22,7 @@ import {
     type AdvanceRepaymentType,
     type PrincipalClearanceMethod,
 } from "@/lib/landlord-advances/calculator";
-import type { LandlordAdvanceGroup, LandlordMonthlyPayable, LandlordPayableGroup, LandlordPayablesData, LandlordPaymentApprovalRequest, PaidLandlordPayment } from "@/lib/landlord-payables/types";
+import type { LandlordAdvanceGroup, LandlordMonthlyPayable, LandlordPayableGroup, LandlordPayablesData, LandlordPaymentApprovalRequest, LandlordUnpaidMonthGroup, PaidLandlordPayment } from "@/lib/landlord-payables/types";
 
 type Props = {
     data: LandlordPayablesData;
@@ -75,6 +75,7 @@ export default function LandlordPaymentsConsole({ data }: Props) {
     const offices = data.offices ?? [];
     const summary = {
         totalUnpaidLandlordMoney: data.summary?.totalUnpaidLandlordMoney ?? 0,
+        totalUnpaidAcrossMonths: data.summary?.totalUnpaidAcrossMonths ?? data.summary?.totalOutstandingToLandlords ?? 0,
         unpaidLandlords: data.summary?.unpaidLandlords ?? 0,
         partialLandlords: data.summary?.partialLandlords ?? 0,
         needsReviewLandlords: data.summary?.needsReviewLandlords ?? 0,
@@ -109,10 +110,8 @@ export default function LandlordPaymentsConsole({ data }: Props) {
         } satisfies PaidLandlordPayment)));
     const paidPayments = importedPaidRows.length > 0 ? importedPaidRows : data.paidPayments ?? [];
     const safeData = { ...data, groups, advanceGroups, landlords, offices, summary };
-    const hasMayClearanceMarkers = groups.some((group) => group.rows.some((row) => String(row.settlement_month).slice(0, 7) === currentMonthKey.slice(0, 7) && String(row.reasons_notes ?? "").includes("cleared_month=MAY")));
-    const unpaidReportGroups = hasMayClearanceMarkers
-        ? groups.filter((group) => group.rows.some((row) => String(row.settlement_month).slice(0, 7) === currentMonthKey.slice(0, 7) && String(row.reasons_notes ?? "").includes("cleared_month=MAY") && String(row.status ?? "").toLowerCase() === "unpaid"))
-        : groups.filter((group) => group.totalOutstanding > 0);
+    const unpaidReportGroups = groups.filter((group) => group.totalOutstanding > 0);
+    const unpaidMonthGroups = data.unpaidMonthGroups ?? [];
     const [selectedLandlordId, setSelectedLandlordId] = useState(unpaidReportGroups[0]?.landlordId ?? groups[0]?.landlordId ?? "");
     const [selectedAdvanceLandlordId, setSelectedAdvanceLandlordId] = useState(advanceGroups[0]?.landlordId ?? "");
     const [activePanel, setActivePanel] = useState<"unpaid" | "ledger" | "advances" | "paid" | "recovery">("unpaid");
@@ -232,7 +231,7 @@ export default function LandlordPaymentsConsole({ data }: Props) {
 
                 <section className="mt-6 grid grid-cols-1 gap-6 2xl:grid-cols-12">
                     <div id="unpaid-landlords-report" className={`2xl:col-span-5 ${activePanel === "advances" ? "opacity-75" : ""}`}>
-                        <UnpaidLandlordsReport groups={unpaidReportGroups} selectedId={selected?.landlordId ?? ""} onSelect={setSelectedLandlordId} onViewLedger={selectLedger} />
+                        <UnpaidLandlordsReport groups={unpaidReportGroups} monthGroups={unpaidMonthGroups} selectedId={selected?.landlordId ?? ""} onSelect={setSelectedLandlordId} onViewLedger={selectLedger} />
                     </div>
                     <div id="monthly-ledger" className="2xl:col-span-7">
                         <MonthlyLedger group={selected} />
@@ -402,89 +401,99 @@ function DebugStat({ label, value, tone = "text-white" }: { label: string; value
 
 function UnpaidLandlordsReport({
     groups,
+    monthGroups,
     selectedId,
     onSelect,
     onViewLedger,
 }: {
     groups: LandlordPayableGroup[];
+    monthGroups: LandlordUnpaidMonthGroup[];
     selectedId: string;
     onSelect: (id: string) => void;
     onViewLedger: (id: string) => void;
 }) {
-    const statusMonth = monthLabel(groups[0]?.rows.find((row) => row.status !== "paid")?.settlement_month ?? groups[0]?.oldestUnpaidMonth ?? new Date().toISOString().slice(0, 10));
-    const totals = groups.reduce((acc, group) => ({
+    const totals = monthGroups.reduce((acc, group) => ({
         payable: acc.payable + group.totalPayable,
         paid: acc.paid + group.totalPaid,
-        outstanding: acc.outstanding + group.totalOutstanding,
-    }), { payable: 0, paid: 0, outstanding: 0 });
+        deductions: acc.deductions + group.totalDeductions,
+        outstanding: acc.outstanding + group.totalUnpaid,
+    }), { payable: 0, paid: 0, deductions: 0, outstanding: 0 });
 
     return (
         <section className="enterprise-panel overflow-hidden">
             <div className="border-b border-slate-200 p-5">
                 <p className="text-xs font-black uppercase tracking-wide text-blue-600">Unpaid Landlords</p>
                 <h2 className="mt-1 text-xl font-black text-slate-950">Unpaid Landlord Report</h2>
-                <p className="mt-1 text-sm font-semibold text-slate-500">Landlord, office, months unpaid, and total amount owed.</p>
+                <p className="mt-1 text-sm font-semibold text-slate-500">Open landlord payable rows grouped by settlement month. Paid, archived, reversed, and voided records are excluded.</p>
             </div>
-            {groups.length === 0 ? (
+            {monthGroups.length === 0 ? (
                 <div className="p-6">
-                    <EmptyState title="No monthly payable records yet" description="Use the Run Monthly Snapshot action above to create live monthly landlord payable records." />
+                    <EmptyState title="No unpaid landlord payable records" description="All live landlord payable rows are currently paid or closed." />
                 </div>
             ) : (
-                <div className="max-h-[680px] overflow-auto">
-                    <table className="enterprise-table">
-                        <thead>
-                            <tr>
-                                <th className="text-left">Landlord</th>
-                                <th className="text-left">Office</th>
-                                <th className="text-left">Months Unpaid</th>
-                                <th className="text-left">Oldest Month</th>
-                                <th className="text-left">{statusMonth} Status</th>
-                                <th className="text-left">Net Payable</th>
-                                <th className="text-left">Paid</th>
-                                <th className="text-left">Outstanding</th>
-                                <th className="text-left">Action</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {groups.map((group) => (
-                                <tr key={group.landlordId} onClick={() => onSelect(group.landlordId)} className={`cursor-pointer ${group.landlordId === selectedId ? "bg-blue-50" : ""}`}>
-                                    <td>
-                                        <button onClick={() => onSelect(group.landlordId)} className="text-left font-black text-slate-950 hover:text-blue-700">
-                                            {group.landlordName}
-                                        </button>
-                                        <p className="text-xs font-bold text-slate-500">Oldest {monthLabel(group.oldestUnpaidMonth)}</p>
-                                    </td>
-                                    <td>{group.officeName}</td>
-                                    <td>{group.monthsUnpaid}</td>
-                                    <td>{monthLabel(group.oldestUnpaidMonth)}</td>
-                                    <td><StatusChip label={`${statusMonth} Unpaid`} tone="orange" /></td>
-                                    <td className="whitespace-normal break-words font-black text-slate-900">{money(group.totalPayable)}</td>
-                                    <td className="whitespace-normal break-words font-bold text-emerald-700">{money(group.totalPaid)}</td>
-                                    <td className="whitespace-normal break-words font-black text-red-700">{money(group.totalOutstanding)}</td>
-                                    <td>
-                                        <div className="flex flex-wrap gap-2">
-                                            <button type="button" onClick={(event) => { event.stopPropagation(); onViewLedger(group.landlordId); }} className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white">View Monthly Ledger</button>
-                                            <button type="button" onClick={(event) => { event.stopPropagation(); onViewLedger(group.landlordId); setTimeout(() => window.print(), 250); }} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700">Print Statement</button>
-                                            <button type="button" onClick={(event) => { event.stopPropagation(); onViewLedger(group.landlordId); }} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700">Record Payment</button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                        <tfoot className="sticky bottom-0 border-t border-slate-300 bg-slate-100 font-black text-slate-950 shadow-[0_-6px_16px_rgba(15,23,42,0.08)]">
-                            <tr>
-                                <td>Total</td>
-                                <td />
-                                <td />
-                                <td />
-                                <td />
-                                <td className="whitespace-normal break-words">{money(totals.payable)}</td>
-                                <td className="whitespace-normal break-words text-emerald-700">{money(totals.paid)}</td>
-                                <td className="whitespace-normal break-words text-red-700">{money(totals.outstanding)}</td>
-                                <td />
-                            </tr>
-                        </tfoot>
-                    </table>
+                <div className="max-h-[760px] overflow-auto">
+                    {monthGroups.map((monthGroup) => (
+                        <div key={monthGroup.monthKey} className="border-b border-slate-200 last:border-b-0">
+                            <div className="sticky top-0 z-10 flex flex-col gap-2 border-b border-slate-700 bg-gradient-to-r from-emerald-950 via-slate-950 to-slate-900 px-4 py-3 text-white shadow-lg md:flex-row md:items-center md:justify-between">
+                                <div>
+                                    <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-200">{monthLabel(`${monthGroup.monthKey}-01`)}</p>
+                                    <h3 className="text-base font-black">Unpaid landlord payables</h3>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 text-xs font-black md:grid-cols-4">
+                                    <span>Payable {money(monthGroup.totalPayable)}</span>
+                                    <span>Paid {money(monthGroup.totalPaid)}</span>
+                                    <span>Deductions {money(monthGroup.totalDeductions)}</span>
+                                    <span className="text-red-200">Unpaid {money(monthGroup.totalUnpaid)}</span>
+                                </div>
+                            </div>
+                            <div className="overflow-x-auto">
+                                <table className="enterprise-table min-w-[920px]">
+                                    <thead>
+                                        <tr>
+                                            <th className="text-left">Landlord</th>
+                                            <th className="text-left">Office</th>
+                                            <th className="text-left">Payable</th>
+                                            <th className="text-left">Paid</th>
+                                            <th className="text-left">Unpaid Balance</th>
+                                            <th className="text-left">Deductions</th>
+                                            <th className="text-left">Status</th>
+                                            <th className="text-left">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {monthGroup.rows.map((row) => (
+                                            <tr key={row.id} onClick={() => onSelect(row.landlordId)} className={`cursor-pointer ${row.landlordId === selectedId ? "bg-blue-50" : ""}`}>
+                                                <td>
+                                                    <button onClick={() => onSelect(row.landlordId)} className="text-left font-black text-slate-950 hover:text-blue-700">
+                                                        {row.landlordName}
+                                                    </button>
+                                                    <p className="text-xs font-bold text-slate-500">{monthLabel(row.settlementMonth)}</p>
+                                                </td>
+                                                <td>{row.officeName}</td>
+                                                <td className="whitespace-nowrap font-black text-slate-900">{money(row.payableAmount)}</td>
+                                                <td className="whitespace-nowrap font-bold text-emerald-700">{money(row.amountPaid)}</td>
+                                                <td className="whitespace-nowrap font-black text-red-700">{money(row.unpaidBalance)}</td>
+                                                <td className="whitespace-nowrap font-bold text-amber-700">{money(row.deductions)}</td>
+                                                <td><StatusChip label={row.status.replaceAll("_", " ")} tone={row.amountPaid > 0 ? "orange" : "red"} /></td>
+                                                <td>
+                                                    <div className="flex flex-nowrap gap-2">
+                                                        <button type="button" onClick={(event) => { event.stopPropagation(); onViewLedger(row.landlordId); }} className="whitespace-nowrap rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white">View Ledger</button>
+                                                        <button type="button" onClick={(event) => { event.stopPropagation(); onViewLedger(row.landlordId); setTimeout(() => window.print(), 250); }} className="whitespace-nowrap rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700">Print</button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    ))}
+                    <div className="sticky bottom-0 z-20 grid grid-cols-2 gap-2 border-t border-slate-700 bg-gradient-to-r from-slate-950 via-emerald-950 to-slate-900 px-4 py-3 text-sm font-black text-white shadow-[0_-8px_20px_rgba(15,23,42,0.18)] md:grid-cols-4">
+                        <span>Total payable: {money(totals.payable)}</span>
+                        <span>Total paid: {money(totals.paid)}</span>
+                        <span>Total deductions: {money(totals.deductions)}</span>
+                        <span className="text-red-200">Total unpaid across all months: {money(totals.outstanding)}</span>
+                    </div>
                 </div>
             )}
         </section>

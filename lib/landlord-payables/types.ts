@@ -112,6 +112,27 @@ export type LandlordPayableGroup = {
     rows: LandlordMonthlyPayable[];
 };
 
+export type LandlordUnpaidMonthGroup = {
+    monthKey: string;
+    totalPayable: number;
+    totalPaid: number;
+    totalDeductions: number;
+    totalUnpaid: number;
+    rows: Array<{
+        id: string;
+        landlordId: string;
+        landlordName: string;
+        officeId: string;
+        officeName: string;
+        payableAmount: number;
+        amountPaid: number;
+        unpaidBalance: number;
+        deductions: number;
+        status: string;
+        settlementMonth: string;
+    }>;
+};
+
 export type LandlordPayablePaymentDetail = {
     id: string;
     label: string | null;
@@ -181,6 +202,7 @@ export type LandlordPayablesData = {
     canManage: boolean;
     rows: LandlordMonthlyPayable[];
     groups: LandlordPayableGroup[];
+    unpaidMonthGroups: LandlordUnpaidMonthGroup[];
     advances: LandlordAdvance[];
     advanceGroups: LandlordAdvanceGroup[];
     paidPayments: PaidLandlordPayment[];
@@ -189,6 +211,7 @@ export type LandlordPayablesData = {
     offices: LandlordPaymentOfficeOption[];
     summary: {
         totalUnpaidLandlordMoney: number;
+        totalUnpaidAcrossMonths: number;
         unpaidLandlords: number;
         partialLandlords: number;
         needsReviewLandlords: number;

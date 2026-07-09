@@ -72,12 +72,23 @@ async function safeRows(query: Promise<{ data: unknown[] | null; error: { messag
     return result;
 }
 
-function paymentMarker(row: LandlordMonthlyPayable) {
-    return /cleared_month=([A-Z]+)/i.exec(String(row.reasons_notes ?? ""))?.[1]?.toUpperCase() ?? "UNKNOWN";
-}
-
 function payableStatus(row: LandlordMonthlyPayable) {
     return String(row.status ?? "").trim().toLowerCase();
+}
+
+function isActivePayable(row: LandlordMonthlyPayable) {
+    return !["archived", "reversed", "void", "voided", "cancelled", "canceled", "deleted", "removed"].includes(payableStatus(row));
+}
+
+function unpaidBalance(row: LandlordMonthlyPayable) {
+    return Math.max(0, amount(row.unpaid_balance));
+}
+
+function payableDeductions(row: LandlordMonthlyPayable) {
+    return amount(row.vacant_room_deductions)
+        + amount(row.vacated_tenant_debt_deductions)
+        + amount(row.advance_deductions)
+        + amount(row.other_deductions);
 }
 
 function isCurrentMonth(row: LandlordMonthlyPayable, currentMonth: string) {
@@ -178,7 +189,7 @@ export async function getLandlordPayablesData(): Promise<LandlordPayablesData> {
         if (room.landlord_id && !landlordOfficeById.has(room.landlord_id)) landlordOfficeById.set(room.landlord_id, room.office_id);
     }
 
-    const rows = (payablesResult.data ?? []) as LandlordMonthlyPayable[];
+    const rows = ((payablesResult.data ?? []) as LandlordMonthlyPayable[]).filter(isActivePayable);
     const paymentDetailsByLandlord = new Map<string, LandlordPayableGroup["approvedPaymentDetails"]>();
     for (const detail of (paymentDetailsResult.data ?? []) as Array<Record<string, unknown>>) {
         const landlordId = String(detail.landlord_id ?? "");
@@ -214,15 +225,15 @@ export async function getLandlordPayablesData(): Promise<LandlordPayablesData> {
     });
     const currentMonth = currentSettlementMonth();
     const currentMonthRows = rows.filter((row) => isCurrentMonth(row, currentMonth));
-    const knownCurrentRows = currentMonthRows.filter((row) => paymentMarker(row) !== "UNKNOWN");
-    const unknownCurrentRows = currentMonthRows.filter((row) => paymentMarker(row) === "UNKNOWN");
-    const paidLedgerRows = knownCurrentRows.filter((row) => payableStatus(row) === "paid" || payableStatus(row) === "overpaid");
-    const unpaidLedgerRows = knownCurrentRows.filter((row) => payableStatus(row) === "unpaid");
-    const partialLedgerRows = knownCurrentRows.filter((row) => payableStatus(row) === "partial" || payableStatus(row) === "partially_paid");
-    const unpaidLandlordKeys = new Set(unpaidLedgerRows.map((row) => String(row.landlord_id || normalizeName(row.landlord_name))).filter(Boolean));
+    const unpaidBalanceRows = rows.filter((row) => unpaidBalance(row) > 0 && payableStatus(row) !== "paid");
+    const paidLedgerRows = rows.filter((row) => unpaidBalance(row) <= 0 && (amount(row.amount_paid) > 0 || ["paid", "overpaid"].includes(payableStatus(row))));
+    const unpaidLedgerRows = unpaidBalanceRows.filter((row) => amount(row.amount_paid) <= 0 || payableStatus(row) === "unpaid");
+    const partialLedgerRows = unpaidBalanceRows.filter((row) => amount(row.amount_paid) > 0 || ["partial", "partially_paid"].includes(payableStatus(row)));
+    const unpaidLandlordKeys = new Set(unpaidBalanceRows.map((row) => String(row.landlord_id || normalizeName(row.landlord_name))).filter(Boolean));
     const paidLandlordMonthKeys = new Set(paidLedgerRows.map((row) => `${row.landlord_id || normalizeName(row.landlord_name)}:${row.settlement_month}`));
     const partialLandlordMonthKeys = new Set(partialLedgerRows.map((row) => `${row.landlord_id || normalizeName(row.landlord_name)}:${row.settlement_month}`));
-    const needsReviewLandlordKeys = new Set(unknownCurrentRows.map((row) => `${row.landlord_id || normalizeName(row.landlord_name)}:${row.settlement_month}`));
+    const needsReviewLandlordKeys = new Set<string>();
+    const unpaidMonthGroups = groupUnpaidByMonth(unpaidBalanceRows);
     const payableBySettlementId = new Map(rows.filter((row) => row.settlement_id).map((row) => [row.settlement_id, row]));
     const paidPayments = ((paymentsResult.data ?? []) as Array<Record<string, unknown>>).map((payment) => {
         const landlordId = typeof payment.landlord_id === "string" ? payment.landlord_id : null;
@@ -304,6 +315,7 @@ export async function getLandlordPayablesData(): Promise<LandlordPayablesData> {
         canManage: context.isCompanyAdmin,
         rows,
         groups,
+        unpaidMonthGroups,
         advances,
         advanceGroups,
         paidPayments,
@@ -311,25 +323,23 @@ export async function getLandlordPayablesData(): Promise<LandlordPayablesData> {
         landlords: landlordOptions,
         offices: officeOptions,
         summary: {
-            totalUnpaidLandlordMoney: [...unpaidLedgerRows, ...partialLedgerRows].reduce((total, row) => total + amount(row.closing_arrears ?? row.unpaid_balance), 0),
+            totalUnpaidLandlordMoney: unpaidBalanceRows.reduce((total, row) => total + unpaidBalance(row), 0),
+            totalUnpaidAcrossMonths: unpaidBalanceRows.reduce((total, row) => total + unpaidBalance(row), 0),
             unpaidLandlords: unpaidLandlordKeys.size,
             partialLandlords: partialLandlordMonthKeys.size,
             needsReviewLandlords: needsReviewLandlordKeys.size,
-            totalOutstandingToLandlords: [...unpaidLedgerRows, ...partialLedgerRows].reduce((total, row) => total + amount(row.closing_arrears ?? row.unpaid_balance), 0),
-            oldestUnpaidMonth: groups
-                .map((group) => group.oldestUnpaidMonth)
-                .filter((value): value is string => Boolean(value))
-                .sort()[0] ?? null,
+            totalOutstandingToLandlords: unpaidBalanceRows.reduce((total, row) => total + unpaidBalance(row), 0),
+            oldestUnpaidMonth: unpaidBalanceRows.map((row) => row.settlement_month).sort()[0] ?? null,
             totalLandlordAdvances: advances
                 .filter((advance) => !["rejected", "cancelled"].includes(String(advance.status ?? "").toLowerCase()))
                 .reduce((total, advance) => total + advanceTotal(advance as unknown as Record<string, unknown>), 0),
             activeLandlordAdvances: advances
                 .filter((advance) => isActiveAdvance(advance as unknown as Record<string, unknown>))
                 .reduce((total, advance) => total + advanceRemaining(advance as unknown as Record<string, unknown>), 0),
-            recoveryDeductions: unpaidLedgerRows.reduce((total, row) => total + amount(row.vacated_tenant_debt_deductions), 0),
+            recoveryDeductions: unpaidBalanceRows.reduce((total, row) => total + amount(row.vacated_tenant_debt_deductions), 0),
             paidLandlords: paidLandlordMonthKeys.size,
             totalMoneyPaidToLandlords: paidLedgerRows.length > 0
-                ? paidLedgerRows.reduce((total, row) => total + amount(row.net_payable), 0)
+                ? paidLedgerRows.reduce((total, row) => total + amount(row.amount_paid || row.net_payable), 0)
                 : paidPayments.reduce((total, payment) => total + payment.amountPaid, 0),
         },
         debug: {
@@ -338,16 +348,47 @@ export async function getLandlordPayablesData(): Promise<LandlordPayablesData> {
             paidRows: paidLedgerRows.length,
             unpaidRows: unpaidLedgerRows.length,
             partialRows: partialLedgerRows.length,
-            unknownRows: unknownCurrentRows.length,
-            excludedRows: unknownCurrentRows.map((row) => ({
-                id: row.id,
-                landlordName: row.landlord_name ?? "Unknown landlord",
-                status: payableStatus(row) || "unknown",
-                marker: paymentMarker(row),
-                reason: "No current-month MAY/JUNE import marker on payable row.",
-            })),
+            unknownRows: 0,
+            excludedRows: [],
         },
     };
+}
+
+function groupUnpaidByMonth(rows: LandlordMonthlyPayable[]): LandlordPayablesData["unpaidMonthGroups"] {
+    const grouped = new Map<string, LandlordMonthlyPayable[]>();
+    for (const row of rows) {
+        const monthKey = String(row.settlement_month).slice(0, 7);
+        if (!monthKey) continue;
+        grouped.set(monthKey, [...(grouped.get(monthKey) ?? []), row]);
+    }
+
+    return [...grouped.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([monthKey, monthRows]) => {
+            const mappedRows = monthRows
+                .map((row) => ({
+                    id: row.id,
+                    landlordId: row.landlord_id,
+                    landlordName: row.landlord_name ?? "Landlord",
+                    officeId: row.office_id,
+                    officeName: row.office_name ?? "Office",
+                    payableAmount: amount(row.net_payable ?? row.monthly_net_payable ?? row.total_due),
+                    amountPaid: amount(row.amount_paid),
+                    unpaidBalance: unpaidBalance(row),
+                    deductions: payableDeductions(row),
+                    status: payableStatus(row) || "unpaid",
+                    settlementMonth: row.settlement_month,
+                }))
+                .sort((a, b) => b.unpaidBalance - a.unpaidBalance || a.landlordName.localeCompare(b.landlordName));
+            return {
+                monthKey,
+                totalPayable: mappedRows.reduce((total, row) => total + row.payableAmount, 0),
+                totalPaid: mappedRows.reduce((total, row) => total + row.amountPaid, 0),
+                totalDeductions: mappedRows.reduce((total, row) => total + row.deductions, 0),
+                totalUnpaid: mappedRows.reduce((total, row) => total + row.unpaidBalance, 0),
+                rows: mappedRows,
+            };
+        });
 }
 
 function groupPayables(rows: LandlordMonthlyPayable[]): LandlordPayableGroup[] {
@@ -358,16 +399,16 @@ function groupPayables(rows: LandlordMonthlyPayable[]): LandlordPayableGroup[] {
     }
 
     return [...grouped].map(([landlordId, groupRows]) => {
-        const unpaidRows = groupRows.filter((row) => amount(row.unpaid_balance) > 0);
+        const unpaidRows = groupRows.filter((row) => unpaidBalance(row) > 0 && payableStatus(row) !== "paid");
         const sortedRows = [...groupRows].sort((a, b) => String(b.settlement_month).localeCompare(String(a.settlement_month)));
         return {
             landlordId,
             landlordName: sortedRows[0]?.landlord_name ?? "Landlord",
             officeName: sortedRows[0]?.office_name ?? "Office",
             monthsUnpaid: unpaidRows.length,
-            totalPayable: groupRows.reduce((total, row) => total + amount(row.total_due ?? row.net_payable), 0),
+            totalPayable: unpaidRows.reduce((total, row) => total + amount(row.net_payable ?? row.monthly_net_payable ?? row.total_due), 0),
             totalPaid: groupRows.reduce((total, row) => total + amount(row.amount_paid), 0),
-            totalOutstanding: groupRows.reduce((total, row) => total + amount(row.closing_arrears ?? row.unpaid_balance), 0),
+            totalOutstanding: unpaidRows.reduce((total, row) => total + unpaidBalance(row), 0),
             oldestUnpaidMonth: unpaidRows.map((row) => row.settlement_month).sort()[0] ?? null,
             lastPaidAt: groupRows.map((row) => row.last_paid_at).filter((value): value is string => Boolean(value)).sort().at(-1) ?? null,
             rows: sortedRows,
@@ -425,6 +466,7 @@ function emptyData(): LandlordPayablesData {
         canManage: false,
         rows: [],
         groups: [],
+        unpaidMonthGroups: [],
         advances: [],
         advanceGroups: [],
         paidPayments: [],
@@ -433,6 +475,7 @@ function emptyData(): LandlordPayablesData {
         offices: [],
         summary: {
             totalUnpaidLandlordMoney: 0,
+            totalUnpaidAcrossMonths: 0,
             unpaidLandlords: 0,
             partialLandlords: 0,
             needsReviewLandlords: 0,
