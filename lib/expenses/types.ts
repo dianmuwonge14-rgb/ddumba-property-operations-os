@@ -24,11 +24,44 @@ export type ExpenseKpis = {
 
 export type ExpenseItem = ExpenseRow & {
     categoryName: string | null;
+    employeeId?: string | null;
+    employeeName?: string | null;
     officeName?: string | null;
+    paymentMethod?: string | null;
     propertyName: string | null;
     landlordName: string | null;
     submittedByName: string | null;
     approvalState: "approved" | "pending" | "rejected";
+    status?: string | null;
+};
+
+export type EmployeeExpenseOption = {
+    id: string;
+    name: string;
+    officeId: string | null;
+    officeName: string | null;
+    role: string | null;
+    phone: string | null;
+    email: string | null;
+    assignmentType: string | null;
+};
+
+export type ExpenseChangeRequestItem = {
+    id: string;
+    expenseId: string;
+    officeId: string | null;
+    officeName: string;
+    itemName: string;
+    amount: number;
+    changeType: string;
+    originalValue: Record<string, unknown>;
+    requestedValue: Record<string, unknown>;
+    reason: string;
+    status: string;
+    requestedByName: string;
+    requestedByAccountType: string | null;
+    createdAt: string | null;
+    adminComment: string | null;
 };
 
 export type ExpensesPageData = {
@@ -39,7 +72,8 @@ export type ExpensesPageData = {
     properties: PropertyRow[];
     landlords: LandlordRow[];
     landlordOptions: Array<{ id: string; name: string; officeId: string | null; officeName: string | null }>;
-    employeeOptions: Array<{ id: string; name: string; officeId: string | null; officeName: string | null; role: string | null }>;
+    employeeOptions: EmployeeExpenseOption[];
+    expenseChangeRequests: ExpenseChangeRequestItem[];
     landlordPaymentRequests: Array<{
         id: string;
         landlordId: string;
@@ -181,6 +215,39 @@ export type DecideLandlordPaidExpenseRequestInput = {
 
 export type EditExpenseInput = CreateExpenseInput & {
     expenseId: string;
+};
+
+export type ExpenseChangePayload = {
+    amount?: number | null;
+    category?: string | null;
+    categoryId?: string | null;
+    employeeId?: string | null;
+    expenseDate?: string | null;
+    item?: string | null;
+    officeId?: string | null;
+    paymentMethod?: string | null;
+    receiptUrl?: string | null;
+    status?: string | null;
+    vendor?: string | null;
+    description?: string | null;
+};
+
+export type SubmitExpenseChangeRequestInput = {
+    changeType?: string;
+    expenseId: string;
+    reason: string;
+    requested: ExpenseChangePayload;
+};
+
+export type DecideExpenseChangeRequestInput = {
+    requestId: string;
+    decision: "approved" | "rejected";
+    comment?: string;
+};
+
+export type DeleteExpenseInput = {
+    expenseId: string;
+    reason?: string;
 };
 
 export type ExpenseDecisionInput = {

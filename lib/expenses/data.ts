@@ -6,6 +6,7 @@ import type {
     EmployeeRow,
     ExpenseBalanceFilters,
     ExpenseBalanceReport,
+    ExpenseChangeRequestItem,
     ExpenseCategoryRow,
     ExpenseItem,
     ExpenseKpis,
@@ -155,11 +156,7 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
             if (selectedOfficeId) query = query.eq("office_id", selectedOfficeId);
             return query;
         })(),
-        (() => {
-            let query = supabase.from("employees").select("*").eq("company_id", companyId).neq("status", "terminated").order("full_name", { ascending: true, nullsFirst: false });
-            if (selectedOfficeId) query = query.eq("office_id", selectedOfficeId);
-            return query;
-        })(),
+        supabase.from("employees").select("*").eq("company_id", companyId).neq("status", "terminated").order("full_name", { ascending: true, nullsFirst: false }),
     ]);
 
     for (const result of [
@@ -190,6 +187,7 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
     }));
     const employees = (employeesResult.data ?? []) as EmployeeRow[];
     const officeById = new Map(offices.map((office) => [office.id, office.name]));
+    const employeeById = new Map(employees.map((employee) => [employee.id, employee.full_name ?? "Employee"]));
     const landlordOfficeById = new Map<string, string | null>();
     for (const room of (roomsResult.data ?? []) as Array<{ landlord_id: string | null; office_id: string | null }>) {
         if (room.landlord_id && !landlordOfficeById.has(room.landlord_id)) landlordOfficeById.set(room.landlord_id, room.office_id);
@@ -218,11 +216,20 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
     });
     const employeeExpenseRequests = await getEmployeeExpenseRequests({
         companyId,
-        employeeById: new Map(employees.map((employee) => [employee.id, employee.full_name ?? "Employee"])),
+        employeeById,
         isAdmin,
         officeById,
         officeId: selectedOfficeId,
         supabase,
+    });
+    const expenseChangeRequests = await getExpenseChangeRequests({
+        companyId,
+        expensesById: new Map(items.map((expense) => [expense.id, expense])),
+        isAdmin,
+        officeById,
+        officeId: selectedOfficeId,
+        supabase,
+        userById: new Map(users.map((user) => [user.id, user.full_name ?? user.email ?? "User"])),
     });
 
     return {
@@ -240,7 +247,11 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
             officeId: employee.office_id,
             officeName: employee.office_id ? officeById.get(employee.office_id) ?? "Office" : null,
             role: employee.role ?? employee.job_title ?? null,
+            phone: employee.phone ?? null,
+            email: employee.email ?? null,
+            assignmentType: (employee as Record<string, unknown>).employee_assignment_type ? String((employee as Record<string, unknown>).employee_assignment_type) : null,
         })),
+        expenseChangeRequests,
         employeeExpenseRequests,
         cashAccounts,
         kpis: calculateKpis(expenses, properties, collections, cashAccounts),
@@ -365,6 +376,11 @@ function hydrateExpenseItems(
     const userById = new Map(users.map((user) => [user.id, user]));
 
     return expenses.map((expense) => {
+        const rawExpense = expense as ExpenseRow & {
+            employee_id?: string | null;
+            payment_method?: string | null;
+            status?: string | null;
+        };
         const property = expense.property_id ? propertyById.get(expense.property_id) ?? null : null;
         const landlord = property?.landlord_id ? landlordById.get(property.landlord_id) ?? null : null;
         const rejected = (expense.description ?? "").toLowerCase().includes("[rejected]");
@@ -372,10 +388,14 @@ function hydrateExpenseItems(
         return {
             ...expense,
             categoryName: expense.category_id ? categoryById.get(expense.category_id)?.name ?? expense.category : expense.category,
+            employeeId: rawExpense.employee_id ?? null,
+            employeeName: null,
             propertyName: property?.property_name ?? property?.name ?? null,
             landlordName: landlord?.full_name ?? null,
+            paymentMethod: rawExpense.payment_method ?? null,
             submittedByName: expense.submitted_by ? userById.get(expense.submitted_by)?.full_name ?? null : null,
             approvalState: rejected ? "rejected" : expense.approved_at ? "approved" : "pending",
+            status: rawExpense.status ?? null,
         };
     });
 }
@@ -422,6 +442,7 @@ function emptyData(): ExpensesPageData {
         landlordOptions: [],
         landlordPaymentRequests: [],
         employeeOptions: [],
+        expenseChangeRequests: [],
         employeeExpenseRequests: [],
         cashAccounts: [],
         kpis: {
@@ -435,6 +456,63 @@ function emptyData(): ExpensesPageData {
         },
         expenses: [],
     };
+}
+
+async function getExpenseChangeRequests(input: {
+    companyId: string;
+    expensesById: Map<string, ExpenseItem>;
+    isAdmin: boolean;
+    officeById: Map<string, string>;
+    officeId: string | null;
+    supabase: { from: (table: string) => any };
+    userById: Map<string, string>;
+}): Promise<ExpenseChangeRequestItem[]> {
+    try {
+        let query = input.supabase
+            .from("expense_change_requests")
+            .select("*")
+            .eq("company_id", input.companyId)
+            .order("created_at", { ascending: false })
+            .limit(150);
+        if (!input.isAdmin && input.officeId) query = query.eq("office_id", input.officeId);
+        const { data, error } = await query;
+        if (error) {
+            if (/relation .*expense_change_requests|does not exist|schema cache/i.test(error.message ?? "")) return [];
+            throw new Error(error.message);
+        }
+        return ((data ?? []) as Array<Record<string, unknown>>).map((request) => {
+            const expenseId = String(request.expense_id ?? "");
+            const officeId = typeof request.office_id === "string" ? request.office_id : null;
+            const expense = input.expensesById.get(expenseId);
+            const requestedBy = typeof request.requested_by === "string" ? request.requested_by : "";
+            const originalValue = isRecord(request.original_value) ? request.original_value : {};
+            const requestedValue = isRecord(request.requested_value) ? request.requested_value : {};
+            return {
+                id: String(request.id),
+                expenseId,
+                officeId,
+                officeName: officeId ? input.officeById.get(officeId) ?? "Office" : "Office",
+                itemName: expense?.item ?? expense?.expense_number ?? String(request.change_type ?? "Expense"),
+                amount: Number(expense?.amount ?? originalValue.amount ?? 0),
+                changeType: String(request.change_type ?? "general_edit"),
+                originalValue,
+                requestedValue,
+                reason: String(request.reason ?? ""),
+                status: String(request.status ?? "pending"),
+                requestedByName: input.userById.get(requestedBy) ?? "User",
+                requestedByAccountType: typeof request.requested_by_account_type === "string" ? request.requested_by_account_type : null,
+                createdAt: typeof request.created_at === "string" ? request.created_at : null,
+                adminComment: typeof request.admin_comment === "string" ? request.admin_comment : null,
+            };
+        });
+    } catch (error) {
+        console.warn("Expense change requests could not load:", error instanceof Error ? error.message : error);
+        return [];
+    }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 async function getEmployeeExpenseRequests(input: {

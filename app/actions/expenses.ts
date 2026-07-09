@@ -14,11 +14,14 @@ import type {
     CreateExpenseInput,
     CreateEmployeeExpenseInput,
     CreateLandlordPaidExpenseRequestInput,
+    DecideExpenseChangeRequestInput,
     DecideEmployeeExpenseRequestInput,
     DecideLandlordPaidExpenseRequestInput,
+    DeleteExpenseInput,
     EmployeeExpensePreview,
     EditExpenseInput,
     ExpenseDecisionInput,
+    SubmitExpenseChangeRequestInput,
 } from "@/lib/expenses/types";
 
 async function activeWriteContext() {
@@ -27,6 +30,14 @@ async function activeWriteContext() {
         throw new Error("Active company and office are required.");
     }
     return context;
+}
+
+async function expenseCorrectionContext() {
+    try {
+        return await requirePermission("expenses.manage");
+    } catch (error) {
+        return requirePermission("collector.manage");
+    }
 }
 
 function assertAmount(amount: number) {
@@ -542,11 +553,6 @@ async function loadEmployeeExpensePreview(input: {
     if (attendanceResult.error && !/does not exist|schema cache/i.test(attendanceResult.error.message ?? "")) throw new Error(attendanceResult.error.message);
     const employee = employeeResult.data as Record<string, unknown> | null;
     if (!employee) throw new Error("Employee not found.");
-    const employeeOffice = String(employee.office_id ?? "");
-    const isFieldAgent = Boolean(employee.is_field_agent);
-    if (employeeOffice !== input.officeId && !isFieldAgent) {
-        throw new Error("Employee is not assigned to this office.");
-    }
     const role = itemKey(String(employee.role ?? employee.job_title ?? ""));
     const allowances = (allowanceResult.data ?? []) as Array<Record<string, unknown>>;
     const allowance = allowances.find((row) => String(row.employee_id ?? "") === input.employeeId && (!row.office_id || String(row.office_id) === input.officeId))
@@ -1401,6 +1407,272 @@ async function createEmployeeExpenseDecisionNotification(db: { from: (table: str
         severity: input.severity,
         title: input.title,
     });
+}
+
+function requestedExpensePatch(input: Record<string, unknown>) {
+    const patch: Record<string, unknown> = {};
+    if ("amount" in input && input.amount !== null && input.amount !== undefined) {
+        const nextAmount = Number(input.amount);
+        assertAmount(nextAmount);
+        patch.amount = nextAmount;
+    }
+    if ("category" in input) patch.category = input.category ? String(input.category) : null;
+    if ("categoryId" in input) patch.category_id = input.categoryId ? String(input.categoryId) : null;
+    if ("description" in input) patch.description = input.description ? String(input.description) : null;
+    if ("employeeId" in input) patch.employee_id = input.employeeId ? String(input.employeeId) : null;
+    if ("expenseDate" in input) {
+        const value = input.expenseDate ? String(input.expenseDate) : "";
+        if (value && !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error("Select a valid expense date.");
+        patch.expense_date = value || null;
+    }
+    if ("item" in input) patch.item = input.item ? String(input.item) : null;
+    if ("officeId" in input) patch.office_id = input.officeId ? String(input.officeId) : null;
+    if ("paymentMethod" in input) patch.payment_method = input.paymentMethod ? String(input.paymentMethod) : null;
+    if ("receiptUrl" in input) patch.receipt_url = input.receiptUrl ? String(input.receiptUrl) : null;
+    if ("status" in input) patch.status = input.status ? String(input.status) : "approved";
+    if ("vendor" in input) patch.vendor = input.vendor ? String(input.vendor) : null;
+    return patch;
+}
+
+function expenseSnapshot(expense: Record<string, unknown>) {
+    return {
+        amount: amount(expense.amount),
+        category: expense.category ?? null,
+        categoryId: expense.category_id ?? null,
+        description: expense.description ?? null,
+        employeeId: expense.employee_id ?? null,
+        expenseDate: expense.expense_date ?? null,
+        item: expense.item ?? null,
+        officeId: expense.office_id ?? null,
+        paymentMethod: expense.payment_method ?? null,
+        receiptUrl: expense.receipt_url ?? null,
+        status: expense.status ?? "approved",
+        vendor: expense.vendor ?? null,
+    };
+}
+
+async function loadExpenseForCompany(db: { from: (table: string) => any }, input: { companyId: string; expenseId: string }) {
+    const { data, error } = await db
+        .from("expenses")
+        .select("*")
+        .eq("id", input.expenseId)
+        .eq("company_id", input.companyId)
+        .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) throw new Error("Expense not found.");
+    return data as Record<string, unknown>;
+}
+
+async function applyExpensePatch(db: { from: (table: string) => any }, expenseId: string, patch: Record<string, unknown>) {
+    const update = { ...patch, updated_at: new Date().toISOString() };
+    const { data, error } = await db
+        .from("expenses")
+        .update(update)
+        .eq("id", expenseId)
+        .select("*")
+        .single();
+    if (error) throw new Error(error.message);
+    return data as Record<string, unknown>;
+}
+
+export async function submitExpenseChangeRequest(input: SubmitExpenseChangeRequestInput) {
+    const context = await expenseCorrectionContext();
+    const supabase = await createSupabaseServerClient();
+    const db = supabase as unknown as { from: (table: string) => any };
+    const companyId = context.activeCompany?.id;
+    const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    if (!companyId) throw new Error("Active company is required.");
+    if (!input.expenseId) throw new Error("Expense id is required.");
+    if (!input.reason?.trim()) throw new Error("Reason for expense correction is required.");
+    const expense = await loadExpenseForCompany(db, { companyId, expenseId: input.expenseId });
+    if (!context.isCompanyAdmin && context.activeOffice?.id && String(expense.office_id ?? "") !== context.activeOffice.id) {
+        throw new Error("You can only request corrections for expenses in your active office.");
+    }
+    const requestOfficeId = typeof expense.office_id === "string" && expense.office_id ? expense.office_id : context.activeOffice?.id ?? null;
+    const requestedPatch = requestedExpensePatch(input.requested as Record<string, unknown>);
+    if (!Object.keys(requestedPatch).length) throw new Error("Enter at least one expense field to change.");
+
+    const { data: request, error } = await db
+        .from("expense_change_requests")
+        .insert({
+            change_type: input.changeType || "general_edit",
+            company_id: companyId,
+            expense_id: input.expenseId,
+            office_id: requestOfficeId,
+            original_value: expenseSnapshot(expense),
+            reason: input.reason.trim(),
+            requested_by: actorId,
+            requested_by_account_type: context.profile?.account_type ?? null,
+            requested_value: input.requested,
+            status: "pending",
+        })
+        .select("*")
+        .single();
+    if (error) throw new Error(`Expense change request could not be created: ${error.message}`);
+
+    await createNotificationWithEmail(db, {
+        action_url: "/office/expenses",
+        channel: "in_app",
+        company_id: companyId,
+        delivery_status: "pending",
+        entity_id: request.id,
+        entity_type: "expense_change_request",
+        is_read: false,
+        message: `Expense correction requested for ${String(expense.item ?? expense.expense_number ?? "expense")} (${input.reason.trim()}).`,
+        office_id: requestOfficeId ?? undefined,
+        recipient_type: "admin",
+        severity: "warning",
+        title: "Expense correction pending approval",
+    });
+
+    await logUserAction({
+        action: "expense_change_request_created",
+        entityType: "expense_change_request",
+        entityId: request.id,
+        companyId,
+        officeId: requestOfficeId ?? undefined,
+        beforeData: expense as any,
+        afterData: request as any,
+    });
+    revalidateExpenseSurfaces();
+    return request;
+}
+
+export async function adminEditExpenseDirect(input: SubmitExpenseChangeRequestInput) {
+    const context = await requireCompanyAdminMode();
+    const supabase = await createSupabaseServerClient();
+    const db = supabase as unknown as { from: (table: string) => any };
+    const companyId = context.activeCompany?.id;
+    if (!companyId) throw new Error("Active company is required.");
+    if (!input.expenseId) throw new Error("Expense id is required.");
+    if (!input.reason?.trim()) throw new Error("Reason for expense edit is required.");
+    const expense = await loadExpenseForCompany(db, { companyId, expenseId: input.expenseId });
+    const patch = requestedExpensePatch(input.requested as Record<string, unknown>);
+    if (!Object.keys(patch).length) throw new Error("Enter at least one expense field to change.");
+    const updated = await applyExpensePatch(db, input.expenseId, patch);
+    await logUserAction({
+        action: "expense_admin_direct_edit",
+        entityType: "expense",
+        entityId: input.expenseId,
+        companyId,
+        officeId: String(updated.office_id ?? expense.office_id ?? ""),
+        beforeData: expense as any,
+        afterData: { ...updated, reason: input.reason.trim() } as any,
+    });
+    revalidateExpenseSurfaces();
+    return updated;
+}
+
+export async function decideExpenseChangeRequest(input: DecideExpenseChangeRequestInput) {
+    const context = await requireCompanyAdminMode();
+    const supabase = await createSupabaseServerClient();
+    const db = supabase as unknown as { from: (table: string) => any };
+    const companyId = context.activeCompany?.id;
+    const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    if (!companyId) throw new Error("Active company is required.");
+    const { data: request, error: requestError } = await db
+        .from("expense_change_requests")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("id", input.requestId)
+        .maybeSingle();
+    if (requestError) throw new Error(requestError.message);
+    if (!request) throw new Error("Expense change request not found.");
+    if (request.status !== "pending") throw new Error("This expense change request has already been reviewed.");
+    const reviewedAt = new Date().toISOString();
+    const beforeExpense = await loadExpenseForCompany(db, { companyId, expenseId: request.expense_id });
+    if (input.decision === "rejected") {
+        const { data, error } = await db
+            .from("expense_change_requests")
+            .update({
+                admin_comment: input.comment || null,
+                reviewed_at: reviewedAt,
+                reviewed_by: actorId,
+                status: "rejected",
+            })
+            .eq("id", request.id)
+            .select("*")
+            .single();
+        if (error) throw new Error(error.message);
+        await createNotificationWithEmail(db, {
+            action_url: "/office/expenses",
+            channel: "in_app",
+            company_id: companyId,
+            delivery_status: "pending",
+            entity_id: request.id,
+            entity_type: "expense_change_request",
+            is_read: false,
+            message: `Admin rejected an expense correction${input.comment ? `: ${input.comment}` : "."}`,
+            office_id: request.office_id,
+            recipient_type: "office",
+            severity: "error",
+            title: "Expense correction rejected",
+        });
+        await logUserAction({ action: "expense_change_request_rejected", entityType: "expense_change_request", entityId: request.id, companyId, officeId: request.office_id, beforeData: request as any, afterData: data as any });
+        revalidateExpenseSurfaces();
+        return data;
+    }
+
+    const patch = requestedExpensePatch((request.requested_value ?? {}) as Record<string, unknown>);
+    const updatedExpense = await applyExpensePatch(db, request.expense_id, patch);
+    const { data: reviewedRequest, error: reviewError } = await db
+        .from("expense_change_requests")
+        .update({
+            admin_comment: input.comment || null,
+            reviewed_at: reviewedAt,
+            reviewed_by: actorId,
+            status: "approved",
+        })
+        .eq("id", request.id)
+        .select("*")
+        .single();
+    if (reviewError) throw new Error(reviewError.message);
+    await createNotificationWithEmail(db, {
+        action_url: "/office/expenses",
+        channel: "in_app",
+        company_id: companyId,
+        delivery_status: "pending",
+        entity_id: request.id,
+        entity_type: "expense_change_request",
+        is_read: false,
+        message: `Admin approved an expense correction for ${String(beforeExpense.item ?? beforeExpense.expense_number ?? "expense")}.`,
+        office_id: updatedExpense.office_id ?? request.office_id,
+        recipient_type: "office",
+        severity: "success",
+        title: "Expense correction approved",
+    });
+    await logUserAction({ action: "expense_change_request_approved", entityType: "expense_change_request", entityId: request.id, companyId, officeId: updatedExpense.office_id ?? request.office_id, beforeData: { request, expense: beforeExpense } as any, afterData: { request: reviewedRequest, expense: updatedExpense } as any });
+    revalidateExpenseSurfaces();
+    return reviewedRequest;
+}
+
+export async function adminSafeDeleteExpense(input: DeleteExpenseInput) {
+    const context = await requireCompanyAdminMode();
+    const supabase = await createSupabaseServerClient();
+    const db = supabase as unknown as { from: (table: string) => any };
+    const companyId = context.activeCompany?.id;
+    const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    if (!companyId) throw new Error("Active company is required.");
+    const expense = await loadExpenseForCompany(db, { companyId, expenseId: input.expenseId });
+    const now = new Date().toISOString();
+    const deleted = await applyExpensePatch(db, input.expenseId, {
+        amount: 0,
+        deleted_at: now,
+        deleted_by: actorId,
+        delete_reason: input.reason || "Admin safe delete",
+        status: "deleted",
+    });
+    await logUserAction({
+        action: "expense_admin_safe_deleted",
+        entityType: "expense",
+        entityId: input.expenseId,
+        companyId,
+        officeId: String(expense.office_id ?? ""),
+        beforeData: expense as any,
+        afterData: deleted as any,
+    });
+    revalidateExpenseSurfaces();
+    return deleted;
 }
 
 export async function editExpense(input: EditExpenseInput) {

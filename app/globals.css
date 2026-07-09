@@ -131,6 +131,30 @@ textarea {
   max-width: 100%;
 }
 
+.modal-input {
+  height: 2.75rem;
+  width: 100%;
+  border-radius: 1rem;
+  border: 1px solid rgb(226 232 240);
+  background: rgb(248 250 252);
+  padding: 0 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: rgb(15 23 42);
+  outline: none;
+}
+
+.modal-input:focus {
+  border-color: rgb(96 165 250);
+  background: white;
+  box-shadow: 0 0 0 4px rgb(219 234 254);
+}
+
+.modal-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 button,
 [role="button"],
 a[href],
