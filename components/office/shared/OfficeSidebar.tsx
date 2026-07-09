@@ -237,7 +237,7 @@ export default function OfficeSidebar({ isAdmin, isCollector = false, officeName
                     })}
                 </nav>
             </header>
-            <aside className="sticky top-32 z-20 hidden h-[calc(100vh-8rem)] w-80 shrink-0 border-r border-white/10 bg-slate-950/62 px-4 py-5 shadow-2xl shadow-black/30 backdrop-blur-2xl xl:block">
+            <aside className="office-desktop-sidebar sticky z-20 hidden w-80 shrink-0 border-r border-white/10 bg-slate-950/62 px-4 py-5 shadow-2xl shadow-black/30 backdrop-blur-2xl xl:block">
                 <div className="enterprise-dark-panel mb-6 rounded-3xl p-5 text-white">
                     <div className="flex items-center gap-3">
                         <div className="grid h-11 w-11 place-items-center rounded-2xl bg-blue-500">
