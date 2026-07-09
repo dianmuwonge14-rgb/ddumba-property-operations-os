@@ -54,6 +54,22 @@ function amount(value: unknown) {
     return Number.isFinite(Number(value)) ? Number(value) : 0;
 }
 
+function monthStart(value: string | null | undefined) {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
+function monthIndex(month: string) {
+    const [year, monthNumber] = month.slice(0, 10).split("-").map((part) => Number(part));
+    return year * 12 + monthNumber;
+}
+
+function backdatedMonthCount(effectiveMonth: string, currentMonth: string) {
+    return Math.max(1, monthIndex(currentMonth) - monthIndex(effectiveMonth));
+}
+
 function landlordAdvanceTotal(row: Record<string, unknown>) {
     const explicitTotal = amount(row.total_repayable);
     if (explicitTotal > 0) return explicitTotal;
@@ -234,6 +250,147 @@ async function updateRoomTenantLeaseRent(db: Db, input: {
             .eq("company_id", input.companyId);
         if (leaseError) throw new Error(leaseError.message);
     }
+}
+
+async function updateAdvanceAllocationAmount(db: Db, input: {
+    allocationId: string;
+    amountAllocated: number;
+}) {
+    if (input.amountAllocated <= 0) {
+        const deleted = await db
+            .from("tenant_rent_allocations")
+            .delete()
+            .eq("id", input.allocationId);
+        if (deleted.error) throw new Error(deleted.error.message);
+        return;
+    }
+
+    const withSource = await db
+        .from("tenant_rent_allocations")
+        .update({
+            allocation_source: "backdated_rent_correction_adjusted",
+            amount_allocated: input.amountAllocated,
+        })
+        .eq("id", input.allocationId);
+    if (!withSource.error) return;
+
+    const amountOnly = await db
+        .from("tenant_rent_allocations")
+        .update({ amount_allocated: input.amountAllocated })
+        .eq("id", input.allocationId);
+    if (amountOnly.error) throw new Error(amountOnly.error.message);
+}
+
+async function recalculateBackdatedRentCorrection(db: Db, input: {
+    companyId: string;
+    room: Record<string, unknown>;
+    lease: Record<string, unknown> | null;
+    tenant: Record<string, unknown> | null;
+    oldRent: number;
+    newRent: number;
+    effectiveDate: string;
+    userId: string | null;
+    sourceRequestId: string | null;
+}) {
+    const effectiveMonth = monthStart(input.effectiveDate);
+    const currentMonth = currentSettlementMonth();
+    const rentIncrease = Math.max(0, input.newRent - input.oldRent);
+    const tenantId = input.tenant?.id ? String(input.tenant.id) : null;
+    if (!tenantId || !effectiveMonth) return null;
+
+    const roomId = String(input.room.id);
+    const officeId = String(input.room.office_id ?? input.lease?.office_id ?? input.tenant?.office_id ?? "") || null;
+    const monthsRecalculated = effectiveMonth < currentMonth ? backdatedMonthCount(effectiveMonth, currentMonth) : 0;
+    const currentOutstanding = Math.max(
+        0,
+        amount(input.tenant?.balance),
+        amount(input.room.outstanding_balance),
+    );
+
+    const { data: advanceRows, error: advanceError } = await db
+        .from("tenant_rent_allocations")
+        .select("*")
+        .eq("company_id", input.companyId)
+        .eq("tenant_id", tenantId)
+        .eq("room_id", roomId)
+        .eq("allocation_type", "advance_month")
+        .gte("allocation_month", effectiveMonth)
+        .order("allocation_month", { ascending: true })
+        .order("created_at", { ascending: true });
+    if (advanceError) throw new Error(advanceError.message);
+
+    const advances = ((advanceRows ?? []) as Record<string, unknown>[])
+        .filter((row) => amount(row.amount_allocated) > 0);
+    const advanceBefore = advances.reduce((total, row) => total + amount(row.amount_allocated), 0);
+    const existingConflict = currentOutstanding > 0 && advanceBefore > 0;
+    if (monthsRecalculated <= 0 && !existingConflict) return null;
+
+    const extraDue = existingConflict ? 0 : rentIncrease * monthsRecalculated;
+    if (extraDue <= 0 && !existingConflict) return null;
+
+    const totalDueAfterCorrection = currentOutstanding + extraDue;
+    const advanceConsumed = Math.min(advanceBefore, totalDueAfterCorrection);
+    const advanceAfter = Math.max(0, advanceBefore - advanceConsumed);
+    const outstandingAfter = Math.max(0, totalDueAfterCorrection - advanceConsumed);
+
+    let remainingToConsume = advanceConsumed;
+    for (const row of advances) {
+        if (remainingToConsume <= 0) break;
+        const rowAmount = amount(row.amount_allocated);
+        const consumedFromRow = Math.min(rowAmount, remainingToConsume);
+        remainingToConsume -= consumedFromRow;
+        await updateAdvanceAllocationAmount(db, {
+            allocationId: String(row.id),
+            amountAllocated: Math.max(0, rowAmount - consumedFromRow),
+        });
+    }
+
+    const now = new Date().toISOString();
+    const tenantUpdate = await db
+        .from("tenants")
+        .update({ balance: outstandingAfter, monthly_rent: input.newRent, updated_at: now })
+        .eq("company_id", input.companyId)
+        .eq("id", tenantId);
+    if (tenantUpdate.error) throw new Error(tenantUpdate.error.message);
+
+    const roomUpdate = await db
+        .from("rooms")
+        .update({ monthly_rent: input.newRent, outstanding_balance: outstandingAfter, updated_at: now })
+        .eq("company_id", input.companyId)
+        .eq("id", roomId);
+    if (roomUpdate.error) throw new Error(roomUpdate.error.message);
+
+    const afterData = {
+        advanceAfter,
+        advanceBefore,
+        advanceConsumed,
+        backdated_months_recalculated: monthsRecalculated,
+        effectiveMonth,
+        existingAdvanceOutstandingConflict: existingConflict,
+        extraDue,
+        outstandingAfter,
+        outstandingBefore: currentOutstanding,
+        rentIncrease,
+        sourceRequestId: input.sourceRequestId,
+        userId: input.userId,
+    };
+
+    await logUserAction({
+        action: "Backdated rent correction recalculated advance/outstanding.",
+        entityType: "room",
+        entityId: roomId,
+        companyId: input.companyId,
+        officeId,
+        beforeData: {
+            advanceBefore,
+            effectiveMonth,
+            oldRent: input.oldRent,
+            outstandingBefore: currentOutstanding,
+        },
+        afterData,
+    });
+
+    return afterData;
 }
 
 export async function refreshAffectedLandlordPayable(db: Db, input: {
@@ -491,6 +648,17 @@ export async function decideRoomRentChange(input: {
             roomId: String(request.room_id),
             tenantId: tenant?.id ?? (String(request.tenant_id ?? "") || null),
         });
+        await recalculateBackdatedRentCorrection(db, {
+            companyId: context.activeCompany.id,
+            effectiveDate: String(request.effective_date ?? ""),
+            lease: lease ?? null,
+            newRent: Number(request.new_rent ?? 0),
+            oldRent: Number(request.old_rent ?? room.monthly_rent ?? lease?.monthly_rent ?? tenant?.monthly_rent ?? 0),
+            room,
+            sourceRequestId: String(request.id),
+            tenant: tenant ?? null,
+            userId: context.profile?.id ?? null,
+        });
         await refreshAffectedLandlordPayable(db, {
             companyId: context.activeCompany.id,
             landlordId: String(request.landlord_id ?? room.landlord_id ?? "") || null,
@@ -591,6 +759,18 @@ export async function adminDirectRoomRentChange(input: {
         .single();
     if (error) throw new Error(error.message);
 
+    const backdatedRecalculation = await recalculateBackdatedRentCorrection(db, {
+        companyId: context.activeCompany.id,
+        effectiveDate: input.effectiveDate,
+        lease: lease ?? null,
+        newRent,
+        oldRent,
+        room,
+        sourceRequestId: data.id,
+        tenant: tenant ?? null,
+        userId: context.profile?.id ?? null,
+    });
+
     await logUserAction({
         action: "Admin changed room rent directly",
         entityType: "room_rent_change_request",
@@ -598,7 +778,7 @@ export async function adminDirectRoomRentChange(input: {
         companyId: context.activeCompany.id,
         officeId: room.office_id ?? lease?.office_id ?? null,
         beforeData: { room, lease, tenant, oldRent },
-        afterData: { ...data, refreshedPayable },
+        afterData: { ...data, backdatedRecalculation, refreshedPayable },
     });
 
     revalidateRentPages();
