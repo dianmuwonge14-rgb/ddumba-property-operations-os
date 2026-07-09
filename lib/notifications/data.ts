@@ -79,6 +79,27 @@ export type NotificationTenantBalanceAdjustmentRequest = {
     updated_at: string;
 };
 
+export type NotificationPromiseChangeRequest = {
+    id: string;
+    company_id: string;
+    office_id: string | null;
+    promise_id: string;
+    tenant_id: string | null;
+    room_id: string | null;
+    change_type: string;
+    original_value: Record<string, unknown> | null;
+    requested_value: Record<string, unknown> | null;
+    reason: string;
+    status: "pending" | "approved" | "rejected" | string;
+    requested_by: string | null;
+    requested_by_account_type: string | null;
+    reviewed_by: string | null;
+    reviewed_at: string | null;
+    admin_comment: string | null;
+    created_at: string | null;
+    updated_at: string | null;
+};
+
 export type NotificationLandlordPaymentRequest = {
     id: string;
     company_id: string;
@@ -202,6 +223,7 @@ export type NotificationsCentreData = {
     requests: NotificationRentRequest[];
     paymentDateRequests: NotificationPaymentDateRequest[];
     tenantBalanceAdjustmentRequests: NotificationTenantBalanceAdjustmentRequest[];
+    promiseChangeRequests: NotificationPromiseChangeRequest[];
     landlordPaymentRequests: NotificationLandlordPaymentRequest[];
     landlordPaymentDetailRequests: NotificationLandlordPaymentDetailRequest[];
     landlordBulkRoomRequests: NotificationLandlordBulkRoomRequest[];
@@ -227,17 +249,18 @@ export async function getNotificationBadgeCount(context?: AuthContext) {
     const db = await createSupabaseServerClient() as unknown as Db;
 
     if (auth.isCompanyAdmin && !auth.isOfficeMode) {
-        const [rentRequests, paymentDateRequests, tenantBalanceAdjustmentRequests, landlordPaymentRequests, landlordPaymentDetailRequests, landlordBulkRoomRequests, advanceRequests, offDayRequests] = await Promise.all([
+        const [rentRequests, paymentDateRequests, tenantBalanceAdjustmentRequests, promiseChangeRequests, landlordPaymentRequests, landlordPaymentDetailRequests, landlordBulkRoomRequests, advanceRequests, offDayRequests] = await Promise.all([
             db.from("room_rent_change_requests").select("id", { count: "exact", head: true }).eq("company_id", auth.activeCompany.id).eq("status", "pending"),
             db.from("payment_correction_requests").select("id", { count: "exact", head: true }).eq("company_id", auth.activeCompany.id).eq("status", "pending"),
             safeCount(db, "tenant_balance_adjustments", auth.activeCompany.id),
+            safeCount(db, "promise_change_requests", auth.activeCompany.id),
             safeCount(db, "landlord_payment_expense_requests", auth.activeCompany.id),
             safeCount(db, "landlord_payment_details", auth.activeCompany.id),
             safeCount(db, "landlord_bulk_room_requests", auth.activeCompany.id),
             db.from("employee_advance_requests").select("id", { count: "exact", head: true }).eq("company_id", auth.activeCompany.id).eq("status", "pending").eq("active", true),
             db.from("employee_off_day_requests").select("id", { count: "exact", head: true }).eq("company_id", auth.activeCompany.id).eq("status", "pending").eq("active", true),
         ]);
-        return (rentRequests.count ?? 0) + (paymentDateRequests.count ?? 0) + (tenantBalanceAdjustmentRequests.count ?? 0) + (landlordPaymentRequests.count ?? 0) + (landlordPaymentDetailRequests.count ?? 0) + (landlordBulkRoomRequests.count ?? 0) + (advanceRequests.count ?? 0) + (offDayRequests.count ?? 0);
+        return (rentRequests.count ?? 0) + (paymentDateRequests.count ?? 0) + (tenantBalanceAdjustmentRequests.count ?? 0) + (promiseChangeRequests.count ?? 0) + (landlordPaymentRequests.count ?? 0) + (landlordPaymentDetailRequests.count ?? 0) + (landlordBulkRoomRequests.count ?? 0) + (advanceRequests.count ?? 0) + (offDayRequests.count ?? 0);
     }
 
     if (!auth.activeOffice?.id) return 0;
@@ -315,6 +338,17 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
         tenantBalanceAdjustmentQuery = tenantBalanceAdjustmentQuery.eq("office_id", context.activeOffice?.id);
     }
 
+    let promiseChangeRequestQuery = db
+        .from("promise_change_requests")
+        .select("id,company_id,office_id,promise_id,tenant_id,room_id,change_type,original_value,requested_value,reason,status,requested_by,requested_by_account_type,reviewed_by,reviewed_at,admin_comment,created_at,updated_at")
+        .eq("company_id", context.activeCompany.id)
+        .order("created_at", { ascending: false })
+        .limit(INITIAL_APPROVAL_LIMIT);
+
+    if (!isAdmin) {
+        promiseChangeRequestQuery = promiseChangeRequestQuery.eq("office_id", context.activeOffice?.id);
+    }
+
     let landlordPaymentRequestQuery = db
         .from("landlord_payment_expense_requests")
         .select("id,company_id,office_id,landlord_id,expense_id,monthly_payable_id,requested_amount,normal_payment_amount,advance_amount,current_net_payable,already_paid_amount,outstanding_amount,active_advance_balance,pending_request_amount,flag_reason,payment_month,payment_date,payment_method,notes,status,submitted_by,reviewed_by,reviewed_at,admin_comment,approved_landlord_payment_id,approved_advance_id,advance_agreement,created_at,updated_at")
@@ -363,10 +397,11 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
             .eq("office_id", context.activeOffice?.id);
     }
 
-    const [requestResult, paymentDateRequestResult, tenantBalanceAdjustmentResult, landlordPaymentRequestResult, landlordPaymentDetailRequestResult, landlordBulkRoomRequestResult, notificationResult] = await Promise.all([
+    const [requestResult, paymentDateRequestResult, tenantBalanceAdjustmentResult, promiseChangeRequestResult, landlordPaymentRequestResult, landlordPaymentDetailRequestResult, landlordBulkRoomRequestResult, notificationResult] = await Promise.all([
         safeRows(requestQuery),
         safeRows(paymentDateRequestQuery),
         safeRows(tenantBalanceAdjustmentQuery),
+        safeRows(promiseChangeRequestQuery),
         safeRows(landlordPaymentRequestQuery),
         safeRows(landlordPaymentDetailRequestQuery),
         safeRows(landlordBulkRoomRequestQuery),
@@ -380,6 +415,7 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
     const requests = (requestResult.data ?? []) as NotificationRentRequest[];
     const paymentDateRequests = (paymentDateRequestResult.data ?? []) as NotificationPaymentDateRequest[];
     const tenantBalanceAdjustmentRequests = (tenantBalanceAdjustmentResult.data ?? []) as NotificationTenantBalanceAdjustmentRequest[];
+    const promiseChangeRequests = (promiseChangeRequestResult.data ?? []) as NotificationPromiseChangeRequest[];
     const landlordPaymentRequests = (landlordPaymentRequestResult.data ?? []) as NotificationLandlordPaymentRequest[];
     const landlordPaymentDetailRequests = (landlordPaymentDetailRequestResult.data ?? []) as NotificationLandlordPaymentDetailRequest[];
     const landlordBulkRoomRequests = (landlordBulkRoomRequestResult.data ?? []) as NotificationLandlordBulkRoomRequest[];
@@ -394,6 +430,7 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
         ...paymentDateRequests.map((request) => request.original_room_id),
         ...paymentDateRequests.map((request) => request.requested_room_id),
         ...tenantBalanceAdjustmentRequests.map((request) => request.room_id),
+        ...promiseChangeRequests.map((request) => request.room_id),
     ]);
     const tenantIds = unique([
         ...requests.map((request) => request.tenant_id),
@@ -401,9 +438,10 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
         ...paymentDateRequests.map((request) => request.original_tenant_id),
         ...paymentDateRequests.map((request) => request.requested_tenant_id),
         ...tenantBalanceAdjustmentRequests.map((request) => request.tenant_id),
+        ...promiseChangeRequests.map((request) => request.tenant_id),
     ]);
     const landlordIds = unique([...requests.map((request) => request.landlord_id), ...landlordPaymentRequests.map((request) => request.landlord_id), ...landlordPaymentDetailRequests.map((request) => request.landlord_id)]);
-    const officeIds = unique([...requests.map((request) => request.office_id), ...paymentDateRequests.map((request) => request.office_id), ...tenantBalanceAdjustmentRequests.map((request) => request.office_id), ...landlordPaymentRequests.map((request) => request.office_id), ...landlordPaymentDetailRequests.map((request) => request.office_id), ...landlordBulkRoomRequests.map((request) => request.office_id)]);
+    const officeIds = unique([...requests.map((request) => request.office_id), ...paymentDateRequests.map((request) => request.office_id), ...tenantBalanceAdjustmentRequests.map((request) => request.office_id), ...promiseChangeRequests.map((request) => request.office_id), ...landlordPaymentRequests.map((request) => request.office_id), ...landlordPaymentDetailRequests.map((request) => request.office_id), ...landlordBulkRoomRequests.map((request) => request.office_id)]);
     const userIds = unique([
         ...requests.map((request) => request.requested_by),
         ...requests.map((request) => request.decided_by),
@@ -411,6 +449,8 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
         ...paymentDateRequests.map((request) => request.reviewed_by),
         ...tenantBalanceAdjustmentRequests.map((request) => request.requested_by),
         ...tenantBalanceAdjustmentRequests.map((request) => request.approved_by),
+        ...promiseChangeRequests.map((request) => request.requested_by),
+        ...promiseChangeRequests.map((request) => request.reviewed_by),
         ...landlordPaymentRequests.map((request) => request.submitted_by),
         ...landlordPaymentRequests.map((request) => request.reviewed_by),
         ...landlordPaymentDetailRequests.map((request) => request.requested_by),
@@ -422,7 +462,8 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
     const landlordPaymentDetailRequestIds = landlordPaymentDetailRequests.map((request) => request.id);
     const landlordBulkRoomRequestIds = landlordBulkRoomRequests.map((request) => request.id);
     const tenantBalanceAdjustmentRequestIds = tenantBalanceAdjustmentRequests.map((request) => request.id);
-    const allApprovalIds = [...requestIds, ...paymentDateRequestIds, ...tenantBalanceAdjustmentRequestIds, ...landlordPaymentRequestIds, ...landlordPaymentDetailRequestIds, ...landlordBulkRoomRequestIds];
+    const promiseChangeRequestIds = promiseChangeRequests.map((request) => request.id);
+    const allApprovalIds = [...requestIds, ...paymentDateRequestIds, ...tenantBalanceAdjustmentRequestIds, ...promiseChangeRequestIds, ...landlordPaymentRequestIds, ...landlordPaymentDetailRequestIds, ...landlordBulkRoomRequestIds];
 
     const [rooms, tenants, landlords, offices, users, payments] = await Promise.all([
         roomIds.length ? safeRows(db.from("rooms").select("id, room_number").in("id", roomIds).limit(200)) : { data: [], error: null },
@@ -438,6 +479,7 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
     const pendingApprovalCount = requests.filter((request) => request.status === "pending").length
         + paymentDateRequests.filter((request) => request.status === "pending").length
         + tenantBalanceAdjustmentRequests.filter((request) => request.status === "pending").length
+        + promiseChangeRequests.filter((request) => request.status === "pending").length
         + landlordPaymentRequests.filter((request) => request.status === "pending").length
         + landlordPaymentDetailRequests.filter((request) => request.status === "pending").length
         + landlordBulkRoomRequests.filter((request) => request.status === "pending").length;
@@ -451,6 +493,7 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
 	        requests,
 	        paymentDateRequests,
             tenantBalanceAdjustmentRequests,
+            promiseChangeRequests,
             landlordPaymentRequests,
             landlordPaymentDetailRequests,
             landlordBulkRoomRequests,

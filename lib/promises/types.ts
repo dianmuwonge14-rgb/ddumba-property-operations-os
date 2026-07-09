@@ -87,3 +87,13 @@ export type ReschedulePromiseInput = {
     promisedDate: string;
     notes?: string;
 };
+
+export type SubmitPromiseChangeRequestInput = {
+    promiseId: string;
+    changeType?: "general_edit" | "amount_change" | "date_change" | "notes_change" | "status_change" | "reschedule" | string;
+    promisedAmount?: number;
+    promisedDate?: string;
+    notes?: string | null;
+    status?: string | null;
+    reason: string;
+};

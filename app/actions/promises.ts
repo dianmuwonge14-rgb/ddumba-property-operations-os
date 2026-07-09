@@ -1,8 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireAuth, requirePermission } from "@/lib/auth/permissions";
+import { requireAuth, requireCompanyAdminMode } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
+import { createNotificationWithEmail } from "@/lib/notifications/email";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getTenantCollectionContext } from "@/lib/collections/data";
 import { recordCollectionLedgerAndCash } from "@/lib/collections/payment-ledger";
@@ -14,7 +16,12 @@ import type {
     PromiseFollowupInput,
     PromiseStateInput,
     ReschedulePromiseInput,
+    SubmitPromiseChangeRequestInput,
 } from "@/lib/promises/types";
+
+type Db = {
+    from: (table: string) => any;
+};
 
 function assertAmount(amount: number) {
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -34,6 +41,9 @@ function collectionNumber() {
 
 function revalidatePromiseWorkflow() {
     revalidatePath("/office/promises");
+    revalidatePath("/office/collector/promises");
+    revalidatePath("/office/notifications");
+    revalidatePath("/office/admin/notifications");
     revalidatePath("/office/collections");
     revalidatePath("/office");
     revalidatePath("/office/dashboard");
@@ -42,6 +52,75 @@ function revalidatePromiseWorkflow() {
     revalidatePath("/office/ai");
     revalidatePath("/office/automation");
     revalidatePath("/office/audit");
+}
+
+function isCollectorContext(context: Awaited<ReturnType<typeof requireAuth>>) {
+    return context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
+}
+
+function promiseSnapshot(promise: Record<string, unknown>) {
+    return {
+        amount: Number(promise.promised_amount ?? promise.amount ?? 0),
+        notes: typeof promise.notes === "string" ? promise.notes : null,
+        promise_date: promise.promised_date ?? promise.promise_date ?? null,
+        promised_amount: Number(promise.promised_amount ?? promise.amount ?? 0),
+        promised_date: promise.promised_date ?? promise.promise_date ?? null,
+        status: typeof promise.status === "string" ? promise.status : null,
+    };
+}
+
+function requestedPromisePatch(input: {
+    amount?: number;
+    promise_date?: string;
+    promised_amount?: number;
+    promisedAmount?: number;
+    promisedDate?: string;
+    promised_date?: string;
+    notes?: string | null;
+    status?: string | null;
+}) {
+    const patch: Record<string, unknown> = {};
+    const requestedAmount = input.promisedAmount ?? input.promised_amount ?? input.amount;
+    const requestedDate = input.promisedDate ?? input.promised_date ?? input.promise_date;
+    if (requestedAmount !== undefined) {
+        const amount = Number(requestedAmount);
+        assertAmount(amount);
+        patch.amount = amount;
+        patch.promised_amount = amount;
+    }
+    if (requestedDate !== undefined) {
+        assertDate(requestedDate);
+        patch.promise_date = requestedDate;
+        patch.promised_date = requestedDate;
+    }
+    if (input.notes !== undefined) patch.notes = input.notes || null;
+    if (input.status) patch.status = input.status;
+    return patch;
+}
+
+async function notifyPromiseRequest(db: Db, input: {
+    companyId: string;
+    entityId: string;
+    message: string;
+    officeId: string | null;
+    recipientType: "admin" | "office";
+    severity: "information" | "success" | "warning" | "error";
+    title: string;
+}) {
+    await createNotificationWithEmail(db, {
+        action_url: "/office/notifications",
+        channel: "in_app",
+        company_id: input.companyId,
+        delivery_status: "pending",
+        entity_id: input.entityId,
+        entity_type: "promise_change_request",
+        is_read: false,
+        message: input.message,
+        office_id: input.officeId,
+        recipient_type: input.recipientType,
+        severity: input.severity,
+        title: input.title,
+    });
 }
 
 async function activeWriteContext() {
@@ -185,6 +264,204 @@ export async function editPromise(input: EditPromiseInput) {
 
     revalidatePromiseWorkflow();
     return data;
+}
+
+export async function submitPromiseChangeRequest(input: SubmitPromiseChangeRequestInput) {
+    const context = await activeWriteContext();
+    const isCollector = isCollectorContext(context);
+    const db = (isCollector ? createSupabaseAdminClient() : await createSupabaseServerClient()) as unknown as Db;
+    if (!context.activeCompany?.id) throw new Error("Active company is required.");
+    if (!input.reason?.trim()) throw new Error("Reason for promise change is required.");
+
+    const existing = await getPromiseInActiveOffice(input.promiseId);
+    if (!isCollector && !(context.isCompanyAdmin || context.canAccessAllOffices) && existing.office_id !== context.activeOffice?.id) {
+        throw new Error("You can only request promise corrections for your active office.");
+    }
+
+    const patch = requestedPromisePatch({
+        notes: input.notes,
+        promisedAmount: input.promisedAmount,
+        promisedDate: input.promisedDate,
+        status: input.status,
+    });
+    if (!Object.keys(patch).length) throw new Error("Enter at least one promise field to change.");
+
+    const { data: pending, error: pendingError } = await db
+        .from("promise_change_requests")
+        .select("id")
+        .eq("company_id", context.activeCompany.id)
+        .eq("promise_id", existing.id)
+        .eq("change_type", input.changeType || "general_edit")
+        .eq("status", "pending")
+        .maybeSingle();
+    if (pendingError) throw new Error(pendingError.message);
+    if (pending) throw new Error("This promise already has a pending change request.");
+
+    const officeId = existing.office_id ?? context.activeOffice?.id ?? null;
+    const { data, error } = await db
+        .from("promise_change_requests")
+        .insert({
+            change_type: input.changeType || "general_edit",
+            company_id: context.activeCompany.id,
+            office_id: officeId,
+            original_value: promiseSnapshot(existing as Record<string, unknown>),
+            promise_id: existing.id,
+            reason: input.reason.trim(),
+            requested_by: context.profile?.id ?? context.authUser?.id ?? null,
+            requested_by_account_type: context.profile?.account_type ?? (isCollector ? "field_collector" : null),
+            requested_value: patch,
+            room_id: existing.room_id ?? null,
+            status: "pending",
+            tenant_id: existing.tenant_id ?? null,
+        })
+        .select("*")
+        .single();
+    if (error) {
+        throw new Error(`Promise change request could not be created: ${error.message}`);
+    }
+
+    await notifyPromiseRequest(db, {
+        companyId: context.activeCompany.id,
+        entityId: data.id,
+        message: `Promise correction requested${isCollector ? " by field collector" : ""}. Reason: ${input.reason.trim()}`,
+        officeId,
+        recipientType: "admin",
+        severity: "warning",
+        title: "Promise correction pending approval",
+    });
+
+    await logUserAction({
+        action: "promise_change_request_created",
+        entityType: "promise_change_request",
+        entityId: data.id,
+        companyId: context.activeCompany.id,
+        officeId: officeId ?? undefined,
+        beforeData: existing,
+        afterData: data,
+    });
+
+    revalidatePromiseWorkflow();
+    return data;
+}
+
+export async function decidePromiseChangeRequest(input: {
+    requestId: string;
+    decision: "approved" | "rejected";
+    comment?: string | null;
+}) {
+    const context = await requireCompanyAdminMode();
+    const db = (await createSupabaseServerClient()) as unknown as Db;
+    const companyId = context.activeCompany?.id;
+    const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    if (!companyId) throw new Error("Active company is required.");
+    if (input.decision === "rejected" && !String(input.comment ?? "").trim()) throw new Error("Rejection reason is required.");
+
+    const { data: request, error: requestError } = await db
+        .from("promise_change_requests")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("id", input.requestId)
+        .maybeSingle();
+    if (requestError) throw new Error(requestError.message);
+    if (!request) throw new Error("Promise change request not found.");
+    if (request.status !== "pending") throw new Error("This promise change request has already been reviewed.");
+
+    const { data: promise, error: promiseError } = await db
+        .from("promises")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("id", request.promise_id)
+        .maybeSingle();
+    if (promiseError) throw new Error(promiseError.message);
+    if (!promise) throw new Error("Promise not found.");
+
+    const reviewedAt = new Date().toISOString();
+    if (input.decision === "rejected") {
+        const { data, error } = await db
+            .from("promise_change_requests")
+            .update({
+                admin_comment: input.comment || null,
+                reviewed_at: reviewedAt,
+                reviewed_by: actorId,
+                status: "rejected",
+            })
+            .eq("id", request.id)
+            .select("*")
+            .single();
+        if (error) throw new Error(error.message);
+        await notifyPromiseRequest(db, {
+            companyId,
+            entityId: request.id,
+            message: `Admin rejected a promise correction${input.comment ? `: ${input.comment}` : "."}`,
+            officeId: request.office_id ?? promise.office_id ?? null,
+            recipientType: "office",
+            severity: "error",
+            title: "Promise correction rejected",
+        });
+        await logUserAction({
+            action: "promise_change_request_rejected",
+            entityType: "promise_change_request",
+            entityId: request.id,
+            companyId,
+            officeId: request.office_id ?? promise.office_id ?? undefined,
+            beforeData: request,
+            afterData: data,
+        });
+        revalidatePromiseWorkflow();
+        return data;
+    }
+
+    const patch = requestedPromisePatch((request.requested_value ?? {}) as {
+        promisedAmount?: number;
+        promisedDate?: string;
+        notes?: string | null;
+        status?: string | null;
+    });
+    const { data: updatedPromise, error: updateError } = await db
+        .from("promises")
+        .update(patch)
+        .eq("id", request.promise_id)
+        .eq("company_id", companyId)
+        .select("*")
+        .single();
+    if (updateError) throw new Error(updateError.message);
+
+    await addPromiseFollowup(updatedPromise.id, "edited", "Promise correction approved", input.comment ?? undefined);
+
+    const { data: reviewedRequest, error: reviewError } = await db
+        .from("promise_change_requests")
+        .update({
+            admin_comment: input.comment || null,
+            reviewed_at: reviewedAt,
+            reviewed_by: actorId,
+            status: "approved",
+        })
+        .eq("id", request.id)
+        .select("*")
+        .single();
+    if (reviewError) throw new Error(reviewError.message);
+
+    await notifyPromiseRequest(db, {
+        companyId,
+        entityId: request.id,
+        message: "Admin approved a promise correction. Promise Centre has been updated live.",
+        officeId: updatedPromise.office_id ?? request.office_id ?? null,
+        recipientType: "office",
+        severity: "success",
+        title: "Promise correction approved",
+    });
+    await logUserAction({
+        action: "promise_change_request_approved",
+        entityType: "promise_change_request",
+        entityId: request.id,
+        companyId,
+        officeId: updatedPromise.office_id ?? request.office_id ?? undefined,
+        beforeData: { request, promise },
+        afterData: { request: reviewedRequest, promise: updatedPromise },
+    });
+
+    revalidatePromiseWorkflow();
+    return reviewedRequest;
 }
 
 export async function createPromiseFollowup(input: PromiseFollowupInput) {

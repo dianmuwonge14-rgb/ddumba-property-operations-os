@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Search, Send } from "lucide-react";
-import { createPromise, editPromise, reschedulePromise } from "@/app/actions/promises";
+import { createPromise, editPromise, reschedulePromise, submitPromiseChangeRequest } from "@/app/actions/promises";
 import { recordCollectorPromise } from "@/app/actions/collectors";
 import TenantContactCard from "@/components/office/shared/TenantContactCard";
 import type { PromiseItem, PromiseTenantOption } from "@/lib/promises/types";
@@ -165,6 +165,21 @@ export default function PromiseCommandPanel({ selectedPromise, canManage, entryM
         try {
             const combinedNotes = [outcome ? `Outcome: ${outcome}` : "", notes].filter(Boolean).join("\n");
             if (selectedPromise) {
+                if (entryMode === "collector") {
+                    await submitPromiseChangeRequest({
+                        promiseId: selectedPromise.id,
+                        changeType: "general_edit",
+                        promisedAmount,
+                        promisedDate: date,
+                        notes: combinedNotes || undefined,
+                        reason: combinedNotes || "Field collector requested promise correction.",
+                    });
+                    setMessageTone("success");
+                    setMessage("Promise correction request sent for approval.");
+                    resetForm();
+                    onSaved();
+                    return;
+                }
                 const currentDate = promiseDate(selectedPromise.promised_date ?? selectedPromise.promise_date);
                 if (date !== currentDate) {
                     await reschedulePromise({ promiseId: selectedPromise.id, promisedDate: date, notes: combinedNotes || undefined });

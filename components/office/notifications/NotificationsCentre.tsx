@@ -6,10 +6,11 @@ import { BellRing, CheckCircle2, Clock3, History, XCircle } from "lucide-react";
 import { decidePaymentCorrection, decideTenantOutstandingBalanceAdjustment } from "@/app/actions/collections";
 import { decideLandlordPaidExpenseRequest } from "@/app/actions/expenses";
 import { decideLandlordPaymentDetails } from "@/app/actions/landlords";
+import { decidePromiseChangeRequest } from "@/app/actions/promises";
 import { reviewLandlordBulkRoomRequest } from "@/app/actions/properties";
 import { decideRoomRentChange } from "@/app/actions/room-rent";
 import { PageHero, StatusChip } from "@/components/office/shared/EnterpriseUI";
-import type { NotificationAuditRow, NotificationLandlordBulkRoomRequest, NotificationLandlordPaymentDetailRequest, NotificationLandlordPaymentRequest, NotificationPaymentDateRequest, NotificationRentRequest, NotificationTenantBalanceAdjustmentRequest, NotificationsCentreData } from "@/lib/notifications/data";
+import type { NotificationAuditRow, NotificationLandlordBulkRoomRequest, NotificationLandlordPaymentDetailRequest, NotificationLandlordPaymentRequest, NotificationPaymentDateRequest, NotificationPromiseChangeRequest, NotificationRentRequest, NotificationTenantBalanceAdjustmentRequest, NotificationsCentreData } from "@/lib/notifications/data";
 
 type Props = {
     data: NotificationsCentreData;
@@ -20,6 +21,7 @@ type ApprovalQueue =
     | "rent"
     | "payment"
     | "balance"
+    | "promise"
     | "landlordPayment"
     | "landlordPaymentDetail"
     | "landlordBulkRoom";
@@ -42,6 +44,10 @@ type PaymentModalState =
 type BalanceAdjustmentModalState =
     | { type: "reject"; request: NotificationTenantBalanceAdjustmentRequest }
     | { type: "reason"; request: NotificationTenantBalanceAdjustmentRequest }
+    | null;
+type PromiseChangeModalState =
+    | { type: "reject"; request: NotificationPromiseChangeRequest }
+    | { type: "reason"; request: NotificationPromiseChangeRequest }
     | null;
 type LandlordPaymentModalState =
     | { type: "reject"; request: NotificationLandlordPaymentRequest }
@@ -113,18 +119,42 @@ function correctionRequestedValue(data: NotificationsCentreData, request: Notifi
     return formatDate(request.requested_payment_date);
 }
 
+function promiseChangeTypeName(value: string | null | undefined) {
+    if (value === "amount_change") return "Amount Change";
+    if (value === "date_change" || value === "reschedule") return "Date Change";
+    if (value === "notes_change") return "Notes Change";
+    if (value === "status_change") return "Status Change";
+    return "General Edit";
+}
+
+function promiseValueSummary(value: Record<string, unknown> | null | undefined) {
+    if (!value) return "No value";
+    const amount = value.promised_amount ?? value.amount;
+    const date = value.promised_date ?? value.promise_date;
+    const status = value.status;
+    const notes = value.notes;
+    return [
+        amount !== undefined && amount !== null ? money(String(amount)) : "",
+        date ? formatDate(String(date)) : "",
+        status ? `Status: ${String(status)}` : "",
+        notes ? `Notes: ${String(notes).slice(0, 60)}` : "",
+    ].filter(Boolean).join(" · ") || "No value";
+}
+
 export default function NotificationsCentre({ data }: Props) {
     const router = useRouter();
     const [filter, setFilter] = useState<Filter>("pending");
     const [modal, setModal] = useState<ModalState>(null);
     const [paymentModal, setPaymentModal] = useState<PaymentModalState>(null);
     const [balanceAdjustmentModal, setBalanceAdjustmentModal] = useState<BalanceAdjustmentModalState>(null);
+    const [promiseChangeModal, setPromiseChangeModal] = useState<PromiseChangeModalState>(null);
     const [landlordPaymentModal, setLandlordPaymentModal] = useState<LandlordPaymentModalState>(null);
     const [landlordPaymentDetailModal, setLandlordPaymentDetailModal] = useState<LandlordPaymentDetailModalState>(null);
     const [landlordBulkRoomModal, setLandlordBulkRoomModal] = useState<LandlordBulkRoomModalState>(null);
     const [decisionNote, setDecisionNote] = useState("");
     const [paymentDecisionNote, setPaymentDecisionNote] = useState("");
     const [balanceAdjustmentDecisionNote, setBalanceAdjustmentDecisionNote] = useState("");
+    const [promiseChangeDecisionNote, setPromiseChangeDecisionNote] = useState("");
     const [landlordPaymentDecisionNote, setLandlordPaymentDecisionNote] = useState("");
     const [landlordPaymentDetailDecisionNote, setLandlordPaymentDetailDecisionNote] = useState("");
     const [landlordBulkRoomDecisionNote, setLandlordBulkRoomDecisionNote] = useState("");
@@ -135,6 +165,7 @@ export default function NotificationsCentre({ data }: Props) {
     const [selectedRentRequestIds, setSelectedRentRequestIds] = useState<string[]>([]);
     const [selectedPaymentRequestIds, setSelectedPaymentRequestIds] = useState<string[]>([]);
     const [selectedBalanceRequestIds, setSelectedBalanceRequestIds] = useState<string[]>([]);
+    const [selectedPromiseChangeRequestIds, setSelectedPromiseChangeRequestIds] = useState<string[]>([]);
     const [selectedLandlordPaymentRequestIds, setSelectedLandlordPaymentRequestIds] = useState<string[]>([]);
     const [selectedLandlordPaymentDetailRequestIds, setSelectedLandlordPaymentDetailRequestIds] = useState<string[]>([]);
     const [selectedLandlordBulkRoomRequestIds, setSelectedLandlordBulkRoomRequestIds] = useState<string[]>([]);
@@ -155,6 +186,7 @@ export default function NotificationsCentre({ data }: Props) {
         notifications: data.notifications ?? [],
         paymentDateRequests: data.paymentDateRequests ?? [],
         tenantBalanceAdjustmentRequests: data.tenantBalanceAdjustmentRequests ?? [],
+        promiseChangeRequests: data.promiseChangeRequests ?? [],
         landlordPaymentRequests: data.landlordPaymentRequests ?? [],
         landlordPaymentDetailRequests: data.landlordPaymentDetailRequests ?? [],
         landlordBulkRoomRequests: data.landlordBulkRoomRequests ?? [],
@@ -183,6 +215,14 @@ export default function NotificationsCentre({ data }: Props) {
         : filter === "approved"
             ? approvedBalanceAdjustmentRequests
             : rejectedBalanceAdjustmentRequests;
+    const pendingPromiseChangeRequests = safeData.promiseChangeRequests.filter((request) => request.status === "pending");
+    const approvedPromiseChangeRequests = safeData.promiseChangeRequests.filter((request) => request.status === "approved");
+    const rejectedPromiseChangeRequests = safeData.promiseChangeRequests.filter((request) => request.status === "rejected");
+    const visiblePromiseChangeRequests = filter === "pending"
+        ? pendingPromiseChangeRequests
+        : filter === "approved"
+            ? approvedPromiseChangeRequests
+            : rejectedPromiseChangeRequests;
     const landlordPaymentRequests = safeData.landlordPaymentRequests.map((request) => {
         const localStatus = localLandlordPaymentStatuses[request.id];
         return localStatus ? { ...request, status: localStatus } : request;
@@ -237,6 +277,12 @@ export default function NotificationsCentre({ data }: Props) {
         setMessage(null);
         setBalanceAdjustmentDecisionNote("");
         setBalanceAdjustmentModal({ type: "reject", request });
+    }
+
+    function openPromiseChangeRejectModal(request: NotificationPromiseChangeRequest) {
+        setMessage(null);
+        setPromiseChangeDecisionNote("");
+        setPromiseChangeModal({ type: "reject", request });
     }
 
     function openLandlordPaymentRejectModal(request: NotificationLandlordPaymentRequest) {
@@ -326,6 +372,31 @@ export default function NotificationsCentre({ data }: Props) {
                 router.refresh();
             } catch (error) {
                 setMessage(error instanceof Error ? error.message : "Unable to process outstanding balance adjustment.");
+            } finally {
+                setActionLabel(null);
+            }
+        });
+    }
+
+    function executePromiseChangeDecision(request: NotificationPromiseChangeRequest, decision: "approved" | "rejected", comment: string) {
+        if (decision === "rejected" && !comment.trim()) {
+            setMessage("Rejection reason is required.");
+            return;
+        }
+
+        startTransition(async () => {
+            try {
+                setMessage(null);
+                setActionLabel(decision === "approved" ? "Approving promise correction..." : "Rejecting promise correction...");
+                await decidePromiseChangeRequest({ requestId: request.id, decision, comment });
+                setMessage(decision === "approved"
+                    ? "Promise correction approved. Promise Centre was updated live."
+                    : "Promise correction rejected. Original promise was kept.");
+                setPromiseChangeModal(null);
+                setPromiseChangeDecisionNote("");
+                router.refresh();
+            } catch (error) {
+                setMessage(error instanceof Error ? error.message : "Unable to process promise correction.");
             } finally {
                 setActionLabel(null);
             }
@@ -423,6 +494,11 @@ export default function NotificationsCentre({ data }: Props) {
         executeBalanceAdjustmentDecision(balanceAdjustmentModal.request, "rejected", balanceAdjustmentDecisionNote);
     }
 
+    function submitPromiseChangeRejectDecision() {
+        if (!promiseChangeModal || promiseChangeModal.type !== "reject") return;
+        executePromiseChangeDecision(promiseChangeModal.request, "rejected", promiseChangeDecisionNote);
+    }
+
     function submitLandlordPaymentRejectDecision() {
         if (!landlordPaymentModal || landlordPaymentModal.type !== "reject") return;
         executeLandlordPaymentDecision(landlordPaymentModal.request, "rejected", landlordPaymentDecisionNote);
@@ -452,6 +528,7 @@ export default function NotificationsCentre({ data }: Props) {
         if (queue === "rent") setSelectedRentRequestIds([]);
         if (queue === "payment") setSelectedPaymentRequestIds([]);
         if (queue === "balance") setSelectedBalanceRequestIds([]);
+        if (queue === "promise") setSelectedPromiseChangeRequestIds([]);
         if (queue === "landlordPayment") setSelectedLandlordPaymentRequestIds([]);
         if (queue === "landlordPaymentDetail") setSelectedLandlordPaymentDetailRequestIds([]);
         if (queue === "landlordBulkRoom") setSelectedLandlordBulkRoomRequestIds([]);
@@ -477,6 +554,9 @@ export default function NotificationsCentre({ data }: Props) {
                 }
                 if (bulkModal.queue === "balance") {
                     for (const id of bulkModal.ids) await decideTenantOutstandingBalanceAdjustment({ adjustmentId: id, decision: bulkModal.decision, comment });
+                }
+                if (bulkModal.queue === "promise") {
+                    for (const id of bulkModal.ids) await decidePromiseChangeRequest({ requestId: id, decision: bulkModal.decision, comment });
                 }
                 if (bulkModal.queue === "landlordPayment") {
                     for (const id of bulkModal.ids) await decideLandlordPaidExpenseRequest({ requestId: id, decision: bulkModal.decision, comment });
@@ -536,9 +616,9 @@ export default function NotificationsCentre({ data }: Props) {
                                 <p className="text-sm font-semibold text-slate-500">Room rent and payment date change requests are approved here. Audit Centre remains history-only.</p>
                                 </div>
                                 <div className="flex flex-wrap gap-2">
-                                    <FilterButton active={filter === "pending"} label={`Pending (${pendingRequests.length + pendingPaymentDateRequests.length + pendingBalanceAdjustmentRequests.length + pendingLandlordPaymentRequests.length + pendingLandlordPaymentDetailRequests.length + pendingLandlordBulkRoomRequests.length})`} onClick={() => setFilter("pending")} />
-                                    <FilterButton active={filter === "approved"} label={`Approved (${approvedRequests.length + approvedPaymentDateRequests.length + approvedBalanceAdjustmentRequests.length + approvedLandlordPaymentRequests.length + approvedLandlordPaymentDetailRequests.length + approvedLandlordBulkRoomRequests.length})`} onClick={() => setFilter("approved")} />
-                                    <FilterButton active={filter === "rejected"} label={`Rejected (${rejectedRequests.length + rejectedPaymentDateRequests.length + rejectedBalanceAdjustmentRequests.length + rejectedLandlordPaymentRequests.length + rejectedLandlordPaymentDetailRequests.length + rejectedLandlordBulkRoomRequests.length})`} onClick={() => setFilter("rejected")} />
+                                    <FilterButton active={filter === "pending"} label={`Pending (${pendingRequests.length + pendingPaymentDateRequests.length + pendingBalanceAdjustmentRequests.length + pendingPromiseChangeRequests.length + pendingLandlordPaymentRequests.length + pendingLandlordPaymentDetailRequests.length + pendingLandlordBulkRoomRequests.length})`} onClick={() => setFilter("pending")} />
+                                    <FilterButton active={filter === "approved"} label={`Approved (${approvedRequests.length + approvedPaymentDateRequests.length + approvedBalanceAdjustmentRequests.length + approvedPromiseChangeRequests.length + approvedLandlordPaymentRequests.length + approvedLandlordPaymentDetailRequests.length + approvedLandlordBulkRoomRequests.length})`} onClick={() => setFilter("approved")} />
+                                    <FilterButton active={filter === "rejected"} label={`Rejected (${rejectedRequests.length + rejectedPaymentDateRequests.length + rejectedBalanceAdjustmentRequests.length + rejectedPromiseChangeRequests.length + rejectedLandlordPaymentRequests.length + rejectedLandlordPaymentDetailRequests.length + rejectedLandlordBulkRoomRequests.length})`} onClick={() => setFilter("rejected")} />
                                 </div>
                             </div>
                             {message ? <p className="mt-4 rounded-2xl bg-blue-50 px-4 py-3 text-sm font-black text-blue-800">{message}</p> : null}
@@ -611,6 +691,30 @@ export default function NotificationsCentre({ data }: Props) {
                             onApprove={(request) => executeBalanceAdjustmentDecision(request, "approved", "")}
                             onReject={(request) => openBalanceAdjustmentRejectModal(request)}
                             onReason={(request) => setBalanceAdjustmentModal({ type: "reason", request })}
+                        />
+                    </section>
+                    <section className="enterprise-panel mt-6 overflow-hidden">
+                        <div className="border-b border-slate-200 p-5">
+                            <h2 className="text-xl font-black text-slate-950">Promise Correction Requests</h2>
+                            <p className="text-sm font-semibold text-slate-500">Approve collector or office requested edits before Promise Centre records change.</p>
+                        </div>
+                        <BulkApprovalControls
+                            disabled={isPending}
+                            label="Promise correction requests"
+                            pendingIds={pendingPromiseChangeRequests.map((request) => request.id)}
+                            selectedIds={selectedPromiseChangeRequestIds}
+                            onChangeSelected={setSelectedPromiseChangeRequestIds}
+                            onBulk={(decision, ids) => openBulkDecision("promise", "Promise correction requests", decision, ids)}
+                        />
+                        <PromiseChangeApprovalTable
+                            data={safeData}
+                            isPending={isPending}
+                            selectedIds={selectedPromiseChangeRequestIds}
+                            requests={visiblePromiseChangeRequests}
+                            onToggleSelected={(id) => toggleSelectedId(selectedPromiseChangeRequestIds, setSelectedPromiseChangeRequestIds, id)}
+                            onApprove={(request) => executePromiseChangeDecision(request, "approved", "")}
+                            onReject={(request) => openPromiseChangeRejectModal(request)}
+                            onReason={(request) => setPromiseChangeModal({ type: "reason", request })}
                         />
                     </section>
                     <section className="enterprise-panel mt-6 overflow-hidden">
@@ -761,6 +865,18 @@ export default function NotificationsCentre({ data }: Props) {
                     }}
                     onDecisionNoteChange={setBalanceAdjustmentDecisionNote}
                     onSubmitRejectDecision={submitBalanceAdjustmentRejectDecision}
+                />
+                <PromiseChangeRequestModal
+                    actionLabel={actionLabel}
+                    data={safeData}
+                    decisionNote={promiseChangeDecisionNote}
+                    isPending={isPending}
+                    modal={promiseChangeModal}
+                    onClose={() => {
+                        if (!isPending) setPromiseChangeModal(null);
+                    }}
+                    onDecisionNoteChange={setPromiseChangeDecisionNote}
+                    onSubmitRejectDecision={submitPromiseChangeRejectDecision}
                 />
                 <LandlordPaymentRequestModal
                     actionLabel={actionLabel}
@@ -1178,6 +1294,96 @@ function BalanceAdjustmentApprovalTable({
                             </td>
                             <td>{lookup(data.lookups.users, request.requested_by, "Unknown user")}</td>
                             <td><StatusChip label={String(request.status ?? "pending")} tone={request.status === "approved" || request.status === "direct_admin_change" ? "green" : request.status === "rejected" ? "red" : "orange"} /></td>
+                            <td>
+                                <div className="flex flex-wrap gap-2">
+                                    {request.status === "pending" ? (
+                                        <>
+                                            <button type="button" disabled={isPending} onClick={() => onApprove(request)} className="inline-flex items-center gap-1 rounded-xl bg-emerald-700 px-3 py-2 text-xs font-black text-white disabled:opacity-40">
+                                                <CheckCircle2 size={14} /> {isPending ? "Approving..." : "Approve"}
+                                            </button>
+                                            <button type="button" disabled={isPending} onClick={() => onReject(request)} className="inline-flex items-center gap-1 rounded-xl bg-red-700 px-3 py-2 text-xs font-black text-white disabled:opacity-40">
+                                                <XCircle size={14} /> {isPending ? "Rejecting..." : "Reject"}
+                                            </button>
+                                        </>
+                                    ) : null}
+                                </div>
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
+function PromiseChangeApprovalTable({
+    data,
+    isPending,
+    selectedIds = [],
+    requests,
+    onToggleSelected,
+    onApprove,
+    onReject,
+    onReason,
+}: {
+    data: NotificationsCentreData;
+    isPending: boolean;
+    selectedIds?: string[];
+    requests: NotificationPromiseChangeRequest[];
+    onToggleSelected?: (id: string) => void;
+    onApprove: (request: NotificationPromiseChangeRequest) => void;
+    onReject: (request: NotificationPromiseChangeRequest) => void;
+    onReason: (request: NotificationPromiseChangeRequest) => void;
+}) {
+    return (
+        <div className="overflow-x-auto">
+            <table className="enterprise-table">
+                <thead>
+                    <tr>
+                        <th className="text-left">Select</th>
+                        <th className="text-left">Room</th>
+                        <th className="text-left">Tenant</th>
+                        <th className="text-left">Office</th>
+                        <th className="text-left">Type</th>
+                        <th className="text-left">Current Value</th>
+                        <th className="text-left">Requested Value</th>
+                        <th className="text-left">Reason</th>
+                        <th className="text-left">Requested By</th>
+                        <th className="text-left">Status</th>
+                        <th className="text-left">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {requests.length === 0 ? (
+                        <tr><td colSpan={11} className="p-6 text-sm font-bold text-slate-500">No promise correction requests in this state.</td></tr>
+                    ) : requests.map((request) => (
+                        <tr key={`promise-change:${request.id}`}>
+                            <td>
+                                {request.status === "pending" ? (
+                                    <input checked={selectedIds.includes(request.id)} type="checkbox" onChange={() => onToggleSelected?.(request.id)} className="h-4 w-4 rounded border-slate-300 text-blue-700" />
+                                ) : null}
+                            </td>
+                            <td className="font-black text-slate-950">{lookup(data.lookups.rooms, request.room_id, "Unknown room")}</td>
+                            <td>{lookup(data.lookups.tenants, request.tenant_id, "Unknown tenant")}</td>
+                            <td>{lookup(data.lookups.offices, request.office_id, "Needs review")}</td>
+                            <td>{promiseChangeTypeName(request.change_type)}</td>
+                            <td><span className="font-black text-rose-700">{promiseValueSummary(request.original_value)}</span></td>
+                            <td><span className="font-black text-blue-700">{promiseValueSummary(request.requested_value)}</span></td>
+                            <td>
+                                <div className="max-w-72">
+                                    <p className="line-clamp-2 text-xs font-bold text-slate-600">{request.reason || "No reason provided."}</p>
+                                    <button type="button" onClick={() => onReason(request)} className="mt-1 text-xs font-black text-blue-700 hover:text-blue-900">
+                                        View full reason
+                                    </button>
+                                </div>
+                            </td>
+                            <td>
+                                <div>
+                                    <p className="font-bold text-slate-800">{lookup(data.lookups.users, request.requested_by, "Unknown user")}</p>
+                                    {request.requested_by_account_type ? <p className="text-[10px] font-black uppercase text-slate-400">{request.requested_by_account_type}</p> : null}
+                                </div>
+                            </td>
+                            <td><StatusChip label={String(request.status ?? "pending")} tone={request.status === "approved" ? "green" : request.status === "rejected" ? "red" : "orange"} /></td>
                             <td>
                                 <div className="flex flex-wrap gap-2">
                                     {request.status === "pending" ? (
@@ -2121,6 +2327,73 @@ function BalanceAdjustmentRequestModal({
                                 onChange={(event) => onDecisionNoteChange(event.target.value)}
                                 className="mt-2 min-h-28 w-full rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm font-semibold outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
                                 placeholder="Explain why this balance change is rejected..."
+                            />
+                        </label>
+                    ) : null}
+                </div>
+                <div className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 p-5">
+                    <button type="button" disabled={isPending} onClick={onClose} className="rounded-2xl bg-white px-5 py-3 text-sm font-black text-slate-700 shadow disabled:opacity-40">
+                        Close
+                    </button>
+                    {isReject ? (
+                        <button type="button" disabled={isPending} onClick={onSubmitRejectDecision} className="rounded-2xl bg-red-700 px-5 py-3 text-sm font-black text-white disabled:opacity-40">
+                            {actionLabel ?? "Reject Request"}
+                        </button>
+                    ) : null}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function PromiseChangeRequestModal({
+    actionLabel,
+    data,
+    decisionNote,
+    isPending,
+    modal,
+    onClose,
+    onDecisionNoteChange,
+    onSubmitRejectDecision,
+}: {
+    actionLabel: string | null;
+    data: NotificationsCentreData;
+    decisionNote: string;
+    isPending: boolean;
+    modal: PromiseChangeModalState;
+    onClose: () => void;
+    onDecisionNoteChange: (value: string) => void;
+    onSubmitRejectDecision: () => void;
+}) {
+    if (!modal) return null;
+    const request = modal.request;
+    const isReject = modal.type === "reject";
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-xl rounded-[28px] border border-slate-200 bg-white shadow-2xl">
+                <div className="border-b border-slate-200 p-5">
+                    <p className="text-xs font-black uppercase tracking-wide text-blue-700">Promise correction</p>
+                    <h2 className="mt-2 text-2xl font-black text-slate-950">{isReject ? "Reject promise correction" : "Promise correction details"}</h2>
+                </div>
+                <div className="grid gap-3 p-5 sm:grid-cols-2">
+                    <Detail label="Room" value={lookup(data.lookups.rooms, request.room_id, "Unknown room")} />
+                    <Detail label="Tenant" value={lookup(data.lookups.tenants, request.tenant_id, "Unknown tenant")} />
+                    <Detail label="Office" value={lookup(data.lookups.offices, request.office_id, "Needs review")} />
+                    <Detail label="Requested by" value={lookup(data.lookups.users, request.requested_by, "Unknown user")} />
+                    <Detail label="Current" value={promiseValueSummary(request.original_value)} />
+                    <Detail label="Requested" value={promiseValueSummary(request.requested_value)} />
+                    <div className="sm:col-span-2 rounded-2xl bg-slate-50 p-4">
+                        <p className="text-xs font-black uppercase text-slate-500">Reason</p>
+                        <p className="mt-1 text-sm font-bold text-slate-800">{request.reason || "No reason supplied."}</p>
+                    </div>
+                    {isReject ? (
+                        <label className="sm:col-span-2">
+                            <span className="text-sm font-black text-slate-700">Rejection reason</span>
+                            <textarea
+                                value={decisionNote}
+                                onChange={(event) => onDecisionNoteChange(event.target.value)}
+                                className="mt-2 min-h-28 w-full rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm font-semibold outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                                placeholder="Explain why this promise correction is rejected..."
                             />
                         </label>
                     ) : null}
