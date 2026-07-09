@@ -81,6 +81,12 @@ function isActivePayable(row: LandlordMonthlyPayable) {
 }
 
 function unpaidBalance(row: LandlordMonthlyPayable) {
+    const monthlyDue = amount(row.monthly_net_payable)
+        || amount(row.net_payable)
+        || Math.max(0, amount(row.total_due) - amount(row.opening_arrears));
+    if (monthlyDue > 0 || amount(row.amount_paid) > 0) {
+        return Math.max(0, monthlyDue - Math.min(amount(row.amount_paid), monthlyDue));
+    }
     return Math.max(0, amount(row.unpaid_balance));
 }
 

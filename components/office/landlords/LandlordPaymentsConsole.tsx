@@ -36,6 +36,14 @@ function numeric(value: unknown) {
     return Number.isFinite(Number(value)) ? Number(value) : 0;
 }
 
+function monthlyUnpaid(row: LandlordMonthlyPayable) {
+    const monthlyDue = numeric(row.monthly_net_payable) || numeric(row.net_payable) || Math.max(0, numeric(row.total_due) - numeric(row.opening_arrears));
+    if (monthlyDue > 0 || numeric(row.amount_paid) > 0) {
+        return Math.max(0, monthlyDue - Math.min(numeric(row.amount_paid), monthlyDue));
+    }
+    return Math.max(0, numeric(row.unpaid_balance));
+}
+
 function advanceTotal(advance: Record<string, unknown>) {
     const total = numeric(advance.total_repayable);
     if (total > 0) return total;
@@ -637,7 +645,7 @@ function MonthlyLedger({ group }: { group: LandlordPayableGroup | null }) {
 
     function openPayment(row: LandlordMonthlyPayable) {
         setPaymentTarget(row);
-        setPaymentAmount(String(Math.round(Number(row.unpaid_balance ?? row.total_due ?? 0))));
+        setPaymentAmount(String(Math.round(monthlyUnpaid(row))));
         setPaymentMethod(group?.activePaymentDetail?.paymentMethod ?? "cash");
         setPaymentDetailId(group?.activePaymentDetail?.id ?? "");
         setPaymentReference("");
@@ -706,6 +714,7 @@ function MonthlyLedger({ group }: { group: LandlordPayableGroup | null }) {
                     </thead>
                     <tbody>
                         {group.rows.map((row) => {
+                            const balance = monthlyUnpaid(row);
                             const deductions =
                                 Number(row.vacant_room_deductions ?? 0) +
                                 Number(row.vacated_tenant_debt_deductions ?? 0) +
@@ -716,7 +725,7 @@ function MonthlyLedger({ group }: { group: LandlordPayableGroup | null }) {
                                     <td className="font-black">{monthLabel(row.settlement_month)}</td>
                                     <td>{money(row.opening_arrears ?? 0)}</td>
                                     <td>{money(row.monthly_net_payable ?? row.net_payable)}</td>
-                                    <td className="font-black">{money(row.total_due ?? row.net_payable)}</td>
+                                    <td className="font-black">{money(row.monthly_net_payable ?? row.net_payable)}</td>
                                     <td className="font-bold text-red-700">{money(deductions)}</td>
                                     <td>
                                         <p className="text-xs font-bold text-slate-600">
@@ -726,7 +735,7 @@ function MonthlyLedger({ group }: { group: LandlordPayableGroup | null }) {
                                     </td>
                                     <td className="font-bold text-emerald-700">{money(row.amount_paid)}</td>
                                     <td>
-                                        <p className="font-black text-red-700">{money(row.closing_arrears ?? row.unpaid_balance)}</p>
+                                        <p className="font-black text-red-700">{money(balance)}</p>
                                         {Number(row.overpaid_amount ?? 0) > 0 ? <p className="text-xs font-black text-blue-700">Advance: {money(row.overpaid_amount)}</p> : null}
                                     </td>
                                     <td>
@@ -743,7 +752,7 @@ function MonthlyLedger({ group }: { group: LandlordPayableGroup | null }) {
                             <td>Total</td>
                             <td>{money(group.rows.reduce((total, row) => total + Number(row.opening_arrears ?? 0), 0))}</td>
                             <td>{money(group.totalPayable)}</td>
-                            <td>{money(group.rows.reduce((total, row) => total + Number(row.total_due ?? row.net_payable ?? 0), 0))}</td>
+                            <td>{money(group.totalPayable)}</td>
                             <td />
                             <td />
                             <td>{money(group.totalPaid)}</td>
@@ -762,7 +771,7 @@ function MonthlyLedger({ group }: { group: LandlordPayableGroup | null }) {
                             <p className="text-xs font-black uppercase tracking-wide text-emerald-700">Record Payment</p>
                             <h3 className="text-lg font-black text-slate-950">{group.landlordName} · {monthLabel(paymentTarget.settlement_month)}</h3>
                             <p className="text-sm font-bold text-slate-600">
-                                Opening arrears: {money(paymentTarget.opening_arrears ?? 0)} · Current payable: {money(paymentTarget.monthly_net_payable ?? paymentTarget.net_payable)} · Total due: {money(paymentTarget.total_due ?? paymentTarget.net_payable)}
+                                Previous unpaid: {money(paymentTarget.opening_arrears ?? 0)} · Current month payable: {money(paymentTarget.monthly_net_payable ?? paymentTarget.net_payable)} · Current month balance: {money(monthlyUnpaid(paymentTarget))}
                             </p>
                             <p className="text-xs font-bold text-slate-500">Payment clears oldest unpaid arrears first. Any excess becomes a landlord advance.</p>
                         </div>
@@ -825,16 +834,16 @@ function MonthlyLedger({ group }: { group: LandlordPayableGroup | null }) {
                         <div key={row.id} className="rounded-2xl border border-slate-200 p-4">
                             <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                                 <p className="font-black">{monthLabel(row.settlement_month)}</p>
-                                <StatusChip label={row.status.replaceAll("_", " ")} tone={Number(row.unpaid_balance) > 0 ? "orange" : "green"} />
+                                <StatusChip label={row.status.replaceAll("_", " ")} tone={monthlyUnpaid(row) > 0 ? "orange" : "green"} />
                             </div>
                             <div className="mt-3 grid grid-cols-2 gap-3 text-sm md:grid-cols-5">
                                 <StatementLine label="Net Payable" value={money(row.net_payable)} />
                                 <StatementLine label="Opening Arrears" value={money(row.opening_arrears ?? 0)} />
-                                <StatementLine label="Total Due" value={money(row.total_due ?? row.net_payable)} />
+                                <StatementLine label="Current Month Payable" value={money(row.monthly_net_payable ?? row.net_payable)} />
                                 <StatementLine label="Deductions" value={money(Number(row.vacant_room_deductions) + Number(row.vacated_tenant_debt_deductions) + Number(row.advance_deductions) + Number(row.other_deductions))} />
                                 <StatementLine label="Reason" value={row.reasons_notes ?? "Monthly landlord payable"} />
                                 <StatementLine label="Amount Paid" value={money(row.amount_paid)} />
-                                <StatementLine label="Balance" value={money(row.closing_arrears ?? row.unpaid_balance)} />
+                                <StatementLine label="Final Balance" value={money(monthlyUnpaid(row))} />
                                 <StatementLine label="Advance Created" value={money(row.advance_created ?? row.overpaid_amount ?? 0)} />
                             </div>
                         </div>

@@ -27,6 +27,21 @@ function money(value: number) {
     return `UGX ${Math.round(value).toLocaleString()}`;
 }
 
+function amount(value: unknown) {
+    return Number.isFinite(Number(value)) ? Number(value) : 0;
+}
+
+function payableMonthBalance(payable: LandlordItem["monthlyPayables"][number]) {
+    const dynamicPayable = payable as unknown as Record<string, unknown>;
+    const monthlyDue = amount(dynamicPayable.monthly_net_payable)
+        || amount(payable.net_payable)
+        || Math.max(0, amount(dynamicPayable.total_due) - amount(dynamicPayable.opening_arrears));
+    if (monthlyDue > 0 || amount(payable.amount_paid) > 0) {
+        return Math.max(0, monthlyDue - Math.min(amount(payable.amount_paid), monthlyDue));
+    }
+    return Math.max(0, amount(payable.unpaid_balance));
+}
+
 function monthLabel(value: string | null | undefined) {
     if (!value) return "Not set";
     const date = new Date(value);
@@ -570,7 +585,7 @@ function LandlordProfile({
                                                         <td className="px-3 py-2 text-right font-bold">{money(Number(payable.net_payable ?? 0))}</td>
                                                         <td className="px-3 py-2 text-right font-bold text-red-700">{money(deductions)}</td>
                                                         <td className="px-3 py-2 text-right font-bold text-emerald-700">{money(Number(payable.amount_paid ?? 0))}</td>
-                                                        <td className="px-3 py-2 text-right font-black text-slate-950">{money(Number(payable.unpaid_balance ?? 0))}</td>
+                                                        <td className="px-3 py-2 text-right font-black text-slate-950">{money(payableMonthBalance(payable))}</td>
                                                     </tr>
                                                 );
                                             })}
@@ -581,7 +596,7 @@ function LandlordProfile({
                                                 <td className="px-3 py-2 text-right">{money(landlord.monthlyPayables.reduce((total, payable) => total + Number(payable.net_payable ?? 0), 0))}</td>
                                                 <td />
                                                 <td className="px-3 py-2 text-right">{money(landlord.monthlyPayables.reduce((total, payable) => total + Number(payable.amount_paid ?? 0), 0))}</td>
-                                                <td className="px-3 py-2 text-right">{money(landlord.monthlyPayables.reduce((total, payable) => total + Number(payable.unpaid_balance ?? 0), 0))}</td>
+                                                <td className="px-3 py-2 text-right">{money(landlord.monthlyPayables.reduce((total, payable) => total + payableMonthBalance(payable), 0))}</td>
                                             </tr>
                                         </tfoot>
                                     </table>
@@ -1105,7 +1120,7 @@ function LandlordProfile({
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 bg-white">
                                     {visibleUnpaidMonths.map((payable) => {
-                                        const unpaidBalance = Number(payable.unpaid_balance ?? 0);
+                                        const unpaidBalance = payableMonthBalance(payable);
                                         return (
                                             <tr key={payable.id}>
                                                 <td className="px-4 py-3 font-black text-slate-900">{monthLabel(payable.settlement_month)}</td>

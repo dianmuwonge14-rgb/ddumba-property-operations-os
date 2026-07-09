@@ -1322,8 +1322,8 @@ export async function runMonthlyLandlordPayableSnapshot(input: MonthlyLandlordPa
             const amountPaid = clearedMonth === "JUNE" ? netPayable : 0;
             const openingArrears = await getLandlordOpeningArrears({ db, companyId, officeId, landlordId, beforeMonth: settlementMonth });
             const totalDue = openingArrears + netPayable;
-            const unpaidBalance = Math.max(0, totalDue - amountPaid);
-            const overpaidAmount = Math.max(0, amountPaid - totalDue);
+            const unpaidBalance = Math.max(0, netPayable - Math.min(amountPaid, netPayable));
+            const overpaidAmount = Math.max(0, amountPaid - netPayable);
 
             const row = {
                 company_id: companyId,
@@ -2093,14 +2093,23 @@ async function getLandlordOpeningArrears({
 }) {
     const { data, error } = await db
         .from("landlord_monthly_payables")
-        .select("unpaid_balance,closing_arrears,settlement_month")
+        .select("unpaid_balance,monthly_net_payable,net_payable,total_due,opening_arrears,amount_paid,settlement_month")
         .eq("company_id", companyId)
         .eq("office_id", officeId)
         .eq("landlord_id", landlordId)
         .neq("status", "archived")
         .lt("settlement_month", beforeMonth);
     if (error) throw new Error(error.message);
-    return ((data ?? []) as LooseRecord[]).reduce((total, row) => total + Math.max(0, Number(row.closing_arrears ?? row.unpaid_balance ?? 0)), 0);
+    return ((data ?? []) as LooseRecord[]).reduce((total, row) => total + monthOnlyPayableBalance(row), 0);
+}
+
+function monthOnlyPayableBalance(row: LooseRecord) {
+    const monthlyDue = Math.max(0, Number(row.monthly_net_payable ?? row.net_payable ?? 0))
+        || Math.max(0, Number(row.total_due ?? 0) - Number(row.opening_arrears ?? 0));
+    if (monthlyDue > 0 || Number(row.amount_paid ?? 0) > 0) {
+        return Math.max(0, monthlyDue - Math.min(Math.max(0, Number(row.amount_paid ?? 0)), monthlyDue));
+    }
+    return Math.max(0, Number(row.unpaid_balance ?? 0));
 }
 
 function buildAdvanceSettlementLines({
@@ -2558,8 +2567,8 @@ async function refreshCurrentMonthPayablesForLandlord({
                 : Number(existing.data?.amount_paid ?? 0);
         const openingArrears = await getLandlordOpeningArrears({ db, companyId, officeId, landlordId, beforeMonth: settlementMonth });
         const totalDue = openingArrears + netPayable;
-        const unpaidBalance = Math.max(0, totalDue - amountPaid);
-        const overpaidAmount = Math.max(0, amountPaid - totalDue);
+        const unpaidBalance = Math.max(0, netPayable - Math.min(amountPaid, netPayable));
+        const overpaidAmount = Math.max(0, amountPaid - netPayable);
         const row = {
             company_id: companyId,
             office_id: officeId,
@@ -2716,7 +2725,7 @@ async function allocateLandlordPaymentAcrossLedger({
     if (openResult.error) throw new Error(openResult.error.message);
 
     const rows = ((openResult.data ?? []) as LooseRecord[])
-        .filter((row) => Math.max(0, Number(row.unpaid_balance ?? row.closing_arrears ?? row.net_payable ?? 0)) > 0 || String(row.id) === startingMonthlyPayableId)
+        .filter((row) => monthOnlyPayableBalance(row) > 0 || String(row.id) === startingMonthlyPayableId)
         .sort((a, b) => String(a.settlement_month ?? a.month_key ?? "").localeCompare(String(b.settlement_month ?? b.month_key ?? "")));
     if (!rows.some((row) => String(row.id) === startingMonthlyPayableId)) {
         const selected = (openResult.data ?? []).find((row: LooseRecord) => String(row.id) === startingMonthlyPayableId);
@@ -2734,7 +2743,7 @@ async function allocateLandlordPaymentAcrossLedger({
         const monthlyNetPayable = Math.max(0, Number(row.monthly_net_payable ?? row.net_payable ?? 0));
         const totalDue = Math.max(0, Number(row.total_due ?? 0)) || Math.max(0, openingArrears + monthlyNetPayable);
         const amountPaidBefore = Math.max(0, Number(row.amount_paid ?? 0));
-        const currentUnpaid = Math.max(0, Number(row.unpaid_balance ?? 0)) || Math.max(0, totalDue - amountPaidBefore);
+        const currentUnpaid = monthOnlyPayableBalance(row);
         if (currentUnpaid <= 0 && payableId !== startingMonthlyPayableId) continue;
 
         const applied = Math.min(remaining, currentUnpaid);
@@ -2742,7 +2751,7 @@ async function allocateLandlordPaymentAcrossLedger({
         remaining -= applied;
         appliedAmount += applied;
         const nextPaid = amountPaidBefore + applied;
-        const unpaidBalance = Math.max(0, totalDue - nextPaid);
+        const unpaidBalance = Math.max(0, monthlyNetPayable - Math.min(nextPaid, monthlyNetPayable));
         const status = unpaidBalance <= 0 ? "paid" : nextPaid > 0 ? "partial" : "unpaid";
 
         const update = await db
@@ -2874,13 +2883,13 @@ async function allocateLandlordPaymentAcrossLedger({
 
     const remainingResult = await db
         .from("landlord_monthly_payables")
-        .select("unpaid_balance")
+        .select("unpaid_balance,monthly_net_payable,net_payable,total_due,opening_arrears,amount_paid")
         .eq("company_id", companyId)
         .eq("office_id", officeId)
         .eq("landlord_id", landlordId)
         .neq("status", "archived");
     if (remainingResult.error) throw new Error(remainingResult.error.message);
-    const remainingBalance = ((remainingResult.data ?? []) as LooseRecord[]).reduce((total, row) => total + Math.max(0, Number(row.unpaid_balance ?? 0)), 0);
+    const remainingBalance = ((remainingResult.data ?? []) as LooseRecord[]).reduce((total, row) => total + monthOnlyPayableBalance(row), 0);
 
     return {
         appliedAmount,

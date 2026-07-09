@@ -34,6 +34,21 @@ import type {
 
 const LANDLORD_PAGE_SIZE = 60;
 
+function numberValue(value: unknown) {
+    return Number.isFinite(Number(value)) ? Number(value) : 0;
+}
+
+function monthOnlyUnpaidBalance(row: LandlordMonthlyPayableRow) {
+    const dynamicRow = row as unknown as Record<string, unknown>;
+    const monthlyDue = numberValue(dynamicRow.monthly_net_payable)
+        || numberValue(row.net_payable)
+        || Math.max(0, numberValue(dynamicRow.total_due) - numberValue(dynamicRow.opening_arrears));
+    if (monthlyDue > 0 || numberValue(row.amount_paid) > 0) {
+        return Math.max(0, monthlyDue - Math.min(numberValue(row.amount_paid), monthlyDue));
+    }
+    return Math.max(0, numberValue(row.unpaid_balance));
+}
+
 function currentSettlementMonth() {
     const now = new Date();
     return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-01`;
@@ -697,7 +712,7 @@ export const getLandlordsPageData = cache(async function getLandlordsPageData(in
         );
         const currentMonthRow = monthlyPayables.find((payable) => String(payable.settlement_month).slice(0, 7) === currentSettlementMonth().slice(0, 7)) ?? null;
         const landlordAdvanceRows = advancesByLandlord.get(landlord.id) ?? [];
-        const unpaidMonthlyPayables = monthlyPayables.filter((payable) => Number(payable.unpaid_balance ?? 0) > 0);
+        const unpaidMonthlyPayables = monthlyPayables.filter((payable) => monthOnlyUnpaidBalance(payable) > 0);
         const collectionValue = sumCollections(landlordCollections);
         const expenseValue = sumExpenses(landlordExpenses);
         const summaryRoomPortfolio = landlordRooms.map((room) => {
@@ -896,7 +911,7 @@ export const getLandlordsPageData = cache(async function getLandlordsPageData(in
             monthlyPayables,
             currentMonthPayable,
             unpaidMonthlyPayables,
-            totalUnpaidMonthlyPayables: unpaidMonthlyPayables.reduce((total, payable) => total + Number(payable.unpaid_balance ?? 0), 0),
+            totalUnpaidMonthlyPayables: unpaidMonthlyPayables.reduce((total, payable) => total + monthOnlyUnpaidBalance(payable), 0),
             oldestUnpaidMonth: unpaidMonthlyPayables.length
                 ? unpaidMonthlyPayables.reduce((oldest, payable) => String(payable.settlement_month) < oldest ? String(payable.settlement_month) : oldest, String(unpaidMonthlyPayables[0].settlement_month))
                 : null,
@@ -974,7 +989,7 @@ function parseCommissionInputMode(value: unknown): "percentage" | "landlord_net_
 
 function buildCurrentMonthPayableFromRow(row: LandlordMonthlyPayableRow): LandlordCurrentMonthPayable {
     const paidAmount = Number(row.amount_paid ?? 0);
-    const outstandingAmount = Number(row.unpaid_balance ?? 0);
+    const outstandingAmount = monthOnlyUnpaidBalance(row);
     const notes = String(row.reasons_notes ?? "");
     const rowStatus = String(row.status ?? "").toLowerCase();
     const status = notes.includes("cleared_month=JUNE") || (outstandingAmount <= 0 && rowStatus === "paid")
