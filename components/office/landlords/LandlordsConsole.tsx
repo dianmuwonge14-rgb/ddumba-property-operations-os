@@ -960,15 +960,18 @@ function searchableLandlordName(landlord: LandlordItem) {
         landlord.full_name,
         landlord.phone,
         landlord.landlord_code,
+        landlord.searchableText,
         ...landlord.offices.map((office) => office.office_name ?? office.name),
         ...landlord.locations,
         ...landlord.properties.map((property) => property.property_name ?? property.name ?? property.village),
+        ...landlord.rooms.map((room) => room.room.room_number),
     ].filter(Boolean).join(" "));
 }
 
 function rankLocalLandlordMatches(landlords: LandlordItem[], search: string) {
     const query = normalizeLandlordName(search);
     if (!query) return landlords;
+    const compactQuery = compactLandlordSearch(search);
 
     const exact: LandlordItem[] = [];
     const startsWith: LandlordItem[] = [];
@@ -976,9 +979,10 @@ function rankLocalLandlordMatches(landlords: LandlordItem[], search: string) {
     for (const landlord of landlords) {
         const name = normalizeLandlordName(landlord.full_name ?? "");
         const searchable = searchableLandlordName(landlord);
-        if (name === query) exact.push(landlord);
+        const compact = compactLandlordSearch(searchable);
+        if (name === query || compactLandlordSearch(landlord.phone ?? "") === compactQuery) exact.push(landlord);
         else if (name.startsWith(query) || searchable.split(" ").some((part) => part.startsWith(query))) startsWith.push(landlord);
-        else if (searchable.includes(query)) contains.push(landlord);
+        else if (searchable.includes(query) || compact.includes(compactQuery)) contains.push(landlord);
     }
     return [...exact, ...startsWith, ...contains];
 }
@@ -988,6 +992,10 @@ function normalizeLandlordName(value: string) {
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, " ")
         .trim();
+}
+
+function compactLandlordSearch(value: string) {
+    return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
 function useDebouncedValue<T>(value: T, delayMs: number) {

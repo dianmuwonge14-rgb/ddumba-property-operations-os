@@ -63,6 +63,10 @@ type LandlordSearchIndexRow = {
     normalized_name: string;
     phone: string | null;
     office_name: string | null;
+    location_text: string | null;
+    room_numbers_text: string | null;
+    tenant_names_text: string | null;
+    searchable_text: string | null;
     room_count: number | string | null;
     rent_roll: number | string | null;
     net_payable: number | string | null;
@@ -90,17 +94,42 @@ export async function getLandlordNamePrefixSearchData(input: {
     if (!companyId || (!officeId && !canAccessAllOffices)) return emptyData();
 
     const requestedPage = Math.max(1, Math.floor(Number(input.page ?? 1)));
-    const from = (requestedPage - 1) * LANDLORD_PAGE_SIZE;
-    const to = requestedPage * LANDLORD_PAGE_SIZE - 1;
     const prefix = `${escapeSupabaseLike(normalizedSearch)}%`;
+    const contains = `%${escapeSupabaseLike(normalizedSearch)}%`;
+    const rawContains = `%${escapeSupabaseLike(input.search.trim().toLowerCase())}%`;
+    const phoneDigits = input.search.replace(/\D+/g, "");
+    const phoneTailContains = phoneDigits.length >= 4
+        ? `%${escapeSupabaseLike(phoneDigits.slice(-4))}%`
+        : null;
 
     let indexQuery = (adminSupabase as unknown as { from: (table: string) => ReturnType<typeof adminSupabase.from> })
         .from("landlord_search_index")
         .select("*", { count: "planned" })
         .eq("company_id", companyId)
-        .order("normalized_name")
-        .range(from, to);
-    if (normalizedSearch) indexQuery = indexQuery.ilike("normalized_name", prefix);
+        .order("normalized_name");
+    if (normalizedSearch) {
+        const searchFilters = [
+            `normalized_name.ilike.${prefix}`,
+            `normalized_name.ilike.${contains}`,
+            `phone.ilike.${rawContains}`,
+            `office_name.ilike.${rawContains}`,
+            `location_text.ilike.${rawContains}`,
+            `room_numbers_text.ilike.${rawContains}`,
+            `tenant_names_text.ilike.${rawContains}`,
+            `searchable_text.ilike.${contains}`,
+            `searchable_text.ilike.${rawContains}`,
+        ];
+        if (phoneTailContains) {
+            searchFilters.push(`phone.ilike.${phoneTailContains}`, `searchable_text.ilike.${phoneTailContains}`);
+        }
+        indexQuery = indexQuery
+            .or(searchFilters.join(","))
+            .limit(1000);
+    } else {
+        const from = (requestedPage - 1) * LANDLORD_PAGE_SIZE;
+        const to = requestedPage * LANDLORD_PAGE_SIZE - 1;
+        indexQuery = indexQuery.range(from, to);
+    }
     if (!canAccessAllOffices && officeId) indexQuery = indexQuery.eq("office_id", officeId);
 
     const [indexResult, companySettingsResult] = await Promise.all([
@@ -117,7 +146,10 @@ export async function getLandlordNamePrefixSearchData(input: {
         return null;
     }
 
-    const indexRows = (indexResult.data ?? []) as LandlordSearchIndexRow[];
+    const rawIndexRows = (indexResult.data ?? []) as LandlordSearchIndexRow[];
+    const indexRows = normalizedSearch
+        ? rankLandlordSearchIndexRows(rawIndexRows, normalizedSearch).slice((requestedPage - 1) * LANDLORD_PAGE_SIZE, requestedPage * LANDLORD_PAGE_SIZE)
+        : rawIndexRows;
     const landlordIds = indexRows.map((row) => row.landlord_id);
     if (landlordIds.length === 0) {
         return {
@@ -161,7 +193,7 @@ export async function getLandlordNamePrefixSearchData(input: {
     const currentPayableByLandlord = new Map(((monthlyPayablesResult.data ?? []) as LandlordMonthlyPayableRow[]).map((row) => [row.landlord_id, row]));
     const approvedPaymentDetailsByLandlord = new Map<string, LandlordPaymentDetail[]>();
     const pendingPaymentDetailsByLandlord = new Map<string, LandlordPaymentDetail[]>();
-    const totalLandlords = indexResult.count ?? indexRows.length;
+    const totalLandlords = normalizedSearch ? rankLandlordSearchIndexRows(rawIndexRows, normalizedSearch).length : indexResult.count ?? indexRows.length;
     const totalPages = Math.max(1, Math.ceil(totalLandlords / LANDLORD_PAGE_SIZE));
     const items = indexRows.flatMap((indexRow): LandlordItem[] => {
         const landlord = landlordById.get(indexRow.landlord_id);
@@ -234,7 +266,15 @@ export async function getLandlordNamePrefixSearchData(input: {
         return [{
             ...landlord,
             portfolioRoomCount: roomCount,
-            searchableText: normalizeLandlordSearch(indexRow.landlord_name),
+            searchableText: normalizeLandlordSearch([
+                indexRow.landlord_name,
+                indexRow.phone,
+                indexRow.office_name,
+                indexRow.location_text,
+                indexRow.room_numbers_text,
+                indexRow.tenant_names_text,
+                indexRow.searchable_text,
+            ].filter(Boolean).join(" ")),
             commissionRate,
             commissionCalculationMode,
             commissionInputMode: parseCommissionInputMode(
@@ -249,7 +289,7 @@ export async function getLandlordNamePrefixSearchData(input: {
             offices: office ? [office] : [],
             properties: [],
             rooms: [],
-            locations: [],
+            locations: indexRow.location_text ? [indexRow.location_text] : [],
             settlements: [],
             settlementLines: [],
             statements: [],
@@ -1223,7 +1263,7 @@ async function collectLandlordSearchIds({
         if (propertyIds.size > 0) {
             let propertyQuery = supabase
                 .from("properties")
-                .select("landlord_id,office_id")
+                .select("id,landlord_id,office_id")
                 .eq("company_id", companyId)
                 .in("id", [...propertyIds])
                 .not("landlord_id", "is", null);
@@ -1231,6 +1271,16 @@ async function collectLandlordSearchIds({
             const propertyResult = await propertyQuery;
             if (!propertyResult.error) {
                 for (const row of propertyResult.data ?? []) {
+                    if (row.landlord_id) ids.add(row.landlord_id);
+                }
+            }
+            const propertyLinkResult = await (supabase as unknown as { from: (table: string) => ReturnType<typeof supabase.from> })
+                .from("property_landlords")
+                .select("landlord_id,property_id")
+                .eq("company_id", companyId)
+                .in("property_id", [...propertyIds]);
+            if (!propertyLinkResult.error) {
+                for (const row of propertyLinkResult.data as Array<{ landlord_id: string | null }>) {
                     if (row.landlord_id) ids.add(row.landlord_id);
                 }
             }
@@ -1285,15 +1335,27 @@ async function collectOfficeLandlordIds({
     for (let from = 0; ; from += 1000) {
         const { data, error } = await supabase
             .from("properties")
-            .select("landlord_id")
+            .select("id,landlord_id")
             .eq("company_id", companyId)
             .eq("office_id", officeId)
             .neq("status", "archived")
-            .not("landlord_id", "is", null)
             .range(from, from + 999);
         if (error) throw new Error(error.message);
         for (const row of data ?? []) {
             if (row.landlord_id) ids.add(row.landlord_id);
+        }
+        const propertyIds = (data ?? []).map((row) => row.id).filter(Boolean);
+        if (propertyIds.length) {
+            const propertyLinkResult = await (supabase as unknown as { from: (table: string) => ReturnType<typeof supabase.from> })
+                .from("property_landlords")
+                .select("landlord_id")
+                .eq("company_id", companyId)
+                .in("property_id", propertyIds);
+            if (!propertyLinkResult.error) {
+                for (const row of propertyLinkResult.data as Array<{ landlord_id: string | null }>) {
+                    if (row.landlord_id) ids.add(row.landlord_id);
+                }
+            }
         }
         if (!data || data.length < 1000) break;
     }
@@ -1306,6 +1368,35 @@ function normalizeLandlordSearch(value: string) {
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, " ")
         .trim();
+}
+
+function compactSearch(value: string) {
+    return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function rankLandlordSearchIndexRows(rows: LandlordSearchIndexRow[], normalizedSearch: string) {
+    const query = normalizeLandlordSearch(normalizedSearch);
+    const compactQuery = compactSearch(normalizedSearch);
+    const exact: LandlordSearchIndexRow[] = [];
+    const startsWith: LandlordSearchIndexRow[] = [];
+    const contains: LandlordSearchIndexRow[] = [];
+    for (const row of rows) {
+        const name = normalizeLandlordSearch(row.landlord_name ?? "");
+        const searchable = normalizeLandlordSearch([
+            row.landlord_name,
+            row.phone,
+            row.office_name,
+            row.location_text,
+            row.room_numbers_text,
+            row.tenant_names_text,
+            row.searchable_text,
+        ].filter(Boolean).join(" "));
+        const compact = compactSearch(searchable);
+        if (name === query || compactSearch(row.phone ?? "") === compactQuery || compactSearch(row.room_numbers_text ?? "") === compactQuery) exact.push(row);
+        else if (name.startsWith(query) || searchable.split(" ").some((part) => part.startsWith(query))) startsWith.push(row);
+        else if (searchable.includes(query) || compact.includes(compactQuery)) contains.push(row);
+    }
+    return [...exact, ...startsWith, ...contains];
 }
 
 function isActivePortfolioRoom(room: RoomRow) {

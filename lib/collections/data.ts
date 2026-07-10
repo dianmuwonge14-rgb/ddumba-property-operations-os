@@ -824,7 +824,7 @@ export async function lookupPaymentRoom(roomNumber: string, paymentDate?: string
             p_search_all: searchAllOffices,
     });
     if (!fastLookup.error && fastLookup.data?.length) {
-        return fastLookup.data.map((row) => fastPaymentRpcRowToTenantResult(row, paymentMonth));
+        return hydrateFastPaymentRpcResults(fastLookup.data, companyId, paymentMonth);
     }
 
     const escapedTerm = escapeSupabaseLike(term);
@@ -1013,6 +1013,34 @@ function fastPaymentRpcRowToTenantResult(row: Record<string, unknown>, paymentMo
         ledgerEntries: [],
         actionHistory: [],
     };
+}
+
+async function hydrateFastPaymentRpcResults(rows: Array<Record<string, unknown>>, companyId: string, paymentMonth: string): Promise<CollectionTenantResult[]> {
+    const { supabase } = await getScopedSupabase();
+    const propertyIds = uniqueIds(rows.map((row) => row.room_property_id as string | null));
+    const directLandlordIds = uniqueIds(rows.map((row) => row.room_landlord_id as string | null));
+    const { data: properties } = propertyIds.length
+        ? await supabase.from("properties").select("*").eq("company_id", companyId).in("id", propertyIds)
+        : { data: [] as PropertyRow[] };
+    const propertyById = new Map((properties ?? []).map((property) => [property.id, property]));
+    const propertyLandlordIds = uniqueIds((properties ?? []).map((property) => property.landlord_id));
+    const landlordIds = uniqueIds([...directLandlordIds, ...propertyLandlordIds]);
+    const { data: landlords } = landlordIds.length
+        ? await supabase.from("landlords").select("*").eq("company_id", companyId).in("id", landlordIds)
+        : { data: [] as LandlordRow[] };
+    const landlordById = new Map((landlords ?? []).map((landlord) => [landlord.id, landlord]));
+
+    return rows.map((row) => {
+        const result = fastPaymentRpcRowToTenantResult(row, paymentMonth);
+        const property = result.room?.property_id ? propertyById.get(result.room.property_id) ?? null : null;
+        const landlordId = result.room?.landlord_id ?? property?.landlord_id ?? null;
+        return {
+            ...result,
+            property,
+            landlord: landlordId ? landlordById.get(landlordId) ?? null : null,
+            room: result.room ? { ...result.room, landlord_id: landlordId } as RoomRow : result.room,
+        };
+    });
 }
 
 export async function getAdvanceRentAssistant(month?: string | null): Promise<AdvanceRentAssistantItem[]> {
@@ -1260,12 +1288,16 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
     const roomRows = rooms.data ?? [];
     const officeIds = uniqueIds([officeId, ...tenants.map((tenant) => tenant.office_id), ...roomRows.map((room) => room.office_id), ...leaseRows.map((lease) => lease.office_id)]);
     const propertyIds = uniqueIds([...tenants.map((tenant) => tenant.property_id), ...roomRows.map((room) => room.property_id)]);
-    const landlordIds = uniqueIds(roomRows.map((room) => room.landlord_id));
-    const [{ data: offices }, { data: properties }, { data: landlords }] = await Promise.all([
+    const initialLandlordIds = uniqueIds(roomRows.map((room) => room.landlord_id));
+    const [{ data: offices }, { data: properties }] = await Promise.all([
         officeIds.length ? supabase.from("offices").select("*").eq("company_id", companyId).in("id", officeIds) : { data: [] as OfficeRow[] },
         propertyIds.length ? supabase.from("properties").select("*").eq("company_id", companyId).in("id", propertyIds) : { data: [] as PropertyRow[] },
-        landlordIds.length ? supabase.from("landlords").select("*").eq("company_id", companyId).in("id", landlordIds) : { data: [] as LandlordRow[] },
     ]);
+    const propertyLandlordIds = uniqueIds((properties ?? []).map((property) => property.landlord_id));
+    const landlordIds = uniqueIds([...initialLandlordIds, ...propertyLandlordIds]);
+    const { data: landlords } = landlordIds.length
+        ? await supabase.from("landlords").select("*").eq("company_id", companyId).in("id", landlordIds)
+        : { data: [] as LandlordRow[] };
     const leaseByTenant = new Map(leaseRows.map((lease) => [lease.tenant_id, lease]));
     const roomById = new Map(roomRows.map((room) => [room.id, room]));
     const officeById = new Map((offices ?? []).map((office) => [office.id, office]));
@@ -1331,13 +1363,14 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
         const amountUsedToClearOutstanding = Number((lastCollection as CollectionRow & { used_to_clear_outstanding?: number | null })?.used_to_clear_outstanding ?? 0) ||
             Math.min(previousOutstandingBeforeLastPayment, lastAmountPaid);
         const propertyId = tenant.property_id ?? room?.property_id ?? null;
-        const landlordId = room?.landlord_id ?? null;
+        const property = propertyId ? propertyById.get(propertyId) ?? null : null;
+        const landlordId = room?.landlord_id ?? property?.landlord_id ?? null;
         const resolvedOfficeId = lease?.office_id ?? room?.office_id ?? tenant.office_id ?? officeId;
 
         return {
             tenant,
-            room,
-            property: propertyId ? propertyById.get(propertyId) ?? null : null,
+            room: room ? { ...room, landlord_id: landlordId } as RoomRow : room,
+            property,
             office: resolvedOfficeId ? officeById.get(resolvedOfficeId) ?? null : null,
             landlord: landlordId ? landlordById.get(landlordId) ?? null : null,
             lease,
@@ -1559,7 +1592,7 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
         ...tenants.map((tenant) => tenant.property_id),
         ...(rooms.data ?? []).map((room) => room.property_id),
     ].filter((id): id is string => Boolean(id)))];
-    const landlordIds = [...new Set([
+    const directLandlordIds = [...new Set([
         ...(rooms.data ?? []).map((room) => room.landlord_id),
     ].filter((id): id is string => Boolean(id)))];
 
@@ -1570,22 +1603,24 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
         ...(leases.data ?? []).map((lease) => lease.office_id),
     ].filter((id): id is string => Boolean(id)))];
 
-    const [{ data: hydratedProperties }, { data: hydratedOffices }, { data: hydratedLandlords }] = await Promise.all([
+    const [{ data: hydratedProperties }, { data: hydratedOffices }] = await Promise.all([
         propertyIds.length
             ? supabase.from("properties").select("*").eq("company_id", companyId).in("id", propertyIds)
             : { data: [] as PropertyRow[] },
         officeIds.length
             ? supabase.from("offices").select("*").eq("company_id", companyId).in("id", officeIds)
             : { data: [] as OfficeRow[] },
-        landlordIds.length
-            ? supabase.from("landlords").select("*").eq("company_id", companyId).in("id", landlordIds)
-            : { data: [] as LandlordRow[] },
     ]);
 
     const propertyById = new Map((properties.data ?? []).map((property) => [property.id, property]));
     for (const property of hydratedProperties ?? []) {
         propertyById.set(property.id, property);
     }
+    const propertyLandlordIds = [...new Set((hydratedProperties ?? []).map((property) => property.landlord_id).filter((id): id is string => Boolean(id)))];
+    const landlordIds = [...new Set([...directLandlordIds, ...propertyLandlordIds])];
+    const { data: hydratedLandlords } = landlordIds.length
+        ? await supabase.from("landlords").select("*").eq("company_id", companyId).in("id", landlordIds)
+        : { data: [] as LandlordRow[] };
     const officeById = new Map((hydratedOffices ?? []).map((officeRow) => [officeRow.id, officeRow]));
     const landlordById = new Map((hydratedLandlords ?? []).map((landlord) => [landlord.id, landlord]));
     if (office.data) {
@@ -1597,7 +1632,7 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
         const room = tenant.room_id ? roomById.get(tenant.room_id) ?? null : null;
         const propertyId = tenant.property_id ?? room?.property_id ?? null;
         const property = propertyId ? propertyById.get(propertyId) ?? null : null;
-        const landlordId = room?.landlord_id ?? null;
+        const landlordId = room?.landlord_id ?? property?.landlord_id ?? null;
         const resolvedOfficeId = lease?.office_id ?? room?.office_id ?? tenant.office_id ?? officeId;
         const lastCollection =
             (collections.data ?? []).find((collection) => collection.tenant_id === tenant.id) ?? null;
@@ -1709,7 +1744,7 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
 
         return {
             tenant,
-            room,
+            room: room ? { ...room, landlord_id: landlordId } as RoomRow : room,
             property,
             office: resolvedOfficeId ? officeById.get(resolvedOfficeId) ?? null : null,
             landlord: landlordId ? landlordById.get(landlordId) ?? null : null,
