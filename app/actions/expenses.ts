@@ -8,6 +8,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getExpenseInActiveOffice } from "@/lib/expenses/data";
 import { calculateLandlordAdvancePlan } from "@/lib/landlord-advances/calculator";
+import { assertLandlordPayableIntegrity } from "@/lib/landlord-payables/integrity";
 import { getLiveLandlordMonthlyNetPayable, reconcileLandlordPayableWithLiveNet } from "@/lib/landlord-payables/live-net";
 import { buildLandlordPaymentAllocationPlan, landlordMonthlyDue, landlordMonthlyPaid } from "@/lib/landlord-payables/payment-allocation";
 import type {
@@ -1623,6 +1624,12 @@ async function applyApprovedLandlordPaymentToLedger(input: {
         .select("id")
         .single();
     if (paymentInsert.error) throw new Error(paymentInsert.error.message);
+    await assertLandlordPayableIntegrity({
+        companyId: input.companyId,
+        db: input.db,
+        landlordId: input.landlordId,
+        officeId: input.officeId,
+    });
     return String(paymentInsert.data.id);
 }
 

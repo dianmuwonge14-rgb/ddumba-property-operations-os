@@ -9,6 +9,7 @@ import { getLandlordInCompany, getPropertyForLandlordAssignment } from "@/lib/la
 import { getMoveInPayableDecision } from "@/lib/landlords/payable-cutoff";
 import { scheduledAdvanceDeductionForMonth, splitAdvanceDeductionPortions } from "@/lib/landlord-advances/calculator";
 import { reconcileLandlordPayableWithLiveNet } from "@/lib/landlord-payables/live-net";
+import { assertLandlordPayableIntegrity } from "@/lib/landlord-payables/integrity";
 import { landlordMonthlyDue, landlordMonthlyPaid, landlordMonthlyUnpaid } from "@/lib/landlord-payables/payment-allocation";
 import { isRecoveryDeductionActiveForMonth } from "@/lib/landlord-payables/recovery-deductions";
 import type {
@@ -2895,6 +2896,12 @@ async function allocateLandlordPaymentAcrossLedger({
         .neq("status", "archived");
     if (remainingResult.error) throw new Error(remainingResult.error.message);
     const remainingBalance = ((remainingResult.data ?? []) as LooseRecord[]).reduce((total, row) => total + monthOnlyPayableBalance(row), 0);
+    await assertLandlordPayableIntegrity({
+        companyId,
+        db,
+        landlordId,
+        officeId,
+    });
 
     return {
         appliedAmount,
