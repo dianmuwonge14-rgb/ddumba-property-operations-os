@@ -48,7 +48,7 @@ insert into public.audit_logs (
     created_at
 )
 select
-    company_id,
+    id,
     'landlord_recovery_deduction_single_month_guard_created',
     'landlord_debt_deductions',
     jsonb_build_object(
