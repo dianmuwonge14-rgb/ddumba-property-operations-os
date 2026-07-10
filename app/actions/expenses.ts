@@ -1205,7 +1205,6 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
     const claim = await db
         .from("landlord_payment_expense_requests")
         .update({
-            status: "approving",
             reviewed_by: actorId,
             reviewed_at: reviewedAt,
             admin_comment: input.comment || null,
@@ -1214,11 +1213,13 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
         .eq("id", request.id)
         .eq("company_id", companyId)
         .eq("status", "pending")
+        .is("reviewed_at", null)
         .select("*")
         .maybeSingle();
     if (claim.error) throw new Error(claim.error.message);
     if (!claim.data) throw new Error("This landlord payment request has already been reviewed.");
 
+    try {
     const reference = `EXP-LP-${request.id.slice(0, 8)}`;
     const storedNormalPaymentAmount = Math.max(0, Number(request.normal_payment_amount ?? 0));
     const storedAdvanceAmount = Math.max(0, Number(request.advance_amount ?? 0));
@@ -1397,6 +1398,19 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
 
     revalidateExpenseSurfaces();
     return data;
+    } catch (error) {
+        await db
+            .from("landlord_payment_expense_requests")
+            .update({
+                admin_comment: null,
+                reviewed_at: null,
+                reviewed_by: null,
+                updated_at: new Date().toISOString(),
+            })
+            .eq("id", request.id)
+            .eq("status", "pending");
+        throw error;
+    }
 }
 
 async function createApprovedLandlordAdvanceFromExpenseRequest(input: {
