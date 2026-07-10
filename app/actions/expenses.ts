@@ -1028,66 +1028,42 @@ export async function decideEmployeeExpenseRequest(input: DecideEmployeeExpenseR
         .single();
     if (expenseError) throw new Error(expenseError.message);
     let approvedEmployeeExpenseId: string | null = null;
-    let approvedAdvanceId: string | null = null;
     const salaryDeductible = isSalaryDeductibleExpenseItem(String(request.requested_item_key ?? ""));
-    if (String(request.requested_item_key ?? "") === "lunch") {
-        const { data: advance, error: advanceError } = await db
-            .from("employee_advances")
-            .insert({
-                active: true,
-                amount: extraAmount,
-                amount_deducted: 0,
-                advance_date: request.expense_date,
-                company_id: companyId,
-                created_by: actorId,
-                employee_id: request.employee_id,
-                month_key: request.month_key,
-                office_id: request.office_id,
-                reason: request.note || "Lunch taken above available allowance",
-                remaining_balance: extraAmount,
-                status: "approved",
-            })
-            .select("id")
-            .single();
-        if (advanceError) throw new Error(advanceError.message);
-        approvedAdvanceId = advance.id;
-    } else {
-        const { data: employeeExpense, error: employeeExpenseError } = await db
-            .from("employee_expenses")
-            .insert({
-                active: true,
-                amount: extraAmount,
-                approved_for_payroll: salaryDeductible,
-                category: String(request.requested_item_key ?? "other"),
-                company_id: companyId,
-                created_by: request.requested_by ?? actorId,
-                expense_date: request.expense_date,
-                expense_source: "office_extra_approved",
-                month_key: request.month_key,
-                note: request.note || "Above-allowance employee expense approved by Admin",
-                office_id: request.office_id,
-                recorded_by_office: true,
-                reviewed_at: reviewedAt,
-                reviewed_by: actorId,
-                salary_deductible: salaryDeductible,
-                status: "approved",
-                employee_id: request.employee_id,
-            })
-            .select("id")
-            .single();
-        if (employeeExpenseError) throw new Error(employeeExpenseError.message);
-        approvedEmployeeExpenseId = employeeExpense.id;
-    }
+    const { data: employeeExpense, error: employeeExpenseError } = await db
+        .from("employee_expenses")
+        .insert({
+            active: true,
+            amount: extraAmount,
+            approved_for_payroll: salaryDeductible,
+            category: String(request.requested_item_key ?? "other"),
+            company_id: companyId,
+            created_by: request.requested_by ?? actorId,
+            expense_date: request.expense_date,
+            expense_source: "office_extra_approved",
+            month_key: request.month_key,
+            note: request.note || "Above-allowance employee expense approved by Admin",
+            office_id: request.office_id,
+            recorded_by_office: true,
+            reviewed_at: reviewedAt,
+            reviewed_by: actorId,
+            salary_deductible: salaryDeductible,
+            status: "approved",
+            employee_id: request.employee_id,
+        })
+        .select("id")
+        .single();
+    if (employeeExpenseError) throw new Error(employeeExpenseError.message);
+    approvedEmployeeExpenseId = employeeExpense.id;
 
     const { data, error } = await db
         .from("employee_expense_requests")
         .update({
             admin_comment: input.comment || null,
             approved_at: reviewedAt,
-            approved_advance_id: approvedAdvanceId,
+            approved_advance_id: null,
             approved_employee_expense_id: approvedEmployeeExpenseId,
             approved_expense_id: expense.id,
-            converted_to_advance: Boolean(approvedAdvanceId),
+            converted_to_advance: false,
             reviewed_at: reviewedAt,
             reviewed_by: actorId,
             status: "approved",

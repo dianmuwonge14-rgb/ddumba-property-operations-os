@@ -1113,7 +1113,7 @@ function EmployeeExpenseAiPreview({ loading, preview }: { loading: boolean; prev
                     )}
                     {preview.extraAmount > 0 ? (
                         <p className="mt-1 text-sm font-black text-amber-800">
-                            Salary impact after Admin approval: {money(preview.salaryImpactAmount)} employee advance deduction.
+                            Salary impact after Admin approval: {money(preview.salaryImpactAmount)} payroll deduction.
                         </p>
                     ) : null}
                     {preview.itemName.toLowerCase() === "lunch" && !preview.presentForExpenseDate ? (
@@ -1130,7 +1130,7 @@ function EmployeeExpenseAiPreview({ loading, preview }: { loading: boolean; prev
             {preview.extraAmount > 0 ? (
                 <div className="mt-4 rounded-2xl border border-amber-300 bg-white p-4">
                     <p className="text-sm font-black text-amber-900">
-                        {preview.itemName} allowance available is {money(preview.remainingAllowance)}. The entered amount leaves {money(preview.extraAmount)} above the available balance and must be sent to Admin for approval as an employee advance before salary is affected.
+                        {preview.itemName} allowance available is {money(preview.remainingAllowance)}. The entered amount leaves {money(preview.extraAmount)} above the available balance and must be reviewed before payroll is affected. Only Other expenses are salary deductible.
                     </p>
                 </div>
             ) : null}
