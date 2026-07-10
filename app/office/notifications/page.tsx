@@ -22,14 +22,12 @@ export default async function OfficeNotificationsPage() {
 
     if (data) {
         return (
-            <>
-                <div className="enterprise-page pb-0">
-                    <div className="enterprise-shell">
-                        <MyNotificationEmailSettingsCard settings={emailSettings} />
-                    </div>
+            <main className="enterprise-page">
+                <div className="enterprise-shell space-y-6">
+                    <MyNotificationEmailSettingsCard settings={emailSettings} />
+                    <NotificationsCentre data={data} embedded />
                 </div>
-                <NotificationsCentre data={data} />
-            </>
+            </main>
         );
     }
 

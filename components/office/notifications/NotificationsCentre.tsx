@@ -13,6 +13,7 @@ import type { NotificationAuditRow, NotificationLandlordBulkRoomRequest, Notific
 
 type Props = {
     data: NotificationsCentreData;
+    embedded?: boolean;
 };
 
 type Filter = "pending" | "approved" | "rejected";
@@ -156,7 +157,7 @@ function promiseValueSummary(value: Record<string, unknown> | null | undefined) 
     ].filter(Boolean).join(" · ") || "No value";
 }
 
-export default function NotificationsCentre({ data }: Props) {
+export default function NotificationsCentre({ data, embedded = false }: Props) {
     const router = useRouter();
     const [filter, setFilter] = useState<Filter>("pending");
     const [modal, setModal] = useState<ModalState>(null);
@@ -267,6 +268,21 @@ export default function NotificationsCentre({ data }: Props) {
             ? approvedLandlordBulkRoomRequests
             : rejectedLandlordBulkRoomRequests;
     const feed = safeData.notifications.slice(0, 12);
+    const hasRentQueue = visibleRequests.length > 0 || requests.length > 0;
+    const hasPaymentQueue = visiblePaymentDateRequests.length > 0 || paymentDateRequests.length > 0;
+    const hasBalanceQueue = visibleBalanceAdjustmentRequests.length > 0 || safeData.tenantBalanceAdjustmentRequests.length > 0;
+    const hasPromiseQueue = visiblePromiseChangeRequests.length > 0 || safeData.promiseChangeRequests.length > 0;
+    const hasLandlordPaymentQueue = visibleLandlordPaymentRequests.length > 0 || landlordPaymentRequests.length > 0;
+    const hasLandlordBulkRoomQueue = visibleLandlordBulkRoomRequests.length > 0 || safeData.landlordBulkRoomRequests.length > 0;
+    const hasLandlordPaymentDetailQueue = visibleLandlordPaymentDetailRequests.length > 0 || safeData.landlordPaymentDetailRequests.length > 0;
+    const hasAnyVisibleAdminQueue =
+        hasRentQueue ||
+        hasPaymentQueue ||
+        hasBalanceQueue ||
+        hasPromiseQueue ||
+        hasLandlordPaymentQueue ||
+        hasLandlordBulkRoomQueue ||
+        hasLandlordPaymentDetailQueue;
     const auditEventsByRequest = (() => {
         const grouped = new Map<string, NotificationAuditRow[]>();
         for (const event of safeData.auditEvents) {
@@ -600,9 +616,8 @@ export default function NotificationsCentre({ data }: Props) {
         });
     }
 
-    return (
-        <main className="enterprise-page">
-            <div className="enterprise-shell">
+    const content = (
+        <>
                 <PageHero
                     title={safeData.isAdmin ? `Notifications (${safeData.pendingApprovalCount ?? pendingRequests.length})` : `Office Notifications (${safeData.unreadNotificationCount ?? 0})`}
                     subtitle={safeData.isAdmin ? "Pending approvals and company operational notifications." : `${safeData.activeOfficeName ?? "Office"} approvals, rejections, and operational notices.`}
@@ -623,7 +638,7 @@ export default function NotificationsCentre({ data }: Props) {
 
                 {safeData.isAdmin ? (
                     <>
-                    <section className="enterprise-panel overflow-hidden">
+                    {hasRentQueue ? <section className="enterprise-panel overflow-hidden">
                         <div className="border-b border-slate-200 p-5">
                             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                                 <div>
@@ -658,8 +673,8 @@ export default function NotificationsCentre({ data }: Props) {
                             onReason={(request) => setModal({ type: "reason", request })}
                             onHistory={(request) => setModal({ type: "history", request })}
                         />
-                    </section>
-                    <section className="enterprise-panel mt-6 overflow-hidden">
+                    </section> : null}
+                    {hasPaymentQueue ? <section className="enterprise-panel mt-6 overflow-hidden">
                         <div className="border-b border-slate-200 p-5">
                             <h2 className="text-xl font-black text-slate-950">Payment Correction Requests</h2>
                             <p className="text-sm font-semibold text-slate-500">Approve date, amount, and room corrections only after reviewing the office explanation.</p>
@@ -683,8 +698,8 @@ export default function NotificationsCentre({ data }: Props) {
                             onReason={(request) => setPaymentModal({ type: "reason", request })}
                             onHistory={(request) => setPaymentModal({ type: "history", request })}
                         />
-                    </section>
-                    <section className="enterprise-panel mt-6 overflow-hidden">
+                    </section> : null}
+                    {hasBalanceQueue ? <section className="enterprise-panel mt-6 overflow-hidden">
                         <div className="border-b border-slate-200 p-5">
                             <h2 className="text-xl font-black text-slate-950">Outstanding Balance Adjustment Requests</h2>
                             <p className="text-sm font-semibold text-slate-500">Approve office-requested tenant outstanding balance changes without deleting payment history.</p>
@@ -707,8 +722,8 @@ export default function NotificationsCentre({ data }: Props) {
                             onReject={(request) => openBalanceAdjustmentRejectModal(request)}
                             onReason={(request) => setBalanceAdjustmentModal({ type: "reason", request })}
                         />
-                    </section>
-                    <section className="enterprise-panel mt-6 overflow-hidden">
+                    </section> : null}
+                    {hasPromiseQueue ? <section className="enterprise-panel mt-6 overflow-hidden">
                         <div className="border-b border-slate-200 p-5">
                             <h2 className="text-xl font-black text-slate-950">Promise Correction Requests</h2>
                             <p className="text-sm font-semibold text-slate-500">Approve collector or office requested edits before Promise Centre records change.</p>
@@ -731,8 +746,8 @@ export default function NotificationsCentre({ data }: Props) {
                             onReject={(request) => openPromiseChangeRejectModal(request)}
                             onReason={(request) => setPromiseChangeModal({ type: "reason", request })}
                         />
-                    </section>
-                    <section className="enterprise-panel mt-6 overflow-hidden">
+                    </section> : null}
+                    {hasLandlordPaymentQueue ? <section className="enterprise-panel mt-6 overflow-hidden">
                         <div className="border-b border-slate-200 p-5">
                             <h2 className="text-xl font-black text-slate-950">Landlord Payment Approval Queue</h2>
                             <p className="text-sm font-semibold text-slate-500">Office-submitted landlord payments from Expenses are approved here before they affect landlord ledgers.</p>
@@ -756,8 +771,8 @@ export default function NotificationsCentre({ data }: Props) {
                             onReason={(request) => setLandlordPaymentModal({ type: "reason", request })}
                             onHistory={(request) => setLandlordPaymentModal({ type: "history", request })}
                         />
-                    </section>
-                    <section className="enterprise-panel mt-6 overflow-hidden">
+                    </section> : null}
+                    {hasLandlordBulkRoomQueue ? <section className="enterprise-panel mt-6 overflow-hidden">
                         <div className="border-b border-slate-200 p-5">
                             <h2 className="text-xl font-black text-slate-950">New Landlord & Room Inventory Approval Queue</h2>
                             <p className="text-sm font-semibold text-slate-500">Review office-submitted landlords, rooms, occupied tenants, vacant rooms, and opening balances before they become live.</p>
@@ -780,8 +795,8 @@ export default function NotificationsCentre({ data }: Props) {
                             onReject={(request) => openLandlordBulkRoomRejectModal(request)}
                             onViewDetails={(request) => setLandlordBulkRoomModal({ type: "details", request })}
                         />
-                    </section>
-                    <section className="enterprise-panel mt-6 overflow-hidden">
+                    </section> : null}
+                    {hasLandlordPaymentDetailQueue ? <section className="enterprise-panel mt-6 overflow-hidden">
                         <div className="border-b border-slate-200 p-5">
                             <h2 className="text-xl font-black text-slate-950">Landlord Payment Details Approval Queue</h2>
                             <p className="text-sm font-semibold text-slate-500">Approve mobile money or bank details before they become active on landlord payment forms.</p>
@@ -805,21 +820,17 @@ export default function NotificationsCentre({ data }: Props) {
                             onReason={(request) => setLandlordPaymentDetailModal({ type: "reason", request })}
                             onHistory={(request) => setLandlordPaymentDetailModal({ type: "history", request })}
                         />
-                    </section>
+                    </section> : null}
+                    {!hasAnyVisibleAdminQueue ? (
+                        <section className="enterprise-panel p-5">
+                            <h2 className="text-xl font-black text-slate-950">Approval Queues</h2>
+                            <p className="mt-1 text-sm font-semibold text-slate-500">No approval requests match the current filter.</p>
+                        </section>
+                    ) : null}
                     </>
                 ) : (
                     <OfficeNotificationFeed data={safeData} />
                 )}
-
-                {safeData.isAdmin ? (
-                    <section className="enterprise-panel mt-6 p-5">
-                        <h2 className="text-xl font-black text-slate-950">Other Approval Requests</h2>
-                        <p className="mt-1 text-sm font-semibold text-slate-500">Future approval workflows will appear here beside rent and payment date requests.</p>
-                        <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm font-bold text-slate-500">
-                            No other approval request types are pending.
-                        </div>
-                    </section>
-                ) : null}
 
                 <section className="enterprise-panel mt-6 p-5">
                     <h2 className="text-xl font-black text-slate-950">{safeData.isAdmin ? "Notification Feed" : "Office Approval Updates"}</h2>
@@ -945,6 +956,15 @@ export default function NotificationsCentre({ data }: Props) {
                     }}
                     onConfirm={runBulkDecision}
                 />
+        </>
+    );
+
+    if (embedded) return <div className="notifications-centre-stack">{content}</div>;
+
+    return (
+        <main className="enterprise-page">
+            <div className="enterprise-shell">
+                {content}
             </div>
         </main>
     );
