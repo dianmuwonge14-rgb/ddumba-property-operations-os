@@ -32,6 +32,55 @@ async function activeWriteContext() {
     return context;
 }
 
+async function resolveExpenseEmployeeActorId(context: Awaited<ReturnType<typeof requireAuth>>) {
+    const companyId = context.activeCompany?.id ?? context.profile?.company_id ?? null;
+    if (!companyId) return null;
+
+    const admin = createSupabaseAdminClient();
+    const candidateIds = [
+        context.profile?.id,
+        context.authUser?.id,
+    ].filter((value): value is string => Boolean(value));
+
+    if (candidateIds.length) {
+        const { data, error } = await admin
+            .from("employees")
+            .select("id")
+            .eq("company_id", companyId)
+            .in("id", candidateIds)
+            .limit(1);
+        if (error) throw new Error(error.message);
+        if (data?.[0]?.id) return String(data[0].id);
+    }
+
+    const profile = context.profile as Record<string, unknown> | null;
+    const email = String(profile?.email ?? context.authUser?.email ?? "").trim();
+    if (email) {
+        const { data, error } = await admin
+            .from("employees")
+            .select("id")
+            .eq("company_id", companyId)
+            .ilike("email", email)
+            .limit(1);
+        if (error) throw new Error(error.message);
+        if (data?.[0]?.id) return String(data[0].id);
+    }
+
+    const employeeCode = String(profile?.employee_code ?? "").trim();
+    if (employeeCode) {
+        const { data, error } = await admin
+            .from("employees")
+            .select("id")
+            .eq("company_id", companyId)
+            .eq("employee_code", employeeCode)
+            .limit(1);
+        if (error) throw new Error(error.message);
+        if (data?.[0]?.id) return String(data[0].id);
+    }
+
+    return null;
+}
+
 async function expenseCorrectionContext() {
     const context = await requireAuth();
     const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
@@ -275,10 +324,11 @@ export async function createExpense(input: CreateExpenseInput) {
 
     const expenseDate = input.expenseDate || new Date().toISOString().slice(0, 10);
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    const expenseActorId = await resolveExpenseEmployeeActorId(context);
     const expensePayload = {
         amount,
         approved_at: new Date().toISOString(),
-        approved_by: actorId,
+        approved_by: expenseActorId,
         category: input.category || null,
         category_id: input.categoryId || null,
         company_id: context.activeCompany!.id,
@@ -720,6 +770,7 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
     const officeId = context.activeOffice!.id;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
     const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
+    const expenseActorId = await resolveExpenseEmployeeActorId(context);
     const value = Number(input.amount);
     assertAmount(value);
     if (!input.employeeId) throw new Error("Select employee.");
@@ -766,7 +817,7 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
             .insert({
                 amount: preview.allowedPortion,
                 approved_at: new Date().toISOString(),
-                approved_by: actorId,
+                approved_by: expenseActorId,
                 category: "Employee Expense",
                 company_id: companyId,
                 description: `[employee_expense_allowed] ${input.note ?? ""}`.trim(),
@@ -909,6 +960,7 @@ export async function decideEmployeeExpenseRequest(input: DecideEmployeeExpenseR
     const db = supabase as unknown as { from: (table: string) => any };
     const companyId = context.activeCompany?.id;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    const expenseActorId = await resolveExpenseEmployeeActorId(context);
     if (!companyId) throw new Error("Active company is required.");
     if (!input.requestId) throw new Error("Request id is required.");
     const { data: request, error: requestError } = await db
@@ -962,7 +1014,7 @@ export async function decideEmployeeExpenseRequest(input: DecideEmployeeExpenseR
         .insert({
             amount: extraAmount,
             approved_at: reviewedAt,
-            approved_by: actorId,
+            approved_by: expenseActorId,
             category: "Employee Extra Expense",
             company_id: companyId,
             description: `[employee_expense_extra_approved] ${request.note ?? ""} ${input.comment ? `Admin: ${input.comment}` : ""}`.trim(),
@@ -1063,6 +1115,7 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
     const db = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
     const companyId = context.activeCompany?.id;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    const expenseActorId = await resolveExpenseEmployeeActorId(context);
     if (!companyId) throw new Error("Active company is required.");
     if (!input.requestId) throw new Error("Request id is required.");
 
@@ -1151,7 +1204,7 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
         .insert({
             amount: requestedAmount,
             approved_at: reviewedAt,
-            approved_by: actorId,
+            approved_by: expenseActorId,
             category: "Landlord Paid",
             company_id: companyId,
             description: `[landlord_payment_approved] ${request.notes ?? ""} ${input.comment ? `Admin: ${input.comment}` : ""}`.trim(),
@@ -1637,6 +1690,7 @@ export async function adminEditExpenseDirect(input: SubmitExpenseChangeRequestIn
     const db = supabase as unknown as { from: (table: string) => any };
     const companyId = context.activeCompany?.id;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    const expenseActorId = await resolveExpenseEmployeeActorId(context);
     if (!companyId) throw new Error("Active company is required.");
     if (!input.expenseId) throw new Error("Expense id is required.");
     if (!input.reason?.trim()) throw new Error("Reason for expense edit is required.");
@@ -1646,7 +1700,7 @@ export async function adminEditExpenseDirect(input: SubmitExpenseChangeRequestIn
     const updated = await applyExpensePatch(db, input.expenseId, {
         ...patch,
         approved_at: new Date().toISOString(),
-        approved_by: actorId,
+        approved_by: expenseActorId,
         status: "approved",
     });
     await logUserAction({
