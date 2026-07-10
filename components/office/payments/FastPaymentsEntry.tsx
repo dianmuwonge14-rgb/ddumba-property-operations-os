@@ -1053,7 +1053,7 @@ function NewTenantModal({
 	                    </button>
 	                    <button type="button" disabled={isPending} onClick={onSubmit} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white shadow-lg disabled:opacity-40">
 	                        {isPending ? <Loader2 className="animate-spin" size={16} /> : <UserPlus size={16} />}
-	                        {isPending ? "Saving..." : "Complete New Tenant"}
+	                        {isPending ? "Creating tenant..." : "Complete New Tenant"}
 	                    </button>
                 </div>
             </div>
