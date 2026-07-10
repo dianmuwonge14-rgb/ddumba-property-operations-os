@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 function amount(value) {
@@ -93,4 +94,51 @@ test("opening arrears are informational and never create a third unpaid month", 
     { settlement_month: "2026-07-01", monthly_net_payable: 280000, opening_arrears: 560000, amount_paid: 0 },
   ]);
   assert.equal(plan.outstanding, 560000);
+});
+
+test("expense-routed landlord payment uses the same total unpaid as the landlord report", () => {
+  const reportRows = [
+    {
+      settlement_month: "2026-06-01",
+      monthly_net_payable: 855500,
+      net_payable: 855500,
+      vacated_tenant_debt_deductions: 190000,
+      amount_paid: 0,
+      status: "unpaid",
+    },
+    {
+      settlement_month: "2026-07-01",
+      monthly_net_payable: 1045500,
+      net_payable: 1045500,
+      opening_arrears: 1045500,
+      vacated_tenant_debt_deductions: 0,
+      amount_paid: 0,
+      status: "unpaid",
+    },
+  ];
+  const totalReportDue = reportRows.reduce((total, row) => total + monthlyUnpaid(row), 0);
+  assert.equal(totalReportDue, 1901000);
+
+  const partial = allocationPlan(1731000, reportRows);
+  assert.equal(partial.applied, 1731000);
+  assert.equal(partial.advance, 0);
+  assert.equal(partial.outstanding, 170000);
+
+  const exact = allocationPlan(1901000, reportRows);
+  assert.equal(exact.applied, 1901000);
+  assert.equal(exact.advance, 0);
+  assert.equal(exact.outstanding, 0);
+
+  const overpayment = allocationPlan(1930000, reportRows);
+  assert.equal(overpayment.applied, 1901000);
+  assert.equal(overpayment.advance, 29000);
+  assert.equal(overpayment.outstanding, 0);
+});
+
+test("expenses landlord payment preview does not recompute and double-deduct current month live net", () => {
+  const source = readFileSync(new URL("../app/actions/expenses.ts", import.meta.url), "utf8");
+  const previewBody = source.slice(source.indexOf("async function getLandlordPaymentPreview"), source.indexOf("export async function createExpense"));
+  assert.match(previewBody, /summarizeLandlordPayables/);
+  assert.doesNotMatch(previewBody, /getLiveLandlordMonthlyNetPayable/);
+  assert.doesNotMatch(previewBody, /liveNet\.recoveryDeduction/);
 });

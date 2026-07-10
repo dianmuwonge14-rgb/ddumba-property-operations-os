@@ -9,8 +9,8 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getExpenseInActiveOffice } from "@/lib/expenses/data";
 import { calculateLandlordAdvancePlan } from "@/lib/landlord-advances/calculator";
 import { assertLandlordPayableIntegrity } from "@/lib/landlord-payables/integrity";
-import { getLiveLandlordMonthlyNetPayable, reconcileLandlordPayableWithLiveNet } from "@/lib/landlord-payables/live-net";
-import { buildLandlordPaymentAllocationPlan, landlordMonthlyDue, landlordMonthlyPaid } from "@/lib/landlord-payables/payment-allocation";
+import { reconcileLandlordPayableWithLiveNet } from "@/lib/landlord-payables/live-net";
+import { buildLandlordPaymentAllocationPlan, landlordMonthlyDue, landlordMonthlyPaid, summarizeLandlordPayables } from "@/lib/landlord-payables/payment-allocation";
 import type {
     CreateExpenseCategoryInput,
     CreateExpenseInput,
@@ -279,51 +279,29 @@ async function getLandlordPaymentPreview(input: {
         throw new Error(pendingResult.error.message);
     }
 
-    let payables = (payablesResult.data ?? []) as Record<string, unknown>[];
-    let currentPayable = payables.find((row) => String(row.settlement_month ?? "").slice(0, 10) === paymentMonth) ?? null;
-    const liveNet = currentPayable
-        ? await getLiveLandlordMonthlyNetPayable({
-            companyId: input.companyId,
-            db: input.db,
-            landlordId: input.landlordId,
-            officeId: input.officeId,
-            settlementMonth: paymentMonth,
-        })
-        : null;
-    if (currentPayable && liveNet && Math.round(landlordMonthlyDue(currentPayable)) !== Math.round(liveNet.netPayable)) {
-        const paid = landlordMonthlyPaid(currentPayable);
-        currentPayable = {
-            ...currentPayable,
-            advance_deductions: liveNet.advanceDeduction,
-            commission_amount: liveNet.commissionAmount,
-            commission_mode: liveNet.commissionMode,
-            commission_percentage: liveNet.commissionRate,
-            full_rent_roll: liveNet.fullRentRoll,
-            monthly_net_payable: liveNet.netPayable,
-            net_payable: liveNet.netPayable,
-            total_due: liveNet.netPayable,
-            unpaid_balance: Math.max(0, liveNet.netPayable - Math.min(paid, liveNet.netPayable)),
-            vacant_room_deductions: liveNet.vacantRoomDeductions,
-            vacated_tenant_debt_deductions: liveNet.recoveryDeduction,
-        };
-        payables = payables.map((row) => String(row.id) === String(currentPayable?.id) ? currentPayable! : row);
-    }
+    const payables = (payablesResult.data ?? []) as Record<string, unknown>[];
+    const currentPayable = payables.find((row) => String(row.settlement_month ?? "").slice(0, 10) === paymentMonth) ?? null;
+    const activeAdvanceBalance = ((advancesResult.data ?? []) as Record<string, unknown>[])
+        .filter(isApprovedActiveAdvance)
+        .reduce((total, advance) => total + advanceRemaining(advance), 0);
+    const payableSummary = summarizeLandlordPayables({
+        activeAdvanceBalance,
+        currentMonth: paymentMonth,
+        payables,
+    });
     const allocationPlan = buildLandlordPaymentAllocationPlan({
         amount: input.amount,
         currentMonth: paymentMonth,
         payables,
     });
-    const currentNetPayable = landlordMonthlyDue(currentPayable ?? {});
-    const alreadyPaidAmount = landlordMonthlyPaid(currentPayable ?? {});
-    const outstandingAmount = allocationPlan.totalUnpaidPayable;
+    const currentNetPayable = payableSummary.currentMonthNetPayable || landlordMonthlyDue(currentPayable ?? {});
+    const alreadyPaidAmount = payableSummary.alreadyPaidAmount || landlordMonthlyPaid(currentPayable ?? {});
+    const outstandingAmount = payableSummary.totalOutstandingPayable;
     const openingArrears = amount(currentPayable?.opening_arrears);
-    const activeAdvanceBalance = ((advancesResult.data ?? []) as Record<string, unknown>[])
-        .filter(isApprovedActiveAdvance)
-        .reduce((total, advance) => total + advanceRemaining(advance), 0);
     const pendingRequestAmount = ((pendingResult.data ?? []) as Record<string, unknown>[])
         .reduce((total, request) => total + amount(request.requested_amount), 0);
-    const normalPaymentAmount = allocationPlan.normalPaymentAmount;
-    const advanceAmount = allocationPlan.advanceAmount;
+    const normalPaymentAmount = Math.min(Math.max(0, input.amount), outstandingAmount);
+    const advanceAmount = Math.max(0, Math.max(0, input.amount) - outstandingAmount);
     const duplicatePaymentRisk = ((pendingResult.data ?? []) as Record<string, unknown>[])
         .some((request) => Math.round(amount(request.requested_amount)) === Math.round(input.amount));
     const flagReason = advanceAmount > 0 && normalPaymentAmount > 0
@@ -341,7 +319,7 @@ async function getLandlordPaymentPreview(input: {
         currentNetPayable,
         duplicatePaymentRisk,
         flagReason,
-        monthlyPayableId: allocationPlan.currentMonthPayableId ?? allocationPlan.oldestUnpaidPayableId,
+        monthlyPayableId: payableSummary.currentMonthPayableId ?? payableSummary.oldestUnpaidPayableId ?? allocationPlan.currentMonthPayableId ?? allocationPlan.oldestUnpaidPayableId,
         normalPaymentAmount,
         openingArrears,
         outstandingAmount,
