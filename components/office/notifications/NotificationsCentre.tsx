@@ -4,7 +4,6 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { BellRing, CheckCircle2, Clock3, History, XCircle } from "lucide-react";
 import { decidePaymentCorrection, decideTenantOutstandingBalanceAdjustment } from "@/app/actions/collections";
-import { decideLandlordPaidExpenseRequest } from "@/app/actions/expenses";
 import { decideLandlordPaymentDetails } from "@/app/actions/landlords";
 import { decidePromiseChangeRequest } from "@/app/actions/promises";
 import { reviewLandlordBulkRoomRequest } from "@/app/actions/properties";
@@ -63,6 +62,22 @@ type LandlordBulkRoomModalState =
     | { type: "details"; request: NotificationLandlordBulkRoomRequest }
     | { type: "reject"; request: NotificationLandlordBulkRoomRequest }
     | null;
+
+async function decideLandlordPaymentRequestViaApi(input: {
+    comment: string;
+    decision: "approved" | "rejected";
+    requestId: string;
+}) {
+    const response = await fetch("/api/expenses/landlord-payment-requests/decide", {
+        body: JSON.stringify(input),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+    });
+    const payload = await response.json().catch(() => ({})) as { error?: string };
+    if (!response.ok) {
+        throw new Error(payload.error ?? "Unable to process landlord payment request.");
+    }
+}
 
 function money(value: number | string | null | undefined) {
     const numeric = Number(value ?? 0);
@@ -413,7 +428,7 @@ export default function NotificationsCentre({ data }: Props) {
             try {
                 setMessage(null);
                 setActionLabel(decision === "approved" ? "Approving landlord payment..." : "Rejecting landlord payment...");
-                await decideLandlordPaidExpenseRequest({ requestId: request.id, decision, comment });
+                await decideLandlordPaymentRequestViaApi({ requestId: request.id, decision, comment });
                 setLocalLandlordPaymentStatuses((current) => ({ ...current, [request.id]: decision }));
                 setMessage(decision === "approved"
                     ? "Landlord payment approved. The landlord ledger and reports were updated."
@@ -559,7 +574,7 @@ export default function NotificationsCentre({ data }: Props) {
                     for (const id of bulkModal.ids) await decidePromiseChangeRequest({ requestId: id, decision: bulkModal.decision, comment });
                 }
                 if (bulkModal.queue === "landlordPayment") {
-                    for (const id of bulkModal.ids) await decideLandlordPaidExpenseRequest({ requestId: id, decision: bulkModal.decision, comment });
+                    for (const id of bulkModal.ids) await decideLandlordPaymentRequestViaApi({ requestId: id, decision: bulkModal.decision, comment });
                     setLocalLandlordPaymentStatuses((current) => {
                         const next = { ...current };
                         for (const id of bulkModal.ids) next[id] = bulkModal.decision;
