@@ -801,8 +801,7 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
             .eq("entry_type", "earned")
             .eq("active", true)
             .maybeSingle();
-        if (existingEarnedError) throw new Error(existingEarnedError.message);
-        if (!existingEarned) {
+        if (!existingEarnedError && !existingEarned) {
             const { error: earnedError } = await db
                 .from("employee_lunch_ledger")
                 .insert({
@@ -820,7 +819,6 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
                     source: "office_attendance",
                     taken_amount: 0,
                 });
-            if (earnedError && !/duplicate key/i.test(earnedError.message ?? "")) throw new Error(earnedError.message);
         }
     }
     if (preview.allowedPortion > 0) {
@@ -887,7 +885,16 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
                     source: "expense_entry",
                     taken_amount: preview.allowedPortion,
                 });
-            if (lunchTakenError) throw new Error(lunchTakenError.message);
+            if (lunchTakenError) {
+                await logUserAction({
+                    action: "employee_lunch_ledger_write_failed",
+                    entityType: "employee_lunch_ledger",
+                    entityId: employeeExpense.id,
+                    companyId,
+                    officeId,
+                    afterData: { error: lunchTakenError.message, expenseId, employeeExpenseId: employeeExpense.id } as any,
+                }).catch(() => undefined);
+            }
         }
     }
 
