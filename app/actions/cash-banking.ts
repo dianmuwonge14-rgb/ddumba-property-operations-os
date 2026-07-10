@@ -47,6 +47,19 @@ type GiveMoneyInput = {
     notes?: string | null;
 };
 
+type AdminCashMovementInput = {
+    movementType: "cash_received" | "cash_out" | "bank_deposit";
+    amount: number;
+    movementDate: string;
+    source?: string | null;
+    category?: string | null;
+    recipient?: string | null;
+    bankName?: string | null;
+    method?: string | null;
+    referenceNumber?: string | null;
+    notes?: string | null;
+};
+
 type ReassignTransferInput = {
     transferId: string;
     correctOfficeId: string;
@@ -73,6 +86,10 @@ function assertDate(value: string, label: string) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
         throw new Error(`${label} must be a valid date.`);
     }
+}
+
+function isInactiveFinancialStatus(status: unknown) {
+    return ["voided", "removed", "removed_by_admin_approval", "rejected", "pending", "cancelled", "canceled", "deleted"].includes(String(status ?? "").toLowerCase());
 }
 
 function actorId(context: AuthContext) {
@@ -129,6 +146,7 @@ async function accountBalance(accountId: string) {
 
 async function officeCashBalance(input: { companyId: string; officeId: string }) {
     const db = createSupabaseAdminClient();
+    const dynamicDb = db as unknown as { from: (table: string) => any };
     const officeAccount = await ensureCashAccount({
         accountType: "office_cash",
         companyId: input.companyId,
@@ -142,9 +160,9 @@ async function officeCashBalance(input: { companyId: string; officeId: string })
             .eq("company_id", input.companyId)
             .eq("office_id", input.officeId)
             .limit(10000),
-        db
+        dynamicDb
             .from("expenses")
-            .select("amount")
+            .select("amount, status")
             .eq("company_id", input.companyId)
             .eq("office_id", input.officeId)
             .limit(10000),
@@ -162,7 +180,9 @@ async function officeCashBalance(input: { companyId: string; officeId: string })
         return !["voided", "removed", "removed_by_admin_approval", "rejected", "pending", "cancelled", "canceled"].includes(status);
     });
     const collected = activeCollections.reduce((total, row) => total + amountValue(row.amount_paid ?? row.amount), 0);
-    const expenses = (expensesResult.data ?? []).reduce((total, row) => total + amountValue(row.amount), 0);
+    const expenses = ((expensesResult.data ?? []) as Array<Record<string, unknown>>)
+        .filter((row) => !isInactiveFinancialStatus(row.status))
+        .reduce((total: number, row) => total + amountValue(row.amount), 0);
     const banked = (cashResult.data ?? [])
         .filter((row) => row.transaction_type === "outflow" && row.source_type === "bank_deposit")
         .reduce((total, row) => total + amountValue(row.amount), 0);
@@ -429,6 +449,195 @@ export async function giveMoneyToOffice(input: GiveMoneyInput) {
     });
     revalidateCashPages();
     return { ok: true, transferId: transfer.id };
+}
+
+export async function recordAdminCashMovement(input: AdminCashMovementInput) {
+    const context = await requireCompanyAdminMode();
+    if (!hasPermission(context, "cash.manage")) throw new Error("Cash management permission is required.");
+    const companyId = context.activeCompany?.id;
+    if (!companyId) throw new Error("Active company is required.");
+
+    const amount = amountValue(input.amount);
+    assertAmount(amount);
+    assertDate(input.movementDate, "Movement date");
+
+    const db = createSupabaseAdminClient();
+    const actor = actorId(context);
+    const adminCashAccount = await ensureCashAccount({
+        accountType: "hq_cash",
+        companyId,
+        officeId: null,
+        name: "Admin Cash",
+    });
+    const bankAccount = await ensureCashAccount({
+        accountType: "bank",
+        companyId,
+        officeId: null,
+        name: "Company Bank",
+    });
+
+    if (input.referenceNumber?.trim()) {
+        const dynamicDb = db as unknown as { from: (table: string) => any };
+        const { data: duplicate, error: duplicateError } = await dynamicDb
+            .from("admin_cash_movements")
+            .select("id")
+            .eq("company_id", companyId)
+            .eq("reference", input.referenceNumber.trim())
+            .eq("amount", amount)
+            .limit(1)
+            .maybeSingle();
+        if (duplicateError) throw new Error(`Reference check failed: ${duplicateError.message}`);
+        if (duplicate?.id) throw new Error("This Admin cash reference has already been recorded.");
+    }
+
+    const adminCashBefore = await accountBalance(String(adminCashAccount.id));
+    const bankBefore = await accountBalance(String(bankAccount.id));
+    const movementType = input.movementType;
+    const cashOut = movementType === "cash_out" || movementType === "bank_deposit";
+    if (cashOut && amount > adminCashBefore) {
+        throw new Error(`Admin cash is insufficient. Available: UGX ${Math.round(adminCashBefore).toLocaleString()}.`);
+    }
+
+    let transferId: string | null = null;
+    if (movementType === "bank_deposit") {
+        const { data: transfer, error: transferError } = await db
+            .from("cash_transfers")
+            .insert({
+                amount,
+                company_id: companyId,
+                completed_at: new Date().toISOString(),
+                from_cash_account_id: adminCashAccount.id,
+                requested_by: actor,
+                status: "completed",
+                to_cash_account_id: bankAccount.id,
+            })
+            .select("id")
+            .single();
+        if (transferError) throw new Error(`Admin bank transfer could not be created: ${transferError.message}`);
+        transferId = String(transfer.id);
+    }
+
+    const dynamicDb = db as unknown as { from: (table: string) => any };
+    const { data: movement, error: movementError } = await dynamicDb
+        .from("admin_cash_movements")
+        .insert({
+            amount,
+            company_id: companyId,
+            movement_date: input.movementDate,
+            movement_type: movementType === "cash_received" ? "admin_cash_received" : movementType === "cash_out" ? "admin_cash_out" : "admin_bank_deposit",
+            notes: input.notes ?? null,
+            office_id: null,
+            recorded_by: actor,
+            reference: input.referenceNumber?.trim() || null,
+            source: input.source?.trim() || input.method?.trim() || "admin_cash",
+            transfer_id: transferId,
+        })
+        .select("id")
+        .single();
+    if (movementError) throw new Error(`Admin cash movement could not be saved: ${movementError.message}`);
+
+    const sourceId = String(movement.id);
+    const description = [
+        movementType === "cash_received" ? "Admin cash received" : movementType === "cash_out" ? "Admin cash out" : "Admin deposited cash to bank",
+        input.source ? `source: ${input.source}` : null,
+        input.category ? `category: ${input.category}` : null,
+        input.recipient ? `recipient: ${input.recipient}` : null,
+        input.bankName ? `bank: ${input.bankName}` : null,
+        input.method ? `method: ${input.method}` : null,
+        input.referenceNumber ? `ref ${input.referenceNumber}` : null,
+        input.notes ? `notes: ${input.notes}` : null,
+    ].filter(Boolean).join(" · ");
+
+    const rows = movementType === "cash_received"
+        ? [{
+            amount,
+            cash_account_id: adminCashAccount.id,
+            company_id: companyId,
+            description,
+            office_id: null,
+            recorded_by: actor,
+            source_id: sourceId,
+            source_type: "admin_cash_received",
+            transaction_date: input.movementDate,
+            transaction_type: "inflow",
+        }]
+        : movementType === "cash_out"
+            ? [{
+                amount,
+                cash_account_id: adminCashAccount.id,
+                company_id: companyId,
+                description,
+                office_id: null,
+                recorded_by: actor,
+                source_id: sourceId,
+                source_type: "admin_cash_out",
+                transaction_date: input.movementDate,
+                transaction_type: "outflow",
+            }]
+            : [
+                {
+                    amount,
+                    cash_account_id: adminCashAccount.id,
+                    company_id: companyId,
+                    description,
+                    office_id: null,
+                    recorded_by: actor,
+                    source_id: sourceId,
+                    source_type: "admin_bank_deposit",
+                    transaction_date: input.movementDate,
+                    transaction_type: "outflow",
+                },
+                {
+                    amount,
+                    cash_account_id: bankAccount.id,
+                    company_id: companyId,
+                    description,
+                    office_id: null,
+                    recorded_by: actor,
+                    source_id: sourceId,
+                    source_type: "admin_bank_deposit",
+                    transaction_date: input.movementDate,
+                    transaction_type: "inflow",
+                },
+            ];
+
+    const { error: transactionError } = await db.from("cash_transactions").insert(rows);
+    if (transactionError) throw new Error(`Admin cash ledger could not be posted: ${transactionError.message}`);
+
+    await notify({
+        actionUrl: "/office/admin/cash-banking",
+        companyId,
+        entityId: sourceId,
+        entityType: "admin_cash_movement",
+        message: `Admin recorded UGX ${Math.round(amount).toLocaleString()} for ${movementType.replaceAll("_", " ")}.`,
+        officeId: null,
+        recipientType: "admin",
+        severity: "success",
+        title: "Admin cash movement recorded",
+    });
+    await logUserAction({
+        action: movementType === "cash_received" ? "admin_cash_received" : movementType === "cash_out" ? "admin_cash_out" : "admin_bank_deposit",
+        entityType: "admin_cash_movement",
+        entityId: sourceId,
+        companyId,
+        afterData: {
+            ...input,
+            amount,
+            admin_cash_before: adminCashBefore,
+            admin_cash_after: movementType === "cash_received" ? adminCashBefore + amount : adminCashBefore - amount,
+            bank_before: bankBefore,
+            bank_after: movementType === "bank_deposit" ? bankBefore + amount : bankBefore,
+        },
+    });
+    revalidateCashPages();
+    return {
+        ok: true,
+        movementId: sourceId,
+        balances: {
+            adminCash: movementType === "cash_received" ? adminCashBefore + amount : adminCashBefore - amount,
+            moneyAtBank: movementType === "bank_deposit" ? bankBefore + amount : bankBefore,
+        },
+    };
 }
 
 export async function reassignAdminOfficeTransfer(input: ReassignTransferInput) {

@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Banknote, Brain, Building2, Download, Eye, GitBranch, Landmark, Printer, RefreshCw, Send, Trash2, WalletCards } from "lucide-react";
-import { bankOfficeMoney, cancelAdminOfficeTransfer, giveMoneyToOffice, reassignAdminOfficeTransfer } from "@/app/actions/cash-banking";
+import { bankOfficeMoney, cancelAdminOfficeTransfer, giveMoneyToOffice, reassignAdminOfficeTransfer, recordAdminCashMovement } from "@/app/actions/cash-banking";
 import type { CashBankingData, CashLedgerRow } from "@/lib/cash-banking/types";
 
 type Props = {
@@ -67,6 +67,18 @@ export default function CashBankingConsole({ data }: Props) {
         source: "bank" as "bank" | "admin_cash",
         movementDate: today(),
         reason: "",
+        referenceNumber: "",
+        notes: "",
+    });
+    const [adminCashForm, setAdminCashForm] = useState({
+        movementType: "cash_received" as "cash_received" | "cash_out" | "bank_deposit",
+        amount: "",
+        movementDate: today(),
+        source: "",
+        category: "",
+        recipient: "",
+        bankName: "",
+        method: "Cash",
         referenceNumber: "",
         notes: "",
     });
@@ -158,6 +170,32 @@ export default function CashBankingConsole({ data }: Props) {
                 router.refresh();
             } catch (err) {
                 setError(err instanceof Error ? err.message : "Office float transfer failed.");
+            }
+        });
+    }
+
+    function submitAdminCashMovement() {
+        setError(null);
+        setMessage(null);
+        startTransition(async () => {
+            try {
+                const result = await recordAdminCashMovement({
+                    movementType: adminCashForm.movementType,
+                    amount: Number(adminCashForm.amount),
+                    movementDate: adminCashForm.movementDate,
+                    source: adminCashForm.source || null,
+                    category: adminCashForm.category || null,
+                    recipient: adminCashForm.recipient || null,
+                    bankName: adminCashForm.bankName || null,
+                    method: adminCashForm.method || null,
+                    referenceNumber: adminCashForm.referenceNumber || null,
+                    notes: adminCashForm.notes || null,
+                });
+                setMessage(`Admin cash movement saved. Admin cash is now ${formatMoney(result.balances.adminCash)} and Money at Bank is ${formatMoney(result.balances.moneyAtBank)}.`);
+                setAdminCashForm((current) => ({ ...current, amount: "", referenceNumber: "", notes: "" }));
+                router.refresh();
+            } catch (err) {
+                setError(err instanceof Error ? err.message : "Admin cash movement failed.");
             }
         });
     }
@@ -262,7 +300,8 @@ export default function CashBankingConsole({ data }: Props) {
                                 </div>
                             </div>
                         ) : (
-                            <div>
+                            <div className="grid gap-6 2xl:grid-cols-2">
+                                <div>
                                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                                     <div>
                                         <h2 className="text-xl font-black text-white">Transfer Money to Office</h2>
@@ -280,6 +319,27 @@ export default function CashBankingConsole({ data }: Props) {
                                     <button disabled={isPending || !floatForm.officeId} onClick={submitFloat} className="mt-5 inline-flex h-[46px] items-center justify-center gap-2 rounded-2xl bg-blue-300 px-5 text-sm font-black text-slate-950 shadow-lg shadow-blue-900/20 transition hover:bg-blue-200 disabled:opacity-60">
                                         <Send size={16} /> {isPending ? "Sending..." : "Send Money to Office"}
                                     </button>
+                                </div>
+                                </div>
+                                <div>
+                                    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                                        <div>
+                                            <h2 className="text-xl font-black text-white">Admin Cash Entry</h2>
+                                            <p className="text-xs font-semibold text-slate-400">Record Admin cash received, cash out, or Admin cash deposited to bank.</p>
+                                        </div>
+                                        <span className="rounded-full border border-violet-300/20 bg-violet-300/10 px-3 py-1 text-xs font-black text-violet-100">Auto-approved</span>
+                                    </div>
+                                    <div className="grid gap-3 lg:grid-cols-[1fr_1fr_1fr_1fr_1fr_1.2fr_auto]">
+                                        <Select label="Movement" value={adminCashForm.movementType} onChange={(value) => setAdminCashForm((current) => ({ ...current, movementType: value as "cash_received" | "cash_out" | "bank_deposit" }))} options={["Cash Received", "Cash Out", "Deposit to Bank"]} optionValues={["cash_received", "cash_out", "bank_deposit"]} />
+                                        <Input label="Amount" value={adminCashForm.amount} onChange={(value) => setAdminCashForm((current) => ({ ...current, amount: value }))} type="number" />
+                                        <Input label="Date" value={adminCashForm.movementDate} onChange={(value) => setAdminCashForm((current) => ({ ...current, movementDate: value }))} type="date" />
+                                        <Input label={adminCashForm.movementType === "cash_received" ? "Source" : "Purpose / Category"} value={adminCashForm.movementType === "cash_received" ? adminCashForm.source : adminCashForm.category} onChange={(value) => setAdminCashForm((current) => adminCashForm.movementType === "cash_received" ? { ...current, source: value } : { ...current, category: value })} />
+                                        <Input label={adminCashForm.movementType === "bank_deposit" ? "Bank / Account" : "Method"} value={adminCashForm.movementType === "bank_deposit" ? adminCashForm.bankName : adminCashForm.method} onChange={(value) => setAdminCashForm((current) => adminCashForm.movementType === "bank_deposit" ? { ...current, bankName: value } : { ...current, method: value })} />
+                                        <Input label="Reference / Notes" value={adminCashForm.referenceNumber} onChange={(value) => setAdminCashForm((current) => ({ ...current, referenceNumber: value }))} />
+                                        <button disabled={isPending} onClick={submitAdminCashMovement} className="mt-5 inline-flex h-[46px] items-center justify-center gap-2 rounded-2xl bg-violet-300 px-5 text-sm font-black text-slate-950 shadow-lg shadow-violet-900/20 transition hover:bg-violet-200 disabled:opacity-60">
+                                            <Banknote size={16} /> {isPending ? "Saving..." : "Save Cash"}
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         )}

@@ -43,6 +43,11 @@ function isActiveCollection(row: Row) {
     return !INACTIVE_PAYMENT_STATUSES.has(status);
 }
 
+function isApprovedExpense(row: Row) {
+    const status = String(row.status ?? "approved").toLowerCase();
+    return !INACTIVE_PAYMENT_STATUSES.has(status);
+}
+
 function officeName(row: Row) {
     return row.office_name ?? row.name ?? "Office";
 }
@@ -167,7 +172,7 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
     const userById = new Map(((usersResult.data ?? []) as Row[]).map((user) => [String(user.id), user.full_name ?? user.email ?? "User"]));
 
     const collections = ((collectionsResult.data ?? []) as Row[]).filter((row) => row.office_id && visibleOfficeIds.has(row.office_id) && isActiveCollection(row));
-    const expenses = ((expensesResult.data ?? []) as Row[]).filter((row) => row.office_id && visibleOfficeIds.has(row.office_id));
+    const expenses = ((expensesResult.data ?? []) as Row[]).filter((row) => row.office_id && visibleOfficeIds.has(row.office_id) && isApprovedExpense(row));
     const accounts = ((accountsResult.data ?? []) as Row[]).filter((row) => !row.office_id || visibleOfficeIds.has(row.office_id));
     const accountById = new Map(accounts.map((row) => [accountKey(row), row]));
     const transferById = new Map(((cashTransfersResult.data ?? []) as Row[]).map((row) => [String(row.id), row]));
@@ -329,6 +334,57 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
                 transferStatus: transfer?.status ?? null,
                 canReassign: false,
                 canCancel: false,
+            });
+        }
+        if (isAdmin && account?.account_type === "hq_cash" && row.source_type === "admin_cash_received" && row.transaction_type === "inflow") {
+            ledgerRows.push({
+                id: `admin-cash-in-${row.id}`,
+                date: movementDate(row),
+                time: timeOnly(row.created_at ?? row.transaction_date),
+                officeId: null,
+                officeName: "Admin",
+                transactionType: "admin_cash",
+                label: "Admin cash received",
+                amountIn: numberValue(row.amount),
+                amountOut: 0,
+                runningBalance: 0,
+                recordedBy: userById.get(String(row.recorded_by)) ?? "Admin",
+                reference: row.source_id ?? null,
+                notes: row.description ?? null,
+            });
+        }
+        if (isAdmin && account?.account_type === "hq_cash" && row.source_type === "admin_cash_out" && row.transaction_type === "outflow") {
+            ledgerRows.push({
+                id: `admin-cash-out-${row.id}`,
+                date: movementDate(row),
+                time: timeOnly(row.created_at ?? row.transaction_date),
+                officeId: null,
+                officeName: "Admin",
+                transactionType: "admin_cash",
+                label: "Admin cash out",
+                amountIn: 0,
+                amountOut: numberValue(row.amount),
+                runningBalance: 0,
+                recordedBy: userById.get(String(row.recorded_by)) ?? "Admin",
+                reference: row.source_id ?? null,
+                notes: row.description ?? null,
+            });
+        }
+        if (isAdmin && account?.account_type === "hq_cash" && row.source_type === "admin_bank_deposit" && row.transaction_type === "outflow") {
+            ledgerRows.push({
+                id: `admin-bank-${row.id}`,
+                date: movementDate(row),
+                time: timeOnly(row.created_at ?? row.transaction_date),
+                officeId: null,
+                officeName: "Admin",
+                transactionType: "admin_cash",
+                label: "Admin cash deposited to bank",
+                amountIn: 0,
+                amountOut: numberValue(row.amount),
+                runningBalance: 0,
+                recordedBy: userById.get(String(row.recorded_by)) ?? "Admin",
+                reference: row.source_id ?? null,
+                notes: row.description ?? null,
             });
         }
     }
