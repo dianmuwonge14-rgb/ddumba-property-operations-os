@@ -50,6 +50,20 @@ function monthOnlyUnpaidBalance(row: LandlordMonthlyPayableRow) {
     return Math.max(0, numberValue(row.unpaid_balance));
 }
 
+function latestMonthlyPayableByLandlord(rows: LandlordMonthlyPayableRow[]) {
+    const byLandlord = new Map<string, LandlordMonthlyPayableRow>();
+    for (const row of rows) {
+        if (!row.landlord_id) continue;
+        const status = String(row.status ?? "").toLowerCase();
+        if (["archived", "reversed", "voided", "deleted", "removed"].includes(status)) continue;
+        const existing = byLandlord.get(row.landlord_id);
+        if (!existing || String(row.updated_at ?? row.created_at ?? "") > String(existing.updated_at ?? existing.created_at ?? "")) {
+            byLandlord.set(row.landlord_id, row);
+        }
+    }
+    return byLandlord;
+}
+
 function currentSettlementMonth() {
     const now = new Date();
     return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-01`;
@@ -191,7 +205,7 @@ export async function getLandlordNamePrefixSearchData(input: {
 
     const companyDefaultCommissionRate = parseCommissionSetting(companySettingsResult.data?.[0]?.value, 10);
     const landlordById = new Map((landlordRows ?? []).map((landlord) => [landlord.id, landlord]));
-    const currentPayableByLandlord = new Map(((monthlyPayablesResult.data ?? []) as LandlordMonthlyPayableRow[]).map((row) => [row.landlord_id, row]));
+    const currentPayableByLandlord = latestMonthlyPayableByLandlord((monthlyPayablesResult.data ?? []) as LandlordMonthlyPayableRow[]);
     const approvedPaymentDetailsByLandlord = new Map<string, LandlordPaymentDetail[]>();
     const pendingPaymentDetailsByLandlord = new Map<string, LandlordPaymentDetail[]>();
     const totalLandlords = normalizedSearch ? rankLandlordSearchIndexRows(rawIndexRows, normalizedSearch).length : indexResult.count ?? indexRows.length;
@@ -209,21 +223,14 @@ export async function getLandlordNamePrefixSearchData(input: {
             ?? commissionMetadata.commissionCalculationMode,
         );
         const currentMonthRow = currentPayableByLandlord.get(landlord.id) ?? null;
-        const rentRoll = indexedRentRoll;
-        const commissionBaseAmount = rentRoll;
-        const commissionAmount = Math.round(commissionBaseAmount * (commissionRate / 100));
-        const netPayable = Math.max(0, rentRoll - commissionAmount);
+        const rowCurrentPayable = currentMonthRow ? buildCurrentMonthPayableFromRow(currentMonthRow) : null;
+        const rentRoll = rowCurrentPayable?.fullRentRoll ?? indexedRentRoll;
+        const commissionAmount = rowCurrentPayable?.commissionAmount ?? Math.round(rentRoll * (commissionRate / 100));
+        const netPayable = rowCurrentPayable?.netPayable ?? Math.max(0, rentRoll - commissionAmount);
         const currentMonthPayable = currentMonthRow
-            ? mergeCurrentMonthPayableWithLiveEstimate(buildCurrentMonthPayableFromRow(currentMonthRow), {
-                commissionAmount,
-                commissionBaseAmount,
-                commissionRate,
-                fullRentRoll: rentRoll,
-                netPayable,
-                recoveryDeduction: 0,
-            })
+            ? buildCurrentMonthPayableFromRow(currentMonthRow)
             : buildCurrentMonthPayableFallback({
-                commissionBaseAmount,
+                commissionBaseAmount: rentRoll,
                 commissionMode: commissionCalculationMode,
                 commissionRate,
                 fullRentRoll: rentRoll,
