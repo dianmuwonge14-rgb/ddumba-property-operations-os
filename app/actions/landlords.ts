@@ -10,6 +10,7 @@ import { getMoveInPayableDecision } from "@/lib/landlords/payable-cutoff";
 import { scheduledAdvanceDeductionForMonth, splitAdvanceDeductionPortions } from "@/lib/landlord-advances/calculator";
 import { reconcileLandlordPayableWithLiveNet } from "@/lib/landlord-payables/live-net";
 import { landlordMonthlyDue, landlordMonthlyPaid, landlordMonthlyUnpaid } from "@/lib/landlord-payables/payment-allocation";
+import { isRecoveryDeductionActiveForMonth } from "@/lib/landlord-payables/recovery-deductions";
 import type {
     ArchiveLandlordInput,
     AssignPropertyInput,
@@ -1049,7 +1050,7 @@ export async function generateLandlordSettlement(input: GenerateSettlementInput)
     if (debtDeductionsError) throw new Error(debtDeductionsError.message);
 
     const pendingDeductions = ((debtDeductions ?? []) as Array<Record<string, unknown>>)
-        .filter((deduction) => ["pending", "partially_applied"].includes(String(deduction.status ?? "pending")));
+        .filter((deduction) => isRecoveryDeductionActiveForMonth(deduction, settlementMonth));
     const requestedRecoveryDeduction = pendingDeductions.reduce((total, deduction) => {
         const remaining = Number(deduction.amount ?? 0) - Number(deduction.applied_amount ?? 0);
         return total + Math.max(0, remaining);
@@ -1290,7 +1291,7 @@ export async function runMonthlyLandlordPayableSnapshot(input: MonthlyLandlordPa
             const activeDebtDeductions = ((debtRows ?? []) as LooseRecord[])
                 .filter((deduction) => String(deduction.office_id) === officeId)
                 .filter((deduction) => String(deduction.landlord_id) === landlordId)
-                .filter((deduction) => ["pending", "partially_applied"].includes(String(deduction.status ?? "pending")));
+                .filter((deduction) => isRecoveryDeductionActiveForMonth(deduction, settlementMonth));
             const requestedRecovery = activeDebtDeductions.reduce((total, deduction) => {
                 const remaining = Number(deduction.amount ?? 0) - Number(deduction.applied_amount ?? 0);
                 return total + Math.max(0, remaining);
@@ -2544,7 +2545,7 @@ async function refreshCurrentMonthPayablesForLandlord({
             : Math.max(0, fullRentRoll - commissionAmount - vacantRoomDeductions);
         const activeDebts = ((debts ?? []) as LooseRecord[])
             .filter((debt) => String(debt.office_id) === officeId)
-            .filter((debt) => ["pending", "partially_applied"].includes(String(debt.status ?? "pending")));
+            .filter((debt) => isRecoveryDeductionActiveForMonth(debt, settlementMonth));
         const requestedRecovery = activeDebts.reduce((total, debt) => {
             const remaining = Number(debt.amount ?? 0) - Number(debt.applied_amount ?? 0);
             return total + Math.max(0, remaining);

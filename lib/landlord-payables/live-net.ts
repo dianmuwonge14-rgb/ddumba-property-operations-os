@@ -1,5 +1,6 @@
 import { scheduledAdvanceDeductionForMonth } from "@/lib/landlord-advances/calculator";
 import { landlordMonthlyDue, landlordMonthlyPaid, type LandlordPayableLike } from "@/lib/landlord-payables/payment-allocation";
+import { sumRecoveryDeductionsForMonth } from "@/lib/landlord-payables/recovery-deductions";
 
 type DbLike = { from: (table: string) => any };
 
@@ -97,9 +98,7 @@ export async function getLiveLandlordMonthlyNetPayable({
         ? Math.max(0, occupiedPayableRent - commissionAmount)
         : Math.max(0, fullRentRoll - commissionAmount - vacantRoomDeductions);
     const portfolioNet = landlordNetOverride(landlord) ?? calculatedNet;
-    const recoveryRequested = ((debtsResult.data ?? []) as Record<string, unknown>[])
-        .filter((deduction) => ["pending", "partially_applied"].includes(String(deduction.status ?? "pending")))
-        .reduce((total, deduction) => total + Math.max(0, num(deduction.amount) - num(deduction.applied_amount)), 0);
+    const recoveryRequested = sumRecoveryDeductionsForMonth((debtsResult.data ?? []) as Record<string, unknown>[], settlementMonth);
     const recoveryDeduction = Math.min(recoveryRequested, portfolioNet);
     const advanceRequested = ((advancesResult.data ?? []) as Record<string, unknown>[])
         .filter((advance) => String(advance.status ?? "pending") !== "fully_deducted")

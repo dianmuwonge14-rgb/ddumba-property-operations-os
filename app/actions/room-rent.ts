@@ -7,6 +7,7 @@ import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getMoveInPayableDecision } from "@/lib/landlords/payable-cutoff";
+import { isRecoveryDeductionActiveForMonth } from "@/lib/landlord-payables/recovery-deductions";
 
 type Db = {
     from: (table: string) => any;
@@ -478,7 +479,7 @@ export async function refreshAffectedLandlordPayable(db: Db, input: {
         ? Math.max(0, occupiedPayableRent - commissionAmount)
         : Math.max(0, fullRentRoll - commissionAmount - vacantRoomDeductions);
     const activeDebts = ((debtsResult.data ?? []) as Record<string, unknown>[])
-        .filter((debt) => ["pending", "partially_applied"].includes(String(debt.status ?? "pending")));
+        .filter((debt) => isRecoveryDeductionActiveForMonth(debt, settlementMonth));
     const requestedRecovery = activeDebts.reduce((total, debt) => total + Math.max(0, amount(debt.amount) - amount(debt.applied_amount)), 0);
     const recoveryDeduction = Math.min(requestedRecovery, landlordPortfolioNet);
     const activeAdvances = ((advancesResult.data ?? []) as Record<string, unknown>[])

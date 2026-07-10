@@ -4,6 +4,7 @@ import { getScopedSupabase } from "@/lib/auth/query";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { scheduledAdvanceDeductionForMonth } from "@/lib/landlord-advances/calculator";
 import { getMoveInPayableDecision } from "@/lib/landlords/payable-cutoff";
+import { isRecoveryDeductionActiveForMonth } from "@/lib/landlord-payables/recovery-deductions";
 import type {
     CollectionRow,
     ExpenseRow,
@@ -1897,7 +1898,7 @@ function buildSettlementEstimate({
     const landlordGrossPayable = commissionCalculationMode === "occupied_room_based"
         ? Math.max(0, occupiedPayableRent - companyCommissionAmount)
         : Math.max(0, expectedGrossRent - companyCommissionAmount - emptyRoomDeductions);
-    const pendingDeductions = landlordDeductions.filter((deduction) => ["pending", "partially_applied"].includes(String(deduction.status ?? "pending")));
+    const pendingDeductions = landlordDeductions.filter((deduction) => isRecoveryDeductionActiveForMonth(deduction, settlementMonth));
     const previousUnrecoveredTenantDebts = pendingDeductions.reduce((total, deduction) => {
         const remaining = Number(deduction.amount ?? 0) - Number(deduction.applied_amount ?? 0);
         return total + Math.max(0, remaining);
