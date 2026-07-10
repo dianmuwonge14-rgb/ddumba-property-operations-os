@@ -371,7 +371,28 @@ export async function vacateTenant(input: VacateTenantInput) {
         if (result.error) console.warn("Vacancy notification failed:", result.error.message);
     });
 
-    for (const path of ["/office/collections", "/office/landlords", "/office/properties", "/office/vacant-rooms", "/office/admin/vacant-rooms", "/office/spreadsheet", "/office/admin", "/office/reports", "/office/ceo", "/office/audit", "/office/notifications"]) {
+    for (const path of [
+        "/office/collections",
+        "/office/payments",
+        "/office/admin/payments",
+        "/office/collector/payments",
+        "/office/promises",
+        "/office/collector/promises",
+        "/office/landlords",
+        "/office/properties",
+        "/office/vacant-rooms",
+        "/office/admin/vacant-rooms",
+        "/office/collector/vacant-rooms",
+        "/office/tenant-relocation",
+        "/office/admin/tenant-relocation",
+        "/office/collector/tenant-relocation",
+        "/office/spreadsheet",
+        "/office/admin",
+        "/office/reports",
+        "/office/ceo",
+        "/office/audit",
+        "/office/notifications",
+    ]) {
         revalidatePath(path);
     }
 

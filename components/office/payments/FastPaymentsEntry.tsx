@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { AlertTriangle, Banknote, BrainCircuit, CalendarDays, CheckCircle2, CreditCard, Eye, History, Home, Loader2, Pencil, ReceiptText, Search, ShieldCheck, Smartphone, Trash2, UserPlus } from "lucide-react";
+import { AlertTriangle, Banknote, BrainCircuit, CalendarDays, CheckCircle2, CreditCard, DoorOpen, Eye, History, Home, Loader2, Pencil, ReceiptText, Search, ShieldCheck, Smartphone, Trash2, UserPlus } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { adminCorrectPayment, recordCollection, requestPaymentCorrection, requestTenantOutstandingBalanceAdjustment } from "@/app/actions/collections";
 import { recordCollectorPayment } from "@/app/actions/collectors";
 import { logReceiptPrintOrDownload, logReceiptShareLink, sendReceiptByEmail } from "@/app/actions/receipts";
 import { replaceTenantFromPaymentsEntry } from "@/app/actions/room-occupancy";
+import { vacateTenant } from "@/app/actions/tenants";
 import TenantContactCard from "@/components/office/shared/TenantContactCard";
 import type { AdvanceRentAssistantItem, CollectionTenantResult, FastPaymentRecentItem, FastPaymentRecentTotals } from "@/lib/collections/types";
 import type { Company, Office, UserProfile } from "@/lib/auth/types";
@@ -48,6 +49,14 @@ type BalanceAdjustmentForm = {
     newBalance: string;
     notes: string;
     reason: string;
+};
+type VacateRoomForm = {
+    finalPaymentAmount: string;
+    notes: string;
+    paymentMethod: string;
+    reason: string;
+    referenceNumber: string;
+    vacateDate: string;
 };
 type ReceiptModalState = {
     email: string;
@@ -146,6 +155,16 @@ export default function FastPaymentsEntry({
     const [newTenantError, setNewTenantError] = useState<string | null>(null);
     const [balanceAdjustmentOpen, setBalanceAdjustmentOpen] = useState(false);
     const [balanceAdjustmentError, setBalanceAdjustmentError] = useState<string | null>(null);
+    const [vacateRoomOpen, setVacateRoomOpen] = useState(false);
+    const [vacateRoomError, setVacateRoomError] = useState<string | null>(null);
+    const [vacateRoomForm, setVacateRoomForm] = useState<VacateRoomForm>({
+        finalPaymentAmount: "",
+        notes: "",
+        paymentMethod: "cash",
+        reason: "",
+        referenceNumber: "",
+        vacateDate: today(),
+    });
     const [balanceAdjustmentForm, setBalanceAdjustmentForm] = useState<BalanceAdjustmentForm>({
         effectiveDate: today(),
         newBalance: "",
@@ -389,6 +408,21 @@ export default function FastPaymentsEntry({
         setBalanceAdjustmentOpen(true);
     }
 
+    function openVacateRoomModal() {
+        if (!selectedTenant) return;
+        setMessage(null);
+        setVacateRoomError(null);
+        setVacateRoomForm({
+            finalPaymentAmount: "",
+            notes: "",
+            paymentMethod: "cash",
+            reason: "",
+            referenceNumber: "",
+            vacateDate: paymentDate,
+        });
+        setVacateRoomOpen(true);
+    }
+
     function submitBalanceAdjustment() {
         if (!selectedTenant?.room?.id) {
             setBalanceAdjustmentError("Search and select a room before editing outstanding balance.");
@@ -489,6 +523,96 @@ export default function FastPaymentsEntry({
                 void loadAdvanceRentAssistant(paymentDate);
             } catch (error) {
                 setNewTenantError(error instanceof Error ? error.message : "New tenant workflow could not be completed.");
+            }
+        });
+    }
+
+    function submitVacateRoom() {
+        if (!selectedTenant) {
+            setVacateRoomError("Search and select a room before vacating.");
+            return;
+        }
+        if (!isDateOnly(vacateRoomForm.vacateDate)) {
+            setVacateRoomError("Select a valid vacate date.");
+            return;
+        }
+        if (!vacateRoomForm.reason.trim()) {
+            setVacateRoomError("Reason for vacating is required.");
+            return;
+        }
+        if (selectedOfficeMismatch) {
+            setVacateRoomError("This room is outside your active office.");
+            return;
+        }
+
+        const finalPaymentAmount = Number(vacateRoomForm.finalPaymentAmount || 0);
+        if (!Number.isFinite(finalPaymentAmount) || finalPaymentAmount < 0) {
+            setVacateRoomError("Final payment must be zero or greater.");
+            return;
+        }
+
+        const selected = selectedTenant;
+        const outstandingBeforeFinalPayment = liveOutstandingBalance(selected);
+        const shouldClearBalance = Math.max(0, outstandingBeforeFinalPayment - finalPaymentAmount) <= 0;
+
+        startTransition(async () => {
+            try {
+                setMessage(null);
+                setVacateRoomError(null);
+                setAllocationMessage(null);
+
+                let receipt: PaymentReceiptSummary | null = null;
+                let receiptError: string | null = null;
+                if (finalPaymentAmount > 0) {
+                    const collection = entryMode === "collector"
+                        ? await recordCollectorPayment({
+                            amount: finalPaymentAmount,
+                            paymentDate: vacateRoomForm.vacateDate,
+                            paymentMethod: vacateRoomForm.paymentMethod || "cash",
+                            tenantId: selected.tenant.id,
+                        })
+                        : await recordCollection({
+                            amount: finalPaymentAmount,
+                            paymentDate: vacateRoomForm.vacateDate,
+                            paymentKind: "tenant_normal",
+                            paymentMethod: vacateRoomForm.paymentMethod || "cash",
+                            paymentSource: "tenant",
+                            tenantId: selected.tenant.id,
+                        });
+                    receipt = (collection as typeof collection & { receipt?: PaymentReceiptSummary | null; receiptError?: string | null }).receipt ?? null;
+                    receiptError = (collection as typeof collection & { receiptError?: string | null }).receiptError ?? null;
+                }
+
+                const result = await vacateTenant({
+                    clearBalance: shouldClearBalance,
+                    reason: [
+                        vacateRoomForm.reason.trim(),
+                        vacateRoomForm.notes.trim(),
+                        vacateRoomForm.referenceNumber.trim() ? `Reference: ${vacateRoomForm.referenceNumber.trim()}` : "",
+                        finalPaymentAmount > 0 ? `Final payment received before vacating: ${money(finalPaymentAmount)}.` : "",
+                    ].filter(Boolean).join(" "),
+                    tenantId: selected.tenant.id,
+                    vacateDate: vacateRoomForm.vacateDate,
+                });
+
+                setVacateRoomOpen(false);
+                setMessage(`${selected.tenant.full_name ?? "Tenant"} vacated from room ${selected.room?.room_number ?? "selected room"}. Room is now vacant.${result.finalOutstanding > 0 ? ` Frozen debt: ${money(result.finalOutstanding)}.` : " Balance cleared."}${receiptError ? ` Receipt warning: ${receiptError}` : ""}`);
+                setAmount("");
+                setDuplicateWarning(null);
+                clearForNextPayment();
+                void loadRecentPayments(paymentDate);
+                void loadAdvanceRentAssistant(paymentDate);
+                if (receipt) {
+                    setReceiptModal({
+                        email: receipt.tenantEmail ?? "",
+                        message: null,
+                        phone: receipt.tenantPhone ?? "",
+                        receipt,
+                        sending: false,
+                    });
+                }
+            } catch (error) {
+                setVacateRoomError(error instanceof Error ? error.message : "Room could not be vacated.");
             }
         });
     }
@@ -806,20 +930,31 @@ export default function FastPaymentsEntry({
                     {selectedTenant ? (
                         <div className="mt-4 flex flex-col gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                             <div>
-                                <p className="text-sm font-black text-slate-950">Tenant replacement</p>
+                                <p className="text-sm font-black text-slate-950">Tenant actions</p>
                                 <p className="mt-1 text-xs font-bold text-slate-500">
-                                    Vacate the current tenant, keep their history separate, and add a new tenant to this room.
+                                    Vacate this room, keep old history separate, or add a replacement tenant.
                                 </p>
                             </div>
-                            <button
-                                type="button"
-                                disabled={!canPostPayments || selectedOfficeMismatch || isPending}
-                                onClick={openNewTenantModal}
-                                className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 text-sm font-black text-white shadow-lg shadow-slate-200 transition hover:-translate-y-0.5 disabled:opacity-40"
-                            >
-                                <UserPlus size={17} />
-                                New Tenant
-                            </button>
+                            <div className="flex flex-wrap gap-2">
+                                <button
+                                    type="button"
+                                    disabled={!canPostPayments || selectedOfficeMismatch || isPending}
+                                    onClick={openVacateRoomModal}
+                                    className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-rose-700 px-5 text-sm font-black text-white shadow-lg shadow-rose-100 transition hover:-translate-y-0.5 disabled:opacity-40"
+                                >
+                                    <DoorOpen size={17} />
+                                    Vacate Room
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={!canPostPayments || selectedOfficeMismatch || isPending}
+                                    onClick={openNewTenantModal}
+                                    className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 text-sm font-black text-white shadow-lg shadow-slate-200 transition hover:-translate-y-0.5 disabled:opacity-40"
+                                >
+                                    <UserPlus size={17} />
+                                    New Tenant
+                                </button>
+                            </div>
                         </div>
                     ) : null}
 
@@ -924,6 +1059,19 @@ export default function FastPaymentsEntry({
                 onSubmit={submitNewTenant}
                 open={newTenantOpen}
                 paymentDate={paymentDate}
+                tenant={selectedTenant}
+            />
+            <VacateRoomModal
+                error={vacateRoomError}
+                form={vacateRoomForm}
+                isAdmin={isAdmin}
+                isPending={isPending}
+                onChange={(patch) => setVacateRoomForm((current) => ({ ...current, ...patch }))}
+                onClose={() => {
+                    if (!isPending) setVacateRoomOpen(false);
+                }}
+                onSubmit={submitVacateRoom}
+                open={vacateRoomOpen}
                 tenant={selectedTenant}
             />
             <BalanceAdjustmentModal
@@ -1241,6 +1389,153 @@ function NewTenantModal({
 	                        {isPending ? <Loader2 className="animate-spin" size={16} /> : <UserPlus size={16} />}
 	                        {isPending ? "Creating tenant..." : "Complete New Tenant"}
 	                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function VacateRoomModal({
+    error,
+    form,
+    isAdmin,
+    isPending,
+    onChange,
+    onClose,
+    onSubmit,
+    open,
+    tenant,
+}: {
+    error: string | null;
+    form: VacateRoomForm;
+    isAdmin: boolean;
+    isPending: boolean;
+    onChange: (patch: Partial<VacateRoomForm>) => void;
+    onClose: () => void;
+    onSubmit: () => void;
+    open: boolean;
+    tenant: CollectionTenantResult | null;
+}) {
+    if (!open || !tenant) return null;
+    const outstanding = liveOutstandingBalance(tenant);
+    const advance = Math.max(0, Number(tenant.advanceRentBalance ?? 0));
+    const finalPayment = Math.max(0, Number(form.finalPaymentAmount || 0));
+    const remainingAfterPayment = Math.max(0, outstanding - finalPayment);
+    const clearsBalance = remainingAfterPayment <= 0;
+
+    return (
+        <div className="fixed inset-0 z-[145] flex items-center justify-center overflow-y-auto bg-slate-950/75 p-4 backdrop-blur-sm">
+            <div className="my-6 w-full max-w-4xl overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-2xl">
+                <div className="flex items-start justify-between gap-4 border-b border-rose-200 bg-gradient-to-br from-slate-950 via-rose-950 to-slate-900 p-5 text-white">
+                    <div>
+                        <p className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black uppercase text-rose-100">
+                            <DoorOpen size={14} />
+                            Vacate room
+                        </p>
+                        <h2 className="mt-3 text-2xl font-black">Vacate Room {tenant.room?.room_number ?? "Unknown"}</h2>
+                        <p className="mt-1 max-w-2xl text-sm font-semibold text-rose-100">
+                            This closes the current tenancy, preserves tenant history, and makes the room available as vacant.
+                        </p>
+                    </div>
+                    <button type="button" disabled={isPending} onClick={onClose} className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-black text-white disabled:opacity-40">
+                        Close
+                    </button>
+                </div>
+
+                <div className="grid gap-5 p-5 lg:grid-cols-[1fr_0.9fr]">
+                    <section className="space-y-4">
+                        <div className="rounded-3xl border border-rose-200 bg-rose-50 p-4">
+                            <div className="flex items-start gap-3">
+                                <AlertTriangle className="mt-0.5 shrink-0 text-rose-700" size={20} />
+                                <div>
+                                    <p className="font-black text-rose-950">Confirm before vacating</p>
+                                    <p className="mt-1 text-sm font-bold text-rose-800">
+                                        Old tenant debt, promises, and payment history stay with the old tenant. Nothing is carried to the next tenant.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="grid gap-3 sm:grid-cols-2">
+                            <MiniStat label="Tenant name" value={tenant.tenant.full_name ?? "Unnamed tenant"} />
+                            <MiniStat label="Tenant phone" value={tenant.tenant.phone ?? "Not recorded"} />
+                            <MiniStat label="Room number" value={tenant.room?.room_number ?? "Unknown"} />
+                            <MiniStat label="Landlord" value={tenant.landlord?.full_name ?? "No landlord"} />
+                            <MiniStat label="Office" value={tenant.office?.office_name ?? tenant.office?.name ?? "No office"} />
+                            <MiniStat label="Monthly rent" value={money(tenant.monthlyRent)} />
+                            <MiniStat label="Current outstanding" value={money(outstanding)} tone={outstanding > 0 ? "text-rose-700" : "text-emerald-700"} />
+                            <MiniStat label="Advance balance" value={money(advance)} tone={advance > 0 ? "text-violet-700" : "text-slate-700"} />
+                        </div>
+
+                        <div className="grid gap-3 sm:grid-cols-2">
+                            <TextField label="Vacate date" type="date" value={form.vacateDate} onChange={(value) => onChange({ vacateDate: value })} />
+                            <TextField label="Final payment received" type="number" value={form.finalPaymentAmount} onChange={(value) => onChange({ finalPaymentAmount: value })} placeholder="UGX 0 if none" />
+                            <label className="block">
+                                <span className="text-xs font-black uppercase text-slate-500">Payment method</span>
+                                <select
+                                    value={form.paymentMethod}
+                                    onChange={(event) => onChange({ paymentMethod: event.target.value })}
+                                    className="mt-1 h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                                >
+                                    <option value="cash">Cash</option>
+                                    <option value="mobile_money">Mobile money</option>
+                                    <option value="bank">Bank</option>
+                                    <option value="cheque">Cheque</option>
+                                </select>
+                            </label>
+                            <TextField label="Reference" value={form.referenceNumber} onChange={(value) => onChange({ referenceNumber: value })} placeholder="Optional" />
+                            <label className="sm:col-span-2 block">
+                                <span className="text-xs font-black uppercase text-slate-500">Reason for vacating</span>
+                                <input
+                                    value={form.reason}
+                                    onChange={(event) => onChange({ reason: event.target.value })}
+                                    placeholder="Required reason"
+                                    className="mt-1 h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                                />
+                            </label>
+                            <label className="sm:col-span-2 block">
+                                <span className="text-xs font-black uppercase text-slate-500">Notes</span>
+                                <textarea
+                                    value={form.notes}
+                                    onChange={(event) => onChange({ notes: event.target.value })}
+                                    placeholder="Optional final notes"
+                                    className="mt-1 min-h-24 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                                />
+                            </label>
+                        </div>
+                    </section>
+
+                    <aside className="space-y-3">
+                        <div className="rounded-3xl border border-slate-800 bg-slate-950 p-4 text-white">
+                            <p className="text-sm font-black">Vacate impact preview</p>
+                            <div className="mt-4 space-y-3">
+                                <ModalMetric label="Outstanding now" value={money(outstanding)} />
+                                <ModalMetric label="Final payment" value={money(finalPayment)} tone={finalPayment > 0 ? "text-emerald-200" : "text-slate-200"} />
+                                <ModalMetric label="Frozen old-tenant debt" value={money(remainingAfterPayment)} tone={remainingAfterPayment > 0 ? "text-rose-200" : "text-emerald-200"} />
+                                <ModalMetric label="Room status after save" value="Vacant" tone="text-cyan-200" />
+                                <ModalMetric label="Approval mode" value={isAdmin ? "Admin direct" : "Existing permission workflow"} tone="text-amber-200" />
+                            </div>
+                            <p className="mt-4 rounded-2xl bg-white/10 px-3 py-2 text-xs font-bold text-slate-200">
+                                {clearsBalance ? "The tenancy will be marked Vacated — Cleared." : "The remaining balance will be frozen as Vacated with debt and sent to landlord recovery where required."}
+                            </p>
+                            {advance > 0 ? (
+                                <p className="mt-2 rounded-2xl bg-violet-400/15 px-3 py-2 text-xs font-bold text-violet-100">
+                                    Advance balance detected. It will remain separate for Admin review and will not transfer to the next tenant automatically.
+                                </p>
+                            ) : null}
+                        </div>
+                    </aside>
+                </div>
+
+                <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 p-5">
+                    {error ? <div className="mr-auto w-full rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-black text-rose-700 lg:w-auto">{error}</div> : null}
+                    <button type="button" disabled={isPending} onClick={onClose} className="rounded-2xl bg-white px-5 py-3 text-sm font-black text-slate-700 shadow disabled:opacity-40">
+                        Cancel
+                    </button>
+                    <button type="button" disabled={isPending} onClick={onSubmit} className="inline-flex items-center gap-2 rounded-2xl bg-rose-700 px-5 py-3 text-sm font-black text-white shadow-lg disabled:opacity-40">
+                        {isPending ? <Loader2 className="animate-spin" size={16} /> : <DoorOpen size={16} />}
+                        {isPending ? "Vacating room..." : "Confirm Vacate Room"}
+                    </button>
                 </div>
             </div>
         </div>
