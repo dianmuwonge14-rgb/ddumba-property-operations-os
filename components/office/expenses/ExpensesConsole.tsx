@@ -367,7 +367,9 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                         notes: notes || trimmedItem || undefined,
                     });
                     flashExpense(String(request.expense_id ?? request.id));
-                    setMessage("Pending approval created. Admin has been notified. No expense or landlord totals were changed.");
+                    setMessage(isAdmin
+                        ? "Landlord payment expense approved directly by Admin. Live totals are updating."
+                        : "Pending approval created. Admin has been notified. No expense or landlord totals were changed.");
                 } else if (isEmployeeExpenseMode) {
                     const result = await createEmployeeExpenseFromExpenses({
                         amount: value,
@@ -377,7 +379,9 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                         note: notes || trimmedItem || undefined,
                     });
                     flashExpense(String(result.expenseId ?? result.request?.id ?? Date.now()));
-                    setMessage(result.preview.extraAmount > 0
+                    setMessage(isAdmin && result.preview.extraAmount > 0
+                        ? "Employee expense approved directly by Admin."
+                        : result.preview.extraAmount > 0
                         ? `Allowed portion recorded. UGX ${Math.round(result.preview.extraAmount).toLocaleString()} extra was sent to Admin for approval.`
                         : `Employee expense recorded. Remaining ${employeeExpenseItem} allowance: ${money(result.preview.remainingAllowance - result.preview.allowedPortion)}.`);
                 } else {

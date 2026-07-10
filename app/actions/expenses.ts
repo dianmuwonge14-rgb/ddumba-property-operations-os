@@ -274,9 +274,11 @@ export async function createExpense(input: CreateExpenseInput) {
     assertAmount(amount);
 
     const expenseDate = input.expenseDate || new Date().toISOString().slice(0, 10);
+    const actorId = context.profile?.id ?? context.authUser?.id ?? null;
     const expensePayload = {
         amount,
         approved_at: new Date().toISOString(),
+        approved_by: actorId,
         category: input.category || null,
         category_id: input.categoryId || null,
         company_id: context.activeCompany!.id,
@@ -289,7 +291,7 @@ export async function createExpense(input: CreateExpenseInput) {
         property_id: input.propertyId || null,
         receipt_url: input.receiptUrl || null,
         status: "approved",
-        submitted_by: context.profile?.id ?? null,
+        submitted_by: actorId,
         vendor: input.vendor || null,
     };
 
@@ -307,6 +309,7 @@ export async function createExpense(input: CreateExpenseInput) {
         delete (fallbackPayload as Partial<typeof fallbackPayload>).payment_method;
         delete (fallbackPayload as Partial<typeof fallbackPayload>).status;
         delete (fallbackPayload as Partial<typeof fallbackPayload>).approved_at;
+        delete (fallbackPayload as Partial<typeof fallbackPayload>).approved_by;
         insertResult = await adminDb
             .from("expenses")
             .insert(fallbackPayload)
@@ -415,6 +418,7 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
     const companyId = context.activeCompany!.id;
     const officeId = context.activeOffice!.id;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
     const amount = Number(input.amount);
     assertAmount(amount);
     if (!input.landlordId) throw new Error("Select landlord.");
@@ -500,6 +504,22 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
     if (requestError) {
         console.error("Landlord payment approval request insert failed:", requestError.message);
         throw new Error(`Approval request could not be created: ${requestError.message}`);
+    }
+
+    if (isDirectAdmin) {
+        await logUserAction({
+            action: "landlord_payment_expense_admin_direct_created",
+            entityType: "landlord_payment_expense_request",
+            entityId: request.id,
+            companyId,
+            officeId,
+            afterData: request,
+        });
+        return decideLandlordPaidExpenseRequest({
+            requestId: request.id,
+            decision: "approved",
+            comment: "Admin entered and approved directly.",
+        });
     }
 
     await createNotificationWithEmail(db, {
@@ -699,6 +719,7 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
     const companyId = context.activeCompany!.id;
     const officeId = context.activeOffice!.id;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
     const value = Number(input.amount);
     assertAmount(value);
     if (!input.employeeId) throw new Error("Select employee.");
@@ -745,6 +766,7 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
             .insert({
                 amount: preview.allowedPortion,
                 approved_at: new Date().toISOString(),
+                approved_by: actorId,
                 category: "Employee Expense",
                 company_id: companyId,
                 description: `[employee_expense_allowed] ${input.note ?? ""}`.trim(),
@@ -836,6 +858,23 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
             .single();
         if (error) throw new Error(`Employee extra approval request could not be created: ${error.message}`);
         request = data;
+        if (isDirectAdmin) {
+            const approvedRequest = await decideEmployeeExpenseRequest({
+                requestId: String(data.id),
+                decision: "approved",
+                comment: "Admin entered and approved directly.",
+            });
+            await logUserAction({
+                action: "employee_expense_admin_direct_extra_approved",
+                entityType: "employee_expense_request",
+                entityId: String(data.id),
+                companyId,
+                officeId,
+                afterData: { preview, request: approvedRequest, expenseId, employeeExpenseId } as any,
+            });
+            revalidateExpenseSurfaces();
+            return { expenseId, employeeExpenseId, request: approvedRequest, preview };
+        }
         await createNotificationWithEmail(db, {
             action_url: "/office/notifications",
             channel: "in_app",
@@ -923,6 +962,7 @@ export async function decideEmployeeExpenseRequest(input: DecideEmployeeExpenseR
         .insert({
             amount: extraAmount,
             approved_at: reviewedAt,
+            approved_by: actorId,
             category: "Employee Extra Expense",
             company_id: companyId,
             description: `[employee_expense_extra_approved] ${request.note ?? ""} ${input.comment ? `Admin: ${input.comment}` : ""}`.trim(),
@@ -1111,6 +1151,7 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
         .insert({
             amount: requestedAmount,
             approved_at: reviewedAt,
+            approved_by: actorId,
             category: "Landlord Paid",
             company_id: companyId,
             description: `[landlord_payment_approved] ${request.notes ?? ""} ${input.comment ? `Admin: ${input.comment}` : ""}`.trim(),
@@ -1595,13 +1636,19 @@ export async function adminEditExpenseDirect(input: SubmitExpenseChangeRequestIn
     const supabase = await createSupabaseServerClient();
     const db = supabase as unknown as { from: (table: string) => any };
     const companyId = context.activeCompany?.id;
+    const actorId = context.profile?.id ?? context.authUser?.id ?? null;
     if (!companyId) throw new Error("Active company is required.");
     if (!input.expenseId) throw new Error("Expense id is required.");
     if (!input.reason?.trim()) throw new Error("Reason for expense edit is required.");
     const expense = await loadExpenseForCompany(db, { companyId, expenseId: input.expenseId });
     const patch = requestedExpensePatch(input.requested as Record<string, unknown>);
     if (!Object.keys(patch).length) throw new Error("Enter at least one expense field to change.");
-    const updated = await applyExpensePatch(db, input.expenseId, patch);
+    const updated = await applyExpensePatch(db, input.expenseId, {
+        ...patch,
+        approved_at: new Date().toISOString(),
+        approved_by: actorId,
+        status: "approved",
+    });
     await logUserAction({
         action: "expense_admin_direct_edit",
         entityType: "expense",
