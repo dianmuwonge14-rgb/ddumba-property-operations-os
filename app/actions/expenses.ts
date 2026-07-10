@@ -1337,7 +1337,7 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
             current_net_payable: approvalPayables
                 .filter((row) => String(row.settlement_month ?? "").slice(0, 10) === paymentMonth)
                 .reduce((total, row) => total + landlordMonthlyDue(row), 0),
-            outstanding_amount: approvalPlan.totalUnpaidPayable,
+            outstanding_amount: Math.max(0, approvalPlan.totalUnpaidPayable - normalPaymentAmount),
             reviewed_by: actorId,
             reviewed_at: reviewedAt,
             approved_at: reviewedAt,
