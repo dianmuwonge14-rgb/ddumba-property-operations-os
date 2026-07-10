@@ -12,6 +12,7 @@ import { reconcileLandlordPayableWithLiveNet } from "@/lib/landlord-payables/liv
 import { assertLandlordPayableIntegrity } from "@/lib/landlord-payables/integrity";
 import { landlordMonthlyDue, landlordMonthlyPaid, landlordMonthlyUnpaid } from "@/lib/landlord-payables/payment-allocation";
 import { isRecoveryDeductionActiveForMonth } from "@/lib/landlord-payables/recovery-deductions";
+import { createLandlordPaymentReceipt } from "@/lib/receipts/payment-receipts";
 import type {
     ArchiveLandlordInput,
     AssignPropertyInput,
@@ -1762,6 +1763,15 @@ export async function markLandlordMonthlyPayablePaid(input: {
         afterData: jsonSafe({ payment, allocation }),
     });
 
+    let receipt = null;
+    let receiptError: string | null = null;
+    try {
+        receipt = await createLandlordPaymentReceipt(payment.id, { issuedBy: context.profile?.id ?? context.authUser?.id ?? null });
+    } catch (error) {
+        receiptError = error instanceof Error ? error.message : "Landlord payment receipt could not be generated.";
+        console.warn("Landlord payment receipt generation failed:", receiptError);
+    }
+
     revalidatePath("/office/landlords");
     revalidatePath("/office/spreadsheet");
     revalidatePath("/office/admin");
@@ -1770,7 +1780,7 @@ export async function markLandlordMonthlyPayablePaid(input: {
     revalidatePath("/office");
     revalidatePath("/office/ceo");
     revalidatePath("/office/reports");
-    return { ok: true, amount, appliedAmount: allocation.appliedAmount, advanceCreated: allocation.advanceCreated, remainingBalance: allocation.remainingBalance };
+    return { ok: true, amount, appliedAmount: allocation.appliedAmount, advanceCreated: allocation.advanceCreated, receipt, receiptError, remainingBalance: allocation.remainingBalance };
 }
 
 export async function submitLandlordPaymentDetails(input: LandlordPaymentDetailsInput) {

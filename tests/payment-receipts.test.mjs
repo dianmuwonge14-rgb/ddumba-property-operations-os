@@ -5,6 +5,7 @@ import { test } from "node:test";
 const migration = readFileSync(new URL("../supabase/upgrade_migrations/0204_payment_receipts.sql", import.meta.url), "utf8");
 const receiptService = readFileSync(new URL("../lib/receipts/payment-receipts.ts", import.meta.url), "utf8");
 const collectionsAction = readFileSync(new URL("../app/actions/collections.ts", import.meta.url), "utf8");
+const landlordsAction = readFileSync(new URL("../app/actions/landlords.ts", import.meta.url), "utf8");
 const paymentEntry = readFileSync(new URL("../components/office/payments/FastPaymentsEntry.tsx", import.meta.url), "utf8");
 
 test("payment receipt schema prevents duplicate receipts per transaction", () => {
@@ -25,6 +26,12 @@ test("tenant payment save returns receipt metadata without blocking successful p
   assert.match(collectionsAction, /createTenantPaymentReceipt\(data\.id/);
   assert.match(collectionsAction, /receiptError/);
   assert.match(collectionsAction, /Payment receipt generation failed/);
+});
+
+test("landlord payment save creates receipt metadata where applicable", () => {
+  assert.match(receiptService, /createLandlordPaymentReceipt/);
+  assert.match(landlordsAction, /createLandlordPaymentReceipt\(payment\.id/);
+  assert.match(landlordsAction, /Landlord payment receipt generation failed/);
 });
 
 test("payment entry shows receipt confirmation actions after successful payment", () => {

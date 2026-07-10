@@ -667,7 +667,7 @@ function MonthlyLedger({ group }: { group: LandlordPayableGroup | null }) {
                     reference: paymentReference || undefined,
                     notes: "Recorded from Landlord Payments monthly ledger.",
                 });
-                setPaymentMessage(`Payment recorded: ${money(result.amount)}.`);
+                setPaymentMessage(result.receiptError ? `Payment recorded: ${money(result.amount)}. Receipt warning: ${result.receiptError}` : `Payment recorded: ${money(result.amount)}. Receipt metadata saved.`);
                 setPaymentTarget(null);
             } catch (error) {
                 setPaymentMessage(error instanceof Error ? error.message : "Unable to record landlord payment.");

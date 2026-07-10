@@ -72,6 +72,11 @@ function receiptNumberFor(payment: LooseRow) {
     return `DDM-${date}-${String(payment.id).slice(0, 8).toUpperCase()}`;
 }
 
+function landlordReceiptNumberFor(payment: LooseRow) {
+    const date = String(payment.paid_at ?? new Date().toISOString()).slice(0, 10).replaceAll("-", "");
+    return `LDR-${date}-${String(payment.id).slice(0, 8).toUpperCase()}`;
+}
+
 function verificationCodeFor(payment: LooseRow) {
     return `VR-${String(payment.company_id ?? "").slice(0, 4).toUpperCase()}-${String(payment.id).slice(-6).toUpperCase()}`;
 }
@@ -212,6 +217,71 @@ export async function createTenantPaymentReceipt(paymentId: string, options: { c
             receipt_number: receiptNumber,
             receipt_snapshot: snapshot,
             status: options.correctedFromReceiptId || options.forceRefresh ? "corrected" : "issued",
+            updated_at: new Date().toISOString(),
+            verification_code: verificationCode,
+        }, { onConflict: "company_id,payment_type,payment_id" })
+        .select("*")
+        .single();
+    if (insertError) {
+        if (isMissingSchemaError(insertError)) throw new Error("Payment receipt tables are missing. Apply migration 0204_payment_receipts.sql.");
+        throw new Error(insertError.message);
+    }
+    return receiptSummary(receipt);
+}
+
+export async function createLandlordPaymentReceipt(paymentId: string, options: { issuedBy?: string | null } = {}) {
+    const db = createSupabaseAdminClient() as unknown as Db;
+    const { data: payment, error } = await db.from("landlord_payments").select("*").eq("id", paymentId).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!payment) throw new Error("Landlord payment record not found for receipt.");
+    if (!activePaymentStatus(payment.status)) throw new Error("Receipts are only generated for successful active landlord payments.");
+    const companyId = String(payment.company_id);
+    const receiptNumber = landlordReceiptNumberFor(payment);
+    const verificationCode = verificationCodeFor(payment);
+    const [company, office, landlord, recordedBy] = await Promise.all([
+        getOne(db, "companies", payment.company_id, companyId, "*"),
+        getOne(db, "offices", payment.office_id, companyId, "*"),
+        getOne(db, "landlords", payment.landlord_id, companyId, "*"),
+        payment.created_by ? db.from("users").select("id,full_name,email,phone,account_type").eq("id", payment.created_by).maybeSingle() : Promise.resolve({ data: null, error: null }),
+    ]);
+    if (recordedBy.error && !isMissingSchemaError(recordedBy.error)) throw new Error(recordedBy.error.message);
+    const snapshot: PaymentReceiptSnapshot = {
+        advanceBalance: String(payment.status ?? "").toLowerCase() === "overpaid" ? amount(payment.amount) : 0,
+        amountApplied: amount(payment.amount),
+        amountPaid: amount(payment.amount),
+        companyContact: text(company?.phone) ?? text(company?.email) ?? null,
+        companyName: text(company?.name) ?? "DDUMBA OS",
+        coveragePeriod: null,
+        landlordName: text(landlord?.full_name),
+        monthlyRent: 0,
+        notes: text(payment.notes),
+        officeName: text(office?.office_name) ?? text(office?.name),
+        paymentDateTime: text(payment.paid_at),
+        paymentMethod: text(payment.payment_method),
+        previousOutstandingBalance: 0,
+        receiptNumber,
+        recordedByName: text(recordedBy.data?.full_name),
+        referenceNumber: text(payment.payout_reference),
+        remainingOutstandingBalance: 0,
+        roomNumber: null,
+        status: text(payment.status) ?? "paid",
+        tenantEmail: text(landlord?.email),
+        tenantName: text(landlord?.full_name),
+        tenantPhone: text(landlord?.phone),
+        verificationCode,
+    };
+    const { data: receipt, error: insertError } = await db
+        .from("payment_receipts")
+        .upsert({
+            company_id: companyId,
+            file_url: null,
+            issued_by: options.issuedBy ?? payment.created_by ?? null,
+            office_id: payment.office_id ?? null,
+            payment_id: paymentId,
+            payment_type: "landlord_payment",
+            receipt_number: receiptNumber,
+            receipt_snapshot: snapshot,
+            status: "issued",
             updated_at: new Date().toISOString(),
             verification_code: verificationCode,
         }, { onConflict: "company_id,payment_type,payment_id" })
