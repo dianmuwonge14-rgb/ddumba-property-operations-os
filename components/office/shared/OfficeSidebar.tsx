@@ -237,60 +237,6 @@ export default function OfficeSidebar({ isAdmin, isCollector = false, officeName
                     })}
                 </nav>
             </header>
-            <aside className="office-desktop-sidebar sticky z-20 hidden w-80 shrink-0 border-r border-white/10 bg-slate-950/62 px-4 py-5 shadow-2xl shadow-black/30 backdrop-blur-2xl xl:block">
-                <div className="enterprise-dark-panel mb-6 rounded-3xl p-5 text-white">
-                    <div className="flex items-center gap-3">
-                        <div className="grid h-11 w-11 place-items-center rounded-2xl bg-blue-500">
-                            <WalletCards size={23} />
-                        </div>
-                        <div>
-                            <h2 className="text-lg font-black">DDUMBA OS</h2>
-                            <p className="text-xs text-slate-300">{isAdmin ? "Property Operations" : isCollector ? "Field Collections" : officeName ?? "Office Operations"}</p>
-                        </div>
-                    </div>
-                    <div className="mt-5 flex items-center justify-between rounded-2xl bg-white/10 px-4 py-3">
-                        <span className="text-xs font-bold text-slate-300">{isAdmin ? "Enterprise Status" : "Attendance Status"}</span>
-                        <span className={`inline-flex items-center gap-1 text-xs font-black ${attendance.required && !attendance.checkedIn ? "text-orange-300" : attendance.status === "late" ? "text-amber-300" : attendance.status === "absent" ? "text-red-300" : "text-emerald-300"}`}>
-                            <ClipboardCheck size={14} />
-                            {attendanceLabel}
-                        </span>
-                    </div>
-                    <AttendanceAccountControls attendance={attendance} compact />
-                </div>
-
-                <nav className="space-y-6 overflow-y-auto pb-6">
-                    {sections.map((section) => (
-                        <div key={section.label}>
-                            <p className="mb-2 px-3 text-xs font-black uppercase text-slate-500">{section.label}</p>
-                            <div className="space-y-1">
-                                {section.items.map((item) => {
-                                    const active = pathname === item.href || (item.href !== "/office" && pathname.startsWith(item.href));
-                                    const Icon = item.icon;
-                                    return (
-                                        <Link
-                                            key={item.href}
-                                            href={item.href}
-                                            className={`group flex items-center gap-3 rounded-2xl px-3 py-3 text-sm font-bold transition ${
-                                                active
-                                                    ? "bg-white text-slate-950 shadow-lg shadow-cyan-500/10 ring-1 ring-white/30"
-                                                    : "text-slate-300 hover:bg-white/10 hover:text-white hover:shadow-sm"
-                                            }`}
-                                        >
-                                            <span className={`grid h-9 w-9 place-items-center rounded-xl ${active ? "bg-gradient-to-br from-blue-600 to-cyan-500 text-white" : "bg-white/8 text-slate-400 group-hover:bg-white/12 group-hover:text-white"}`}>
-                                                <Icon size={18} />
-                                            </span>
-                                            <span className="flex-1">
-                                                {item.href === "/office/notifications" && notificationCount > 0 ? `${item.label} (${notificationCount})` : item.label}
-                                            </span>
-                                            {active && <span className="h-2 w-2 rounded-full bg-cyan-400 shadow-lg shadow-cyan-400/50" />}
-                                        </Link>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    ))}
-                </nav>
-            </aside>
         </>
     );
 }
