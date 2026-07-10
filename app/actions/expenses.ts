@@ -7,7 +7,6 @@ import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getExpenseInActiveOffice } from "@/lib/expenses/data";
-import { markLandlordMonthlyPayablePaid } from "@/app/actions/landlords";
 import { calculateLandlordAdvancePlan } from "@/lib/landlord-advances/calculator";
 import { getLiveLandlordMonthlyNetPayable, reconcileLandlordPayableWithLiveNet } from "@/lib/landlord-payables/live-net";
 import { buildLandlordPaymentAllocationPlan, landlordMonthlyDue, landlordMonthlyPaid } from "@/lib/landlord-payables/payment-allocation";
@@ -1303,36 +1302,32 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
     });
 
     if (normalPaymentAmount > 0) {
-        const payable = payableId
-            ? { id: payableId }
-            : await findPayableForLandlordPayment({
+        if (!payableId) {
+            const payable = await findPayableForLandlordPayment({
                 companyId,
                 db,
                 landlordId: request.landlord_id,
                 officeId: request.office_id,
                 paymentMonth: String(request.payment_month ?? request.payment_date ?? ""),
             });
-        if (!payable) throw new Error("No live monthly payable record was found for the normal payment portion. Run monthly snapshot or refresh landlord payables first.");
-        payableId = payable.id;
-        await markLandlordMonthlyPayablePaid({
-            monthlyPayableId: payable.id,
+            if (!payable) throw new Error("No live monthly payable record was found for the normal payment portion. Run monthly snapshot or refresh landlord payables first.");
+            payableId = payable.id;
+        }
+        approvedPaymentId = await applyApprovedLandlordPaymentToLedger({
             amount: normalPaymentAmount,
+            companyId,
+            db,
+            landlordId: request.landlord_id,
+            officeId: request.office_id,
             paidAt: request.payment_date,
+            paidBy: actorId,
             paymentMethod: request.payment_method ?? "cash",
             reference,
+            requestId: request.id,
+            paymentMonth,
+            startingMonthlyPayableId: payableId,
             notes: `Approved from Expenses landlord payment request. ${request.notes ?? ""}`.trim(),
         });
-
-        const { data: payment } = await db
-            .from("landlord_payments")
-            .select("id")
-            .eq("company_id", companyId)
-            .eq("landlord_id", request.landlord_id)
-            .eq("payout_reference", reference)
-            .order("created_at", { ascending: false })
-            .limit(1)
-            .maybeSingle();
-        approvedPaymentId = payment?.id ?? null;
     }
 
     if (advanceAmount > 0) {
@@ -1353,6 +1348,12 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
             monthly_payable_id: payableId,
             normal_payment_amount: normalPaymentAmount,
             advance_amount: advanceAmount,
+            already_paid_amount: approvalPayables
+                .filter((row) => String(row.settlement_month ?? "").slice(0, 10) === paymentMonth)
+                .reduce((total, row) => total + landlordMonthlyPaid(row), 0),
+            current_net_payable: approvalPayables
+                .filter((row) => String(row.settlement_month ?? "").slice(0, 10) === paymentMonth)
+                .reduce((total, row) => total + landlordMonthlyDue(row), 0),
             outstanding_amount: approvalPlan.totalUnpaidPayable,
             reviewed_by: actorId,
             reviewed_at: reviewedAt,
@@ -1532,6 +1533,112 @@ async function findPayableForLandlordPayment(input: { db: { from: (table: string
         const unpaid = Math.max(0, Number(row.unpaid_balance ?? row.closing_arrears ?? row.net_payable ?? 0));
         return unpaid > 0;
     }) ?? (data ?? [])[0] ?? null;
+}
+
+async function applyApprovedLandlordPaymentToLedger(input: {
+    amount: number;
+    companyId: string;
+    db: { from: (table: string) => any };
+    landlordId: string;
+    officeId: string;
+    paidAt: string;
+    paidBy: string | null;
+    paymentMethod: string;
+    paymentMonth: string;
+    reference: string;
+    requestId: string;
+    startingMonthlyPayableId: string | null;
+    notes: string | null;
+}) {
+    if (input.amount <= 0) return null;
+    const rowsResult = await input.db
+        .from("landlord_monthly_payables")
+        .select("*")
+        .eq("company_id", input.companyId)
+        .eq("office_id", input.officeId)
+        .eq("landlord_id", input.landlordId)
+        .neq("status", "archived")
+        .lte("settlement_month", input.paymentMonth)
+        .order("settlement_month", { ascending: true });
+    if (rowsResult.error) throw new Error(rowsResult.error.message);
+
+    const plan = buildLandlordPaymentAllocationPlan({
+        amount: input.amount,
+        currentMonth: input.paymentMonth,
+        payables: (rowsResult.data ?? []) as Record<string, unknown>[],
+    });
+    if (plan.normalPaymentAmount <= 0 || plan.lines.length === 0) {
+        throw new Error("No genuine unpaid landlord payable was found for this payment.");
+    }
+
+    const rowsById = new Map(((rowsResult.data ?? []) as Record<string, unknown>[]).map((row) => [String(row.id), row]));
+    for (const line of plan.lines) {
+        const row = rowsById.get(line.payableId);
+        if (!row) continue;
+        const monthlyNetPayable = landlordMonthlyDue(row);
+        const openingArrears = amount(row.opening_arrears);
+        const totalDue = amount(row.total_due) || monthlyNetPayable;
+        const nextPaid = landlordMonthlyPaid(row) + line.applied;
+        const unpaidBalance = Math.max(0, monthlyNetPayable - Math.min(nextPaid, monthlyNetPayable));
+        const status = unpaidBalance <= 0 ? "paid" : nextPaid > 0 ? "partial" : "unpaid";
+        const update = await input.db
+            .from("landlord_monthly_payables")
+            .update({
+                accounting_notes: `Approved from Notifications landlord payment request ${input.requestId}. ${input.notes ?? ""}`.trim(),
+                advance_created: 0,
+                amount_paid: nextPaid,
+                closing_arrears: unpaidBalance,
+                last_paid_at: input.paidAt,
+                monthly_net_payable: monthlyNetPayable,
+                opening_arrears: openingArrears,
+                overpaid_amount: 0,
+                paid_at: nextPaid > 0 ? input.paidAt : row.paid_at ?? null,
+                payment_reference: input.reference,
+                status,
+                total_due: totalDue,
+                unpaid_balance: unpaidBalance,
+                updated_at: new Date().toISOString(),
+            })
+            .eq("id", line.payableId);
+        if (update.error) throw new Error(update.error.message);
+
+        const lineInsert = await input.db
+            .from("landlord_monthly_payable_payments")
+            .insert({
+                amount: line.applied,
+                company_id: input.companyId,
+                landlord_id: input.landlordId,
+                monthly_payable_id: line.payableId,
+                notes: input.notes ?? `Allocated to ${line.month}`,
+                office_id: input.officeId,
+                paid_at: input.paidAt,
+                paid_by: input.paidBy,
+                payment_method: input.paymentMethod,
+                reference: input.reference,
+                settlement_id: row.settlement_id ? String(row.settlement_id) : null,
+            });
+        if (lineInsert.error) throw new Error(lineInsert.error.message);
+    }
+
+    const remainingAfterPayment = Math.max(0, plan.totalUnpaidPayable - input.amount);
+    const paymentInsert = await input.db
+        .from("landlord_payments")
+        .insert({
+            amount: input.amount,
+            company_id: input.companyId,
+            created_by: input.paidBy,
+            landlord_id: input.landlordId,
+            office_id: input.officeId,
+            paid_at: input.paidAt,
+            payment_method: input.paymentMethod,
+            payout_reference: input.reference,
+            settlement_id: null,
+            status: remainingAfterPayment > 0 ? "partial" : "paid",
+        })
+        .select("id")
+        .single();
+    if (paymentInsert.error) throw new Error(paymentInsert.error.message);
+    return String(paymentInsert.data.id);
 }
 
 async function markLandlordPaymentApprovalNotificationsReviewed(db: { from: (table: string) => any }, input: {
