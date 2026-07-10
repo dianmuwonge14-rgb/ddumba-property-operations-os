@@ -489,25 +489,25 @@ function LandlordProfile({
                 </div>
 
                 {settlementReportOpen ? (
-                    <div id="landlord-payment-report" className="mx-auto max-w-5xl rounded-3xl border-2 border-slate-300 bg-white p-6 text-slate-950 shadow-2xl print:max-w-none print:rounded-none print:border-slate-900 print:p-8 print:shadow-none">
+                    <div id="landlord-payment-report" className="mx-auto w-full max-w-5xl min-w-0 overflow-hidden rounded-3xl border-2 border-slate-300 bg-white p-4 text-slate-950 shadow-2xl sm:p-5 md:p-6 print:max-w-none print:overflow-visible print:rounded-none print:border-slate-900 print:p-8 print:shadow-none">
                         <div className="flex flex-col gap-4 border-b-2 border-slate-900 pb-5 md:flex-row md:items-start md:justify-between">
                             <div className="min-w-0">
                                 <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-600">Landlord payment report</p>
-                                <h3 className="mt-2 text-3xl font-black text-slate-950">{landlord.full_name}</h3>
-                                <p className="mt-1 text-sm font-bold text-slate-700">
+                                <h3 className="mt-2 break-words text-[clamp(1.35rem,7vw,1.875rem)] font-black leading-tight text-slate-950 md:text-3xl">{landlord.full_name}</h3>
+                                <p className="mt-1 text-sm font-bold text-slate-700 [overflow-wrap:anywhere]">
                                     {landlord.phone ?? "No phone"} · {landlord.offices.map(officeLabel).join(", ") || "Company-wide"}
                                 </p>
                             </div>
-                            <div className="rounded-2xl border border-slate-300 bg-slate-50 p-4 text-sm font-bold text-slate-800 md:text-right">
+                            <div className="min-w-0 rounded-2xl border border-slate-300 bg-slate-50 p-3 text-sm font-bold text-slate-800 sm:p-4 md:text-right">
                                 <p>Settlement period: <span className="text-slate-950">{estimate.settlementMonth}</span></p>
                                 <p>Prepared: <span className="text-slate-950">{new Date().toLocaleString("en-UG")}</span></p>
                                 <p>Payment status: <span className="capitalize text-slate-950">{estimate.paymentStatus.replaceAll("_", " ")}</span></p>
                             </div>
                         </div>
 
-                        <div className="mt-5 rounded-2xl border-2 border-slate-200 bg-white p-5">
+                        <div className="mt-5 min-w-0 rounded-2xl border-2 border-slate-200 bg-white p-4 sm:p-5">
                             <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-600">Landlord-facing settlement summary</p>
-                            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                            <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2">
                                 <ReportLine label="Landlord Portfolio Net" value={money(landlordPortfolioNet)} strong />
                                 <ReportLine label="Company commission rate" value={`${estimate.companyCommissionRate}%`} />
                                 <ReportLine label="Commission mode" value={modeLabel(estimate.commissionCalculationMode)} />
@@ -516,16 +516,30 @@ function LandlordProfile({
                                 <ReportLine label="Amount recovered this month" value={`-${money(estimate.vacatedTenantDebtDeductions)}`} />
                                 <ReportLine label="Remaining recovery balance" value={money(estimate.carriedForwardRecoveryBalance)} />
                             </div>
-                            <div className="mt-5 rounded-2xl border-2 border-slate-900 bg-slate-50 p-4">
+                            <div className="mt-5 min-w-0 rounded-2xl border-2 border-slate-900 bg-slate-50 p-3 sm:p-4">
                                 <ReportLine label="Net Landlord Payable" value={money(estimate.netLandlordPayable)} strong />
                             </div>
                         </div>
 
                         {estimate.advanceDeductionLines.length > 0 ? (
-                            <div className="mt-5 rounded-2xl border-2 border-slate-200 bg-white p-5">
+                            <div className="mt-5 min-w-0 rounded-2xl border-2 border-slate-200 bg-white p-4 sm:p-5">
                                 <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-600">Landlord Advance Deductions</p>
-                                <div className="mt-4 overflow-hidden rounded-xl border border-slate-200">
-                                    <table className="min-w-full divide-y divide-slate-200 text-sm">
+                                <div className="mt-4 space-y-3 md:hidden print:hidden">
+                                    {estimate.advanceDeductionLines.map((line) => (
+                                        <div key={line.advanceId} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                                            <ReportLine label="Advance date" value={line.advanceDate ? monthLabel(line.advanceDate) : "Not dated"} />
+                                            <ReportLine label="Original advance" value={money(line.originalAdvanceAmount)} />
+                                            <ReportLine label="Deduction term" value={line.deductionTerm} />
+                                            <ReportLine label="This month deduction" value={`-${money(line.thisMonthDeduction)}`} strong />
+                                            <ReportLine label="Remaining balance" value={money(line.remainingAdvanceBalance)} />
+                                        </div>
+                                    ))}
+                                    <div className="rounded-2xl border-2 border-slate-900 bg-slate-50 p-3">
+                                        <ReportLine label="Total advance deduction this month" value={`-${money(estimate.landlordAdvanceDeductions)}`} strong />
+                                    </div>
+                                </div>
+                                <div className="mt-4 hidden overflow-x-auto rounded-xl border border-slate-200 md:block print:block">
+                                    <table className="min-w-full divide-y divide-slate-200 text-sm md:min-w-[760px] print:min-w-full">
                                         <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-600">
                                             <tr>
                                                 <th className="px-3 py-2">Advance date</th>
@@ -559,10 +573,33 @@ function LandlordProfile({
                         ) : null}
 
                         {landlord.monthlyPayables.length > 0 ? (
-                            <div className="mt-5 rounded-2xl border-2 border-slate-200 bg-white p-5">
+                            <div className="mt-5 min-w-0 rounded-2xl border-2 border-slate-200 bg-white p-4 sm:p-5">
                                 <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-600">Multi-month payable history</p>
-                                <div className="mt-4 overflow-hidden rounded-xl border border-slate-200">
-                                    <table className="min-w-full divide-y divide-slate-200 text-sm">
+                                <div className="mt-4 space-y-3 md:hidden print:hidden">
+                                    {landlord.monthlyPayables.slice(0, 12).map((payable) => {
+                                        const deductions =
+                                            Number(payable.vacant_room_deductions ?? 0) +
+                                            Number(payable.vacated_tenant_debt_deductions ?? 0) +
+                                            Number(payable.advance_deductions ?? 0) +
+                                            Number(payable.other_deductions ?? 0);
+                                        return (
+                                            <div key={payable.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                                                <ReportLine label="Month" value={monthLabel(payable.settlement_month)} strong />
+                                                <ReportLine label="Net payable" value={money(Number(payable.net_payable ?? 0))} />
+                                                <ReportLine label="Deductions" value={money(deductions)} />
+                                                <ReportLine label="Paid" value={money(Number(payable.amount_paid ?? 0))} />
+                                                <ReportLine label="Balance still due" value={money(payableMonthBalance(payable))} strong />
+                                            </div>
+                                        );
+                                    })}
+                                    <div className="rounded-2xl border-2 border-slate-900 bg-white p-3">
+                                        <ReportLine label="Total net payable" value={money(landlord.monthlyPayables.reduce((total, payable) => total + Number(payable.net_payable ?? 0), 0))} />
+                                        <ReportLine label="Total paid" value={money(landlord.monthlyPayables.reduce((total, payable) => total + Number(payable.amount_paid ?? 0), 0))} />
+                                        <ReportLine label="Final amount due" value={money(landlord.monthlyPayables.reduce((total, payable) => total + payableMonthBalance(payable), 0))} strong />
+                                    </div>
+                                </div>
+                                <div className="mt-4 hidden overflow-x-auto rounded-xl border border-slate-200 md:block print:block">
+                                    <table className="min-w-full divide-y divide-slate-200 text-sm md:min-w-[760px] print:min-w-full">
                                         <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-600">
                                             <tr>
                                                 <th className="px-3 py-2">Month</th>
@@ -604,7 +641,7 @@ function LandlordProfile({
                             </div>
                         ) : null}
 
-                        <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <div className="mt-5 grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2">
                             <ReportRoomList title="Occupied Rooms" roomNumbers={estimate.occupiedRoomLines.map((line) => line.roomNumber)} tone="green" />
                             <ReportRoomList title="Vacant Rooms" roomNumbers={estimate.vacantRoomLines.map((line) => line.roomNumber)} tone="amber" />
                             <ReportBox
@@ -626,12 +663,12 @@ function LandlordProfile({
                                     `${line.tenantName} · Room ${line.roomNumber} · Room rent ${money(line.roomRent)} · Outstanding left ${money(line.amount)} · Deducted ${money(line.appliedInEstimate)} · ${line.reason}`,
                                 )}
                             />
-                            <div className="rounded-2xl border-2 border-slate-300 bg-white p-5">
+                            <div className="min-w-0 rounded-2xl border-2 border-slate-300 bg-white p-4 sm:p-5">
                                 <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-600">Approval</p>
                                 <div className="mt-4 space-y-3 text-sm font-bold text-slate-800">
-                                    <p>Prepared by: <span className="text-slate-500">________________________</span></p>
-                                    <p>Approved by: <span className="text-slate-500">________________________</span></p>
-                                    <p>Date/time: <span className="text-slate-950">{new Date().toLocaleString("en-UG")}</span></p>
+                                    <p className="[overflow-wrap:anywhere]">Prepared by: <span className="text-slate-500">________________________</span></p>
+                                    <p className="[overflow-wrap:anywhere]">Approved by: <span className="text-slate-500">________________________</span></p>
+                                    <p className="[overflow-wrap:anywhere]">Date/time: <span className="text-slate-950">{new Date().toLocaleString("en-UG")}</span></p>
                                 </div>
                                 <div className="mt-10 grid grid-cols-1 gap-8 text-xs font-black uppercase tracking-wide text-slate-600 md:grid-cols-2">
                                     <div className="border-t-2 border-slate-900 pt-3">Landlord signature</div>
@@ -1350,14 +1387,14 @@ function CalcLine({
 
 function ReportBox({ title, lines }: { title: string; lines: string[] }) {
     return (
-        <div className="rounded-2xl border-2 border-slate-200 bg-white p-5 text-slate-950">
+        <div className="min-w-0 rounded-2xl border-2 border-slate-200 bg-white p-4 text-slate-950 sm:p-5">
             <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-600">{title}</p>
             {lines.length === 0 ? (
                 <p className="mt-3 text-sm font-bold text-slate-600">None.</p>
             ) : (
                 <div className="mt-3 max-h-48 space-y-2 overflow-auto print:max-h-none print:overflow-visible">
                     {lines.slice(0, 30).map((line, index) => (
-                        <p key={`${line}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-800">
+                        <p key={`${line}-${index}`} className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold leading-relaxed text-slate-800 [overflow-wrap:anywhere]">
                             {line}
                         </p>
                     ))}
@@ -1385,7 +1422,7 @@ function ReportRoomList({
         : "border-amber-200 bg-amber-50 text-amber-900";
 
     return (
-        <div className="rounded-2xl border-2 border-slate-200 bg-white p-5 text-slate-950">
+        <div className="min-w-0 rounded-2xl border-2 border-slate-200 bg-white p-4 text-slate-950 sm:p-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-600">{title}</p>
                 <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-black text-slate-700">{uniqueRooms.length} rooms</span>
@@ -1415,9 +1452,9 @@ function ReportLine({
     strong?: boolean;
 }) {
     return (
-        <div className={`flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 ${strong ? "border-slate-900 bg-white" : ""}`}>
-            <span className="text-sm font-black text-slate-700">{label}</span>
-            <span className={`text-right font-black text-slate-950 ${strong ? "text-xl" : "text-sm"}`}>{value}</span>
+        <div className={`grid min-w-0 grid-cols-1 gap-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-4 sm:px-4 ${strong ? "border-slate-900 bg-white" : ""}`}>
+            <span className="min-w-0 text-sm font-black leading-snug text-slate-700 [overflow-wrap:anywhere]">{label}</span>
+            <span className={`min-w-0 text-left font-black leading-tight text-slate-950 [overflow-wrap:anywhere] sm:text-right ${strong ? "text-[clamp(1rem,5vw,1.25rem)]" : "text-[clamp(0.82rem,3.6vw,0.875rem)]"}`}>{value}</span>
         </div>
     );
 }
