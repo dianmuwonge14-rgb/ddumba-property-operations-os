@@ -314,7 +314,7 @@ export default function NewLandlordBulkRoomsWizard({ canManage, createAction, is
                         {message ? <div className="rounded-2xl border border-white/10 bg-white/10 p-3 text-sm font-bold text-slate-100">{message}</div> : null}
                         <button disabled={!canManage || isPending} type="button" onClick={submit} className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-5 text-sm font-black text-white shadow-lg shadow-emerald-950/20 disabled:opacity-40">
                             <CheckCircle2 size={18} />
-                            {isPending ? "Saving..." : isAdmin ? "Save Live Now" : "Submit for Admin Approval"}
+                            {isPending ? "Saving landlord and rooms..." : isAdmin ? "Save Live Now" : "Submit for Admin Approval"}
                         </button>
                     </aside>
                 </div>

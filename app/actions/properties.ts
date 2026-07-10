@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { canAccessOffice, requirePermission } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
 import { createNotificationWithEmail } from "@/lib/notifications/email";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getPropertyInActiveOffice, getRoomInActiveOffice } from "@/lib/properties/data";
 import type {
@@ -144,6 +145,53 @@ async function refreshLandlordSearchIndex(supabase: LooseSupabase, landlordId: s
     }
 }
 
+async function materializeLandlordWithRoomsBulk(input: {
+    actorId: string | null;
+    companyId: string;
+    landlordPayload: Record<string, unknown>;
+    officeId: string;
+    rooms: CreateLandlordWithRoomsBulkInput["rooms"];
+    sourceRequestId?: string | null;
+    summary: ReturnType<typeof summarizeBulkRooms>;
+}) {
+    const admin = createSupabaseAdminClient() as unknown as LooseSupabase;
+    if (!admin.rpc) {
+        throw new Error("Atomic landlord creation RPC is not available. Apply migration 0205_landlord_bulk_room_atomic_creation.sql.");
+    }
+    const { data, error } = await admin.rpc("ddumba_v1_create_landlord_with_rooms_bulk", {
+        p_company_id: input.companyId,
+        p_created_by: input.actorId,
+        p_landlord_payload: input.landlordPayload,
+        p_office_id: input.officeId,
+        p_rooms_payload: input.rooms,
+        p_source_request_id: input.sourceRequestId ?? null,
+    }) as { data: unknown; error: { message: string } | null };
+    if (error) {
+        const message = error.message.includes("Could not find the function")
+            ? `Atomic landlord creation function is missing. Apply migration 0205_landlord_bulk_room_atomic_creation.sql. ${error.message}`
+            : error.message;
+        throw new Error(message);
+    }
+    const result = (data ?? {}) as {
+        landlordId?: string;
+        roomIds?: string[];
+        tenantIds?: string[];
+        propertyIds?: string[];
+        summary?: Record<string, unknown>;
+    };
+    if (!result.landlordId) {
+        throw new Error("Atomic landlord creation did not return a live landlord ID.");
+    }
+    await refreshLandlordSearchIndex(admin, result.landlordId);
+    return {
+        landlordId: result.landlordId,
+        propertyIds: Array.isArray(result.propertyIds) ? result.propertyIds : [],
+        roomIds: Array.isArray(result.roomIds) ? result.roomIds : [],
+        tenantIds: Array.isArray(result.tenantIds) ? result.tenantIds : [],
+        summary: result.summary ?? input.summary,
+    };
+}
+
 async function findMaterializedLandlordForRequest(supabase: LooseSupabase, input: {
     companyId: string;
     officeId: string;
@@ -278,8 +326,9 @@ export async function createLandlordWithRoomsBulk(input: CreateLandlordWithRooms
     if (!officeId) throw new Error("Office is required.");
     if (!canAccessOffice(context, officeId)) throw new Error("You cannot create records for this office.");
 
-    await validateBulkInput(db, input, companyId, officeId);
-    const actorId = context.profile?.id ?? null;
+    const adminValidationDb = createSupabaseAdminClient() as unknown as LooseSupabase;
+    await validateBulkInput(adminValidationDb, input, companyId, officeId);
+    const actorId = context.profile?.id ?? context.authUser?.id ?? null;
     const summary = summarizeBulkRooms(input);
     const landlordPayload = {
         landlordName: normalizeName(input.landlordName),
@@ -319,127 +368,24 @@ export async function createLandlordWithRoomsBulk(input: CreateLandlordWithRooms
         return { status: "pending", message: "Submitted for Admin approval. Live landlord and room counts were not changed." };
     }
 
-    const created = { landlordId: "", propertyIds: [] as string[], roomIds: [] as string[], tenantIds: [] as string[], leaseIds: [] as string[] };
-    try {
-        const { data: landlord, error: landlordError } = await db
-            .from("landlords")
-            .insert({
-                commission_input_mode: input.commissionType === "fixed_amount" ? "fixed_amount" : "percentage",
-                commission_rate: input.commissionType === "percentage" ? amount(input.commissionValue) : null,
-                company_id: companyId,
-                email: landlordPayload.email,
-                full_name: landlordPayload.landlordName,
-                national_id: landlordPayload.nationalId,
-                phone: landlordPayload.phone,
-                status: "active",
-            })
-            .select("*")
-            .single();
-        if (landlordError) throw new Error(landlordError.message);
-        created.landlordId = landlord.id;
-
-        for (const draft of input.rooms) {
-            const property = await getOrCreateBulkProperty(db, {
-                companyId,
-                createdPropertyIds: created.propertyIds,
-                landlordId: landlord.id,
-                officeId,
-                propertyId: draft.propertyId,
-                propertyName: draft.propertyName,
-            });
-            await db.from("properties").update({ landlord_id: landlord.id }).eq("id", property.id).eq("company_id", companyId);
-            const rent = amount(draft.monthlyRent);
-            const status = draft.status === "occupied" ? "occupied" : "vacant";
-            const startDate = draft.startDate || draft.moveInDate || new Date().toISOString().slice(0, 10);
-            const openingBalance = draft.status === "occupied" && draft.outstandingMode === "has_outstanding" ? amount(draft.outstandingBalance) : 0;
-            const { data: room, error: roomError } = await db
-                .from("rooms")
-                .insert({
-                    company_id: companyId,
-                    effective_start_date: startDate,
-                    landlord_id: landlord.id,
-                    monthly_rent: rent,
-                    office_id: officeId,
-                    outstanding_balance: openingBalance,
-                    payable_notes: draft.notes || null,
-                    property_id: property.id,
-                    room_number: normalizeRoomNumber(draft.roomNumber),
-                    status,
-                })
-                .select("*")
-                .single();
-            if (roomError) throw new Error(roomError.message);
-            created.roomIds.push(room.id);
-            await db.from("room_status_history").insert({
-                changed_by: actorId,
-                company_id: companyId,
-                office_id: officeId,
-                new_status: status,
-                old_status: null,
-                reason: draft.notes || "New landlord bulk room creation",
-                room_id: room.id,
-            });
-            if (draft.status === "occupied") {
-                const moveInDate = draft.moveInDate || startDate;
-                const { data: tenant, error: tenantError } = await db
-                    .from("tenants")
-                    .insert({
-                        balance: openingBalance,
-                        company_id: companyId,
-                        full_name: text(draft.tenantName),
-                        monthly_rent: rent,
-                        national_id: text(draft.tenantNationalId) || null,
-                        office_id: officeId,
-                        phone: text(draft.tenantPhone) || null,
-                        property_id: property.id,
-                        room_id: room.id,
-                        status: "active",
-                        tenant_code: tenantCode(String(draft.roomNumber)),
-                        tenant_type: "individual",
-                    })
-                    .select("*")
-                    .single();
-                if (tenantError) throw new Error(tenantError.message);
-                created.tenantIds.push(tenant.id);
-                const { data: lease, error: leaseError } = await db
-                    .from("leases")
-                    .insert({
-                        billing_day: Math.min(28, Math.max(1, new Date(`${moveInDate}T00:00:00`).getDate())),
-                        company_id: companyId,
-                        monthly_rent: rent,
-                        office_id: officeId,
-                        property_id: property.id,
-                        room_id: room.id,
-                        start_date: moveInDate,
-                        status: "active",
-                        tenant_id: tenant.id,
-                    })
-                    .select("*")
-                    .single();
-                if (leaseError) throw new Error(leaseError.message);
-                created.leaseIds.push(lease.id);
-            }
-        }
-
-        await logUserAction({
-            action: "landlord_bulk_rooms_created_live",
-            entityType: "landlord",
-            entityId: landlord.id,
-            companyId,
-            officeId,
-            afterData: { landlord, rooms: input.rooms, summary },
-        });
-        await refreshLandlordSearchIndex(db, landlord.id);
-        revalidatePropertySurfaces();
-        return { status: "approved", landlordId: landlord.id, message: `Saved live: ${landlordPayload.landlordName}, ${summary.totalRooms} rooms, ${summary.occupiedRooms} occupied, ${summary.vacantRooms} vacant.` };
-    } catch (error) {
-        if (created.leaseIds.length) await db.from("leases").delete().in("id", created.leaseIds);
-        if (created.tenantIds.length) await db.from("tenants").delete().in("id", created.tenantIds);
-        if (created.roomIds.length) await db.from("rooms").delete().in("id", created.roomIds);
-        if (created.propertyIds.length) await db.from("properties").delete().in("id", created.propertyIds);
-        if (created.landlordId) await db.from("landlords").delete().eq("id", created.landlordId);
-        throw error;
-    }
+    const created = await materializeLandlordWithRoomsBulk({
+        actorId,
+        companyId,
+        landlordPayload,
+        officeId,
+        rooms: input.rooms,
+        summary,
+    });
+    await logUserAction({
+        action: "landlord_bulk_rooms_created_live",
+        entityType: "landlord",
+        entityId: created.landlordId,
+        companyId,
+        officeId,
+        afterData: { landlordId: created.landlordId, roomIds: created.roomIds, tenantIds: created.tenantIds, propertyIds: created.propertyIds, summary },
+    });
+    revalidatePropertySurfaces();
+    return { status: "approved", landlordId: created.landlordId, message: `Saved live: ${landlordPayload.landlordName}, ${summary.totalRooms} rooms, ${summary.occupiedRooms} occupied, ${summary.vacantRooms} vacant.` };
 }
 
 export async function reviewLandlordBulkRoomRequest(input: { requestId: string; decision: "approved" | "rejected"; adminComment?: string }) {
@@ -464,7 +410,7 @@ export async function reviewLandlordBulkRoomRequest(input: { requestId: string; 
         throw new Error("Only pending requests can be reviewed. Approved requests can only be repaired if live materialization was incomplete.");
     }
 
-    const actorId = context.profile?.id ?? null;
+    const actorId = context.profile?.id ?? context.authUser?.id ?? null;
     if (input.decision === "rejected") {
         const { error: updateError } = await db
             .from("landlord_bulk_room_requests")
@@ -494,7 +440,8 @@ export async function reviewLandlordBulkRoomRequest(input: { requestId: string; 
     const landlordPayload = request.landlord_payload ?? {};
     const roomsPayload = Array.isArray(request.rooms_payload) ? request.rooms_payload : [];
     const requestLandlordName = text(landlordPayload.landlordName ?? landlordPayload.fullName);
-    const existingMaterializedLandlord = await findMaterializedLandlordForRequest(db, {
+    const adminDb = createSupabaseAdminClient() as unknown as LooseSupabase;
+    const existingMaterializedLandlord = await findMaterializedLandlordForRequest(adminDb, {
         companyId,
         officeId: request.office_id,
         landlordName: requestLandlordName,
@@ -504,17 +451,28 @@ export async function reviewLandlordBulkRoomRequest(input: { requestId: string; 
             .filter(Boolean)
             .map((roomNumber: string) => normalizeRoomNumber(roomNumber)),
     });
-    const creationResult = existingMaterializedLandlord ? null : await createLandlordWithRoomsBulk({
+    const creationResult = existingMaterializedLandlord ? null : await materializeLandlordWithRoomsBulk({
+        actorId,
+        companyId,
+        landlordPayload: {
+            landlordName: requestLandlordName,
+            phone: text(landlordPayload.phone) || null,
+            email: text(landlordPayload.email) || null,
+            nationalId: text(landlordPayload.nationalId) || null,
+            paymentMethods: text(landlordPayload.paymentMethods) || null,
+            commissionType: landlordPayload.commissionType === "fixed_amount" ? "fixed_amount" : "percentage",
+            commissionValue: amount(landlordPayload.commissionValue),
+            notes: text(landlordPayload.notes) || null,
+        },
         officeId: request.office_id,
-        landlordName: requestLandlordName,
-        phone: text(landlordPayload.phone) || undefined,
-        email: text(landlordPayload.email) || undefined,
-        nationalId: text(landlordPayload.nationalId) || undefined,
-        paymentMethods: text(landlordPayload.paymentMethods) || undefined,
-        commissionType: landlordPayload.commissionType === "fixed_amount" ? "fixed_amount" : "percentage",
-        commissionValue: amount(landlordPayload.commissionValue),
-        notes: text(landlordPayload.notes) || undefined,
         rooms: roomsPayload,
+        sourceRequestId: input.requestId,
+        summary: summarizeBulkRooms({
+            landlordName: requestLandlordName,
+            commissionType: landlordPayload.commissionType === "fixed_amount" ? "fixed_amount" : "percentage",
+            commissionValue: amount(landlordPayload.commissionValue),
+            rooms: roomsPayload,
+        }),
     });
     const materializedLandlordId = existingMaterializedLandlord?.id ?? creationResult?.landlordId ?? null;
     if (!materializedLandlordId) throw new Error("Approval could not determine the live landlord record.");
