@@ -11,6 +11,7 @@ import type {
     LandlordPaymentOption,
     PaidLandlordPayment,
 } from "./types";
+import { landlordMonthlyDue, landlordMonthlyPaid, landlordMonthlyUnpaid, summarizeLandlordPayables } from "./payment-allocation";
 
 function amount(value: number | string | null | undefined) {
     return Number(value ?? 0) || 0;
@@ -81,13 +82,7 @@ function isActivePayable(row: LandlordMonthlyPayable) {
 }
 
 function unpaidBalance(row: LandlordMonthlyPayable) {
-    const monthlyDue = amount(row.monthly_net_payable)
-        || amount(row.net_payable)
-        || Math.max(0, amount(row.total_due) - amount(row.opening_arrears));
-    if (monthlyDue > 0 || amount(row.amount_paid) > 0) {
-        return Math.max(0, monthlyDue - Math.min(amount(row.amount_paid), monthlyDue));
-    }
-    return Math.max(0, amount(row.unpaid_balance));
+    return landlordMonthlyUnpaid(row as unknown as Record<string, unknown>);
 }
 
 function payableDeductions(row: LandlordMonthlyPayable) {
@@ -407,14 +402,15 @@ function groupPayables(rows: LandlordMonthlyPayable[]): LandlordPayableGroup[] {
     return [...grouped].map(([landlordId, groupRows]) => {
         const unpaidRows = groupRows.filter((row) => unpaidBalance(row) > 0 && payableStatus(row) !== "paid");
         const sortedRows = [...groupRows].sort((a, b) => String(b.settlement_month).localeCompare(String(a.settlement_month)));
+        const summary = summarizeLandlordPayables({ payables: groupRows as unknown as Record<string, unknown>[] });
         return {
             landlordId,
             landlordName: sortedRows[0]?.landlord_name ?? "Landlord",
             officeName: sortedRows[0]?.office_name ?? "Office",
             monthsUnpaid: unpaidRows.length,
-            totalPayable: unpaidRows.reduce((total, row) => total + amount(row.net_payable ?? row.monthly_net_payable ?? row.total_due), 0),
-            totalPaid: groupRows.reduce((total, row) => total + amount(row.amount_paid), 0),
-            totalOutstanding: unpaidRows.reduce((total, row) => total + unpaidBalance(row), 0),
+            totalPayable: unpaidRows.reduce((total, row) => total + landlordMonthlyDue(row as unknown as Record<string, unknown>), 0),
+            totalPaid: groupRows.reduce((total, row) => total + landlordMonthlyPaid(row as unknown as Record<string, unknown>), 0),
+            totalOutstanding: summary.totalOutstandingPayable,
             oldestUnpaidMonth: unpaidRows.map((row) => row.settlement_month).sort()[0] ?? null,
             lastPaidAt: groupRows.map((row) => row.last_paid_at).filter((value): value is string => Boolean(value)).sort().at(-1) ?? null,
             rows: sortedRows,

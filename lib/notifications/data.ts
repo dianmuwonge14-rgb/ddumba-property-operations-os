@@ -1,6 +1,7 @@
 import { requireAuth } from "@/lib/auth/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { AuthContext } from "@/lib/auth/types";
+import { buildLandlordPaymentAllocationPlan, landlordMonthlyDue, summarizeLandlordPayables } from "@/lib/landlord-payables/payment-allocation";
 
 type Db = {
     from: (table: string) => any;
@@ -465,14 +466,53 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
     const promiseChangeRequestIds = promiseChangeRequests.map((request) => request.id);
     const allApprovalIds = [...requestIds, ...paymentDateRequestIds, ...tenantBalanceAdjustmentRequestIds, ...promiseChangeRequestIds, ...landlordPaymentRequestIds, ...landlordPaymentDetailRequestIds, ...landlordBulkRoomRequestIds];
 
-    const [rooms, tenants, landlords, offices, users, payments] = await Promise.all([
+    const [rooms, tenants, landlords, offices, users, payments, landlordPaymentPayables] = await Promise.all([
         roomIds.length ? safeRows(db.from("rooms").select("id, room_number").in("id", roomIds).limit(200)) : { data: [], error: null },
         tenantIds.length ? safeRows(db.from("tenants").select("id, full_name, phone").in("id", tenantIds).limit(200)) : { data: [], error: null },
         landlordIds.length ? safeRows(db.from("landlords").select("id, full_name, phone").in("id", landlordIds).limit(200)) : { data: [], error: null },
         officeIds.length ? safeRows(db.from("offices").select("id, office_name, name").in("id", officeIds).limit(50)) : { data: [], error: null },
         userIds.length ? safeRows(db.from("users").select("id, full_name, email").in("id", userIds).limit(200)) : { data: [], error: null },
         paymentIds.length ? safeRows(db.from("collections").select("id, amount, amount_paid, paid_at, payment_method").eq("company_id", context.activeCompany.id).in("id", paymentIds).limit(200)) : { data: [], error: null },
+        landlordPaymentRequests.length && landlordIds.length
+            ? safeRows(db
+                .from("landlord_monthly_payables")
+                .select("*")
+                .eq("company_id", context.activeCompany.id)
+                .in("landlord_id", landlordIds)
+                .neq("status", "archived")
+                .order("settlement_month", { ascending: true }))
+            : { data: [], error: null },
     ]);
+
+    const livePayablesByLandlordOffice = new Map<string, Array<Record<string, unknown>>>();
+    for (const row of (landlordPaymentPayables.data ?? []) as Array<Record<string, unknown>>) {
+        const key = `${row.landlord_id ?? ""}:${row.office_id ?? ""}`;
+        livePayablesByLandlordOffice.set(key, [...(livePayablesByLandlordOffice.get(key) ?? []), row]);
+    }
+    const liveLandlordPaymentRequests = landlordPaymentRequests.map((request) => {
+        const rows = livePayablesByLandlordOffice.get(`${request.landlord_id ?? ""}:${request.office_id ?? ""}`) ?? [];
+        const paymentMonth = String(request.payment_month ?? request.payment_date ?? "").slice(0, 10);
+        const scopedRows = paymentMonth ? rows.filter((row) => String(row.settlement_month ?? "").slice(0, 10) <= paymentMonth) : rows;
+        const summary = summarizeLandlordPayables({ currentMonth: paymentMonth || null, payables: scopedRows });
+        const plan = buildLandlordPaymentAllocationPlan({
+            amount: Number(request.requested_amount ?? 0) || 0,
+            currentMonth: paymentMonth || undefined,
+            payables: scopedRows,
+        });
+        return {
+            ...request,
+            already_paid_amount: summary.alreadyPaidAmount,
+            current_net_payable: summary.currentMonthNetPayable || scopedRows
+                .filter((row) => String(row.settlement_month ?? "").slice(0, 10) === paymentMonth)
+                .reduce((total, row) => total + landlordMonthlyDue(row), 0),
+            normal_payment_amount: plan.normalPaymentAmount,
+            advance_amount: plan.advanceAmount,
+            outstanding_amount: summary.totalOutstandingPayable,
+            flag_reason: plan.advanceAmount > 0
+                ? plan.normalPaymentAmount > 0 ? "partial_overpayment_live_recalculated" : "overpayment_creates_advance_live_recalculated"
+                : "normal_payment_live_recalculated",
+        };
+    });
 
     const auditEvents = { data: [], error: null };
 
@@ -494,7 +534,7 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
 	        paymentDateRequests,
             tenantBalanceAdjustmentRequests,
             promiseChangeRequests,
-            landlordPaymentRequests,
+            landlordPaymentRequests: liveLandlordPaymentRequests,
             landlordPaymentDetailRequests,
             landlordBulkRoomRequests,
         notifications,

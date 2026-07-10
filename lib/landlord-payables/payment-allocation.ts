@@ -18,6 +18,24 @@ export type LandlordPaymentAllocationPlan = {
     totalUnpaidPayable: number;
 };
 
+export type LandlordPayableSummary = {
+    activeAdvanceBalance: number;
+    alreadyPaidAmount: number;
+    currentMonthNetPayable: number;
+    currentMonthPayableId: string | null;
+    currentMonthUnpaid: number;
+    maxNormalPayment: number;
+    oldestUnpaidPayableId: string | null;
+    totalOutstandingPayable: number;
+    unpaidRows: Array<{
+        month: string;
+        payableId: string;
+        paid: number;
+        due: number;
+        unpaid: number;
+    }>;
+};
+
 export function payableAmount(value: unknown) {
     const number = Number(value);
     return Number.isFinite(number) ? number : 0;
@@ -49,6 +67,53 @@ export function landlordMonthlyUnpaid(row: LandlordPayableLike) {
 
 export function payableMonthKey(row: LandlordPayableLike) {
     return String(row.settlement_month ?? row.month_key ?? row.payment_month ?? "");
+}
+
+export function summarizeLandlordPayables({
+    activeAdvanceBalance = 0,
+    currentMonth,
+    payables,
+}: {
+    activeAdvanceBalance?: number;
+    currentMonth?: string | null;
+    payables: LandlordPayableLike[];
+}): LandlordPayableSummary {
+    const activeRows = payables
+        .filter(isActiveLandlordPayable)
+        .filter((row) => !currentMonth || payableMonthKey(row) <= currentMonth);
+    const unpaidRows = activeRows
+        .map((row) => {
+            const due = landlordMonthlyDue(row);
+            const paid = landlordMonthlyPaid(row);
+            const unpaid = landlordMonthlyUnpaid(row);
+            return {
+                due,
+                month: payableMonthKey(row),
+                paid,
+                payableId: String(row.id ?? ""),
+                unpaid,
+            };
+        })
+        .filter((row) => row.unpaid > 0)
+        .sort((a, b) => a.month.localeCompare(b.month));
+    const currentRows = currentMonth
+        ? activeRows.filter((row) => payableMonthKey(row) === currentMonth)
+        : [];
+    const currentUnpaidRow = currentRows.find((row) => landlordMonthlyUnpaid(row) > 0);
+
+    const totalOutstandingPayable = unpaidRows.reduce((total, row) => total + row.unpaid, 0);
+
+    return {
+        activeAdvanceBalance: Math.max(0, activeAdvanceBalance),
+        alreadyPaidAmount: currentRows.reduce((total, row) => total + landlordMonthlyPaid(row), 0),
+        currentMonthNetPayable: currentRows.reduce((total, row) => total + landlordMonthlyDue(row), 0),
+        currentMonthPayableId: currentUnpaidRow?.id ? String(currentUnpaidRow.id) : null,
+        currentMonthUnpaid: currentRows.reduce((total, row) => total + landlordMonthlyUnpaid(row), 0),
+        maxNormalPayment: totalOutstandingPayable,
+        oldestUnpaidPayableId: unpaidRows[0]?.payableId ?? null,
+        totalOutstandingPayable,
+        unpaidRows,
+    };
 }
 
 export function buildLandlordPaymentAllocationPlan({

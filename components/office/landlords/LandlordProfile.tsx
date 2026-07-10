@@ -489,7 +489,7 @@ function LandlordProfile({
                 </div>
 
                 {settlementReportOpen ? (
-                    <div id="landlord-payment-report" className="mx-auto w-full max-w-5xl min-w-0 overflow-hidden rounded-3xl border-2 border-slate-300 bg-white p-4 text-slate-950 shadow-2xl sm:p-5 md:p-6 print:max-w-none print:overflow-visible print:rounded-none print:border-slate-900 print:p-8 print:shadow-none">
+                    <div id="landlord-report-print-area" className="mx-auto w-full max-w-5xl min-w-0 overflow-hidden rounded-3xl border-2 border-slate-300 bg-white p-4 text-slate-950 shadow-2xl sm:p-5 md:p-6 print:max-w-none print:overflow-visible print:rounded-none print:border-slate-900 print:p-8 print:shadow-none">
                         <div className="flex flex-col gap-4 border-b-2 border-slate-900 pb-5 md:flex-row md:items-start md:justify-between">
                             <div className="min-w-0">
                                 <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-600">Landlord payment report</p>

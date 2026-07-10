@@ -797,7 +797,57 @@ button:not(:disabled):active {
     -webkit-backdrop-filter: none !important;
   }
 
-  #landlord-payment-report {
+  body:has(#landlord-report-print-area) * {
+    visibility: hidden !important;
+  }
+
+  body:has(#landlord-report-print-area) {
+    background: #ffffff !important;
+  }
+
+  body:has(#landlord-report-print-area) #landlord-report-print-area,
+  body:has(#landlord-report-print-area) #landlord-report-print-area * {
+    visibility: visible !important;
+  }
+
+  body:has(#landlord-report-print-area) #landlord-report-print-area {
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  body:has(#landlord-report-print-area) button,
+  body:has(#landlord-report-print-area) nav,
+  body:has(#landlord-report-print-area) .app-sticky-header,
+  body:has(#landlord-report-print-area) .print\:hidden {
+    display: none !important;
+  }
+
+  body:has(#landlord-report-print-area) #landlord-report-print-area table {
+    width: 100% !important;
+    min-width: 0 !important;
+    page-break-inside: auto;
+  }
+
+  body:has(#landlord-report-print-area) #landlord-report-print-area thead {
+    display: table-header-group;
+  }
+
+  body:has(#landlord-report-print-area) #landlord-report-print-area tr,
+  body:has(#landlord-report-print-area) #landlord-report-print-area section,
+  body:has(#landlord-report-print-area) #landlord-report-print-area article,
+  body:has(#landlord-report-print-area) #landlord-report-print-area .rounded-2xl {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  #landlord-payment-report,
+  #landlord-report-print-area {
     width: 100% !important;
     max-width: none !important;
     color: #020617 !important;
@@ -806,7 +856,8 @@ button:not(:disabled):active {
     break-inside: avoid;
   }
 
-  #landlord-payment-report * {
+  #landlord-payment-report *,
+  #landlord-report-print-area * {
     color-adjust: exact;
     print-color-adjust: exact;
   }

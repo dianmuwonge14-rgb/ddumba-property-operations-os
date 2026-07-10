@@ -22,6 +22,7 @@ import {
     type AdvanceRepaymentType,
     type PrincipalClearanceMethod,
 } from "@/lib/landlord-advances/calculator";
+import { buildLandlordPaymentAllocationPlan, landlordMonthlyUnpaid, summarizeLandlordPayables } from "@/lib/landlord-payables/payment-allocation";
 import type { LandlordAdvanceGroup, LandlordMonthlyPayable, LandlordPayableGroup, LandlordPayablesData, LandlordPaymentApprovalRequest, LandlordUnpaidMonthGroup, PaidLandlordPayment } from "@/lib/landlord-payables/types";
 
 type Props = {
@@ -37,11 +38,7 @@ function numeric(value: unknown) {
 }
 
 function monthlyUnpaid(row: LandlordMonthlyPayable) {
-    const monthlyDue = numeric(row.monthly_net_payable) || numeric(row.net_payable) || Math.max(0, numeric(row.total_due) - numeric(row.opening_arrears));
-    if (monthlyDue > 0 || numeric(row.amount_paid) > 0) {
-        return Math.max(0, monthlyDue - Math.min(numeric(row.amount_paid), monthlyDue));
-    }
-    return Math.max(0, numeric(row.unpaid_balance));
+    return landlordMonthlyUnpaid(row as unknown as Record<string, unknown>);
 }
 
 function advanceTotal(advance: Record<string, unknown>) {
@@ -642,10 +639,14 @@ function MonthlyLedger({ group }: { group: LandlordPayableGroup | null }) {
     const [paymentReference, setPaymentReference] = useState("");
     const [paymentMessage, setPaymentMessage] = useState("");
     const [isPending, startTransition] = useTransition();
+    const payableSummary = useMemo(
+        () => summarizeLandlordPayables({ payables: (group?.rows ?? []) as unknown as Record<string, unknown>[] }),
+        [group?.rows],
+    );
 
     function openPayment(row: LandlordMonthlyPayable) {
         setPaymentTarget(row);
-        setPaymentAmount(String(Math.round(monthlyUnpaid(row))));
+        setPaymentAmount(String(Math.round(payableSummary.totalOutstandingPayable || monthlyUnpaid(row))));
         setPaymentMethod(group?.activePaymentDetail?.paymentMethod ?? "cash");
         setPaymentDetailId(group?.activePaymentDetail?.id ?? "");
         setPaymentReference("");
@@ -653,6 +654,11 @@ function MonthlyLedger({ group }: { group: LandlordPayableGroup | null }) {
     }
 
     const selectedPaymentDetail = (group?.approvedPaymentDetails ?? []).find((detail) => detail.id === paymentDetailId) ?? null;
+    const paymentPreview = useMemo(() => buildLandlordPaymentAllocationPlan({
+        amount: numeric(paymentAmount),
+        currentMonth: paymentTarget?.settlement_month,
+        payables: (group?.rows ?? []) as unknown as Record<string, unknown>[],
+    }), [group?.rows, paymentAmount, paymentTarget?.settlement_month]);
 
     function recordPayment() {
         if (!paymentTarget) return;
@@ -771,11 +777,17 @@ function MonthlyLedger({ group }: { group: LandlordPayableGroup | null }) {
                             <p className="text-xs font-black uppercase tracking-wide text-emerald-700">Record Payment</p>
                             <h3 className="text-lg font-black text-slate-950">{group.landlordName} · {monthLabel(paymentTarget.settlement_month)}</h3>
                             <p className="text-sm font-bold text-slate-600">
-                                Previous unpaid: {money(paymentTarget.opening_arrears ?? 0)} · Current month payable: {money(paymentTarget.monthly_net_payable ?? paymentTarget.net_payable)} · Current month balance: {money(monthlyUnpaid(paymentTarget))}
+                                Total payable: {money(payableSummary.totalOutstandingPayable)} · Already paid this month: {money(payableSummary.alreadyPaidAmount)} · Current month balance: {money(monthlyUnpaid(paymentTarget))}
                             </p>
-                            <p className="text-xs font-bold text-slate-500">Payment clears oldest unpaid arrears first. Any excess becomes a landlord advance.</p>
+                            <p className="text-xs font-bold text-slate-500">Payment clears oldest unpaid month first. Advance is created only after the full {money(payableSummary.totalOutstandingPayable)} genuine payable is cleared.</p>
                         </div>
                         <button onClick={() => setPaymentTarget(null)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Cancel</button>
+                    </div>
+                    <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
+                        <StatementMetric label="Remaining Payable" value={money(payableSummary.totalOutstandingPayable)} />
+                        <StatementMetric label="Normal Payment Portion" value={money(paymentPreview.normalPaymentAmount)} />
+                        <StatementMetric label="Advance Portion" value={money(paymentPreview.advanceAmount)} />
+                        <StatementMetric label="After Payment" value={money(Math.max(0, payableSummary.totalOutstandingPayable - numeric(paymentAmount)))} />
                     </div>
                     <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
                         <input className="field" inputMode="numeric" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} placeholder="Amount paid" />
