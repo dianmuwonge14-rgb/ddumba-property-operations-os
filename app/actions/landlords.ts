@@ -8,6 +8,8 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getLandlordInCompany, getPropertyForLandlordAssignment } from "@/lib/landlords/data";
 import { getMoveInPayableDecision } from "@/lib/landlords/payable-cutoff";
 import { scheduledAdvanceDeductionForMonth, splitAdvanceDeductionPortions } from "@/lib/landlord-advances/calculator";
+import { reconcileLandlordPayableWithLiveNet } from "@/lib/landlord-payables/live-net";
+import { landlordMonthlyDue, landlordMonthlyPaid, landlordMonthlyUnpaid } from "@/lib/landlord-payables/payment-allocation";
 import type {
     ArchiveLandlordInput,
     AssignPropertyInput,
@@ -1708,11 +1710,18 @@ export async function markLandlordMonthlyPayablePaid(input: {
         }
     }
 
+    const reconciledPayable = await reconcileLandlordPayableWithLiveNet({
+        companyId,
+        db,
+        row: payable as LooseRecord,
+        settlementMonth: normalizeSettlementMonth(payable.settlement_month ?? payable.month_key ?? input.paidAt),
+    }) as LooseRecord;
+
     const allocation = await allocateLandlordPaymentAcrossLedger({
         db,
         companyId,
-        officeId: String(payable.office_id),
-        landlordId: String(payable.landlord_id),
+        officeId: String(reconciledPayable.office_id ?? payable.office_id),
+        landlordId: String(reconciledPayable.landlord_id ?? payable.landlord_id),
         startingMonthlyPayableId: input.monthlyPayableId,
         amount,
         paymentMethod,
@@ -1729,12 +1738,12 @@ export async function markLandlordMonthlyPayablePaid(input: {
             amount,
             company_id: companyId,
             created_by: context.profile?.id ?? context.authUser?.id ?? null,
-            landlord_id: payable.landlord_id as string | null,
-            office_id: payable.office_id as string | null,
+            landlord_id: (reconciledPayable.landlord_id ?? payable.landlord_id) as string | null,
+            office_id: (reconciledPayable.office_id ?? payable.office_id) as string | null,
             paid_at: paidAt,
             payment_method: paymentMethod,
             payout_reference: input.reference ?? `LMP-${Date.now()}`,
-            settlement_id: payable.settlement_id as string | null,
+            settlement_id: (reconciledPayable.settlement_id ?? payable.settlement_id) as string | null,
             status: allocation.advanceCreated > 0 ? "overpaid" : allocation.remainingBalance > 0 ? "partial" : "paid",
         })
         .select("*")
@@ -1746,7 +1755,7 @@ export async function markLandlordMonthlyPayablePaid(input: {
         entityType: "landlord_monthly_payable",
         entityId: input.monthlyPayableId,
         companyId,
-        officeId: String(payable.office_id),
+        officeId: String(reconciledPayable.office_id ?? payable.office_id),
         beforeData: jsonSafe(payable),
         afterData: jsonSafe({ payment, allocation }),
     });
@@ -2104,12 +2113,7 @@ async function getLandlordOpeningArrears({
 }
 
 function monthOnlyPayableBalance(row: LooseRecord) {
-    const monthlyDue = Math.max(0, Number(row.monthly_net_payable ?? row.net_payable ?? 0))
-        || Math.max(0, Number(row.total_due ?? 0) - Number(row.opening_arrears ?? 0));
-    if (monthlyDue > 0 || Number(row.amount_paid ?? 0) > 0) {
-        return Math.max(0, monthlyDue - Math.min(Math.max(0, Number(row.amount_paid ?? 0)), monthlyDue));
-    }
-    return Math.max(0, Number(row.unpaid_balance ?? 0));
+    return landlordMonthlyUnpaid(row);
 }
 
 function buildAdvanceSettlementLines({
@@ -2740,9 +2744,9 @@ async function allocateLandlordPaymentAcrossLedger({
         if (remaining <= 0) break;
         const payableId = String(row.id);
         const openingArrears = Math.max(0, Number(row.opening_arrears ?? 0));
-        const monthlyNetPayable = Math.max(0, Number(row.monthly_net_payable ?? row.net_payable ?? 0));
+        const monthlyNetPayable = landlordMonthlyDue(row);
         const totalDue = Math.max(0, Number(row.total_due ?? 0)) || monthlyNetPayable;
-        const amountPaidBefore = Math.max(0, Number(row.amount_paid ?? 0));
+        const amountPaidBefore = landlordMonthlyPaid(row);
         const currentUnpaid = monthOnlyPayableBalance(row);
         if (currentUnpaid <= 0 && payableId !== startingMonthlyPayableId) continue;
 

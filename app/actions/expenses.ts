@@ -9,6 +9,8 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getExpenseInActiveOffice } from "@/lib/expenses/data";
 import { markLandlordMonthlyPayablePaid } from "@/app/actions/landlords";
 import { calculateLandlordAdvancePlan } from "@/lib/landlord-advances/calculator";
+import { getLiveLandlordMonthlyNetPayable, reconcileLandlordPayableWithLiveNet } from "@/lib/landlord-payables/live-net";
+import { buildLandlordPaymentAllocationPlan, landlordMonthlyDue, landlordMonthlyPaid } from "@/lib/landlord-payables/payment-allocation";
 import type {
     CreateExpenseCategoryInput,
     CreateExpenseInput,
@@ -246,16 +248,16 @@ async function getLandlordPaymentPreview(input: {
     paymentMonth: string;
 }) {
     const paymentMonth = monthStart(input.paymentMonth);
-    const [payableResult, advancesResult, pendingResult] = await Promise.all([
+    const [payablesResult, advancesResult, pendingResult] = await Promise.all([
         input.db
             .from("landlord_monthly_payables")
             .select("*")
             .eq("company_id", input.companyId)
             .eq("office_id", input.officeId)
             .eq("landlord_id", input.landlordId)
-            .eq("settlement_month", paymentMonth)
             .neq("status", "archived")
-            .maybeSingle(),
+            .lte("settlement_month", paymentMonth)
+            .order("settlement_month", { ascending: true }),
         input.db
             .from("landlord_advances")
             .select("*")
@@ -271,24 +273,57 @@ async function getLandlordPaymentPreview(input: {
             .eq("payment_month", paymentMonth)
             .eq("status", "pending"),
     ]);
-    if (payableResult.error) throw new Error(payableResult.error.message);
+    if (payablesResult.error) throw new Error(payablesResult.error.message);
     if (advancesResult.error) throw new Error(advancesResult.error.message);
     if (pendingResult.error && !/does not exist|schema cache|Could not find the table/i.test(pendingResult.error.message ?? "")) {
         throw new Error(pendingResult.error.message);
     }
 
-    const payable = payableResult.data as Record<string, unknown> | null;
-    const currentNetPayable = amount(payable?.net_payable ?? payable?.monthly_net_payable);
-    const alreadyPaidAmount = amount(payable?.amount_paid);
-    const outstandingAmount = Math.max(0, amount(payable?.unpaid_balance ?? payable?.closing_arrears ?? Math.max(0, currentNetPayable - alreadyPaidAmount)));
-    const openingArrears = amount(payable?.opening_arrears);
+    let payables = (payablesResult.data ?? []) as Record<string, unknown>[];
+    let currentPayable = payables.find((row) => String(row.settlement_month ?? "").slice(0, 10) === paymentMonth) ?? null;
+    const liveNet = currentPayable
+        ? await getLiveLandlordMonthlyNetPayable({
+            companyId: input.companyId,
+            db: input.db,
+            landlordId: input.landlordId,
+            officeId: input.officeId,
+            settlementMonth: paymentMonth,
+        })
+        : null;
+    if (currentPayable && liveNet && Math.round(landlordMonthlyDue(currentPayable)) !== Math.round(liveNet.netPayable)) {
+        const paid = landlordMonthlyPaid(currentPayable);
+        currentPayable = {
+            ...currentPayable,
+            advance_deductions: liveNet.advanceDeduction,
+            commission_amount: liveNet.commissionAmount,
+            commission_mode: liveNet.commissionMode,
+            commission_percentage: liveNet.commissionRate,
+            full_rent_roll: liveNet.fullRentRoll,
+            monthly_net_payable: liveNet.netPayable,
+            net_payable: liveNet.netPayable,
+            total_due: liveNet.netPayable,
+            unpaid_balance: Math.max(0, liveNet.netPayable - Math.min(paid, liveNet.netPayable)),
+            vacant_room_deductions: liveNet.vacantRoomDeductions,
+            vacated_tenant_debt_deductions: liveNet.recoveryDeduction,
+        };
+        payables = payables.map((row) => String(row.id) === String(currentPayable?.id) ? currentPayable! : row);
+    }
+    const allocationPlan = buildLandlordPaymentAllocationPlan({
+        amount: input.amount,
+        currentMonth: paymentMonth,
+        payables,
+    });
+    const currentNetPayable = landlordMonthlyDue(currentPayable ?? {});
+    const alreadyPaidAmount = landlordMonthlyPaid(currentPayable ?? {});
+    const outstandingAmount = allocationPlan.totalUnpaidPayable;
+    const openingArrears = amount(currentPayable?.opening_arrears);
     const activeAdvanceBalance = ((advancesResult.data ?? []) as Record<string, unknown>[])
         .filter(isApprovedActiveAdvance)
         .reduce((total, advance) => total + advanceRemaining(advance), 0);
     const pendingRequestAmount = ((pendingResult.data ?? []) as Record<string, unknown>[])
         .reduce((total, request) => total + amount(request.requested_amount), 0);
-    const normalPaymentAmount = Math.min(input.amount, outstandingAmount);
-    const advanceAmount = Math.max(0, input.amount - normalPaymentAmount);
+    const normalPaymentAmount = allocationPlan.normalPaymentAmount;
+    const advanceAmount = allocationPlan.advanceAmount;
     const duplicatePaymentRisk = ((pendingResult.data ?? []) as Record<string, unknown>[])
         .some((request) => Math.round(amount(request.requested_amount)) === Math.round(input.amount));
     const flagReason = advanceAmount > 0 && normalPaymentAmount > 0
@@ -306,7 +341,7 @@ async function getLandlordPaymentPreview(input: {
         currentNetPayable,
         duplicatePaymentRisk,
         flagReason,
-        monthlyPayableId: payable?.id ? String(payable.id) : null,
+        monthlyPayableId: allocationPlan.currentMonthPayableId ?? allocationPlan.oldestUnpaidPayableId,
         normalPaymentAmount,
         openingArrears,
         outstandingAmount,
@@ -1186,13 +1221,42 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
     if (!claim.data) throw new Error("This landlord payment request has already been reviewed.");
 
     const reference = `EXP-LP-${request.id.slice(0, 8)}`;
-    const normalPaymentAmount = Math.max(0, Number(request.normal_payment_amount ?? request.requested_amount ?? 0));
-    const advanceAmount = Math.max(0, Number(request.advance_amount ?? 0));
-    const requestedAmount = Math.max(0, Number(request.requested_amount ?? normalPaymentAmount + advanceAmount));
+    const storedNormalPaymentAmount = Math.max(0, Number(request.normal_payment_amount ?? 0));
+    const storedAdvanceAmount = Math.max(0, Number(request.advance_amount ?? 0));
+    const requestedAmount = Math.max(0, Number(request.requested_amount ?? storedNormalPaymentAmount + storedAdvanceAmount));
+    const paymentMonth = monthStart(String(request.payment_month ?? request.payment_date ?? reviewedAt));
+    const payablesResult = await db
+        .from("landlord_monthly_payables")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("office_id", request.office_id)
+        .eq("landlord_id", request.landlord_id)
+        .neq("status", "archived")
+        .lte("settlement_month", paymentMonth)
+        .order("settlement_month", { ascending: true });
+    if (payablesResult.error) throw new Error(payablesResult.error.message);
+    let approvalPayables = (payablesResult.data ?? []) as Record<string, unknown>[];
+    const currentApprovalPayable = approvalPayables.find((row) => String(row.settlement_month ?? "").slice(0, 10) === paymentMonth) ?? null;
+    if (currentApprovalPayable) {
+        const reconciled = await reconcileLandlordPayableWithLiveNet({
+            companyId,
+            db,
+            row: currentApprovalPayable,
+            settlementMonth: paymentMonth,
+        });
+        approvalPayables = approvalPayables.map((row) => String(row.id) === String(reconciled?.id) ? reconciled as Record<string, unknown> : row);
+    }
+    const approvalPlan = buildLandlordPaymentAllocationPlan({
+        amount: requestedAmount,
+        currentMonth: paymentMonth,
+        payables: approvalPayables,
+    });
+    const normalPaymentAmount = approvalPlan.normalPaymentAmount;
+    const advanceAmount = approvalPlan.advanceAmount;
     let approvedPaymentId: string | null = null;
     let approvedAdvanceId: string | null = null;
     let approvedExpenseId: string | null = request.expense_id ?? null;
-    let payableId = request.monthly_payable_id ?? null;
+    let payableId = approvalPlan.currentMonthPayableId ?? approvalPlan.oldestUnpaidPayableId ?? request.monthly_payable_id ?? null;
 
     const { data: approvedExpense, error: approvedExpenseError } = await db
         .from("expenses")
@@ -1287,6 +1351,9 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
         .update({
             status: "approved",
             monthly_payable_id: payableId,
+            normal_payment_amount: normalPaymentAmount,
+            advance_amount: advanceAmount,
+            outstanding_amount: approvalPlan.totalUnpaidPayable,
             reviewed_by: actorId,
             reviewed_at: reviewedAt,
             approved_at: reviewedAt,
