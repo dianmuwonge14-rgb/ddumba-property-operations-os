@@ -195,7 +195,7 @@ begin
       from public.cash_transactions ct
       where ct.cash_account_id = v_office_cash_account_id
         and ct.transaction_type = 'inflow'
-        and ct.source_type in ('admin_float','collector_submission')
+        and ct.source_type in ('admin_float','collector_submission','collector_money_submission')
         and coalesce(ct.status, 'approved') in ('approved','completed')
     ), 0)
     - coalesce((

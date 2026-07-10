@@ -65,7 +65,7 @@ function expenseAmount(row: Row) {
 }
 
 function movementDate(row: Row) {
-    return dateOnly(row.transaction_date ?? row.created_at);
+    return dateOnly(row.occurred_at ?? row.transaction_date ?? row.created_at);
 }
 
 function collectionDate(row: Row) {
@@ -78,6 +78,18 @@ function expenseDate(row: Row) {
 
 function accountKey(row: Row) {
     return String(row.id ?? "");
+}
+
+function isApprovedLedger(row: Row) {
+    const status = String(row.status ?? "approved").toLowerCase();
+    return ["approved", "completed", "posted"].includes(status);
+}
+
+function signedLedgerAmount(row: Row) {
+    const type = String(row.transaction_type ?? "").toLowerCase();
+    const direction = String(row.direction ?? "").toLowerCase();
+    const isOutflow = direction === "outflow" || type === "outflow" || type === "transfer_out";
+    return isOutflow ? -numberValue(row.amount) : numberValue(row.amount);
 }
 
 function buildInsights(summaries: CashOfficeSummary[], totals: CashBankingData["totals"]): CashInsight[] {
@@ -148,18 +160,20 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
         accountsResult,
         cashTransactionsResult,
         cashTransfersResult,
+        collectorProfilesResult,
         usersResult,
     ] = await Promise.all([
         admin.from("offices").select("id, office_name, name").eq("company_id", companyId).order("office_name", { ascending: true, nullsFirst: false }),
         admin.from("collections").select("id, company_id, office_id, amount, amount_paid, payment_date, paid_at, created_at, payment_method, reference_number, recorded_by, status").eq("company_id", companyId).limit(10000),
-        admin.from("expenses").select("id, company_id, office_id, amount, expense_date, created_at, item, description, entered_by, submitted_by").eq("company_id", companyId).limit(10000),
+        admin.from("expenses").select("id, company_id, office_id, amount, expense_date, created_at, item, description, entered_by, submitted_by, status").eq("company_id", companyId).limit(10000),
         admin.from("cash_accounts").select("id, company_id, office_id, account_type, name, status").eq("company_id", companyId).eq("status", "active"),
-        admin.from("cash_transactions").select("id, company_id, office_id, cash_account_id, amount, transaction_type, source_type, source_id, transaction_date, created_at, description, recorded_by").eq("company_id", companyId).limit(10000),
+        (admin as unknown as { from: (table: string) => any }).from("cash_transactions").select("id, company_id, office_id, cash_account_id, amount, transaction_type, source_type, source_id, transaction_date, created_at, description, recorded_by").eq("company_id", companyId).limit(10000),
         admin.from("cash_transfers").select("id, company_id, from_cash_account_id, to_cash_account_id, amount, status, correction_metadata").eq("company_id", companyId).limit(10000),
+        (admin as unknown as { from: (table: string) => any }).from("field_collector_profiles").select("id, company_id, user_id, cash_balance, status").eq("company_id", companyId).limit(1000),
         admin.from("users").select("id, full_name, email").eq("company_id", companyId).limit(1000),
     ]);
 
-    for (const result of [officesResult, collectionsResult, expensesResult, accountsResult, cashTransactionsResult, cashTransfersResult, usersResult]) {
+    for (const result of [officesResult, collectionsResult, expensesResult, accountsResult, cashTransactionsResult, cashTransfersResult, collectorProfilesResult, usersResult]) {
         if (result.error) throw new Error(result.error.message);
     }
 
@@ -177,10 +191,14 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
     const accountById = new Map(accounts.map((row) => [accountKey(row), row]));
     const transferById = new Map(((cashTransfersResult.data ?? []) as Row[]).map((row) => [String(row.id), row]));
     const cashTransactions = ((cashTransactionsResult.data ?? []) as Row[]).filter((row) => {
+        if (!isApprovedLedger(row)) return false;
         if (row.office_id && !visibleOfficeIds.has(row.office_id)) return false;
         const account = accountById.get(String(row.cash_account_id));
         return Boolean(account);
     });
+    const collectorCash = ((collectorProfilesResult.data ?? []) as Row[])
+        .filter((row) => String(row.status ?? "active").toLowerCase() === "active")
+        .reduce((total, row) => total + numberValue(row.cash_balance), 0);
 
     const periodCollections = collections.filter((row) => inRange(collectionDate(row), filters.startDate, filters.endDate));
     const todayCollections = collections.filter((row) => collectionDate(row) === todayKey());
@@ -197,31 +215,14 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
         const account = accountById.get(String(row.cash_account_id));
         return account?.account_type === "office_cash" && row.transaction_type === "outflow" && row.source_type === "admin_float";
     });
-    const bankAccountInflows = cashTransactions.filter((row) => {
-        const account = accountById.get(String(row.cash_account_id));
-        return account?.account_type === "bank" && row.transaction_type === "inflow";
-    });
-    const bankAccountOutflows = cashTransactions.filter((row) => {
-        const account = accountById.get(String(row.cash_account_id));
-        return account?.account_type === "bank" && row.transaction_type === "outflow";
-    });
-    const adminCashInflows = cashTransactions.filter((row) => {
-        const account = accountById.get(String(row.cash_account_id));
-        return account?.account_type === "hq_cash" && row.transaction_type === "inflow";
-    });
-    const adminCashOutflows = cashTransactions.filter((row) => {
-        const account = accountById.get(String(row.cash_account_id));
-        return account?.account_type === "hq_cash" && row.transaction_type === "outflow";
-    });
-
     const summaries = visibleOffices.map<CashOfficeSummary>((office) => {
-        const officeCollections = collections.filter((row) => row.office_id === office.id);
-        const officeExpenses = expenses.filter((row) => row.office_id === office.id);
+        const officeLedger = cashTransactions.filter((row) => {
+            const account = accountById.get(String(row.cash_account_id));
+            return account?.account_type === "office_cash" && row.office_id === office.id;
+        });
         const officeBanked = bankOutflows.filter((row) => row.office_id === office.id);
         const officeFloat = adminFloatInflows.filter((row) => row.office_id === office.id);
         const officeFloatOut = adminFloatOutflows.filter((row) => row.office_id === office.id);
-        const collectedAll = sum(officeCollections, cashAmount);
-        const spentAll = sum(officeExpenses, expenseAmount);
         const bankedAll = sum(officeBanked, (row) => numberValue(row.amount));
         const floatAll = sum(officeFloat, (row) => numberValue(row.amount));
         const floatOutAll = sum(officeFloatOut, (row) => numberValue(row.amount));
@@ -231,7 +232,7 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
             collectedToday: sum(todayCollections.filter((row) => row.office_id === office.id), cashAmount),
             collectedPeriod: sum(periodCollections.filter((row) => row.office_id === office.id), cashAmount),
             expensesPeriod: sum(periodExpenses.filter((row) => row.office_id === office.id), expenseAmount),
-            moneyAtOffice: collectedAll + floatAll - floatOutAll - spentAll - bankedAll,
+            moneyAtOffice: sum(officeLedger, signedLedgerAmount),
             moneyBanked: bankedAll,
             adminFloatReceived: floatAll - floatOutAll,
             bankingCount: officeBanked.filter((row) => inRange(movementDate(row), filters.startDate, filters.endDate)).length,
@@ -396,8 +397,8 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
         row.runningBalance = running;
     }
 
-    const moneyAtBank = sum(bankAccountInflows, (row) => numberValue(row.amount)) - sum(bankAccountOutflows, (row) => numberValue(row.amount));
-    const adminCashBalance = sum(adminCashInflows, (row) => numberValue(row.amount)) - sum(adminCashOutflows, (row) => numberValue(row.amount));
+    const moneyAtBank = sum(cashTransactions.filter((row) => accountById.get(String(row.cash_account_id))?.account_type === "bank"), signedLedgerAmount);
+    const adminCashBalance = sum(cashTransactions.filter((row) => accountById.get(String(row.cash_account_id))?.account_type === "hq_cash"), signedLedgerAmount);
     const totals = {
         collectedToday: sum(todayCollections, cashAmount),
         collectedPeriod: sum(periodCollections, cashAmount),
@@ -406,7 +407,8 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
         moneyBanked: sum(bankOutflows, (row) => numberValue(row.amount)),
         moneyAtBank,
         adminCashBalance,
-        companyCashPosition: moneyAtBank + adminCashBalance + sum(summaries as unknown as Row[], (row) => numberValue(row.moneyAtOffice)),
+        moneyWithCollectors: collectorCash,
+        companyCashPosition: moneyAtBank + adminCashBalance + collectorCash + sum(summaries as unknown as Row[], (row) => numberValue(row.moneyAtOffice)),
         adminFloatGiven: sum(adminFloatInflows, (row) => numberValue(row.amount)) - sum(adminFloatOutflows, (row) => numberValue(row.amount)),
     };
 

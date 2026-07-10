@@ -229,11 +229,13 @@ export default function CashBankingConsole({ data }: Props) {
         });
     }
 
+    const syncedAt = new Date(data.generatedAt).toLocaleString("en-UG", { dateStyle: "medium", timeStyle: "short" });
     const topCards = [
         { label: "Money At Office", value: data.totals.moneyAtOffices, icon: WalletCards, hint: "Live office cash after banking and expenses" },
         { label: "Money At Bank", value: data.totals.moneyAtBank, icon: Landmark, hint: "Banked cash less bank-funded office float" },
         { label: "Collected Period", value: data.totals.collectedPeriod, icon: Banknote, hint: "Active tenant collections in selected period" },
-        { label: "Company Cash Position", value: data.totals.companyCashPosition, icon: Building2, hint: "Bank + admin cash + office cash" },
+        { label: "With Collectors", value: data.totals.moneyWithCollectors, icon: Send, hint: "Live collector money in hand" },
+        { label: "Company Cash Position", value: data.totals.companyCashPosition, icon: Building2, hint: "Bank + admin cash + office + collector cash" },
     ];
 
     return (
@@ -247,8 +249,15 @@ export default function CashBankingConsole({ data }: Props) {
                         <p className="mt-2 max-w-3xl text-sm font-semibold text-slate-300">
                             Live cash position from tenant collections, banking movements, office expenses, and admin float.
                         </p>
+                        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-black">
+                            <span className="rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-emerald-100">Live Supabase</span>
+                            <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-slate-200">Last synced {syncedAt}</span>
+                        </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
+                        <button onClick={() => router.refresh()} disabled={isPending} className="inline-flex items-center gap-2 rounded-2xl border border-cyan-300/20 bg-cyan-300/10 px-4 py-3 text-sm font-black text-cyan-100 hover:bg-cyan-300 hover:text-slate-950 disabled:opacity-60">
+                            <RefreshCw size={16} /> Refresh Live
+                        </button>
                         <button onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-black text-white hover:bg-white/15">
                             <Printer size={16} /> Print A4
                         </button>
@@ -258,7 +267,7 @@ export default function CashBankingConsole({ data }: Props) {
                     </div>
                 </header>
 
-                <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
                     {topCards.map((card, index) => {
                         const Icon = card.icon;
                         return (

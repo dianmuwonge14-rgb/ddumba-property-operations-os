@@ -38,6 +38,7 @@ test("office banking RPC is protected by transaction lock and duplicate-referenc
   assert.match(migration, /pg_advisory_xact_lock/);
   assert.match(migration, /idx_bank_deposits_unique_reference/);
   assert.match(migration, /This deposit reference has already been recorded/);
+  assert.match(migration, /collector_money_submission/);
   assert.ok(migration.includes("coalesce(ct.status, 'approved') in ('approved','completed')"));
 });
 

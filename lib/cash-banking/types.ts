@@ -66,6 +66,7 @@ export type CashBankingData = {
         moneyBanked: number;
         moneyAtBank: number;
         adminCashBalance: number;
+        moneyWithCollectors: number;
         companyCashPosition: number;
         adminFloatGiven: number;
     };

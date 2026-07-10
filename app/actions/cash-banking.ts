@@ -88,10 +88,6 @@ function assertDate(value: string, label: string) {
     }
 }
 
-function isInactiveFinancialStatus(status: unknown) {
-    return ["voided", "removed", "removed_by_admin_approval", "rejected", "pending", "cancelled", "canceled", "deleted"].includes(String(status ?? "").toLowerCase());
-}
-
 function actorId(context: AuthContext) {
     return context.profile?.id ?? context.authUser?.id ?? null;
 }
@@ -146,50 +142,26 @@ async function accountBalance(accountId: string) {
 
 async function officeCashBalance(input: { companyId: string; officeId: string }) {
     const db = createSupabaseAdminClient();
-    const dynamicDb = db as unknown as { from: (table: string) => any };
     const officeAccount = await ensureCashAccount({
         accountType: "office_cash",
         companyId: input.companyId,
         name: "Office Cash",
         officeId: input.officeId,
     });
-    const [collectionsResult, expensesResult, cashResult] = await Promise.all([
-        db
-            .from("collections")
-            .select("amount, amount_paid, status")
-            .eq("company_id", input.companyId)
-            .eq("office_id", input.officeId)
-            .limit(10000),
-        dynamicDb
-            .from("expenses")
-            .select("amount, status")
-            .eq("company_id", input.companyId)
-            .eq("office_id", input.officeId)
-            .limit(10000),
+    const [cashResult] = await Promise.all([
         db
             .from("cash_transactions")
             .select("amount, transaction_type, source_type")
             .eq("cash_account_id", officeAccount.id)
             .limit(10000),
     ]);
-    for (const result of [collectionsResult, expensesResult, cashResult]) {
+    for (const result of [cashResult]) {
         if (result.error) throw new Error(`Office cash balance could not load: ${result.error.message}`);
     }
-    const activeCollections = (collectionsResult.data ?? []).filter((row) => {
-        const status = String(row.status ?? "active").toLowerCase();
-        return !["voided", "removed", "removed_by_admin_approval", "rejected", "pending", "cancelled", "canceled"].includes(status);
-    });
-    const collected = activeCollections.reduce((total, row) => total + amountValue(row.amount_paid ?? row.amount), 0);
-    const expenses = ((expensesResult.data ?? []) as Array<Record<string, unknown>>)
-        .filter((row) => !isInactiveFinancialStatus(row.status))
-        .reduce((total: number, row) => total + amountValue(row.amount), 0);
-    const banked = (cashResult.data ?? [])
-        .filter((row) => row.transaction_type === "outflow" && row.source_type === "bank_deposit")
-        .reduce((total, row) => total + amountValue(row.amount), 0);
-    const adminFloat = (cashResult.data ?? [])
-        .filter((row) => row.transaction_type === "inflow" && row.source_type === "admin_float")
-        .reduce((total, row) => total + amountValue(row.amount), 0);
-    return collected + adminFloat - expenses - banked;
+    return (cashResult.data ?? []).reduce((total, row) => {
+        const signed = row.transaction_type === "outflow" ? -amountValue(row.amount) : amountValue(row.amount);
+        return total + signed;
+    }, 0);
 }
 
 async function notify(input: {
