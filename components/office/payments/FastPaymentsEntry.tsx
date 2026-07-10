@@ -51,10 +51,13 @@ type BalanceAdjustmentForm = {
     reason: string;
 };
 type VacateRoomForm = {
+    effectiveDeductionMonth: string;
     finalPaymentAmount: string;
     notes: string;
     paymentMethod: string;
     reason: string;
+    recoveryAmount: string;
+    recoveryMode: "full" | "custom" | "none" | "admin_review";
     referenceNumber: string;
     vacateDate: string;
 };
@@ -158,10 +161,13 @@ export default function FastPaymentsEntry({
     const [vacateRoomOpen, setVacateRoomOpen] = useState(false);
     const [vacateRoomError, setVacateRoomError] = useState<string | null>(null);
     const [vacateRoomForm, setVacateRoomForm] = useState<VacateRoomForm>({
+        effectiveDeductionMonth: today().slice(0, 7),
         finalPaymentAmount: "",
         notes: "",
         paymentMethod: "cash",
         reason: "",
+        recoveryAmount: "",
+        recoveryMode: "full",
         referenceNumber: "",
         vacateDate: today(),
     });
@@ -413,10 +419,13 @@ export default function FastPaymentsEntry({
         setMessage(null);
         setVacateRoomError(null);
         setVacateRoomForm({
+            effectiveDeductionMonth: paymentDate.slice(0, 7),
             finalPaymentAmount: "",
             notes: "",
             paymentMethod: "cash",
             reason: "",
+            recoveryAmount: "",
+            recoveryMode: "full",
             referenceNumber: "",
             vacateDate: paymentDate,
         });
@@ -540,6 +549,10 @@ export default function FastPaymentsEntry({
             setVacateRoomError("Reason for vacating is required.");
             return;
         }
+        if (!/^\d{4}-\d{2}$/.test(vacateRoomForm.effectiveDeductionMonth)) {
+            setVacateRoomError("Select a valid landlord recovery month.");
+            return;
+        }
         if (selectedOfficeMismatch) {
             setVacateRoomError("This room is outside your active office.");
             return;
@@ -554,6 +567,24 @@ export default function FastPaymentsEntry({
         const selected = selectedTenant;
         const outstandingBeforeFinalPayment = liveOutstandingBalance(selected);
         const shouldClearBalance = Math.max(0, outstandingBeforeFinalPayment - finalPaymentAmount) <= 0;
+        const remainingAfterPayment = Math.max(0, outstandingBeforeFinalPayment - finalPaymentAmount);
+        const landlordRecoveryAmount = vacateRoomForm.recoveryMode === "full"
+            ? remainingAfterPayment
+            : vacateRoomForm.recoveryMode === "none"
+                ? 0
+                : Number(vacateRoomForm.recoveryAmount || 0);
+        if (!Number.isFinite(landlordRecoveryAmount) || landlordRecoveryAmount < 0) {
+            setVacateRoomError("Landlord recovery amount must be zero or greater.");
+            return;
+        }
+        if (landlordRecoveryAmount > remainingAfterPayment) {
+            setVacateRoomError("Landlord recovery amount cannot exceed the remaining tenant debt.");
+            return;
+        }
+        if (remainingAfterPayment > 0 && landlordRecoveryAmount < remainingAfterPayment && !vacateRoomForm.reason.trim()) {
+            setVacateRoomError("Reason is required when landlord recovery is lower than the full tenant debt.");
+            return;
+        }
 
         startTransition(async () => {
             try {
@@ -585,6 +616,9 @@ export default function FastPaymentsEntry({
 
                 const result = await vacateTenant({
                     clearBalance: shouldClearBalance,
+                    effectiveDeductionMonth: `${vacateRoomForm.effectiveDeductionMonth}-01`,
+                    landlordRecoveryAmount,
+                    landlordRecoveryMode: shouldClearBalance ? "none" : vacateRoomForm.recoveryMode,
                     reason: [
                         vacateRoomForm.reason.trim(),
                         vacateRoomForm.notes.trim(),
@@ -1422,6 +1456,22 @@ function VacateRoomModal({
     const finalPayment = Math.max(0, Number(form.finalPaymentAmount || 0));
     const remainingAfterPayment = Math.max(0, outstanding - finalPayment);
     const clearsBalance = remainingAfterPayment <= 0;
+    const proposedRecovery = clearsBalance
+        ? 0
+        : form.recoveryMode === "full"
+            ? remainingAfterPayment
+            : form.recoveryMode === "none"
+                ? 0
+                : Math.max(0, Number(form.recoveryAmount || 0));
+    const landlordRecovery = Math.min(proposedRecovery, remainingAfterPayment);
+    const unrecoveredAmount = Math.max(0, remainingAfterPayment - landlordRecovery);
+    const recoveryLabel = form.recoveryMode === "full"
+        ? "Deduct full remaining balance"
+        : form.recoveryMode === "custom"
+            ? "Deduct custom amount"
+            : form.recoveryMode === "admin_review"
+                ? "Admin review required"
+                : "No landlord deduction";
 
     return (
         <div className="fixed inset-0 z-[145] flex items-center justify-center overflow-y-auto bg-slate-950/75 p-4 backdrop-blur-sm">
@@ -1484,6 +1534,57 @@ function VacateRoomModal({
                                 </select>
                             </label>
                             <TextField label="Reference" value={form.referenceNumber} onChange={(value) => onChange({ referenceNumber: value })} placeholder="Optional" />
+                        </div>
+
+                        <section className="rounded-3xl border border-amber-200 bg-amber-50 p-4">
+                            <p className="text-xs font-black uppercase tracking-wide text-amber-700">Landlord Recovery On Vacate</p>
+                            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                <MiniStat label="Tenant outstanding" value={money(outstanding)} tone={outstanding > 0 ? "text-rose-700" : "text-emerald-700"} />
+                                <MiniStat label="Final payment" value={money(finalPayment)} tone={finalPayment > 0 ? "text-emerald-700" : "text-slate-700"} />
+                                <MiniStat label="Remaining after payment" value={money(remainingAfterPayment)} tone={remainingAfterPayment > 0 ? "text-rose-700" : "text-emerald-700"} />
+                                <MiniStat label="Deduct from landlord" value={money(landlordRecovery)} tone={landlordRecovery > 0 ? "text-amber-800" : "text-slate-700"} />
+                                <MiniStat label="Not assigned for recovery" value={money(unrecoveredAmount)} tone={unrecoveredAmount > 0 ? "text-rose-700" : "text-emerald-700"} />
+                                <TextField label="Effective deduction month" type="month" value={form.effectiveDeductionMonth} onChange={(value) => onChange({ effectiveDeductionMonth: value })} />
+                            </div>
+                            <div className="mt-4 grid gap-2">
+                                <RecoveryOption
+                                    checked={form.recoveryMode === "full"}
+                                    description="Create a landlord recovery deduction for the full remaining tenant debt."
+                                    label="Deduct full remaining balance from landlord"
+                                    onClick={() => onChange({ recoveryMode: "full", recoveryAmount: "" })}
+                                />
+                                <RecoveryOption
+                                    checked={form.recoveryMode === "custom"}
+                                    description="Enter an amount from UGX 0 up to the remaining tenant debt."
+                                    label="Deduct a custom amount from landlord"
+                                    onClick={() => onChange({ recoveryMode: "custom" })}
+                                />
+                                <RecoveryOption
+                                    checked={form.recoveryMode === "none"}
+                                    description="Keep the tenant debt in the unrecovered ledger without reducing landlord payable."
+                                    label="Do not deduct from landlord"
+                                    onClick={() => onChange({ recoveryMode: "none", recoveryAmount: "" })}
+                                />
+                                <RecoveryOption
+                                    checked={form.recoveryMode === "admin_review"}
+                                    description="Record the proposed recovery but do not reduce landlord payable until Admin approval."
+                                    label="Admin review required"
+                                    onClick={() => onChange({ recoveryMode: "admin_review" })}
+                                />
+                            </div>
+                            {(form.recoveryMode === "custom" || form.recoveryMode === "admin_review") && !clearsBalance ? (
+                                <div className="mt-3">
+                                    <TextField label={form.recoveryMode === "admin_review" ? "Proposed recovery amount" : "Custom recovery amount"} type="number" value={form.recoveryAmount} onChange={(value) => onChange({ recoveryAmount: value })} placeholder={`Max ${money(remainingAfterPayment)}`} />
+                                </div>
+                            ) : null}
+                            {landlordRecovery < remainingAfterPayment ? (
+                                <p className="mt-3 rounded-2xl border border-rose-200 bg-white px-3 py-2 text-xs font-bold text-rose-700">
+                                    Reason is required because {money(unrecoveredAmount)} will remain unassigned for landlord recovery.
+                                </p>
+                            ) : null}
+                        </section>
+
+                        <div className="grid gap-3 sm:grid-cols-2">
                             <label className="sm:col-span-2 block">
                                 <span className="text-xs font-black uppercase text-slate-500">Reason for vacating</span>
                                 <input
@@ -1512,8 +1613,12 @@ function VacateRoomModal({
                                 <ModalMetric label="Outstanding now" value={money(outstanding)} />
                                 <ModalMetric label="Final payment" value={money(finalPayment)} tone={finalPayment > 0 ? "text-emerald-200" : "text-slate-200"} />
                                 <ModalMetric label="Frozen old-tenant debt" value={money(remainingAfterPayment)} tone={remainingAfterPayment > 0 ? "text-rose-200" : "text-emerald-200"} />
+                                <ModalMetric label="Landlord deduction" value={money(landlordRecovery)} tone={landlordRecovery > 0 ? "text-amber-200" : "text-slate-200"} />
+                                <ModalMetric label="Company unrecovered loss" value={money(unrecoveredAmount)} tone={unrecoveredAmount > 0 ? "text-rose-200" : "text-emerald-200"} />
+                                <ModalMetric label="Effective settlement month" value={form.effectiveDeductionMonth || "Select month"} tone="text-cyan-200" />
                                 <ModalMetric label="Room status after save" value="Vacant" tone="text-cyan-200" />
-                                <ModalMetric label="Approval mode" value={isAdmin ? "Admin direct" : "Existing permission workflow"} tone="text-amber-200" />
+                                <ModalMetric label="Recovery option" value={recoveryLabel} tone="text-amber-200" />
+                                <ModalMetric label="Approval status" value={form.recoveryMode === "admin_review" ? "Pending Admin review" : isAdmin ? "Admin direct" : "Existing permission workflow"} tone="text-amber-200" />
                             </div>
                             <p className="mt-4 rounded-2xl bg-white/10 px-3 py-2 text-xs font-bold text-slate-200">
                                 {clearsBalance ? "The tenancy will be marked Vacated — Cleared." : "The remaining balance will be frozen as Vacated with debt and sent to landlord recovery where required."}
@@ -1534,11 +1639,31 @@ function VacateRoomModal({
                     </button>
                     <button type="button" disabled={isPending} onClick={onSubmit} className="inline-flex items-center gap-2 rounded-2xl bg-rose-700 px-5 py-3 text-sm font-black text-white shadow-lg disabled:opacity-40">
                         {isPending ? <Loader2 className="animate-spin" size={16} /> : <DoorOpen size={16} />}
-                        {isPending ? "Vacating room..." : "Confirm Vacate Room"}
+                        {isPending ? "Vacating room..." : "Confirm Vacate & Apply Recovery"}
                     </button>
                 </div>
             </div>
         </div>
+    );
+}
+
+function RecoveryOption({ checked, description, label, onClick }: { checked: boolean; description: string; label: string; onClick: () => void }) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            className={`rounded-2xl border px-3 py-3 text-left transition ${checked ? "border-amber-500 bg-white shadow-sm" : "border-amber-100 bg-amber-100/40 hover:border-amber-300"}`}
+        >
+            <span className="flex items-start gap-3">
+                <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${checked ? "border-amber-600 bg-amber-600" : "border-amber-300 bg-white"}`}>
+                    {checked ? <CheckCircle2 size={14} className="text-white" /> : null}
+                </span>
+                <span>
+                    <span className="block text-sm font-black text-slate-950">{label}</span>
+                    <span className="mt-0.5 block text-xs font-bold text-slate-600">{description}</span>
+                </span>
+            </span>
+        </button>
     );
 }
 

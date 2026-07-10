@@ -17,6 +17,9 @@ type VacateTenantInput = {
     tenantId: string;
     vacateDate: string;
     clearBalance: boolean;
+    effectiveDeductionMonth?: string;
+    landlordRecoveryAmount?: number;
+    landlordRecoveryMode?: "full" | "custom" | "none" | "admin_review";
     reason?: string;
 };
 
@@ -178,6 +181,14 @@ export async function vacateTenant(input: VacateTenantInput) {
         activeLease,
     });
     const frozenDebt = input.clearBalance ? 0 : finalOutstanding;
+    let recoveryDecision = resolveLandlordRecoveryDecision({
+        effectiveDeductionMonth: input.effectiveDeductionMonth,
+        finalOutstanding: frozenDebt,
+        mode: input.landlordRecoveryMode,
+        reason: input.reason,
+        requestedAmount: input.landlordRecoveryAmount,
+        vacateDate,
+    });
     const now = new Date().toISOString();
     const reason = input.reason?.trim() || null;
     const snapshot = {
@@ -188,6 +199,18 @@ export async function vacateTenant(input: VacateTenantInput) {
         landlord_name: landlord?.full_name ?? null,
         office_name: office?.office_name ?? office?.name ?? null,
     };
+    if (recoveryDecision.amount > 0 && landlord?.id) {
+        recoveryDecision = {
+            ...recoveryDecision,
+            effectiveMonth: await resolveRecoveryAppliedMonth({
+                companyId,
+                db: supabase,
+                desiredMonth: recoveryDecision.effectiveMonth,
+                landlordId: landlord.id,
+                officeId,
+            }),
+        };
+    }
 
     const { data: exitRecord, error: exitError } = await db
         .from("tenant_exit_records")
@@ -205,7 +228,13 @@ export async function vacateTenant(input: VacateTenantInput) {
             final_outstanding_balance: frozenDebt,
             cleared_balance: input.clearBalance,
             exit_type: input.clearBalance ? "vacated_cleared" : "vacated_with_debt",
-            reason_notes: reason,
+            reason_notes: [
+                reason,
+                `Landlord recovery method: ${recoveryDecision.method}.`,
+                `Landlord recovery amount: UGX ${Math.round(recoveryDecision.amount).toLocaleString("en-UG")}.`,
+                `Unrecovered amount: UGX ${Math.round(recoveryDecision.unrecoveredAmount).toLocaleString("en-UG")}.`,
+                recoveryDecision.effectiveMonth ? `Effective recovery month: ${recoveryDecision.effectiveMonth}.` : "",
+            ].filter(Boolean).join(" "),
         })
         .select("*")
         .single();
@@ -228,8 +257,14 @@ export async function vacateTenant(input: VacateTenantInput) {
                 original_amount: frozenDebt,
                 recovered_amount: 0,
                 remaining_amount: frozenDebt,
-                recovery_status: "pending",
-                notes: reason ?? `Frozen vacate balance from tenant/room/ledger outstanding: UGX ${Math.round(frozenDebt).toLocaleString("en-UG")}. Room rent: UGX ${Math.round(Number(room.monthly_rent ?? activeLease?.monthly_rent ?? tenant.monthly_rent ?? 0)).toLocaleString("en-UG")}.`,
+                recovery_status: recoveryDecision.amount > 0 ? recoveryDecision.status : "unassigned",
+                notes: [
+                    reason ?? `Frozen vacate balance from tenant/room/ledger outstanding: UGX ${Math.round(frozenDebt).toLocaleString("en-UG")}. Room rent: UGX ${Math.round(Number(room.monthly_rent ?? activeLease?.monthly_rent ?? tenant.monthly_rent ?? 0)).toLocaleString("en-UG")}.`,
+                    `Landlord recovery method: ${recoveryDecision.method}.`,
+                    `Landlord recovery amount: UGX ${Math.round(recoveryDecision.amount).toLocaleString("en-UG")}.`,
+                    `Unrecovered amount: UGX ${Math.round(recoveryDecision.unrecoveredAmount).toLocaleString("en-UG")}.`,
+                    recoveryDecision.effectiveMonth ? `Effective recovery month: ${recoveryDecision.effectiveMonth}.` : "",
+                ].filter(Boolean).join(" "),
                 created_by: userId,
             })
             .select("*")
@@ -252,11 +287,20 @@ export async function vacateTenant(input: VacateTenantInput) {
                 property_name: snapshot.property_name,
                 landlord_name: snapshot.landlord_name,
                 office_name: snapshot.office_name,
-                amount: frozenDebt,
+                amount: recoveryDecision.amount,
                 applied_amount: 0,
-                status: "pending",
-                reason: "Tenant vacated with unpaid balance",
-                notes: `Deduct full vacated tenant outstanding balance from landlord payable. Outstanding left: UGX ${Math.round(frozenDebt).toLocaleString("en-UG")}; room rent: UGX ${Math.round(Number(room.monthly_rent ?? activeLease?.monthly_rent ?? tenant.monthly_rent ?? 0)).toLocaleString("en-UG")}.`,
+                status: recoveryDecision.status,
+                vacate_date: vacateDate,
+                advance_payment_month: recoveryDecision.effectiveMonth,
+                applied_month: recoveryDecision.effectiveMonth,
+                deduction_source_id: debt!.id,
+                reason: recoveryDecision.reason,
+                notes: [
+                    recoveryDecision.note,
+                    `Original outstanding after final payment: UGX ${Math.round(frozenDebt).toLocaleString("en-UG")}.`,
+                    `Unrecovered amount not assigned to landlord: UGX ${Math.round(recoveryDecision.unrecoveredAmount).toLocaleString("en-UG")}.`,
+                    `Room rent: UGX ${Math.round(Number(room.monthly_rent ?? activeLease?.monthly_rent ?? tenant.monthly_rent ?? 0)).toLocaleString("en-UG")}.`,
+                ].join(" "),
                 created_by: userId,
             })
             .select("*")
@@ -338,7 +382,7 @@ export async function vacateTenant(input: VacateTenantInput) {
         entityType: "tenant",
         entityId: tenant.id,
         beforeData: auditJson({ tenant, lease: activeLease, room }),
-        afterData: auditJson({ tenant: updatedTenant?.data, exitRecord, debtRecord, roomStatus: "vacant", outstandingSources }),
+        afterData: auditJson({ tenant: updatedTenant?.data, exitRecord, debtRecord, roomStatus: "vacant", outstandingSources, recoveryDecision }),
         companyId,
         officeId,
     });
@@ -445,6 +489,117 @@ async function resolveVacateOutstandingBalance({
             room_monthly_rent: Number(room.monthly_rent ?? activeLease?.monthly_rent ?? tenant.monthly_rent ?? 0) || 0,
         },
     };
+}
+
+function normalizeMonth(value: string | undefined, fallbackDate: string) {
+    const candidate = value?.trim() || fallbackDate;
+    const match = candidate.match(/^(\d{4})-(\d{2})/);
+    if (!match) throw new Error("Enter a valid recovery month.");
+    return `${match[1]}-${match[2]}-01`;
+}
+
+function nextMonth(value: string) {
+    const date = new Date(`${value}T00:00:00Z`);
+    date.setUTCMonth(date.getUTCMonth() + 1);
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-01`;
+}
+
+function resolveLandlordRecoveryDecision({
+    effectiveDeductionMonth,
+    finalOutstanding,
+    mode,
+    reason,
+    requestedAmount,
+    vacateDate,
+}: {
+    effectiveDeductionMonth?: string;
+    finalOutstanding: number;
+    mode?: VacateTenantInput["landlordRecoveryMode"];
+    reason?: string;
+    requestedAmount?: number;
+    vacateDate: string;
+}) {
+    const debt = Math.max(0, Number(finalOutstanding) || 0);
+    const recoveryMode = mode ?? (debt > 0 ? "full" : "none");
+    const effectiveMonth = normalizeMonth(effectiveDeductionMonth, vacateDate);
+    const trimmedReason = reason?.trim() ?? "";
+    let amount = 0;
+    let status = "no_landlord_recovery";
+    let label = "No landlord deduction";
+
+    if (debt <= 0) {
+        return {
+            amount: 0,
+            effectiveMonth,
+            method: "none",
+            note: "Tenant balance was fully cleared before vacating. No landlord recovery deduction was created.",
+            reason: trimmedReason || "Tenant vacated with cleared balance",
+            status,
+            unrecoveredAmount: 0,
+        };
+    }
+
+    if (recoveryMode === "full") {
+        amount = debt;
+        status = "pending";
+        label = "Deduct full remaining balance from landlord";
+    } else if (recoveryMode === "custom" || recoveryMode === "admin_review") {
+        const proposed = Number(requestedAmount ?? 0);
+        if (!Number.isFinite(proposed) || proposed < 0) throw new Error("Landlord recovery amount must be zero or greater.");
+        if (proposed > debt) throw new Error("Landlord recovery amount cannot exceed the tenant's remaining debt.");
+        amount = proposed;
+        status = recoveryMode === "admin_review" ? "pending_admin_review" : "pending";
+        label = recoveryMode === "admin_review" ? "Admin review required" : "Custom landlord deduction";
+        if (amount < debt && !trimmedReason) throw new Error("Reason is required when landlord recovery is lower than the full tenant debt.");
+    } else if (recoveryMode === "none") {
+        amount = 0;
+        status = "no_landlord_recovery";
+        label = "Do not deduct from landlord";
+        if (!trimmedReason) throw new Error("Reason is required when no landlord deduction is selected.");
+    } else {
+        throw new Error("Select a valid landlord recovery option.");
+    }
+
+    const unrecoveredAmount = Math.max(0, debt - amount);
+    return {
+        amount,
+        effectiveMonth,
+        method: recoveryMode,
+        note: `${label}. Landlord recovery amount UGX ${Math.round(amount).toLocaleString("en-UG")}; unrecovered amount UGX ${Math.round(unrecoveredAmount).toLocaleString("en-UG")}.`,
+        reason: trimmedReason || label,
+        status,
+        unrecoveredAmount,
+    };
+}
+
+async function resolveRecoveryAppliedMonth({
+    companyId,
+    db,
+    desiredMonth,
+    landlordId,
+    officeId,
+}: {
+    companyId: string;
+    db: Awaited<ReturnType<typeof createSupabaseServerClient>>;
+    desiredMonth: string;
+    landlordId: string;
+    officeId: string;
+}) {
+    const looseDb = db as unknown as { from: (table: string) => any };
+    const { data, error } = await looseDb
+        .from("landlord_monthly_payables")
+        .select("settlement_month, monthly_net_payable, net_payable, total_due, amount_paid, status")
+        .eq("company_id", companyId)
+        .eq("office_id", officeId)
+        .eq("landlord_id", landlordId)
+        .eq("settlement_month", desiredMonth)
+        .maybeSingle();
+    if (error) return desiredMonth;
+    if (!data) return desiredMonth;
+    const due = Number(data.monthly_net_payable ?? data.net_payable ?? data.total_due ?? 0);
+    const paid = Number(data.amount_paid ?? 0);
+    const isPaid = String(data.status ?? "").toLowerCase() === "paid" || (due > 0 && paid >= due);
+    return isPaid ? nextMonth(desiredMonth) : desiredMonth;
 }
 
 export async function assignReplacementTenantToRoom(input: AssignReplacementTenantInput) {
