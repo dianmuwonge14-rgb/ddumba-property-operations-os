@@ -50,6 +50,7 @@ const adminSections = [
         items: [
             { href: "/office/collections", label: "Collections", icon: HandCoins },
             { href: "/office/admin/payments", label: "Payments Entry", icon: Banknote },
+            { href: "/office/receipts", label: "Receipt History", icon: ReceiptText },
             { href: "/office/admin/cash-banking", label: "Cash Banking", icon: WalletCards },
             { href: "/office/admin/defaulters", label: "Defaulters", icon: AlertTriangle },
             { href: "/office/promises", label: "Promise Centre", icon: CalendarCheck },
@@ -101,6 +102,7 @@ const officeSections = [
             { href: "/office", label: "Dashboard", icon: Home },
             { href: "/office/collections", label: "Collections", icon: HandCoins },
             { href: "/office/payments", label: "Payments Entry", icon: Banknote },
+            { href: "/office/receipts", label: "Receipt History", icon: ReceiptText },
             { href: "/office/cash-banking", label: "Cash Banking", icon: WalletCards },
             { href: "/office/defaulters", label: "Defaulters", icon: AlertTriangle },
             { href: "/office/promises", label: "Promise Centre", icon: CalendarCheck },
@@ -131,6 +133,7 @@ const collectorSections = [
         items: [
             { href: "/office/collector", label: "Dashboard", icon: Home },
             { href: "/office/collector/payments", label: "Payments Entry", icon: Banknote },
+            { href: "/office/receipts", label: "Receipt History", icon: ReceiptText },
             { href: "/office/collector/promises", label: "Promise Entry", icon: CalendarCheck },
             { href: "/office/collector/vacant-rooms", label: "Vacant Rooms", icon: HousePlus },
             { href: "/office/collector/tenant-relocation", label: "Tenant Relocation", icon: GitMerge },
@@ -153,6 +156,7 @@ type Props = {
 function themeForPath(pathname: string) {
     if (pathname.startsWith("/office/collector")) return "collections";
     if (pathname.startsWith("/office/admin")) return "admin";
+    if (pathname.includes("/receipts")) return "payments";
     if (pathname.includes("/collections")) return "collections";
     if (pathname.includes("/payments")) return "payments";
     if (pathname.includes("/cash-banking")) return "cash";

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { logUserAction } from "@/lib/auth/audit";
 import { hasPermission, requireAuth, requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissions";
 import { createNotificationWithEmail } from "@/lib/notifications/email";
+import { createTenantPaymentReceipt } from "@/lib/receipts/payment-receipts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getTenantCollectionContext } from "@/lib/collections/data";
@@ -928,6 +929,15 @@ export async function recordCollection(input: RecordCollectionInput) {
         if (rejected) console.warn("Payment background update failed:", rejected.reason);
     });
 
+    let receipt = null;
+    let receiptError: string | null = null;
+    try {
+        receipt = await createTenantPaymentReceipt(data.id, { issuedBy: context.profile?.id ?? null });
+    } catch (error) {
+        receiptError = error instanceof Error ? error.message : "Receipt could not be generated.";
+        console.warn("Payment receipt generation failed:", receiptError);
+    }
+
     revalidateFastPaymentPages();
     return {
         ...data,
@@ -938,6 +948,8 @@ export async function recordCollection(input: RecordCollectionInput) {
             currentMonthPaid: rentAllocations.filter((allocation) => allocation.allocationType === "current_month").reduce((total, allocation) => total + allocation.amount, 0),
             remainingBalance: balance,
         },
+        receipt,
+        receiptError,
     };
 }
 
@@ -1712,8 +1724,19 @@ export async function adminCorrectPayment(input: {
         afterData: { payment: updatedPayment, correction },
     });
 
+    let receipt = null;
+    let receiptError: string | null = null;
+    if (correctionType !== "remove_payment") {
+        try {
+            receipt = await createTenantPaymentReceipt(input.paymentId, { forceRefresh: true, issuedBy: context.profile?.id ?? null });
+        } catch (error) {
+            receiptError = error instanceof Error ? error.message : "Corrected receipt could not be generated.";
+            console.warn("Corrected payment receipt generation failed:", receiptError);
+        }
+    }
+
     revalidatePaymentDateChangePages();
-    return { correction, payment: updatedPayment };
+    return { correction, payment: updatedPayment, receipt, receiptError };
 }
 
 export async function previewBulkPaymentDateCorrection(input: {

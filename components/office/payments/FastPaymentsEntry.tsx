@@ -5,10 +5,12 @@ import { AlertTriangle, Banknote, BrainCircuit, CalendarDays, CheckCircle2, Cred
 import type { LucideIcon } from "lucide-react";
 import { adminCorrectPayment, recordCollection, requestPaymentCorrection, requestTenantOutstandingBalanceAdjustment } from "@/app/actions/collections";
 import { recordCollectorPayment } from "@/app/actions/collectors";
+import { logReceiptPrintOrDownload, logReceiptShareLink, sendReceiptByEmail } from "@/app/actions/receipts";
 import { replaceTenantFromPaymentsEntry } from "@/app/actions/room-occupancy";
 import TenantContactCard from "@/components/office/shared/TenantContactCard";
 import type { AdvanceRentAssistantItem, CollectionTenantResult, FastPaymentRecentItem, FastPaymentRecentTotals } from "@/lib/collections/types";
 import type { Company, Office, UserProfile } from "@/lib/auth/types";
+import type { PaymentReceiptSummary } from "@/lib/receipts/payment-receipts";
 
 type Props = {
     activeCompany: Company | null;
@@ -46,6 +48,13 @@ type BalanceAdjustmentForm = {
     newBalance: string;
     notes: string;
     reason: string;
+};
+type ReceiptModalState = {
+    email: string;
+    message: string | null;
+    phone: string;
+    receipt: PaymentReceiptSummary;
+    sending: boolean;
 };
 
 function today() {
@@ -154,6 +163,7 @@ export default function FastPaymentsEntry({
         paymentMethod: "cash",
         referenceNumber: "",
     });
+    const [receiptModal, setReceiptModal] = useState<ReceiptModalState | null>(null);
     const [isPending, startTransition] = useTransition();
     const abortRef = useRef<AbortController | null>(null);
     const roomInputRef = useRef<HTMLInputElement | null>(null);
@@ -528,6 +538,8 @@ export default function FastPaymentsEntry({
                         paymentKind: "tenant_normal",
                         paymentSource: "tenant",
                     });
+                const receipt = (collection as typeof collection & { receipt?: PaymentReceiptSummary | null; receiptError?: string | null }).receipt ?? null;
+                const receiptError = (collection as typeof collection & { receiptError?: string | null }).receiptError ?? null;
                 const allocationSummary = (collection as typeof collection & {
                     allocationSummary?: {
                         advanceAmount?: number;
@@ -568,7 +580,16 @@ export default function FastPaymentsEntry({
                 };
                 setRecentPayments((current) => [...current.filter((payment) => payment.id !== optimisticPayment.id), optimisticPayment]);
                 flashLatestPayment(optimisticPayment.id);
-                setMessage(`Payment recorded for room ${roomLabel(selectedTenant)}.`);
+                setMessage(receiptError ? `Payment recorded for room ${roomLabel(selectedTenant)}. Receipt warning: ${receiptError}` : `Payment recorded for room ${roomLabel(selectedTenant)}.`);
+                if (receipt) {
+                    setReceiptModal({
+                        email: receipt.tenantEmail ?? "",
+                        message: null,
+                        phone: receipt.tenantPhone ?? "",
+                        receipt,
+                        sending: false,
+                    });
+                }
                 clearForNextPayment();
                 void loadRecentPayments(paymentDate);
                 void loadAdvanceRentAssistant(paymentDate);
@@ -615,7 +636,18 @@ export default function FastPaymentsEntry({
                             tenantId: correctionType === "room_change" ? result.payment.tenant_id ?? payment.tenantId : payment.tenantId,
                         }
                         : payment).filter((payment) => correctionType === "remove_payment" ? payment.id !== correctionPayment.id : true));
-                    setMessage("Payment corrected successfully.");
+                    const receipt = (result as typeof result & { receipt?: PaymentReceiptSummary | null; receiptError?: string | null }).receipt ?? null;
+                    const receiptError = (result as typeof result & { receiptError?: string | null }).receiptError ?? null;
+                    setMessage(receiptError ? `Payment corrected successfully. Receipt warning: ${receiptError}` : "Payment corrected successfully.");
+                    if (receipt) {
+                        setReceiptModal({
+                            email: receipt.tenantEmail ?? "",
+                            message: null,
+                            phone: receipt.tenantPhone ?? "",
+                            receipt,
+                            sending: false,
+                        });
+                    }
                 } else {
                     const request = await requestPaymentCorrection({
                         correctionType,
@@ -907,7 +939,161 @@ export default function FastPaymentsEntry({
                 open={balanceAdjustmentOpen}
                 tenant={selectedTenant}
             />
+            <ReceiptConfirmationModal
+                modal={receiptModal}
+                onChange={setReceiptModal}
+                onClose={() => setReceiptModal(null)}
+            />
         </main>
+    );
+}
+
+function ReceiptConfirmationModal({
+    modal,
+    onChange,
+    onClose,
+}: {
+    modal: ReceiptModalState | null;
+    onChange: (value: ReceiptModalState | null) => void;
+    onClose: () => void;
+}) {
+    const [isSending, startReceiptTransition] = useTransition();
+    if (!modal) return null;
+    const receipt = modal.receipt;
+    const snapshot = receipt.snapshot;
+    const printReceipt = () => {
+        startReceiptTransition(async () => {
+            await logReceiptPrintOrDownload({ channel: "print", receiptId: receipt.id }).catch(() => null);
+            window.print();
+        });
+    };
+    const downloadPdf = () => {
+        startReceiptTransition(async () => {
+            await logReceiptPrintOrDownload({ channel: "download_pdf", receiptId: receipt.id }).catch(() => null);
+            window.print();
+        });
+    };
+    const sendEmail = () => {
+        startReceiptTransition(async () => {
+            try {
+                onChange({ ...modal, message: null, sending: true });
+                await sendReceiptByEmail({ email: modal.email, receiptId: receipt.id });
+                onChange({ ...modal, message: "E-receipt sent by email.", sending: false });
+            } catch (error) {
+                onChange({ ...modal, message: error instanceof Error ? error.message : "E-receipt could not be sent.", sending: false });
+            }
+        });
+    };
+    const share = (channel: "sms" | "whatsapp") => {
+        const phone = modal.phone.trim();
+        if (!phone) {
+            onChange({ ...modal, message: "Add a phone number before sharing." });
+            return;
+        }
+        const body = `DDUMBA OS receipt ${receipt.receiptNumber}: ${money(snapshot.amountPaid)} paid for room ${snapshot.roomNumber ?? ""}. Verification ${receipt.verificationCode}.`;
+        const href = channel === "whatsapp"
+            ? `https://wa.me/${phone.replace(/\D+/g, "")}?text=${encodeURIComponent(body)}`
+            : `sms:${phone}?&body=${encodeURIComponent(body)}`;
+        startReceiptTransition(async () => {
+            await logReceiptShareLink({ channel, phone, receiptId: receipt.id }).catch(() => null);
+            window.open(href, "_blank", "noopener,noreferrer");
+        });
+    };
+
+    return (
+        <div className="fixed inset-0 z-[100] overflow-y-auto bg-slate-950/80 p-4 backdrop-blur print:static print:bg-white print:p-0">
+            <div className="mx-auto max-w-3xl rounded-[28px] bg-white p-4 text-slate-950 shadow-2xl print:max-w-none print:rounded-none print:p-0 print:shadow-none">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2 print:hidden">
+                    <div>
+                        <p className="text-xs font-black uppercase tracking-[0.2em] text-blue-700">Payment saved</p>
+                        <h2 className="text-2xl font-black">Receipt ready</h2>
+                    </div>
+                    <button type="button" onClick={onClose} className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-black text-slate-700">Close</button>
+                </div>
+
+                <article className="rounded-2xl border-2 border-slate-900 bg-white p-5 print:rounded-none print:border-slate-900">
+                    <header className="flex flex-wrap items-start justify-between gap-4 border-b-2 border-slate-900 pb-4">
+                        <div>
+                            <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">DDUMBA OS / {snapshot.companyName}</p>
+                            <h3 className="mt-1 text-3xl font-black">Payment Receipt</h3>
+                            <p className="mt-1 text-sm font-bold text-slate-600">{snapshot.companyContact ?? "Company contact not set"}</p>
+                        </div>
+                        <div className="text-left sm:text-right">
+                            <p className="text-xs font-black uppercase text-slate-500">Receipt No.</p>
+                            <p className="text-xl font-black text-blue-700">{receipt.receiptNumber}</p>
+                            <p className="mt-1 text-xs font-bold text-slate-500">{snapshot.paymentDateTime ? new Date(snapshot.paymentDateTime).toLocaleString() : "No timestamp"}</p>
+                        </div>
+                    </header>
+
+                    <section className="mt-5 grid gap-3 sm:grid-cols-2">
+                        <ReceiptField label="Office" value={snapshot.officeName ?? "Office"} />
+                        <ReceiptField label="Room" value={snapshot.roomNumber ?? "No room"} />
+                        <ReceiptField label="Tenant" value={snapshot.tenantName ?? "Unnamed tenant"} />
+                        <ReceiptField label="Tenant phone" value={snapshot.tenantPhone ?? "No phone"} />
+                        <ReceiptField label="Landlord" value={snapshot.landlordName ?? "No landlord"} />
+                        <ReceiptField label="Payment method" value={snapshot.paymentMethod?.replaceAll("_", " ") ?? "Payment"} />
+                    </section>
+
+                    <section className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        <ReceiptMetric label="Amount paid" value={money(snapshot.amountPaid)} />
+                        <ReceiptMetric label="Previous outstanding" value={money(snapshot.previousOutstandingBalance)} />
+                        <ReceiptMetric label="Amount applied" value={money(snapshot.amountApplied)} />
+                        <ReceiptMetric label="Remaining balance" value={money(snapshot.remainingOutstandingBalance)} />
+                        <ReceiptMetric label="Monthly rent" value={money(snapshot.monthlyRent)} />
+                        <ReceiptMetric label="Advance balance" value={money(snapshot.advanceBalance)} />
+                        <ReceiptMetric label="Coverage period" value={snapshot.coveragePeriod ?? "Current due"} />
+                        <ReceiptMetric label="Status" value={snapshot.status} />
+                    </section>
+
+                    <section className="mt-5 grid gap-3 sm:grid-cols-2">
+                        <ReceiptField label="Reference" value={snapshot.referenceNumber ?? "No reference"} />
+                        <ReceiptField label="Recorded by" value={snapshot.recordedByName ?? "DDUMBA OS"} />
+                        <ReceiptField label="Verification code" value={receipt.verificationCode} />
+                        <ReceiptField label="Notes" value={snapshot.notes ?? "No notes"} />
+                    </section>
+
+                    <footer className="mt-8 flex flex-wrap items-end justify-between gap-5 border-t border-slate-200 pt-5">
+                        <div>
+                            <p className="text-xs font-black uppercase text-slate-500">Verification QR placeholder</p>
+                            <div className="mt-2 grid h-24 w-24 grid-cols-4 gap-1 rounded-xl border border-slate-900 bg-white p-2">
+                                {Array.from({ length: 16 }).map((_, index) => (
+                                    <span key={index} className={(index + receipt.verificationCode.length) % 3 === 0 ? "bg-slate-950" : "bg-slate-200"} />
+                                ))}
+                            </div>
+                        </div>
+                        <p className="max-w-md text-xs font-bold text-slate-500">This receipt was generated from the final saved Supabase transaction. Keep it for tenant, office, collector, and audit verification.</p>
+                    </footer>
+                </article>
+
+                <div className="mt-4 grid gap-3 print:hidden sm:grid-cols-2">
+                    <input value={modal.email} onChange={(event) => onChange({ ...modal, email: event.target.value })} className="h-12 rounded-2xl border border-slate-200 px-4 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-100" placeholder="Tenant email" />
+                    <input value={modal.phone} onChange={(event) => onChange({ ...modal, phone: event.target.value })} className="h-12 rounded-2xl border border-slate-200 px-4 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-100" placeholder="Tenant phone" />
+                    <button type="button" onClick={printReceipt} disabled={isSending} className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white disabled:opacity-50">Print Receipt</button>
+                    <button type="button" onClick={downloadPdf} disabled={isSending} className="rounded-2xl bg-blue-700 px-4 py-3 text-sm font-black text-white disabled:opacity-50">Download PDF Receipt</button>
+                    <button type="button" onClick={sendEmail} disabled={isSending || modal.sending} className="rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white disabled:opacity-50">Send by Email</button>
+                    <button type="button" onClick={() => share("whatsapp")} disabled={isSending} className="rounded-2xl bg-green-600 px-4 py-3 text-sm font-black text-white disabled:opacity-50">Send by WhatsApp/SMS</button>
+                </div>
+                {modal.message ? <p className="mt-3 rounded-2xl bg-slate-100 px-4 py-3 text-sm font-black text-slate-700 print:hidden">{modal.message}</p> : null}
+            </div>
+        </div>
+    );
+}
+
+function ReceiptField({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+            <p className="text-[10px] font-black uppercase tracking-wide text-slate-500">{label}</p>
+            <p className="mt-1 break-words text-sm font-black text-slate-950">{value}</p>
+        </div>
+    );
+}
+
+function ReceiptMetric({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="min-w-0 rounded-2xl border border-slate-900 bg-slate-950 p-3 text-white">
+            <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">{label}</p>
+            <p className="mt-1 break-words text-base font-black">{value}</p>
+        </div>
     );
 }
 
