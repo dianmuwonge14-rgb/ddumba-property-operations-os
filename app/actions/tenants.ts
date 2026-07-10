@@ -5,6 +5,7 @@ import { canAccessOffice, requirePermission } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { refreshAffectedLandlordPayable } from "@/app/actions/room-rent";
 import type { Database } from "@/types/database.types";
 
 type UpdateTenantContactInput = {
@@ -349,6 +350,20 @@ export async function vacateTenant(input: VacateTenantInput) {
     });
     if (roomHistoryError) throw new Error(roomHistoryError.message);
 
+    let refreshedPayable: Record<string, unknown> | null = null;
+    if (landlord?.id) {
+        refreshedPayable = await refreshAffectedLandlordPayable(db as unknown as Parameters<typeof refreshAffectedLandlordPayable>[0], {
+            companyId,
+            landlordId: landlord.id,
+            officeId,
+            settlementMonth: normalizeMonth(undefined, vacateDate),
+            userId,
+        }) as Record<string, unknown> | null;
+        const searchIndexRefresh = await (adminSupabase as unknown as { rpc?: (name: string, args: Record<string, unknown>) => Promise<{ error: { message: string } | null }> })
+            .rpc?.("ddumba_v1_refresh_landlord_search_index", { p_landlord_id: landlord.id });
+        if (searchIndexRefresh?.error) console.warn(`Landlord search index refresh failed after vacate: ${searchIndexRefresh.error.message}`);
+    }
+
     const { error: collectionActionError } = await supabase.from("collection_actions").insert({
         company_id: companyId,
         office_id: officeId,
@@ -382,7 +397,7 @@ export async function vacateTenant(input: VacateTenantInput) {
         entityType: "tenant",
         entityId: tenant.id,
         beforeData: auditJson({ tenant, lease: activeLease, room }),
-        afterData: auditJson({ tenant: updatedTenant?.data, exitRecord, debtRecord, roomStatus: "vacant", outstandingSources, recoveryDecision }),
+        afterData: auditJson({ tenant: updatedTenant?.data, exitRecord, debtRecord, refreshedPayable, roomStatus: "vacant", outstandingSources, recoveryDecision }),
         companyId,
         officeId,
     });

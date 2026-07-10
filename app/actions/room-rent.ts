@@ -8,6 +8,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getMoveInPayableDecision } from "@/lib/landlords/payable-cutoff";
 import { isRecoveryDeductionActiveForMonth } from "@/lib/landlord-payables/recovery-deductions";
+import { getVacancyCutoffDecision, isVacantStatus } from "@/lib/landlord-payables/vacancy-cutoff";
 
 type Db = {
     from: (table: string) => any;
@@ -107,8 +108,7 @@ function isArchivedRoom(room: Record<string, unknown>) {
 }
 
 function isVacantCommissionRoom(room: Record<string, unknown>) {
-    const status = String(room.status ?? "").toLowerCase();
-    return status.includes("vacant") || status.includes("empty");
+    return isVacantStatus(room.status);
 }
 
 function parseCommissionMode(value: unknown) {
@@ -412,12 +412,13 @@ export async function refreshAffectedLandlordPayable(db: Db, input: {
         debtsResult,
         advancesResult,
         existingResult,
+        exitRecordsResult,
     ] = await Promise.all([
         db.from("landlords").select("*").eq("company_id", input.companyId).eq("id", input.landlordId).maybeSingle(),
         db.from("offices").select("id, office_name, name").eq("company_id", input.companyId).eq("id", input.officeId).maybeSingle(),
         db.from("rooms").select("id, monthly_rent, status").eq("company_id", input.companyId).eq("office_id", input.officeId).eq("landlord_id", input.landlordId),
         db.from("company_settings").select("*").eq("company_id", input.companyId).eq("key", "default_landlord_commission_rate"),
-        db.from("vacated_tenant_debts").select("*").eq("company_id", input.companyId).eq("office_id", input.officeId).eq("landlord_id", input.landlordId),
+        db.from("landlord_debt_deductions").select("*").eq("company_id", input.companyId).eq("office_id", input.officeId).eq("landlord_id", input.landlordId),
         db.from("landlord_advances").select("*").eq("company_id", input.companyId).eq("office_id", input.officeId).eq("landlord_id", input.landlordId),
         db.from("landlord_monthly_payables")
             .select("*")
@@ -427,6 +428,13 @@ export async function refreshAffectedLandlordPayable(db: Db, input: {
             .eq("settlement_month", settlementMonth)
             .neq("status", "archived")
             .maybeSingle(),
+        db.from("tenant_exit_records")
+            .select("room_id,vacate_date,created_at")
+            .eq("company_id", input.companyId)
+            .eq("office_id", input.officeId)
+            .eq("landlord_id", input.landlordId)
+            .order("vacate_date", { ascending: false })
+            .order("created_at", { ascending: false }),
     ]);
     if (landlordResult.error) throw new Error(landlordResult.error.message);
     if (officeResult.error) throw new Error(officeResult.error.message);
@@ -435,23 +443,35 @@ export async function refreshAffectedLandlordPayable(db: Db, input: {
     if (debtsResult.error) throw new Error(debtsResult.error.message);
     if (advancesResult.error) throw new Error(advancesResult.error.message);
     if (existingResult.error) throw new Error(existingResult.error.message);
+    if (exitRecordsResult.error) throw new Error(exitRecordsResult.error.message);
     const landlord = landlordResult.data as Record<string, unknown> | null;
     const office = officeResult.data as Record<string, unknown> | null;
     if (!landlord || !office) return null;
 
     const existing = existingResult.data as Record<string, unknown> | null;
     const rooms = ((roomsResult.data ?? []) as Record<string, unknown>[]).filter((room) => !isArchivedRoom(room));
+    const latestVacateDateByRoom = new Map<string, string>();
+    for (const exit of (exitRecordsResult.data ?? []) as Array<Record<string, unknown>>) {
+        const roomId = String(exit.room_id ?? "");
+        if (roomId && !latestVacateDateByRoom.has(roomId)) latestVacateDateByRoom.set(roomId, String(exit.vacate_date ?? ""));
+    }
     const payableRoomDecisions = rooms.map((room) => ({
-        decision: getMoveInPayableDecision({
-            landlordPayment: {
-                amountPaid: existing?.amount_paid as number | string | null | undefined,
-                lastPaidAt: existing?.last_paid_at as string | null | undefined,
-                status: existing?.status as string | null | undefined,
-            },
-            room,
-            settlementMonth,
-            tenantActive: !isVacantCommissionRoom(room),
-        }),
+        decision: isVacantCommissionRoom(room)
+            ? getVacancyCutoffDecision({
+                room,
+                settlementMonth,
+                vacateDate: latestVacateDateByRoom.get(String(room.id ?? "")) ?? null,
+            })
+            : getMoveInPayableDecision({
+                landlordPayment: {
+                    amountPaid: existing?.amount_paid as number | string | null | undefined,
+                    lastPaidAt: existing?.last_paid_at as string | null | undefined,
+                    status: existing?.status as string | null | undefined,
+                },
+                room,
+                settlementMonth,
+                tenantActive: true,
+            }),
         room,
     }));
     const fullRentRoll = rooms.reduce((total, room) => total + amount(room.monthly_rent), 0);

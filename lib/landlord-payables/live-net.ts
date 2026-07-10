@@ -1,6 +1,7 @@
 import { scheduledAdvanceDeductionForMonth } from "@/lib/landlord-advances/calculator";
 import { landlordMonthlyDue, landlordMonthlyPaid, type LandlordPayableLike } from "@/lib/landlord-payables/payment-allocation";
 import { sumRecoveryDeductionsForMonth } from "@/lib/landlord-payables/recovery-deductions";
+import { getVacancyCutoffDecision } from "@/lib/landlord-payables/vacancy-cutoff";
 
 type DbLike = { from: (table: string) => any };
 
@@ -23,11 +24,6 @@ function num(value: unknown) {
 function isArchivedRoom(row: Record<string, unknown>) {
     const status = String(row.status ?? "").toLowerCase();
     return ["archived", "inactive", "deleted", "removed"].some((value) => status.includes(value));
-}
-
-function isVacantRoom(row: Record<string, unknown>) {
-    const status = String(row.status ?? "").toLowerCase();
-    return status.includes("vacant") || status.includes("empty");
 }
 
 function parseDefaultCommissionRate(value: unknown) {
@@ -85,10 +81,32 @@ export async function getLiveLandlordMonthlyNetPayable({
 
     const rooms = ((roomsResult.data ?? []) as Record<string, unknown>[]).filter((room) => !isArchivedRoom(room));
     if (!rooms.length) return null;
+    const roomIds = rooms.map((room) => String(room.id ?? "")).filter(Boolean);
+    const exitsResult = roomIds.length
+        ? await db
+            .from("tenant_exit_records")
+            .select("room_id,vacate_date,created_at")
+            .eq("company_id", companyId)
+            .eq("office_id", officeId)
+            .in("room_id", roomIds)
+            .order("vacate_date", { ascending: false })
+            .order("created_at", { ascending: false })
+        : { data: [], error: null };
+    if (exitsResult.error) return null;
+    const latestVacateDateByRoom = new Map<string, string>();
+    for (const exit of (exitsResult.data ?? []) as Array<Record<string, unknown>>) {
+        const roomId = String(exit.room_id ?? "");
+        if (roomId && !latestVacateDateByRoom.has(roomId)) latestVacateDateByRoom.set(roomId, String(exit.vacate_date ?? ""));
+    }
     const landlord = landlordResult.data as Record<string, unknown>;
     const fullRentRoll = rooms.reduce((total, room) => total + num(room.monthly_rent), 0);
-    const occupiedPayableRent = rooms.filter((room) => !isVacantRoom(room)).reduce((total, room) => total + num(room.monthly_rent), 0);
-    const vacantRoomDeductions = rooms.filter(isVacantRoom).reduce((total, room) => total + num(room.monthly_rent), 0);
+    const vacancyDecisions = rooms.map((room) => getVacancyCutoffDecision({
+        room,
+        settlementMonth,
+        vacateDate: latestVacateDateByRoom.get(String(room.id ?? "")) ?? null,
+    }));
+    const occupiedPayableRent = vacancyDecisions.reduce((total, decision) => total + decision.includedPayableAmount, 0);
+    const vacantRoomDeductions = vacancyDecisions.reduce((total, decision) => total + decision.vacantRoomDeduction, 0);
     const commissionMode = parseCommissionMode(landlord);
     const defaultCommissionRate = parseDefaultCommissionRate((settingResult.data ?? [])[0]?.value);
     const commissionRate = Number.isFinite(Number(landlord.commission_rate)) ? Number(landlord.commission_rate) : defaultCommissionRate;

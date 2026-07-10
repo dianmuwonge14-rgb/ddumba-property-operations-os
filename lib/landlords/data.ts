@@ -5,6 +5,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { scheduledAdvanceDeductionForMonth } from "@/lib/landlord-advances/calculator";
 import { getMoveInPayableDecision } from "@/lib/landlords/payable-cutoff";
 import { isRecoveryDeductionActiveForMonth } from "@/lib/landlord-payables/recovery-deductions";
+import { getVacancyCutoffDecision, isVacantStatus } from "@/lib/landlord-payables/vacancy-cutoff";
 import type {
     CollectionRow,
     ExpenseRow,
@@ -561,7 +562,7 @@ export const getLandlordsPageData = cache(async function getLandlordsPageData(in
         console.warn("Optional landlord collections query failed:", error);
         return [] as CollectionRow[];
     });
-    const [paymentsScoped, debtsScoped, deductionsScoped, monthlyPayablesScoped, paymentDetailsScoped, landlordAdvancesScoped] = await Promise.all([
+    const [paymentsScoped, debtsScoped, deductionsScoped, monthlyPayablesScoped, paymentDetailsScoped, landlordAdvancesScoped, exitRecordsScoped] = await Promise.all([
         fetchLandlordPaymentsForLandlords({
             supabase: readSupabase,
             companyId,
@@ -614,6 +615,15 @@ export const getLandlordsPageData = cache(async function getLandlordsPageData(in
             landlordIds: [...seedLandlordIds],
         }).catch((error) => {
             console.warn("Optional landlord advances query failed:", error);
+            return [] as Array<Record<string, unknown>>;
+        }),
+        fetchTenantExitRecordsForLandlords({
+            supabase: readSupabase,
+            companyId,
+            officeId: canAccessAllOffices ? null : officeId,
+            landlordIds: [...seedLandlordIds],
+        }).catch((error) => {
+            console.warn("Optional landlord exit records query failed:", error);
             return [] as Array<Record<string, unknown>>;
         }),
     ]);
@@ -707,6 +717,7 @@ export const getLandlordsPageData = cache(async function getLandlordsPageData(in
     const deductionsByLandlord = groupBy(landlordDebtDeductions, (deduction) => deduction.landlord_id ?? "__none__");
     const monthlyPayablesByLandlord = groupBy(monthlyPayablesScoped, (payable) => payable.landlord_id ?? "__none__");
     const advancesByLandlord = groupBy(landlordAdvancesScoped, (advance) => String(advance.landlord_id ?? "__none__"));
+    const exitRecordsByRoom = latestExitRecordByRoom(exitRecordsScoped);
     const approvedPaymentDetailsByLandlord = groupPaymentDetails(paymentDetailsScoped.filter((detail) => detail.status === "approved" && detail.isActive));
     const pendingPaymentDetailsByLandlord = groupPaymentDetails(paymentDetailsScoped.filter((detail) => detail.status === "pending"));
     const statementsBySettlement = groupBy(statementsAll, (statement) => statement.settlement_id);
@@ -773,7 +784,13 @@ export const getLandlordsPageData = cache(async function getLandlordsPageData(in
             const collectedThisMonth = sumCollections(
                 landlordCollections.filter((collection) => collection.room_id === room.id && isThisMonth(collection.paid_at ?? collection.created_at)),
             );
-            const payable = getRoomPayableState({ currentMonthPayable: currentMonthRow, room, settlementMonth: currentSettlementMonth(), tenant: null });
+            const payable = getRoomPayableState({
+                currentMonthPayable: currentMonthRow,
+                room,
+                settlementMonth: currentSettlementMonth(),
+                tenant: null,
+                vacateDate: exitRecordsByRoom.get(room.id)?.vacate_date as string | null | undefined,
+            });
 
             return {
                 room,
@@ -808,7 +825,14 @@ export const getLandlordsPageData = cache(async function getLandlordsPageData(in
                 landlordCollections.filter((collection) => collection.room_id === room.id && isThisMonth(collection.paid_at ?? collection.created_at)),
             );
             const unpaidBalance = totalOutstandingBalance;
-            const payable = getRoomPayableState({ currentMonthPayable: currentMonthRow, leaseStartDate: lease?.start_date ?? null, room, settlementMonth: currentSettlementMonth(), tenant });
+            const payable = getRoomPayableState({
+                currentMonthPayable: currentMonthRow,
+                leaseStartDate: lease?.start_date ?? null,
+                room,
+                settlementMonth: currentSettlementMonth(),
+                tenant,
+                vacateDate: exitRecordsByRoom.get(room.id)?.vacate_date as string | null | undefined,
+            });
 
             return {
                 room,
@@ -867,14 +891,7 @@ export const getLandlordsPageData = cache(async function getLandlordsPageData(in
         const netPayableBeforeRecovery = settlementNet || settlementEstimate.landlordGrossPayable || Math.max(0, totalCollectedThisMonth - expenseValue);
         const netPayable = Math.max(0, netPayableBeforeRecovery - settlementEstimate.vacatedTenantDebtDeductions);
         const currentMonthPayable = currentMonthRow
-            ? mergeCurrentMonthPayableWithLiveEstimate(buildCurrentMonthPayableFromRow(currentMonthRow), {
-                commissionAmount: settlementEstimate.companyCommissionAmount,
-                commissionBaseAmount: settlementEstimate.commissionBaseAmount,
-                commissionRate,
-                fullRentRoll: settlementEstimate.expectedGrossRent,
-                netPayable: settlementEstimate.netLandlordPayable,
-                recoveryDeduction: settlementEstimate.vacatedTenantDebtDeductions,
-            })
+            ? buildCurrentMonthPayableFromRow(currentMonthRow)
             : buildCurrentMonthPayableFallback({
                 commissionBaseAmount: settlementEstimate.commissionBaseAmount,
                 commissionMode: settlementEstimate.commissionCalculationMode,
@@ -1113,37 +1130,6 @@ function buildCurrentMonthPayableFallback({
         outstandingAmount: netPayable,
         recoveryDeduction,
         netPayable,
-    };
-}
-
-function mergeCurrentMonthPayableWithLiveEstimate(
-    payable: LandlordCurrentMonthPayable,
-    live: {
-        commissionAmount: number;
-        commissionBaseAmount: number;
-        commissionRate: number;
-        fullRentRoll: number;
-        netPayable: number;
-        recoveryDeduction: number;
-    },
-): LandlordCurrentMonthPayable {
-    const paidAmount = payable.status === "paid"
-        ? live.netPayable
-        : Math.min(payable.paidAmount, live.netPayable);
-    const outstandingAmount = payable.status === "paid"
-        ? 0
-        : Math.max(0, live.netPayable - paidAmount);
-
-    return {
-        ...payable,
-        fullRentRoll: live.fullRentRoll,
-        commissionPercentage: live.commissionRate,
-        commissionAmount: live.commissionAmount,
-        commissionBaseAmount: live.commissionBaseAmount,
-        paidAmount,
-        outstandingAmount,
-        recoveryDeduction: live.recoveryDeduction,
-        netPayable: live.netPayable,
     };
 }
 
@@ -1694,6 +1680,48 @@ async function fetchLandlordAdvancesForLandlords({
     return rows;
 }
 
+async function fetchTenantExitRecordsForLandlords({
+    supabase,
+    companyId,
+    officeId,
+    landlordIds,
+}: {
+    supabase: Awaited<ReturnType<typeof getScopedSupabase>>["supabase"];
+    companyId: string;
+    officeId: string | null | undefined;
+    landlordIds: string[];
+}) {
+    const rows: Array<Record<string, unknown>> = [];
+    for (const landlordIdChunk of chunkValues(Array.from(new Set(landlordIds)).filter(Boolean), 75)) {
+        if (landlordIdChunk.length === 0) continue;
+        let query = (supabase as unknown as { from: (table: string) => any })
+            .from("tenant_exit_records")
+            .select("id,company_id,office_id,landlord_id,room_id,vacate_date,created_at")
+            .eq("company_id", companyId)
+            .in("landlord_id", landlordIdChunk)
+            .order("vacate_date", { ascending: false })
+            .order("created_at", { ascending: false });
+        if (officeId) query = query.eq("office_id", officeId);
+        const { data, error } = await query;
+        if (error) {
+            if (/does not exist|schema cache|Could not find/i.test(error.message ?? "")) return rows;
+            throw new Error(error.message);
+        }
+        rows.push(...(data ?? []));
+    }
+    return rows;
+}
+
+function latestExitRecordByRoom(rows: Array<Record<string, unknown>>) {
+    const byRoom = new Map<string, Record<string, unknown>>();
+    for (const row of rows) {
+        const roomId = String(row.room_id ?? "");
+        if (!roomId || byRoom.has(roomId)) continue;
+        byRoom.set(roomId, row);
+    }
+    return byRoom;
+}
+
 async function fetchVacatedDebtsForLandlords({
     supabase,
     companyId,
@@ -1908,17 +1936,28 @@ function getRoomPayableState({
     room,
     settlementMonth,
     tenant,
+    vacateDate,
 }: {
     currentMonthPayable: LandlordMonthlyPayableRow | null;
     leaseStartDate?: string | null;
     room: RoomRow;
     settlementMonth: string;
     tenant: TenantRow | null;
+    vacateDate?: string | null;
 }) {
     const extra = room as RoomRow & {
         effective_start_date?: string | null;
         explicitly_payable?: boolean | null;
     };
+    if (isVacantStatus(extra.status)) {
+        const decision = getVacancyCutoffDecision({ room: extra, settlementMonth, vacateDate });
+        return {
+            ...decision,
+            cutoffDecision: decision.cutoffDecision === "vacant_after_cutoff" ? "after_cutoff" as const : "vacant" as const,
+            landlordAlreadyPaid: false,
+            startDate: vacateDate ?? null,
+        };
+    }
     return getMoveInPayableDecision({
         landlordPayment: currentMonthPayable ? {
             amountPaid: currentMonthPayable.amount_paid,
