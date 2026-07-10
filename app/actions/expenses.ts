@@ -792,24 +792,36 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
     const lunchItem = isLunchItem(input.expenseItem);
     const salaryDeductible = isSalaryDeductibleExpenseItem(input.expenseItem);
     if (lunchItem && preview.presentForExpenseDate && preview.dailyLunchAllowance > 0) {
-        const { error: earnedError } = await db
+        const { data: existingEarned, error: existingEarnedError } = await db
             .from("employee_lunch_ledger")
-            .upsert({
-                active: true,
-                balance_after: Math.max(0, preview.lunchEarnedThisMonth - preview.lunchTakenThisMonth),
-                company_id: companyId,
-                created_by: actorId,
-                earned_amount: preview.dailyLunchAllowance,
-                employee_id: input.employeeId,
-                entry_type: "earned",
-                ledger_date: expenseDate,
-                month_key: preview.monthKey,
-                note: "Daily lunch allowance earned from office attendance",
-                office_id: officeId,
-                source: "office_attendance",
-                taken_amount: 0,
-            }, { onConflict: "company_id,employee_id,ledger_date,entry_type", ignoreDuplicates: true });
-        if (earnedError && !/duplicate key/i.test(earnedError.message ?? "")) throw new Error(earnedError.message);
+            .select("id")
+            .eq("company_id", companyId)
+            .eq("employee_id", input.employeeId)
+            .eq("ledger_date", expenseDate)
+            .eq("entry_type", "earned")
+            .eq("active", true)
+            .maybeSingle();
+        if (existingEarnedError) throw new Error(existingEarnedError.message);
+        if (!existingEarned) {
+            const { error: earnedError } = await db
+                .from("employee_lunch_ledger")
+                .insert({
+                    active: true,
+                    balance_after: Math.max(0, preview.lunchEarnedThisMonth - preview.lunchTakenThisMonth),
+                    company_id: companyId,
+                    created_by: actorId,
+                    earned_amount: preview.dailyLunchAllowance,
+                    employee_id: input.employeeId,
+                    entry_type: "earned",
+                    ledger_date: expenseDate,
+                    month_key: preview.monthKey,
+                    note: "Daily lunch allowance earned from office attendance",
+                    office_id: officeId,
+                    source: "office_attendance",
+                    taken_amount: 0,
+                });
+            if (earnedError && !/duplicate key/i.test(earnedError.message ?? "")) throw new Error(earnedError.message);
+        }
     }
     if (preview.allowedPortion > 0) {
         const { data: expense, error: expenseError } = await db
