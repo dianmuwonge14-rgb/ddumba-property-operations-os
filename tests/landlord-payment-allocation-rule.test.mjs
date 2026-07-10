@@ -142,3 +142,15 @@ test("expenses landlord payment preview does not recompute and double-deduct cur
   assert.doesNotMatch(previewBody, /getLiveLandlordMonthlyNetPayable/);
   assert.doesNotMatch(previewBody, /liveNet\.recoveryDeduction/);
 });
+
+test("landlord payment approval paths do not overwrite canonical monthly payable rows with live-net recalculation", () => {
+  const expensesSource = readFileSync(new URL("../app/actions/expenses.ts", import.meta.url), "utf8");
+  const expenseApprovalBody = expensesSource.slice(expensesSource.indexOf("export async function decideLandlordPaidExpenseRequest"), expensesSource.indexOf("async function createApprovedLandlordAdvanceFromExpenseRequest"));
+  assert.match(expenseApprovalBody, /buildLandlordPaymentAllocationPlan/);
+  assert.doesNotMatch(expenseApprovalBody, /reconcileLandlordPayableWithLiveNet/);
+
+  const landlordSource = readFileSync(new URL("../app/actions/landlords.ts", import.meta.url), "utf8");
+  const directPaymentBody = landlordSource.slice(landlordSource.indexOf("export async function markLandlordMonthlyPayablePaid"), landlordSource.indexOf("export async function submitLandlordPaymentDetails"));
+  assert.match(directPaymentBody, /allocateLandlordPaymentAcrossLedger/);
+  assert.doesNotMatch(directPaymentBody, /reconcileLandlordPayableWithLiveNet/);
+});

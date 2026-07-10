@@ -9,7 +9,6 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getExpenseInActiveOffice } from "@/lib/expenses/data";
 import { calculateLandlordAdvancePlan } from "@/lib/landlord-advances/calculator";
 import { assertLandlordPayableIntegrity } from "@/lib/landlord-payables/integrity";
-import { reconcileLandlordPayableWithLiveNet } from "@/lib/landlord-payables/live-net";
 import { buildLandlordPaymentAllocationPlan, landlordMonthlyDue, landlordMonthlyPaid, summarizeLandlordPayables } from "@/lib/landlord-payables/payment-allocation";
 import type {
     CreateExpenseCategoryInput,
@@ -1196,17 +1195,7 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
         .lte("settlement_month", paymentMonth)
         .order("settlement_month", { ascending: true });
     if (payablesResult.error) throw new Error(payablesResult.error.message);
-    let approvalPayables = (payablesResult.data ?? []) as Record<string, unknown>[];
-    const currentApprovalPayable = approvalPayables.find((row) => String(row.settlement_month ?? "").slice(0, 10) === paymentMonth) ?? null;
-    if (currentApprovalPayable) {
-        const reconciled = await reconcileLandlordPayableWithLiveNet({
-            companyId,
-            db,
-            row: currentApprovalPayable,
-            settlementMonth: paymentMonth,
-        });
-        approvalPayables = approvalPayables.map((row) => String(row.id) === String(reconciled?.id) ? reconciled as Record<string, unknown> : row);
-    }
+    const approvalPayables = (payablesResult.data ?? []) as Record<string, unknown>[];
     const approvalPlan = buildLandlordPaymentAllocationPlan({
         amount: requestedAmount,
         currentMonth: paymentMonth,

@@ -8,7 +8,6 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getLandlordInCompany, getPropertyForLandlordAssignment } from "@/lib/landlords/data";
 import { getMoveInPayableDecision } from "@/lib/landlords/payable-cutoff";
 import { scheduledAdvanceDeductionForMonth, splitAdvanceDeductionPortions } from "@/lib/landlord-advances/calculator";
-import { reconcileLandlordPayableWithLiveNet } from "@/lib/landlord-payables/live-net";
 import { assertLandlordPayableIntegrity } from "@/lib/landlord-payables/integrity";
 import { landlordMonthlyDue, landlordMonthlyPaid, landlordMonthlyUnpaid } from "@/lib/landlord-payables/payment-allocation";
 import { isRecoveryDeductionActiveForMonth } from "@/lib/landlord-payables/recovery-deductions";
@@ -1713,18 +1712,11 @@ export async function markLandlordMonthlyPayablePaid(input: {
         }
     }
 
-    const reconciledPayable = await reconcileLandlordPayableWithLiveNet({
-        companyId,
-        db,
-        row: payable as LooseRecord,
-        settlementMonth: normalizeSettlementMonth(payable.settlement_month ?? payable.month_key ?? input.paidAt),
-    }) as LooseRecord;
-
     const allocation = await allocateLandlordPaymentAcrossLedger({
         db,
         companyId,
-        officeId: String(reconciledPayable.office_id ?? payable.office_id),
-        landlordId: String(reconciledPayable.landlord_id ?? payable.landlord_id),
+        officeId: String(payable.office_id),
+        landlordId: String(payable.landlord_id),
         startingMonthlyPayableId: input.monthlyPayableId,
         amount,
         paymentMethod,
@@ -1741,12 +1733,12 @@ export async function markLandlordMonthlyPayablePaid(input: {
             amount,
             company_id: companyId,
             created_by: context.profile?.id ?? context.authUser?.id ?? null,
-            landlord_id: (reconciledPayable.landlord_id ?? payable.landlord_id) as string | null,
-            office_id: (reconciledPayable.office_id ?? payable.office_id) as string | null,
+            landlord_id: payable.landlord_id as string | null,
+            office_id: payable.office_id as string | null,
             paid_at: paidAt,
             payment_method: paymentMethod,
             payout_reference: input.reference ?? `LMP-${Date.now()}`,
-            settlement_id: (reconciledPayable.settlement_id ?? payable.settlement_id) as string | null,
+            settlement_id: payable.settlement_id as string | null,
             status: allocation.advanceCreated > 0 ? "overpaid" : allocation.remainingBalance > 0 ? "partial" : "paid",
         })
         .select("*")
@@ -1758,7 +1750,7 @@ export async function markLandlordMonthlyPayablePaid(input: {
         entityType: "landlord_monthly_payable",
         entityId: input.monthlyPayableId,
         companyId,
-        officeId: String(reconciledPayable.office_id ?? payable.office_id),
+        officeId: String(payable.office_id),
         beforeData: jsonSafe(payable),
         afterData: jsonSafe({ payment, allocation }),
     });
