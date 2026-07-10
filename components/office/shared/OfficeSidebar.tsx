@@ -139,6 +139,7 @@ const collectorSections = [
             { href: "/office/collector/tenant-relocation", label: "Tenant Relocation", icon: GitMerge },
             { href: "/office/collector/daily", label: "Daily Collections", icon: HandCoins },
             { href: "/office/collector/submissions", label: "Money Submission", icon: WalletCards },
+            { href: "/office/expenses", label: "Expenses", icon: ReceiptText },
             { href: "/office/collector/instructions", label: "Instructions", icon: ClipboardCheck },
             { href: "/office/notifications", label: "Notifications", icon: Bell },
         ],
@@ -203,7 +204,7 @@ export default function OfficeSidebar({ isAdmin, isCollector = false, officeName
 
     return (
         <>
-            <header className="app-sticky-header fixed inset-x-0 top-0 z-[80] border-b border-white/10 bg-slate-950/88 px-3 py-2.5 text-white shadow-2xl shadow-black/40 backdrop-blur-2xl sm:px-4 sm:py-3">
+            <header className={`app-sticky-header fixed inset-x-0 top-0 z-[80] border-b border-white/10 bg-slate-950/88 px-3 py-2.5 text-white shadow-2xl shadow-black/40 backdrop-blur-2xl sm:px-4 sm:py-3 ${isCollector ? "collector-top-header" : ""}`}>
                 <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_14%_0%,rgba(59,130,246,0.28),transparent_28%),radial-gradient(circle_at_86%_0%,rgba(20,184,166,0.18),transparent_26%)]" />
                 <div className="app-header-main relative mx-auto grid max-w-[1800px] grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-3">
                     <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
@@ -228,7 +229,7 @@ export default function OfficeSidebar({ isAdmin, isCollector = false, officeName
                         <AttendanceAccountControls attendance={attendance} />
                     </div>
                 </div>
-                <nav className="app-top-nav mobile-nav-scroll relative mx-auto mt-2 flex max-w-[1800px] gap-2 overflow-x-auto pb-1 sm:mt-3">
+                <nav className={`app-top-nav mobile-nav-scroll relative mx-auto mt-2 flex max-w-[1800px] gap-2 overflow-x-auto pb-1 sm:mt-3 ${isCollector ? "collector-top-nav" : ""}`}>
                     {sections.flatMap((section) => section.items).map((item) => {
                         const active = pathname === item.href || (item.href !== "/office" && pathname.startsWith(item.href));
                         const Icon = item.icon;

@@ -12,17 +12,18 @@ export default async function OfficeLayout({
     children: React.ReactNode;
 }) {
     const context = await requireAuth();
+    const isCollector = context.authMode === "collector";
     const [attendance, notificationCount] = await Promise.all([
         getAttendanceGateStatus(context),
         getNotificationBadgeCount(context),
     ]);
 
     return (
-        <div className="office-app-shell relative min-h-screen overflow-x-clip bg-slate-950 pt-[var(--app-header-offset)]">
+        <div className={`office-app-shell relative min-h-screen overflow-x-clip bg-slate-950 pt-[var(--app-header-offset)] ${isCollector ? "collector-account-scope" : ""}`}>
             <div className="pointer-events-none fixed inset-0 z-0 bg-[radial-gradient(circle_at_8%_4%,rgba(37,99,235,0.28),transparent_30%),radial-gradient(circle_at_92%_2%,rgba(16,185,129,0.16),transparent_28%),linear-gradient(135deg,#020617_0%,#07111f_48%,#0f172a_100%)]" />
             <div className="pointer-events-none fixed inset-0 z-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:64px_64px] opacity-30" />
             <OfficeSidebar
-                isCollector={context.authMode === "collector"}
+                isCollector={isCollector}
                 isAdmin={context.isCompanyAdmin && !context.isOfficeMode}
                 officeName={context.activeOffice?.office_name ?? context.activeOffice?.name ?? null}
                 attendance={attendance}

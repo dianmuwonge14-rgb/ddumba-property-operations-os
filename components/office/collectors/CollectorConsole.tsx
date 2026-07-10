@@ -37,16 +37,17 @@ const money = (value: unknown) => `UGX ${Math.round(Number(value ?? 0)).toLocale
 export default function CollectorConsole({ data, mode }: Props) {
     const pendingCount = data.submissions.filter((row) => String(row.status ?? "pending") === "pending").length;
     const rejectedAmount = data.totals.rejectedSubmissions ?? 0;
+    const submittedVsCollected = Number(data.totals.approvedSubmissions ?? 0) + Number(data.totals.pendingSubmissions ?? 0);
     return (
-        <main className="mx-auto max-w-7xl px-3 py-5 text-white sm:px-4 sm:py-6">
-            <section className="sticky top-[calc(var(--app-header-offset,0px)+0.5rem)] z-20 overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-slate-950 via-cyan-950 to-slate-900 p-5 shadow-2xl shadow-black/30">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-                    <div>
-                        <p className="text-xs font-black uppercase tracking-wide text-cyan-200">Field Collector</p>
-                        <h1 className="mt-2 text-3xl font-black sm:text-4xl">{titleForMode(mode)}</h1>
-                        <p className="mt-2 max-w-3xl text-sm font-bold leading-6 text-slate-300">Live collector cash control, office split, daily reconciliation, and submission approvals.</p>
+        <main className="collector-page-shell text-white">
+            <section className="collector-page-hero">
+                <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                    <div className="min-w-0">
+                        <p className="collector-page-eyebrow">Field Collector</p>
+                        <h1>{titleForMode(mode)}</h1>
+                        <p className="collector-page-subtitle">Live collector cash control, office split, daily reconciliation, and submission approvals.</p>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-xs font-black sm:grid-cols-4">
+                    <div className="grid min-w-0 grid-cols-2 gap-2 text-xs font-black sm:grid-cols-4 lg:min-w-[440px]">
                         <MiniStatus label="Pending" value={pendingCount} tone="amber" />
                         <MiniStatus label="Rejected" value={money(rejectedAmount)} tone="red" />
                         <MiniStatus label="Offices" value={data.collectionsByOffice.length} tone="cyan" />
@@ -55,11 +56,15 @@ export default function CollectorConsole({ data, mode }: Props) {
                 </div>
             </section>
 
-            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <Kpi label="Collected today" value={money(data.totals.totalCollectedToday)} tone="green" />
-                <Kpi label="Submitted approved" value={money(data.totals.totalSubmitted)} tone="blue" />
-                <Kpi label="Money in hand" value={money(data.totals.remainingInHand)} tone="amber" />
-                <Kpi label="Pending submissions" value={money(data.totals.pendingSubmissions)} tone="purple" />
+            <div className="collector-kpi-grid">
+                <Kpi label="Collected Today" value={money(data.totals.totalCollectedToday)} tone="green" hint="Approved collector-entered tenant payments today." />
+                <Kpi label="Submitted and Approved" value={money(data.totals.approvedSubmissions)} tone="blue" hint="Cash handovers accepted by receiving offices." />
+                <Kpi label="Money in Hand" value={money(data.totals.remainingInHand)} tone="amber" hint="Collected cash still held by the collector." />
+                <Kpi label="Pending Submissions" value={money(data.totals.pendingSubmissions)} tone="purple" hint="Submitted cash waiting for office approval." />
+                <Kpi label="Daily Total Collected" value={money(data.totals.totalCollectedToday)} tone="green" hint="Live daily collection total." />
+                <Kpi label="Submitted vs Collected" value={money(submittedVsCollected)} tone="blue" hint="Approved plus pending submissions." />
+                <Kpi label="Remaining Balance" value={money(data.totals.remainingInHand)} tone="amber" hint="Same as money in hand after approved movements." />
+                <Kpi label="Office Splits" value={String(data.collectionsByOffice.length)} tone="cyan" hint="Offices represented in today’s collections." />
             </div>
 
             {mode === "payments" && <CollectorPaymentEntry />}
@@ -68,9 +73,11 @@ export default function CollectorConsole({ data, mode }: Props) {
             {mode === "instructions" && <CollectorMessages data={data} />}
             {mode === "daily" && <CollectorDailyEnterprise data={data} />}
             {mode === "dashboard" && (
-                <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-2">
+                <div className="collector-section-grid">
+                    <MoneyInHandBreakdown data={data} />
                     <CollectorDailyEnterprise data={data} compact />
                     <CollectorMessages data={data} compact />
+                    <RecentActivityPanel data={data} />
                 </div>
             )}
         </main>
@@ -86,17 +93,20 @@ function titleForMode(mode: Props["mode"]) {
     return "Collector Dashboard";
 }
 
-function Kpi({ label, tone, value }: { label: string; tone: string; value: string }) {
+function Kpi({ hint, label, tone, value }: { hint: string; label: string; tone: string; value: string }) {
     const styles: Record<string, string> = {
         amber: "border-amber-300/20 bg-amber-300/10 text-amber-100",
         blue: "border-blue-300/20 bg-blue-300/10 text-blue-100",
+        cyan: "border-cyan-300/20 bg-cyan-300/10 text-cyan-100",
         green: "border-emerald-300/20 bg-emerald-300/10 text-emerald-100",
         purple: "border-purple-300/20 bg-purple-300/10 text-purple-100",
     };
     return (
-        <div className={`rounded-3xl border p-4 ${styles[tone]}`}>
+        <div className={`collector-kpi-card rounded-3xl border p-4 ${styles[tone]}`}>
             <p className="text-xs font-black uppercase tracking-wide opacity-75">{label}</p>
-            <p className="mt-2 text-2xl font-black">{value}</p>
+            <p className="collector-kpi-value">{value}</p>
+            <p className="mt-2 text-xs font-bold leading-5 opacity-80">{hint}</p>
+            <span className="mt-3 inline-flex rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-[10px] font-black uppercase text-white/90">Live Supabase</span>
         </div>
     );
 }
@@ -109,6 +119,69 @@ function MiniStatus({ label, tone, value }: { label: string; tone: "amber" | "cy
         slate: "border-slate-300/20 bg-white/10 text-slate-100",
     };
     return <div className={`rounded-2xl border px-3 py-2 text-center ${styles[tone]}`}><p className="text-[10px] uppercase tracking-wide opacity-80">{label}</p><p className="mt-1 whitespace-nowrap">{value}</p></div>;
+}
+
+function MoneyInHandBreakdown({ data }: { data: Props["data"] }) {
+    const collected = Number(data.totals.totalCollectedToday ?? 0);
+    const approved = Number(data.totals.approvedSubmissions ?? 0);
+    const expenses = Number(data.totals.collectorExpenses ?? 0);
+    const reversals = Number(data.totals.reversals ?? 0);
+    const inHand = Number(data.totals.remainingInHand ?? 0);
+    return (
+        <section className="collector-panel">
+            <StickyTitle icon={<WalletCards size={18} />} subtitle="Approved collected cash minus approved outflows and reversals." title="Money in Hand Breakdown" />
+            <div className="grid gap-3 sm:grid-cols-2">
+                <BreakdownLine label="Approved collected cash" value={collected} tone="green" />
+                <BreakdownLine label="Approved money submissions" value={approved} tone="blue" />
+                <BreakdownLine label="Approved collector expenses" value={expenses} tone="amber" />
+                <BreakdownLine label="Approved reversals" value={reversals} tone="red" />
+            </div>
+            <div className="mt-4 rounded-3xl border border-cyan-300/25 bg-cyan-300/10 p-4">
+                <p className="text-xs font-black uppercase tracking-wide text-cyan-100">Money in Hand</p>
+                <p className="mt-2 text-[clamp(1.35rem,4vw,2rem)] font-black text-white">{money(inHand)}</p>
+                <p className="mt-2 text-sm font-bold leading-6 text-cyan-100">This is the collector cash balance used by submissions and daily reconciliation.</p>
+            </div>
+        </section>
+    );
+}
+
+function BreakdownLine({ label, tone, value }: { label: string; tone: "amber" | "blue" | "green" | "red"; value: number }) {
+    const tones = {
+        amber: "text-amber-100",
+        blue: "text-blue-100",
+        green: "text-emerald-100",
+        red: "text-red-100",
+    };
+    return (
+        <div className="min-w-0 rounded-2xl border border-white/10 bg-white/[0.06] p-3">
+            <p className="text-xs font-black uppercase tracking-wide text-slate-400">{label}</p>
+            <p className={`mt-2 text-[clamp(1rem,3vw,1.2rem)] font-black ${tones[tone]}`}>{money(value)}</p>
+        </div>
+    );
+}
+
+function RecentActivityPanel({ data }: { data: Props["data"] }) {
+    const recentCollections = data.collections.slice(0, 4);
+    const recentSubmissions = data.submissions.slice(0, 4);
+    return (
+        <section className="collector-panel">
+            <StickyTitle icon={<ReceiptText size={18} />} subtitle="Latest collector payments and cash handovers." title="Recent Activity" />
+            <div className="grid gap-4 lg:grid-cols-2">
+                <div className="min-w-0">
+                    <p className="text-xs font-black uppercase tracking-wide text-slate-400">Payments</p>
+                    <div className="mt-3 grid gap-2">
+                        {recentCollections.length ? recentCollections.map((row) => <CollectionCard key={String(row.id ?? `${row.tenant_id}-${row.created_at}`)} row={row} />) : <EmptyPanel text="No recent collector payments." />}
+                    </div>
+                </div>
+                <div className="min-w-0">
+                    <p className="text-xs font-black uppercase tracking-wide text-slate-400">Submissions</p>
+                    <div className="mt-3 grid gap-2">
+                        {recentSubmissions.length ? recentSubmissions.map((row) => <SubmissionCard key={String(row.id ?? `${row.created_at}-${row.amount}`)} row={row} offices={data.offices} />) : <EmptyPanel text="No recent submissions." />}
+                    </div>
+                </div>
+            </div>
+        </section>
+    );
 }
 
 function useTenantSearch() {
@@ -354,27 +427,55 @@ function CollectorMessages({ compact, data }: { compact?: boolean; data: Props["
     const [isPending, startTransition] = useTransition();
     const visibleMessages = compact ? data.messages.slice(0, 5) : data.messages;
     return (
-        <section className="mt-5 rounded-3xl border border-white/10 bg-slate-950/70 p-5">
-            <h2 className="text-xl font-black">Instructions & Messages</h2>
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_2fr_auto]">
-                <Field label="Subject" value={subject} onChange={setSubject} />
-                <Field label="Message" value={body} onChange={setBody} />
-                <ActionButton disabled={isPending || !subject || !body} label="Send Reply" icon={<MessageSquareText size={16} />} onClick={() => startTransition(async () => {
-                    try {
-                        await sendCollectorMessage({ body, recipientType: "admin", subject });
-                        setSubject("");
-                        setBody("");
-                        setMessage("Message sent.");
-                    } catch (error) {
-                        setMessage(error instanceof Error ? error.message : "Message failed.");
-                    }
-                })} />
-            </div>
-            <Status message={message} loading={isPending} />
-            <div className="mt-4 space-y-2">
-                {visibleMessages.map((item) => <div key={String(item.id)} className="rounded-2xl border border-white/10 bg-white/5 p-3"><p className="font-black">{String(item.subject ?? "Instruction")}</p><p className="text-sm text-slate-300">{String(item.body ?? "")}</p><p className="mt-1 text-xs font-bold text-slate-500">{String(item.priority ?? "normal")} · {String(item.status ?? "unread")}</p></div>)}
+        <section className="collector-panel">
+            <StickyTitle icon={<MessageSquareText size={18} />} subtitle="Send replies and review instructions without leaving the collector console." title="Instructions & Messages" />
+            <div className="grid gap-5 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+                <div className="min-w-0 rounded-3xl border border-white/10 bg-white/[0.05] p-4">
+                    <p className="text-sm font-black text-white">Compose Message</p>
+                    <div className="mt-4 grid gap-3">
+                        <Field label="Subject" value={subject} onChange={setSubject} />
+                        <TextareaField label="Message" value={body} onChange={setBody} />
+                        <div className="flex flex-wrap items-center gap-3">
+                            <span className="rounded-full border border-cyan-300/25 bg-cyan-300/10 px-3 py-2 text-xs font-black text-cyan-100">Recipient: Admin</span>
+                            <ActionButton disabled={isPending || !subject || !body} label="Send Message" icon={<MessageSquareText size={16} />} onClick={() => startTransition(async () => {
+                                try {
+                                    await sendCollectorMessage({ body, recipientType: "admin", subject });
+                                    setSubject("");
+                                    setBody("");
+                                    setMessage("Message sent.");
+                                } catch (error) {
+                                    setMessage(error instanceof Error ? error.message : "Message failed.");
+                                }
+                            })} />
+                        </div>
+                    </div>
+                    <Status message={message} loading={isPending} />
+                </div>
+                <div className="min-w-0 rounded-3xl border border-white/10 bg-white/[0.05] p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-black text-white">Recent Message History</p>
+                        <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[10px] font-black uppercase text-slate-200">{visibleMessages.length} visible</span>
+                    </div>
+                    <div className="mt-4 grid gap-3">
+                        {visibleMessages.length ? visibleMessages.map((item) => <MessageCard key={String(item.id)} item={item} />) : <EmptyPanel text="No collector messages yet." />}
+                    </div>
+                </div>
             </div>
         </section>
+    );
+}
+
+function MessageCard({ item }: { item: Record<string, unknown> }) {
+    const status = String(item.status ?? "unread");
+    return (
+        <article className="min-w-0 rounded-2xl border border-white/10 bg-white/[0.06] p-3">
+            <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+                <p className="min-w-0 text-sm font-black text-white">{String(item.subject ?? "Instruction")}</p>
+                <StatusPill status={status} />
+            </div>
+            <p className="mt-2 text-sm font-bold leading-6 text-slate-300">{String(item.body ?? "")}</p>
+            <p className="mt-2 text-xs font-bold text-slate-500">{String(item.priority ?? "normal")} · {String(item.created_at ?? item.updated_at ?? "").slice(0, 16).replace("T", " ")}</p>
+        </article>
     );
 }
 
@@ -482,6 +583,19 @@ function Breakdown({ rows, title }: { rows: Array<{ label: string; value: number
 
 function Field({ label, onChange, type = "text", value }: { label: string; onChange: (value: string) => void; type?: string; value: string }) {
     return <label className="text-xs font-black uppercase tracking-wide text-slate-400">{label}<input value={value} type={type} onChange={(event) => onChange(event.target.value)} className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-900 px-3 py-3 text-sm font-black text-white outline-none focus:border-cyan-300" /></label>;
+}
+
+function TextareaField({ label, onChange, value }: { label: string; onChange: (value: string) => void; value: string }) {
+    return (
+        <label className="text-xs font-black uppercase tracking-wide text-slate-400">
+            {label}
+            <textarea
+                value={value}
+                onChange={(event) => onChange(event.target.value)}
+                className="mt-2 min-h-32 w-full resize-y rounded-2xl border border-white/10 bg-slate-900 px-3 py-3 text-sm font-bold leading-6 text-white outline-none focus:border-cyan-300"
+            />
+        </label>
+    );
 }
 
 function Select({ label, onChange, options, value }: { label: string; onChange: (value: string) => void; options: string[]; value: string }) {
