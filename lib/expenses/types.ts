@@ -166,6 +166,7 @@ export type CreateLandlordPaidExpenseRequestInput = {
     advanceAgreement?: Record<string, unknown>;
     expenseDate: string;
     landlordId: string;
+    officeId?: string | null;
     paymentMethod?: string;
     paymentMonth?: string;
     notes?: string;

@@ -164,6 +164,10 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
     const periodLabel = report ? `${report.filters.startDate} to ${report.filters.endDate}` : filters.singleDate;
     const isLandlordPaidMode = normalizeCategory(expenseCategory || expenseItem) === "landlord_paid";
     const isEmployeeExpenseMode = normalizeCategory(expenseCategory || expenseItem) === "employee_expense";
+    const selectedLandlordOption = useMemo(
+        () => data.landlordOptions.find((landlord) => landlord.id === landlordId) ?? null,
+        [data.landlordOptions, landlordId],
+    );
     const financeInsights = useMemo(() => buildFinanceInsights({
         expenses,
         employeeRequests: data.employeeExpenseRequests,
@@ -230,6 +234,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                     const preview = await previewLandlordPaymentExpense({
                         amount: Number(amount),
                         landlordId,
+                        officeId: selectedLandlordOption?.officeId ?? null,
                         paymentMonth,
                     });
                     if (!cancelled) {
@@ -250,7 +255,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
             cancelled = true;
             clearTimeout(timer);
         };
-    }, [amount, isLandlordPaidMode, landlordId, paymentMonth]);
+    }, [amount, isLandlordPaidMode, landlordId, paymentMonth, selectedLandlordOption?.officeId]);
 
     useEffect(() => {
         if (!isEmployeeExpenseMode || !employeeId || !Number.isFinite(Number(amount)) || Number(amount) <= 0) {
@@ -362,6 +367,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                         amount: value,
                         expenseDate,
                         landlordId,
+                        officeId: selectedLandlordOption?.officeId ?? null,
                         paymentMethod,
                         paymentMonth,
                         notes: notes || trimmedItem || undefined,

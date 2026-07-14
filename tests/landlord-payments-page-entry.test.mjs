@@ -7,7 +7,8 @@ const dataSource = readFileSync(new URL("../lib/landlord-payables/data.ts", impo
 
 test("landlord payments page records through canonical expense-routed action", () => {
   assert.match(source, /function LandlordPaymentEntryPanel/);
-  assert.match(source, /createLandlordPaidExpenseRequest/);
+  assert.match(source, /submitLandlordPaymentFromTerminal/);
+  assert.match(source, /officeId: selectedOfficeId/);
   assert.doesNotMatch(source, /markLandlordMonthlyPayablePaid/);
 });
 

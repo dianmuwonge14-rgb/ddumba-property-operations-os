@@ -111,6 +111,10 @@ function monthStart(value: string | null | undefined) {
     return `${source}-01`;
 }
 
+function validUuid(value: unknown): value is string {
+    return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 function itemKey(value: string | null | undefined) {
     return String(value ?? "other").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "other";
 }
@@ -424,17 +428,73 @@ export async function createExpense(input: CreateExpenseInput) {
     return data;
 }
 
+async function resolveLandlordPaymentOfficeId(input: {
+    activeOfficeId: string;
+    companyId: string;
+    db: { from: (table: string) => any };
+    isDirectAdmin: boolean;
+    landlordId: string;
+    paymentMonth: string;
+    requestedOfficeId?: string | null;
+}) {
+    if (!input.isDirectAdmin) return input.activeOfficeId;
+
+    const requestedOfficeId = validUuid(input.requestedOfficeId) ? input.requestedOfficeId : null;
+    const payableQuery = input.db
+        .from("landlord_monthly_payables")
+        .select("office_id, settlement_month, status")
+        .eq("company_id", input.companyId)
+        .eq("landlord_id", input.landlordId)
+        .neq("status", "archived")
+        .lte("settlement_month", input.paymentMonth)
+        .order("settlement_month", { ascending: false })
+        .limit(10);
+    const scopedPayableQuery = requestedOfficeId ? payableQuery.eq("office_id", requestedOfficeId) : payableQuery;
+    const payableResult = await scopedPayableQuery;
+    if (payableResult.error) throw new Error(payableResult.error.message);
+    const payableOfficeId = (payableResult.data ?? []).find((row: Record<string, unknown>) => validUuid(row.office_id))?.office_id;
+    if (validUuid(payableOfficeId)) return payableOfficeId;
+
+    const roomQuery = input.db
+        .from("rooms")
+        .select("office_id")
+        .eq("company_id", input.companyId)
+        .eq("landlord_id", input.landlordId)
+        .not("status", "in", "(archived,inactive,deleted,removed)")
+        .limit(1);
+    const scopedRoomQuery = requestedOfficeId ? roomQuery.eq("office_id", requestedOfficeId) : roomQuery;
+    const roomResult = await scopedRoomQuery;
+    if (roomResult.error) throw new Error(roomResult.error.message);
+    const roomOfficeId = (roomResult.data ?? []).find((row: Record<string, unknown>) => validUuid(row.office_id))?.office_id;
+    if (validUuid(roomOfficeId)) return roomOfficeId;
+
+    throw new Error("This landlord is not attached to the selected office. Choose the landlord from its correct office and retry.");
+}
+
 export async function previewLandlordPaymentExpense(input: {
     amount: number;
     landlordId: string;
+    officeId?: string | null;
     paymentMonth: string;
 }) {
     const context = await activeWriteContext();
     const supabase = await createSupabaseServerClient();
     const db = supabase as unknown as { from: (table: string) => any };
     const companyId = context.activeCompany!.id;
-    const officeId = context.activeOffice!.id;
     const value = Number(input.amount);
+    const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
+    const paymentMonth = monthStart(input.paymentMonth);
+    const officeId = !input.landlordId
+        ? context.activeOffice!.id
+        : await resolveLandlordPaymentOfficeId({
+            activeOfficeId: context.activeOffice!.id,
+            companyId,
+            db,
+            isDirectAdmin,
+            landlordId: input.landlordId,
+            paymentMonth,
+            requestedOfficeId: input.officeId,
+        });
     if (!input.landlordId || !Number.isFinite(value) || value <= 0) {
         return {
             activeAdvanceBalance: 0,
@@ -447,21 +507,23 @@ export async function previewLandlordPaymentExpense(input: {
             normalPaymentAmount: 0,
             openingArrears: 0,
             outstandingAmount: 0,
-            paymentMonth: monthStart(input.paymentMonth),
+            paymentMonth,
             pendingRequestAmount: 0,
         };
     }
 
-    const roomAccess = await db
-        .from("rooms")
-        .select("id")
-        .eq("company_id", companyId)
-        .eq("office_id", officeId)
-        .eq("landlord_id", input.landlordId)
-        .not("status", "in", "(archived,inactive,deleted,removed)")
-        .limit(1);
-    if (roomAccess.error) throw new Error(roomAccess.error.message);
-    if (!(roomAccess.data ?? []).length) throw new Error("This landlord is not attached to the active office.");
+    if (!isDirectAdmin) {
+        const roomAccess = await db
+            .from("rooms")
+            .select("id")
+            .eq("company_id", companyId)
+            .eq("office_id", officeId)
+            .eq("landlord_id", input.landlordId)
+            .not("status", "in", "(archived,inactive,deleted,removed)")
+            .limit(1);
+        if (roomAccess.error) throw new Error(roomAccess.error.message);
+        if (!(roomAccess.data ?? []).length) throw new Error("This landlord is not attached to the active office.");
+    }
 
     return getLandlordPaymentPreview({
         amount: value,
@@ -469,7 +531,7 @@ export async function previewLandlordPaymentExpense(input: {
         db,
         landlordId: input.landlordId,
         officeId,
-        paymentMonth: input.paymentMonth,
+        paymentMonth,
     });
 }
 
@@ -478,7 +540,6 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
     const supabase = await createSupabaseServerClient();
     const db = supabase as unknown as { from: (table: string) => any };
     const companyId = context.activeCompany!.id;
-    const officeId = context.activeOffice!.id;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
     const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
     const amount = Number(input.amount);
@@ -486,6 +547,15 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
     if (!input.landlordId) throw new Error("Select landlord.");
     const paymentDate = input.expenseDate || new Date().toISOString().slice(0, 10);
     const paymentMonth = monthStart(input.paymentMonth || paymentDate);
+    const officeId = await resolveLandlordPaymentOfficeId({
+        activeOfficeId: context.activeOffice!.id,
+        companyId,
+        db,
+        isDirectAdmin,
+        landlordId: input.landlordId,
+        paymentMonth,
+        requestedOfficeId: input.officeId,
+    });
     const paymentMethod = input.paymentMethod || "cash";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)) throw new Error("Select a valid payment date.");
     if (!/^\d{4}-\d{2}-01$/.test(paymentMonth)) throw new Error("Select a valid payment month.");
@@ -499,16 +569,18 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
     if (landlordError) throw new Error(landlordError.message);
     if (!landlord) throw new Error("Landlord not found.");
 
-    const roomAccess = await db
-        .from("rooms")
-        .select("id")
-        .eq("company_id", companyId)
-        .eq("office_id", officeId)
-        .eq("landlord_id", input.landlordId)
-        .not("status", "in", "(archived,inactive,deleted,removed)")
-        .limit(1);
-    if (roomAccess.error) throw new Error(roomAccess.error.message);
-    if (!(roomAccess.data ?? []).length) throw new Error("This landlord is not attached to the active office.");
+    if (!isDirectAdmin) {
+        const roomAccess = await db
+            .from("rooms")
+            .select("id")
+            .eq("company_id", companyId)
+            .eq("office_id", officeId)
+            .eq("landlord_id", input.landlordId)
+            .not("status", "in", "(archived,inactive,deleted,removed)")
+            .limit(1);
+        if (roomAccess.error) throw new Error(roomAccess.error.message);
+        if (!(roomAccess.data ?? []).length) throw new Error("This landlord is not attached to the active office.");
+    }
 
     const preview = await getLandlordPaymentPreview({
         amount,
@@ -612,6 +684,26 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
 
     revalidateExpenseSurfaces();
     return request;
+}
+
+export async function submitLandlordPaymentFromTerminal(input: CreateLandlordPaidExpenseRequestInput) {
+    try {
+        const data = await createLandlordPaidExpenseRequest(input);
+        return { ok: true as const, data, error: null };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Payment could not be recorded.";
+        console.error("Landlord payment terminal submit failed:", message, {
+            landlordId: input.landlordId,
+            officeId: input.officeId ?? null,
+            paymentMonth: input.paymentMonth ?? null,
+            paymentDate: input.expenseDate ?? null,
+        });
+        return {
+            ok: false as const,
+            data: null,
+            error: `Payment could not be recorded: ${message}. No money was deducted. Please retry.`,
+        };
+    }
 }
 
 async function loadEmployeeExpensePreview(input: {

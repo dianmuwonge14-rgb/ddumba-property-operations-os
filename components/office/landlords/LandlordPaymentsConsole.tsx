@@ -12,7 +12,7 @@ import {
     resumeLandlordAdvance,
     settleLandlordAdvanceEarly,
 } from "@/app/actions/admin-finance";
-import { createLandlordPaidExpenseRequest } from "@/app/actions/expenses";
+import { createLandlordPaidExpenseRequest, submitLandlordPaymentFromTerminal } from "@/app/actions/expenses";
 import { runMonthlyLandlordPayableSnapshot } from "@/app/actions/landlords";
 import { EmptyState, PageHero, StatusChip } from "@/components/office/shared/EnterpriseUI";
 import {
@@ -463,6 +463,7 @@ function LandlordPaymentEntryPanel({
     const unpaidRows = monthlyRows.filter((item) => item.balance > 0);
     const paidRows = monthlyRows.filter((item) => item.balance <= 0 && numeric(item.row.amount_paid) > 0);
     const latestRow = selectedRows[0] ?? null;
+    const selectedOfficeId = selectedRows.find((row) => row.office_id)?.office_id ?? null;
     const roomNumbers = (selectedOption?.roomNumbersText ?? "").split(/[,\s]+/).map((value) => value.trim()).filter(Boolean);
     const oldMonthAllocation = allocation.lines
         .filter((line) => line.month.slice(0, 7) < paymentMonth.slice(0, 7))
@@ -495,7 +496,7 @@ function LandlordPaymentEntryPanel({
         setLocalMessage("");
         startTransition(async () => {
             try {
-                const request = await createLandlordPaidExpenseRequest({
+                const result = await submitLandlordPaymentFromTerminal({
                     advanceAgreement: allocation.advanceAmount > 0 ? {
                         deductionStartDate: paymentDate,
                         fixedInterestAmount: 0,
@@ -508,6 +509,7 @@ function LandlordPaymentEntryPanel({
                     amount: amountEntered,
                     expenseDate: paymentDate,
                     landlordId: selected.landlordId,
+                    officeId: selectedOfficeId,
                     paymentMethod,
                     paymentMonth,
                     notes: [
@@ -516,6 +518,11 @@ function LandlordPaymentEntryPanel({
                         "Recorded from Landlord Payments page.",
                     ].filter(Boolean).join("\n") || undefined,
                 });
+                if (!result.ok) {
+                    setLocalMessage(result.error);
+                    setMessage(result.error);
+                    return;
+                }
                 const success = canManage
                     ? `Landlord payment recorded and approved. Normal payment: ${money(allocation.normalPaymentAmount)}; advance: ${money(allocation.advanceAmount)}.`
                     : "Landlord payment request sent to Admin. It will not affect ledgers until approval.";
@@ -524,7 +531,7 @@ function LandlordPaymentEntryPanel({
                 setAmount("");
                 setReference("");
                 setNotes("");
-                if (request?.id) {
+                if (result.data?.id) {
                     setTimeout(() => window.location.reload(), 700);
                 }
             } catch (error) {
