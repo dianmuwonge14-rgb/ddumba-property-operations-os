@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireAuth, requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
 import { createNotificationWithEmail } from "@/lib/notifications/email";
+import { createLandlordPaymentReceipt } from "@/lib/receipts/payment-receipts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getExpenseInActiveOffice } from "@/lib/expenses/data";
@@ -1683,6 +1684,11 @@ async function applyApprovedLandlordPaymentToLedger(input: {
         .select("id")
         .single();
     if (paymentInsert.error) throw new Error(paymentInsert.error.message);
+    try {
+        await createLandlordPaymentReceipt(String(paymentInsert.data.id), { issuedBy: input.paidBy });
+    } catch (error) {
+        console.error("Landlord payment saved but receipt generation failed:", error instanceof Error ? error.message : error);
+    }
     await assertLandlordPayableIntegrity({
         companyId: input.companyId,
         db: input.db,
