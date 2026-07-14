@@ -188,6 +188,10 @@ export type LandlordPaymentOption = {
     name: string;
     officeId: string | null;
     officeName: string;
+    phone?: string | null;
+    searchText?: string | null;
+    roomNumbersText?: string | null;
+    locationText?: string | null;
 };
 
 export type LandlordPaymentOfficeOption = {

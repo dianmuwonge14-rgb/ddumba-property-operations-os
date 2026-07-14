@@ -185,6 +185,17 @@ export async function getLandlordPayablesData(): Promise<LandlordPayablesData> {
     const officeById = new Map(offices.map((office) => [office.id, office.name]));
     const landlordRows = (landlordsResult.data ?? []) as Array<{ id: string; full_name: string | null; phone?: string | null }>;
     const landlordById = new Map(landlordRows.map((landlord) => [landlord.id, landlord.full_name ?? "Landlord"]));
+    const searchIndexResult = await safeRows(
+        db
+            .from("landlord_search_index")
+            .select("landlord_id,office_id,phone,office_name,location_text,room_numbers_text,tenant_names_text,searchable_text")
+            .eq("company_id", companyId),
+    );
+    const searchIndexByLandlord = new Map<string, Record<string, unknown>>();
+    for (const row of (searchIndexResult.data ?? []) as Array<Record<string, unknown>>) {
+        const landlordId = String(row.landlord_id ?? "");
+        if (landlordId && !searchIndexByLandlord.has(landlordId)) searchIndexByLandlord.set(landlordId, row);
+    }
     const landlordOfficeById = new Map<string, string | null>();
     for (const room of (roomsResult.data ?? []) as Array<{ landlord_id: string | null; office_id: string | null }>) {
         if (room.landlord_id && !landlordOfficeById.has(room.landlord_id)) landlordOfficeById.set(room.landlord_id, room.office_id);
@@ -297,11 +308,26 @@ export async function getLandlordPayablesData(): Promise<LandlordPayablesData> {
         .filter((landlord) => context.canAccessAllOffices || scopedLandlordIds.has(landlord.id))
         .map((landlord) => {
             const officeId = landlordOfficeById.get(landlord.id) ?? activeOfficeId ?? null;
+            const searchIndex = searchIndexByLandlord.get(landlord.id);
+            const searchText = [
+                landlord.full_name,
+                landlord.phone,
+                searchIndex?.phone,
+                searchIndex?.office_name,
+                searchIndex?.location_text,
+                searchIndex?.room_numbers_text,
+                searchIndex?.tenant_names_text,
+                searchIndex?.searchable_text,
+            ].filter(Boolean).join(" ");
             return {
                 id: landlord.id,
                 name: landlord.full_name ?? "Landlord",
                 officeId,
-                officeName: officeId ? officeById.get(officeId) ?? "Office" : "Office",
+                officeName: officeId ? officeById.get(officeId) ?? String(searchIndex?.office_name ?? "Office") : String(searchIndex?.office_name ?? "Office"),
+                phone: landlord.phone ?? (typeof searchIndex?.phone === "string" ? searchIndex.phone : null),
+                locationText: typeof searchIndex?.location_text === "string" ? searchIndex.location_text : null,
+                roomNumbersText: typeof searchIndex?.room_numbers_text === "string" ? searchIndex.room_numbers_text : null,
+                searchText,
             };
         });
 

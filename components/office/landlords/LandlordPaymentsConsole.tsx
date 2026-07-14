@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import type { ReactNode } from "react";
-import { BanknoteArrowDown, Landmark, Loader2, Plus, Printer, ReceiptText, RefreshCw, ShieldCheck, TrendingDown, WalletCards } from "lucide-react";
+import { BanknoteArrowDown, FileText, Landmark, Loader2, Plus, Printer, ReceiptText, RefreshCw, Search, SendHorizontal, ShieldCheck, TrendingDown, WalletCards } from "lucide-react";
 import {
     addLandlordAdvance,
     clearLandlordAdvancePrincipal,
@@ -12,7 +12,8 @@ import {
     resumeLandlordAdvance,
     settleLandlordAdvanceEarly,
 } from "@/app/actions/admin-finance";
-import { markLandlordMonthlyPayablePaid, runMonthlyLandlordPayableSnapshot } from "@/app/actions/landlords";
+import { createLandlordPaidExpenseRequest } from "@/app/actions/expenses";
+import { runMonthlyLandlordPayableSnapshot } from "@/app/actions/landlords";
 import { EmptyState, PageHero, StatusChip } from "@/components/office/shared/EnterpriseUI";
 import {
     calculateLandlordAdvancePlan,
@@ -23,7 +24,7 @@ import {
     type PrincipalClearanceMethod,
 } from "@/lib/landlord-advances/calculator";
 import { buildLandlordPaymentAllocationPlan, landlordMonthlyUnpaid, summarizeLandlordPayables } from "@/lib/landlord-payables/payment-allocation";
-import type { LandlordAdvanceGroup, LandlordMonthlyPayable, LandlordPayableGroup, LandlordPayablesData, LandlordPaymentApprovalRequest, LandlordUnpaidMonthGroup, PaidLandlordPayment } from "@/lib/landlord-payables/types";
+import type { LandlordAdvanceGroup, LandlordMonthlyPayable, LandlordPayableGroup, LandlordPayablesData, LandlordPaymentApprovalRequest, LandlordPaymentOption, LandlordUnpaidMonthGroup, PaidLandlordPayment } from "@/lib/landlord-payables/types";
 
 type Props = {
     data: LandlordPayablesData;
@@ -35,6 +36,14 @@ function money(value: number | string | null | undefined) {
 
 function numeric(value: unknown) {
     return Number.isFinite(Number(value)) ? Number(value) : 0;
+}
+
+function normalizeSearch(value: string) {
+    return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function compactSearch(value: string) {
+    return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
 function monthlyUnpaid(row: LandlordMonthlyPayable) {
@@ -118,6 +127,7 @@ export default function LandlordPaymentsConsole({ data }: Props) {
     const unpaidReportGroups = groups.filter((group) => group.totalOutstanding > 0);
     const unpaidMonthGroups = data.unpaidMonthGroups ?? [];
     const [selectedLandlordId, setSelectedLandlordId] = useState(unpaidReportGroups[0]?.landlordId ?? groups[0]?.landlordId ?? "");
+    const [landlordSearch, setLandlordSearch] = useState("");
     const [selectedAdvanceLandlordId, setSelectedAdvanceLandlordId] = useState(advanceGroups[0]?.landlordId ?? "");
     const [activePanel, setActivePanel] = useState<"unpaid" | "ledger" | "advances" | "paid" | "recovery">("unpaid");
     const [message, setMessage] = useState("");
@@ -126,6 +136,30 @@ export default function LandlordPaymentsConsole({ data }: Props) {
         () => groups.find((group) => group.landlordId === selectedLandlordId) ?? groups[0] ?? null,
         [groups, selectedLandlordId],
     );
+    const landlordSearchResults = useMemo(() => {
+        const normalized = normalizeSearch(landlordSearch);
+        const compact = compactSearch(landlordSearch);
+        const optionById = new Map(landlords.map((landlord) => [landlord.id, landlord]));
+        const candidates = groups.map((group) => {
+            const option = optionById.get(group.landlordId);
+            const searchText = [
+                group.landlordName,
+                group.officeName,
+                option?.phone,
+                option?.officeName,
+                option?.roomNumbersText,
+                option?.locationText,
+                option?.searchText,
+                ...group.rows.map((row) => row.landlord_name),
+            ].filter(Boolean).join(" ");
+            return { group, option, searchText };
+        });
+        if (!normalized && !compact) return candidates.slice(0, 12);
+        const exact = candidates.filter(({ group, option }) => normalizeSearch(group.landlordName) === normalized || compactSearch(option?.phone ?? "") === compact || compactSearch(option?.roomNumbersText ?? "") === compact);
+        const starts = candidates.filter((candidate) => !exact.includes(candidate) && normalizeSearch(candidate.searchText).split(" ").some((part) => part.startsWith(normalized)));
+        const contains = candidates.filter((candidate) => !exact.includes(candidate) && !starts.includes(candidate) && (normalizeSearch(candidate.searchText).includes(normalized) || compactSearch(candidate.searchText).includes(compact)));
+        return [...exact, ...starts, ...contains].slice(0, 20);
+    }, [groups, landlordSearch, landlords]);
     const selectedAdvance = useMemo(
         () => advanceGroups.find((group) => group.landlordId === selectedAdvanceLandlordId) ?? advanceGroups[0] ?? null,
         [advanceGroups, selectedAdvanceLandlordId],
@@ -229,6 +263,25 @@ export default function LandlordPaymentsConsole({ data }: Props) {
                         {!data.canManage ? <p className="mt-3 text-xs font-bold text-amber-700">Admin or landlord manager permission is required to run snapshots.</p> : null}
                     </section>
                 ) : null}
+
+                <section className="mt-6">
+                    <LandlordPaymentEntryPanel
+                        canManage={data.canManage}
+                        currentMonthKey={currentMonthKey}
+                        landlordOptions={landlords}
+                        search={landlordSearch}
+                        searchResults={landlordSearchResults}
+                        selected={selected}
+                        selectedAdvanceGroup={advanceGroups.find((group) => group.landlordId === selected?.landlordId) ?? null}
+                        selectedOption={landlords.find((landlord) => landlord.id === selected?.landlordId) ?? null}
+                        setMessage={setMessage}
+                        onSearchChange={setLandlordSearch}
+                        onSelect={(landlordId) => {
+                            setSelectedLandlordId(landlordId);
+                            setActivePanel("ledger");
+                        }}
+                    />
+                </section>
 
                 <section className="mt-6">
                     <LandlordPaymentApprovalStatusPanel requests={data.approvalRequests ?? []} />
@@ -343,6 +396,317 @@ function ApprovalStatusChip({ status }: { status: string }) {
     if (value === "approved") return <StatusChip label="Approved" tone="green" />;
     if (value === "rejected") return <StatusChip label="Rejected" tone="red" />;
     return <StatusChip label="Pending" tone="orange" />;
+}
+
+function LandlordPaymentEntryPanel({
+    canManage,
+    currentMonthKey,
+    landlordOptions,
+    search,
+    searchResults,
+    selected,
+    selectedAdvanceGroup,
+    selectedOption,
+    setMessage,
+    onSearchChange,
+    onSelect,
+}: {
+    canManage: boolean;
+    currentMonthKey: string;
+    landlordOptions: LandlordPaymentOption[];
+    search: string;
+    searchResults: Array<{ group: LandlordPayableGroup; option?: LandlordPaymentOption; searchText: string }>;
+    selected: LandlordPayableGroup | null;
+    selectedAdvanceGroup: LandlordAdvanceGroup | null;
+    selectedOption: LandlordPaymentOption | null;
+    setMessage: (message: string) => void;
+    onSearchChange: (value: string) => void;
+    onSelect: (landlordId: string) => void;
+}) {
+    const today = new Date().toISOString().slice(0, 10);
+    const [amount, setAmount] = useState("");
+    const [paymentDate, setPaymentDate] = useState(today);
+    const [paymentMonth, setPaymentMonth] = useState(currentMonthKey.slice(0, 10));
+    const [paymentMethod, setPaymentMethod] = useState("cash");
+    const [reference, setReference] = useState("");
+    const [notes, setNotes] = useState("");
+    const [localMessage, setLocalMessage] = useState("");
+    const [isPending, startTransition] = useTransition();
+    const selectedRows = selected?.rows ?? [];
+    const summary = useMemo(
+        () => summarizeLandlordPayables({
+            activeAdvanceBalance: selectedAdvanceGroup?.remainingBalance ?? 0,
+            currentMonth: paymentMonth,
+            payables: selectedRows as unknown as Record<string, unknown>[],
+        }),
+        [paymentMonth, selectedAdvanceGroup?.remainingBalance, selectedRows],
+    );
+    const allocation = useMemo(
+        () => buildLandlordPaymentAllocationPlan({
+            amount: numeric(amount),
+            currentMonth: paymentMonth,
+            payables: selectedRows as unknown as Record<string, unknown>[],
+        }),
+        [amount, paymentMonth, selectedRows],
+    );
+    const monthlyRows = useMemo(
+        () => selectedRows
+            .map((row) => ({
+                row,
+                balance: monthlyUnpaid(row),
+                due: numeric(row.monthly_net_payable ?? row.net_payable),
+                deductions: numeric(row.vacant_room_deductions) + numeric(row.vacated_tenant_debt_deductions) + numeric(row.advance_deductions) + numeric(row.other_deductions),
+            }))
+            .sort((a, b) => String(a.row.settlement_month).localeCompare(String(b.row.settlement_month))),
+        [selectedRows],
+    );
+    const unpaidRows = monthlyRows.filter((item) => item.balance > 0);
+    const paidRows = monthlyRows.filter((item) => item.balance <= 0 && numeric(item.row.amount_paid) > 0);
+    const latestRow = selectedRows[0] ?? null;
+    const roomNumbers = (selectedOption?.roomNumbersText ?? "").split(/[,\s]+/).map((value) => value.trim()).filter(Boolean);
+    const oldMonthAllocation = allocation.lines
+        .filter((line) => line.month.slice(0, 7) < paymentMonth.slice(0, 7))
+        .reduce((total, line) => total + line.applied, 0);
+    const currentMonthAllocation = allocation.lines
+        .filter((line) => line.month.slice(0, 7) === paymentMonth.slice(0, 7))
+        .reduce((total, line) => total + line.applied, 0);
+    const amountEntered = numeric(amount);
+    const remainingAfterPayment = Math.max(0, summary.totalOutstandingPayable - amountEntered);
+
+    function submitPayment() {
+        if (!selected) {
+            setLocalMessage("Select a landlord first.");
+            return;
+        }
+        if (amountEntered <= 0) {
+            setLocalMessage("Enter a valid payment amount.");
+            return;
+        }
+        setLocalMessage("");
+        startTransition(async () => {
+            try {
+                const request = await createLandlordPaidExpenseRequest({
+                    advanceAgreement: allocation.advanceAmount > 0 ? {
+                        deductionStartDate: paymentDate,
+                        fixedInterestAmount: 0,
+                        interestRate: 0,
+                        interestValue: 0,
+                        monthlyDeductionAmount: allocation.advanceAmount,
+                        paymentPlan: "one_time",
+                        reason: notes || "Landlord payment overpayment converted to advance from Landlord Payments.",
+                    } : undefined,
+                    amount: amountEntered,
+                    expenseDate: paymentDate,
+                    landlordId: selected.landlordId,
+                    paymentMethod,
+                    paymentMonth,
+                    notes: [
+                        notes,
+                        reference ? `Reference: ${reference}` : "",
+                        "Recorded from Landlord Payments page.",
+                    ].filter(Boolean).join("\n") || undefined,
+                });
+                const success = canManage
+                    ? `Landlord payment recorded and approved. Normal payment: ${money(allocation.normalPaymentAmount)}; advance: ${money(allocation.advanceAmount)}.`
+                    : "Landlord payment request sent to Admin. It will not affect ledgers until approval.";
+                setLocalMessage(success);
+                setMessage(success);
+                setAmount("");
+                setReference("");
+                setNotes("");
+                if (request?.id) {
+                    setTimeout(() => window.location.reload(), 700);
+                }
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : "Unable to record landlord payment.";
+                setLocalMessage(errorMessage);
+                setMessage(errorMessage);
+            }
+        });
+    }
+
+    return (
+        <section className="enterprise-panel overflow-hidden">
+            <div className="border-b border-slate-200 bg-gradient-to-r from-emerald-950 via-slate-950 to-slate-900 p-5 text-white">
+                <p className="text-xs font-black uppercase tracking-[0.2em] text-emerald-200">Main Payment Entry</p>
+                <div className="mt-2 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                    <div>
+                        <h2 className="text-2xl font-black">Record Landlord Payment</h2>
+                        <p className="mt-1 text-sm font-semibold text-slate-300">Search, confirm payable, preview allocation, then record or submit for approval from live Supabase balances.</p>
+                    </div>
+                    <StatusChip label={canManage ? "Admin direct approval" : "Office pending approval"} tone={canManage ? "green" : "orange"} />
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-5 p-5 xl:grid-cols-[minmax(280px,0.85fr)_minmax(0,1.4fr)]">
+                <div className="space-y-4">
+                    <label className="block">
+                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Search landlord, phone, room, office, or property</span>
+                        <div className="mt-2 flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+                            <Search size={18} className="shrink-0 text-slate-400" />
+                            <input
+                                value={search}
+                                onChange={(event) => onSearchChange(event.target.value)}
+                                placeholder="Example: Mawejje, Z127, phone, office..."
+                                className="min-w-0 flex-1 border-0 bg-transparent text-sm font-bold text-slate-950 outline-none"
+                            />
+                        </div>
+                    </label>
+                    <div className="max-h-[420px] space-y-2 overflow-auto pr-1">
+                        {searchResults.length === 0 ? (
+                            <EmptyState title="No landlord found" description={landlordOptions.length ? "Try landlord name, phone, office, property, or room number." : "No landlord payable records are available yet."} />
+                        ) : searchResults.map(({ group, option }) => {
+                            const isSelected = selected?.landlordId === group.landlordId;
+                            return (
+                                <button
+                                    key={group.landlordId}
+                                    type="button"
+                                    onClick={() => onSelect(group.landlordId)}
+                                    className={`w-full rounded-2xl border p-4 text-left transition ${isSelected ? "border-emerald-300 bg-emerald-50 shadow-md" : "border-slate-200 bg-white hover:border-emerald-200 hover:bg-slate-50"}`}
+                                >
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <p className="truncate text-sm font-black text-slate-950">{group.landlordName}</p>
+                                            <p className="mt-1 truncate text-xs font-bold text-slate-500">{option?.phone ?? "No phone"} · {group.officeName}</p>
+                                        </div>
+                                        <span className="shrink-0 rounded-full bg-slate-950 px-2 py-1 text-[10px] font-black text-white">{money(group.totalOutstanding)}</span>
+                                    </div>
+                                    <p className="mt-2 line-clamp-2 text-xs font-semibold text-slate-500">
+                                        Rooms: {option?.roomNumbersText || "Not indexed"} {option?.locationText ? `· ${option.locationText}` : ""}
+                                    </p>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                <div className="min-w-0 space-y-5">
+                    {!selected ? (
+                        <EmptyState title="Select a landlord" description="The live payable position and payment form will appear here." />
+                    ) : (
+                        <>
+                            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                    <div className="min-w-0">
+                                        <p className="text-xs font-black uppercase tracking-wide text-emerald-700">Selected Landlord</p>
+                                        <h3 className="mt-1 truncate text-2xl font-black text-slate-950">{selected.landlordName}</h3>
+                                        <p className="mt-1 text-sm font-bold text-slate-600">{selectedOption?.phone ?? "No phone"} · {selected.officeName}</p>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        <button type="button" onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">
+                                            <Printer size={14} /> Print Report
+                                        </button>
+                                        <a href={`/office/landlords?landlord=${selected.landlordId}`} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-3 py-2 text-xs font-black text-white">
+                                            <FileText size={14} /> Open Landlord Report
+                                        </a>
+                                    </div>
+                                </div>
+                                <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                                    <StatementMetric label="Landlord Outstanding Balance" value={money(summary.totalOutstandingPayable)} />
+                                    <StatementMetric label="Active Advance" value={money(selectedAdvanceGroup?.remainingBalance ?? 0)} />
+                                    <StatementMetric label="Oldest Unpaid" value={monthLabel(summary.unpaidRows[0]?.month)} />
+                                    <StatementMetric label="Latest Paid" value={monthLabel(selected.lastPaidAt)} />
+                                    <StatementMetric label="Rooms Indexed" value={roomNumbers.length.toLocaleString()} />
+                                    <StatementMetric label="Full Rent Roll" value={money(numeric(latestRow?.full_rent_roll))} />
+                                    <StatementMetric label="Commission" value={latestRow ? `${numeric(latestRow.commission_percentage)}%` : "Not set"} />
+                                    <StatementMetric label="Normal Net Payable" value={money(numeric(latestRow?.monthly_net_payable ?? latestRow?.net_payable))} />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-4 2xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+                                <div className="rounded-3xl border border-slate-200 bg-white p-4">
+                                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                        <div>
+                                            <p className="text-xs font-black uppercase tracking-wide text-slate-500">Month-by-month position</p>
+                                            <h4 className="text-lg font-black text-slate-950">Unpaid and Paid Months</h4>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2">
+                                            <StatusChip label={`Unpaid ${unpaidRows.length}`} tone="red" />
+                                            <StatusChip label={`Paid ${paidRows.length}`} tone="green" />
+                                        </div>
+                                    </div>
+                                    <div className="mt-4 max-h-[520px] overflow-auto">
+                                        <table className="enterprise-table min-w-[860px]">
+                                            <thead>
+                                                <tr>
+                                                    <th className="text-left">Month</th>
+                                                    <th className="text-left">Gross Rent</th>
+                                                    <th className="text-left">Commission</th>
+                                                    <th className="text-left">Deductions</th>
+                                                    <th className="text-left">Net Payable</th>
+                                                    <th className="text-left">Paid</th>
+                                                    <th className="text-left">Balance</th>
+                                                    <th className="text-left">Status</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {monthlyRows.map(({ row, balance, deductions, due }) => (
+                                                    <tr key={row.id}>
+                                                        <td className="font-black">{monthLabel(row.settlement_month)}</td>
+                                                        <td>{money(row.full_rent_roll)}</td>
+                                                        <td>{money(row.commission_amount)}</td>
+                                                        <td className="font-bold text-amber-700">{money(deductions)}</td>
+                                                        <td className="font-black text-slate-900">{money(due)}</td>
+                                                        <td className="font-bold text-emerald-700">{money(row.amount_paid)}</td>
+                                                        <td className="font-black text-red-700">{money(balance)}</td>
+                                                        <td><StatusChip label={balance > 0 ? numeric(row.amount_paid) > 0 ? "Partially Paid" : "Unpaid" : "Paid"} tone={balance > 0 ? numeric(row.amount_paid) > 0 ? "orange" : "red" : "green"} /></td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-4">
+                                    <p className="text-xs font-black uppercase tracking-wide text-emerald-700">Payment Form</p>
+                                    <h4 className="mt-1 text-lg font-black text-slate-950">Enter money paid to landlord</h4>
+                                    <div className="mt-4 grid grid-cols-1 gap-3">
+                                        <input className="field" inputMode="numeric" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="Amount Paid" />
+                                        <input className="field" type="date" value={paymentDate} onChange={(event) => setPaymentDate(event.target.value)} />
+                                        <input className="field" type="date" value={paymentMonth} onChange={(event) => setPaymentMonth(event.target.value)} />
+                                        <select className="field" value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}>
+                                            <option value="cash">Cash</option>
+                                            <option value="mobile_money">Mobile Money</option>
+                                            <option value="bank">Bank</option>
+                                            <option value="cheque">Cheque</option>
+                                            <option value="manual">Manual</option>
+                                        </select>
+                                        <input className="field" value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Reference" />
+                                        <textarea className="field min-h-24" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Notes" />
+                                    </div>
+
+                                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                        <StatementMetric label="Total Genuine Outstanding" value={money(summary.totalOutstandingPayable)} />
+                                        <StatementMetric label="Amount Entered" value={money(amountEntered)} />
+                                        <StatementMetric label="Allocated Old Months" value={money(oldMonthAllocation)} />
+                                        <StatementMetric label="Allocated Current Month" value={money(currentMonthAllocation)} />
+                                        <StatementMetric label="Advance Portion" value={money(allocation.advanceAmount)} />
+                                        <StatementMetric label="Remaining After Payment" value={money(remainingAfterPayment)} />
+                                    </div>
+                                    <p className="mt-3 rounded-2xl border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-slate-600">
+                                        Payments are allocated oldest unpaid month first. Advance is created only after every genuine unpaid balance becomes zero.
+                                    </p>
+                                    <button disabled={isPending || amountEntered <= 0} onClick={submitPayment} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50">
+                                        {isPending ? <Loader2 className="animate-spin" size={16} /> : <SendHorizontal size={16} />}
+                                        {isPending ? "Saving..." : canManage ? "Record Landlord Payment" : "Send for Admin Approval"}
+                                    </button>
+                                    {localMessage ? <div className="mt-3 rounded-2xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-bold text-blue-800">{localMessage}</div> : null}
+                                    {localMessage && !isPending ? (
+                                        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                            <button type="button" onClick={() => window.print()} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Print Receipt</button>
+                                            <button type="button" onClick={() => window.print()} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Download PDF</button>
+                                            <a href={`/office/landlords?landlord=${selected.landlordId}`} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-center text-xs font-black text-slate-700">Open Report</a>
+                                            <button type="button" onClick={() => setLocalMessage("E-receipt delivery is handled by the configured notification/email provider after approval.")} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Send E-Receipt</button>
+                                        </div>
+                                    ) : null}
+                                </div>
+                            </div>
+                        </>
+                    )}
+                </div>
+            </div>
+        </section>
+    );
 }
 
 function LivePayableDebugPanel({ data }: { data: LandlordPayablesData }) {
@@ -661,20 +1025,36 @@ function MonthlyLedger({ group }: { group: LandlordPayableGroup | null }) {
     }), [group?.rows, paymentAmount, paymentTarget?.settlement_month]);
 
     function recordPayment() {
-        if (!paymentTarget) return;
+        if (!paymentTarget || !group) return;
         setPaymentMessage("");
         startTransition(async () => {
             try {
-                const result = await markLandlordMonthlyPayablePaid({
-                    monthlyPayableId: paymentTarget.id,
+                const result = await createLandlordPaidExpenseRequest({
+                    advanceAgreement: paymentPreview.advanceAmount > 0 ? {
+                        deductionStartDate: new Date().toISOString().slice(0, 10),
+                        fixedInterestAmount: 0,
+                        interestRate: 0,
+                        interestValue: 0,
+                        monthlyDeductionAmount: paymentPreview.advanceAmount,
+                        paymentPlan: "one_time",
+                        reason: "Monthly ledger overpayment converted to landlord advance.",
+                    } : undefined,
                     amount: Number(paymentAmount),
+                    expenseDate: new Date().toISOString().slice(0, 10),
+                    landlordId: group.landlordId,
                     paymentMethod,
-                    paymentDetailId: paymentDetailId || undefined,
-                    reference: paymentReference || undefined,
-                    notes: "Recorded from Landlord Payments monthly ledger.",
+                    paymentMonth: paymentTarget.settlement_month,
+                    notes: [
+                        paymentReference ? `Reference: ${paymentReference}` : "",
+                        paymentDetailId ? `Payment detail ID: ${paymentDetailId}` : "",
+                        "Recorded from Landlord Payments monthly ledger.",
+                    ].filter(Boolean).join("\n") || undefined,
                 });
-                setPaymentMessage(result.receiptError ? `Payment recorded: ${money(result.amount)}. Receipt warning: ${result.receiptError}` : `Payment recorded: ${money(result.amount)}. Receipt metadata saved.`);
+                setPaymentMessage(result?.status === "pending"
+                    ? "Landlord payment request sent to Admin. It will not affect ledgers until approval."
+                    : "Landlord payment recorded and approved. Live totals are updating.");
                 setPaymentTarget(null);
+                setTimeout(() => window.location.reload(), 700);
             } catch (error) {
                 setPaymentMessage(error instanceof Error ? error.message : "Unable to record landlord payment.");
             }

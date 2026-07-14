@@ -1,0 +1,29 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { test } from "node:test";
+
+const source = readFileSync(new URL("../components/office/landlords/LandlordPaymentsConsole.tsx", import.meta.url), "utf8");
+const dataSource = readFileSync(new URL("../lib/landlord-payables/data.ts", import.meta.url), "utf8");
+
+test("landlord payments page records through canonical expense-routed action", () => {
+  assert.match(source, /function LandlordPaymentEntryPanel/);
+  assert.match(source, /createLandlordPaidExpenseRequest/);
+  assert.doesNotMatch(source, /markLandlordMonthlyPayablePaid/);
+});
+
+test("landlord payments page previews allocation using shared payable calculator", () => {
+  assert.match(source, /summarizeLandlordPayables/);
+  assert.match(source, /buildLandlordPaymentAllocationPlan/);
+  assert.match(source, /oldest unpaid month first/i);
+  assert.match(source, /Advance is created only after every genuine unpaid balance becomes zero/);
+});
+
+test("landlord payments search includes phone, rooms, office, and location index", () => {
+  assert.match(dataSource, /landlord_search_index/);
+  assert.match(dataSource, /room_numbers_text/);
+  assert.match(dataSource, /location_text/);
+  assert.match(dataSource, /searchable_text/);
+  assert.match(source, /option\?\.phone/);
+  assert.match(source, /option\?\.roomNumbersText/);
+  assert.match(source, /option\?\.locationText/);
+});
