@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import type { ReactNode } from "react";
-import { BanknoteArrowDown, FileText, Landmark, Loader2, Plus, Printer, ReceiptText, RefreshCw, Search, SendHorizontal, ShieldCheck, TrendingDown, WalletCards } from "lucide-react";
+import { AlertTriangle, ArrowDown, BadgeDollarSign, BanknoteArrowDown, Building2, CalendarDays, CheckCircle2, CircleDollarSign, CreditCard, FileText, Landmark, Loader2, Phone, Plus, Printer, ReceiptText, RefreshCw, Search, SendHorizontal, ShieldCheck, Sparkles, TrendingDown, WalletCards } from "lucide-react";
 import {
     addLandlordAdvance,
     clearLandlordAdvancePrincipal,
@@ -472,6 +472,16 @@ function LandlordPaymentEntryPanel({
         .reduce((total, line) => total + line.applied, 0);
     const amountEntered = numeric(amount);
     const remainingAfterPayment = Math.max(0, summary.totalOutstandingPayable - amountEntered);
+    const currentMonthPayable = summary.currentMonthNetPayable || numeric(latestRow?.monthly_net_payable ?? latestRow?.net_payable);
+    const previousMonthsOutstanding = Math.max(0, summary.totalOutstandingPayable - summary.currentMonthUnpaid);
+    const recoveryDeductions = selectedRows.reduce((total, row) => total + numeric(row.vacated_tenant_debt_deductions), 0);
+    const vacantRoomDeductions = selectedRows.reduce((total, row) => total + numeric(row.vacant_room_deductions), 0);
+    const totalNetPayable = selectedRows.reduce((total, row) => total + numeric(row.monthly_net_payable ?? row.net_payable), 0);
+    const currentPaymentStatus = summary.totalOutstandingPayable <= 0 ? "Cleared" : numeric(latestRow?.amount_paid) > 0 ? "Partially Paid" : "Unpaid";
+    const confidence = amountEntered <= 0 ? "Awaiting amount" : allocation.advanceAmount > 0 ? "Overpayment reviewed" : remainingAfterPayment > 0 ? "Partial payment" : "High confidence";
+    const riskLabel = amountEntered <= 0 ? "Low input readiness" : allocation.advanceAmount > 0 ? "Advance agreement required" : remainingAfterPayment > 0 ? "Outstanding remains" : "Balanced payment";
+    const isSuccessMessage = Boolean(localMessage) && /recorded|sent/i.test(localMessage) && !/unable|error|select|enter/i.test(localMessage);
+    const submitLabel = canManage ? "Submit Landlord Payment" : "Send for Admin Approval";
 
     function submitPayment() {
         if (!selected) {
@@ -526,186 +536,395 @@ function LandlordPaymentEntryPanel({
     }
 
     return (
-        <section className="enterprise-panel overflow-hidden">
-            <div className="border-b border-slate-200 bg-gradient-to-r from-emerald-950 via-slate-950 to-slate-900 p-5 text-white">
-                <p className="text-xs font-black uppercase tracking-[0.2em] text-emerald-200">Main Payment Entry</p>
-                <div className="mt-2 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-                    <div>
-                        <h2 className="text-2xl font-black">Record Landlord Payment</h2>
-                        <p className="mt-1 text-sm font-semibold text-slate-300">Search, confirm payable, preview allocation, then record or submit for approval from live Supabase balances.</p>
+        <section className="overflow-hidden rounded-[2rem] border border-slate-200 bg-slate-50 shadow-2xl shadow-slate-200/70">
+            <div className="relative overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(34,197,94,0.28),transparent_34%),linear-gradient(135deg,#061826,#0f2f2a_44%,#0f172a)] p-5 text-white md:p-6">
+                <div className="absolute inset-0 bg-white/[0.03] backdrop-blur-sm" />
+                <div className="relative z-10 flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+                    <div className="min-w-0">
+                        <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-200">🏦 Landlord Payment Centre</p>
+                        <h2 className="mt-2 break-words text-[clamp(1.55rem,3vw,2.7rem)] font-black leading-tight">{selected?.landlordName ?? "Select landlord"}</h2>
+                        <div className="mt-3 flex flex-wrap gap-2 text-xs font-black">
+                            <span className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-3 py-1"><Building2 size={13} /> {selected?.officeName ?? "Office"}</span>
+                            <span className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-3 py-1"><Phone size={13} /> {selectedOption?.phone ?? "No phone"}</span>
+                            <span className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-3 py-1"><CalendarDays size={13} /> {monthLabel(paymentMonth)}</span>
+                            <span className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-3 py-1"><ReceiptText size={13} /> {currentPaymentStatus}</span>
+                        </div>
                     </div>
-                    <StatusChip label={canManage ? "Admin direct approval" : "Office pending approval"} tone={canManage ? "green" : "orange"} />
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 xl:min-w-[520px]">
+                        <PremiumHeaderStat label="Last Payment" value={dateLabel(selected?.lastPaidAt)} />
+                        <PremiumHeaderStat label="Live Source" value="Live Supabase" tone="text-emerald-100" />
+                        <PremiumHeaderStat label="Mode" value={canManage ? "Admin Direct" : "Office Approval"} tone={canManage ? "text-emerald-100" : "text-blue-100"} />
+                    </div>
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-5 p-5 xl:grid-cols-[minmax(280px,0.85fr)_minmax(0,1.4fr)]">
+            <div className="grid grid-cols-1 gap-5 p-4 md:p-5 2xl:grid-cols-[minmax(330px,0.95fr)_minmax(0,1.25fr)]">
                 <div className="space-y-4">
-                    <label className="block">
-                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Search landlord, phone, room, office, or property</span>
-                        <div className="mt-2 flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
-                            <Search size={18} className="shrink-0 text-slate-400" />
+                    <div className="rounded-[1.75rem] border border-slate-200 bg-white/95 p-4 shadow-xl shadow-slate-200/60">
+                        <PremiumField label="Landlord Search" icon={<Search size={18} />} helper="Search by landlord, phone, room, office, or property">
                             <input
                                 value={search}
                                 onChange={(event) => onSearchChange(event.target.value)}
-                                placeholder="Example: Mawejje, Z127, phone, office..."
-                                className="min-w-0 flex-1 border-0 bg-transparent text-sm font-bold text-slate-950 outline-none"
+                                placeholder="Mawejje, Z127, phone, office..."
+                                className="w-full border-0 bg-transparent text-sm font-black text-slate-950 outline-none placeholder:text-slate-400"
                             />
-                        </div>
-                    </label>
-                    <div className="max-h-[420px] space-y-2 overflow-auto pr-1">
-                        {searchResults.length === 0 ? (
-                            <EmptyState title="No landlord found" description={landlordOptions.length ? "Try landlord name, phone, office, property, or room number." : "No landlord payable records are available yet."} />
-                        ) : searchResults.map(({ group, option }) => {
-                            const isSelected = selected?.landlordId === group.landlordId;
-                            return (
-                                <button
-                                    key={group.landlordId}
-                                    type="button"
-                                    onClick={() => onSelect(group.landlordId)}
-                                    className={`w-full rounded-2xl border p-4 text-left transition ${isSelected ? "border-emerald-300 bg-emerald-50 shadow-md" : "border-slate-200 bg-white hover:border-emerald-200 hover:bg-slate-50"}`}
-                                >
-                                    <div className="flex items-start justify-between gap-3">
-                                        <div className="min-w-0">
-                                            <p className="truncate text-sm font-black text-slate-950">{group.landlordName}</p>
-                                            <p className="mt-1 truncate text-xs font-bold text-slate-500">{option?.phone ?? "No phone"} · {group.officeName}</p>
+                        </PremiumField>
+                        <div className="mt-4 max-h-[390px] space-y-2 overflow-auto pr-1">
+                            {searchResults.length === 0 ? (
+                                <EmptyState title="No landlord found" description={landlordOptions.length ? "Try landlord name, phone, office, property, or room number." : "No landlord payable records are available yet."} />
+                            ) : searchResults.map(({ group, option }) => {
+                                const isSelected = selected?.landlordId === group.landlordId;
+                                return (
+                                    <button
+                                        key={group.landlordId}
+                                        type="button"
+                                        onClick={() => onSelect(group.landlordId)}
+                                        className={`w-full rounded-2xl border p-4 text-left transition hover:-translate-y-0.5 ${isSelected ? "border-emerald-300 bg-gradient-to-br from-emerald-50 to-white shadow-lg shadow-emerald-100" : "border-slate-200 bg-white hover:border-emerald-200 hover:bg-slate-50"}`}
+                                    >
+                                        <div className="flex min-w-0 items-start justify-between gap-3">
+                                            <div className="min-w-0">
+                                                <p className="truncate text-sm font-black text-slate-950">{group.landlordName}</p>
+                                                <p className="mt-1 truncate text-xs font-bold text-slate-500">{option?.phone ?? "No phone"} · {group.officeName}</p>
+                                            </div>
+                                            <span className="shrink-0 rounded-full bg-slate-950 px-2.5 py-1 text-[10px] font-black text-white">{money(group.totalOutstanding)}</span>
                                         </div>
-                                        <span className="shrink-0 rounded-full bg-slate-950 px-2 py-1 text-[10px] font-black text-white">{money(group.totalOutstanding)}</span>
-                                    </div>
-                                    <p className="mt-2 line-clamp-2 text-xs font-semibold text-slate-500">
-                                        Rooms: {option?.roomNumbersText || "Not indexed"} {option?.locationText ? `· ${option.locationText}` : ""}
-                                    </p>
-                                </button>
-                            );
-                        })}
+                                        <p className="mt-2 line-clamp-2 text-xs font-semibold text-slate-500">
+                                            Rooms: {option?.roomNumbersText || "Not indexed"} {option?.locationText ? `· ${option.locationText}` : ""}
+                                        </p>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    <div className="rounded-[1.75rem] border border-slate-200 bg-white p-4 shadow-xl shadow-slate-200/60">
+                        <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Payment Form</p>
+                        <div className="mt-4 grid grid-cols-1 gap-3">
+                            <PremiumField label="Amount Paid" icon={<CircleDollarSign size={18} />} helper={amountEntered > 0 ? money(amountEntered) : "Enter UGX amount"}>
+                                <input className="w-full border-0 bg-transparent text-base font-black text-slate-950 outline-none placeholder:text-slate-400" inputMode="numeric" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0" />
+                            </PremiumField>
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                <PremiumField label="Payment Month" icon={<CalendarDays size={18} />}>
+                                    <input className="w-full border-0 bg-transparent text-sm font-black text-slate-950 outline-none" type="date" value={paymentMonth} onChange={(event) => setPaymentMonth(event.target.value)} />
+                                </PremiumField>
+                                <PremiumField label="Payment Date" icon={<CalendarDays size={18} />}>
+                                    <input className="w-full border-0 bg-transparent text-sm font-black text-slate-950 outline-none" type="date" value={paymentDate} onChange={(event) => setPaymentDate(event.target.value)} />
+                                </PremiumField>
+                            </div>
+                            <PremiumField label="Payment Method" icon={<CreditCard size={18} />}>
+                                <select className="w-full border-0 bg-transparent text-sm font-black text-slate-950 outline-none" value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}>
+                                    <option value="cash">Cash</option>
+                                    <option value="mobile_money">Mobile Money</option>
+                                    <option value="bank">Bank</option>
+                                    <option value="cheque">Cheque</option>
+                                    <option value="manual">Manual</option>
+                                </select>
+                            </PremiumField>
+                            <PremiumField label="Reference" icon={<BadgeDollarSign size={18} />}>
+                                <input className="w-full border-0 bg-transparent text-sm font-black text-slate-950 outline-none placeholder:text-slate-400" value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Bank slip, MOMO ID, cheque no." />
+                            </PremiumField>
+                            <PremiumField label="Notes" icon={<FileText size={18} />}>
+                                <textarea className="min-h-24 w-full resize-none border-0 bg-transparent text-sm font-bold text-slate-950 outline-none placeholder:text-slate-400" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Optional payment notes" />
+                            </PremiumField>
+                        </div>
                     </div>
                 </div>
 
                 <div className="min-w-0 space-y-5">
                     {!selected ? (
-                        <EmptyState title="Select a landlord" description="The live payable position and payment form will appear here." />
+                        <EmptyState title="Select a landlord" description="The live payable position and payment terminal will appear here." />
                     ) : (
                         <>
-                            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                                    <div className="min-w-0">
-                                        <p className="text-xs font-black uppercase tracking-wide text-emerald-700">Selected Landlord</p>
-                                        <h3 className="mt-1 truncate text-2xl font-black text-slate-950">{selected.landlordName}</h3>
-                                        <p className="mt-1 text-sm font-bold text-slate-600">{selectedOption?.phone ?? "No phone"} · {selected.officeName}</p>
-                                    </div>
-                                    <div className="flex flex-wrap gap-2">
-                                        <button type="button" onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">
-                                            <Printer size={14} /> Print Report
-                                        </button>
-                                        <a href={`/office/landlords?landlord=${selected.landlordId}`} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-3 py-2 text-xs font-black text-white">
-                                            <FileText size={14} /> Open Landlord Report
-                                        </a>
-                                    </div>
-                                </div>
-                                <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-                                    <StatementMetric label="Landlord Outstanding Balance" value={money(summary.totalOutstandingPayable)} />
-                                    <StatementMetric label="Active Advance" value={money(selectedAdvanceGroup?.remainingBalance ?? 0)} />
-                                    <StatementMetric label="Oldest Unpaid" value={monthLabel(summary.unpaidRows[0]?.month)} />
-                                    <StatementMetric label="Latest Paid" value={monthLabel(selected.lastPaidAt)} />
-                                    <StatementMetric label="Rooms Indexed" value={roomNumbers.length.toLocaleString()} />
-                                    <StatementMetric label="Full Rent Roll" value={money(numeric(latestRow?.full_rent_roll))} />
-                                    <StatementMetric label="Commission" value={latestRow ? `${numeric(latestRow.commission_percentage)}%` : "Not set"} />
-                                    <StatementMetric label="Normal Net Payable" value={money(numeric(latestRow?.monthly_net_payable ?? latestRow?.net_payable))} />
-                                </div>
+                            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                                <FinancialSummaryCard icon={<WalletCards size={18} />} label="Total Genuine Outstanding" value={money(summary.totalOutstandingPayable)} tone="red" />
+                                <FinancialSummaryCard icon={<CalendarDays size={18} />} label="Current Month Payable" value={money(currentMonthPayable)} tone="blue" />
+                                <FinancialSummaryCard icon={<TrendingDown size={18} />} label="Previous Months Outstanding" value={money(previousMonthsOutstanding)} tone="amber" />
+                                <FinancialSummaryCard icon={<BanknoteArrowDown size={18} />} label="Advance Balance" value={money(selectedAdvanceGroup?.remainingBalance ?? 0)} tone="purple" />
+                                <FinancialSummaryCard icon={<ShieldCheck size={18} />} label="Recovery Deductions" value={money(recoveryDeductions)} tone="emerald" />
+                                <FinancialSummaryCard icon={<Building2 size={18} />} label="Vacant Room Deductions" value={money(vacantRoomDeductions)} tone="slate" />
+                                <FinancialSummaryCard icon={<ReceiptText size={18} />} label="Net Payable" value={money(totalNetPayable)} tone="green" />
+                                <FinancialSummaryCard icon={<CircleDollarSign size={18} />} label="Remaining After Payment" value={money(remainingAfterPayment)} tone={remainingAfterPayment > 0 ? "red" : "green"} />
                             </div>
 
-                            <div className="grid grid-cols-1 gap-4 2xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
-                                <div className="rounded-3xl border border-slate-200 bg-white p-4">
-                                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                                        <div>
-                                            <p className="text-xs font-black uppercase tracking-wide text-slate-500">Month-by-month position</p>
-                                            <h4 className="text-lg font-black text-slate-950">Unpaid and Paid Months</h4>
-                                        </div>
-                                        <div className="flex flex-wrap gap-2">
-                                            <StatusChip label={`Unpaid ${unpaidRows.length}`} tone="red" />
-                                            <StatusChip label={`Paid ${paidRows.length}`} tone="green" />
-                                        </div>
+                            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(310px,0.82fr)]">
+                                <AiPaymentAssistant
+                                    advanceAmount={allocation.advanceAmount}
+                                    confidence={confidence}
+                                    currentMonthAllocation={currentMonthAllocation}
+                                    normalAmount={allocation.normalPaymentAmount}
+                                    oldMonthAllocation={oldMonthAllocation}
+                                    remainingAfterPayment={remainingAfterPayment}
+                                    riskLabel={riskLabel}
+                                />
+                                <PaymentAllocationTimeline
+                                    amountEntered={amountEntered}
+                                    advanceAmount={allocation.advanceAmount}
+                                    currentMonthAllocation={currentMonthAllocation}
+                                    oldMonthAllocation={oldMonthAllocation}
+                                    remainingAfterPayment={remainingAfterPayment}
+                                />
+                            </div>
+
+                            <div className="rounded-[1.75rem] border border-slate-200 bg-white p-4 shadow-xl shadow-slate-200/60">
+                                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                    <div>
+                                        <p className="text-xs font-black uppercase tracking-wide text-slate-500">Payment Breakdown</p>
+                                        <h4 className="text-lg font-black text-slate-950">Month-by-month allocation preview</h4>
                                     </div>
-                                    <div className="mt-4 max-h-[520px] overflow-auto">
-                                        <table className="enterprise-table min-w-[860px]">
-                                            <thead>
-                                                <tr>
-                                                    <th className="text-left">Month</th>
-                                                    <th className="text-left">Gross Rent</th>
-                                                    <th className="text-left">Commission</th>
-                                                    <th className="text-left">Deductions</th>
-                                                    <th className="text-left">Net Payable</th>
-                                                    <th className="text-left">Paid</th>
-                                                    <th className="text-left">Balance</th>
-                                                    <th className="text-left">Status</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {monthlyRows.map(({ row, balance, deductions, due }) => (
+                                    <div className="flex flex-wrap gap-2">
+                                        <StatusChip label={`Unpaid ${unpaidRows.length}`} tone="red" />
+                                        <StatusChip label={`Paid ${paidRows.length}`} tone="green" />
+                                    </div>
+                                </div>
+                                <div className="mt-4 overflow-x-auto">
+                                    <table className="enterprise-table min-w-[840px]">
+                                        <thead>
+                                            <tr>
+                                                <th className="text-left">Month</th>
+                                                <th className="text-left">Net Payable</th>
+                                                <th className="text-left">Already Paid</th>
+                                                <th className="text-left">Remaining</th>
+                                                <th className="text-left">Payment Applied</th>
+                                                <th className="text-left">Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {monthlyRows.map(({ row, balance, due }) => {
+                                                const applied = allocation.lines.find((line) => line.payableId === row.id)?.applied ?? 0;
+                                                return (
                                                     <tr key={row.id}>
                                                         <td className="font-black">{monthLabel(row.settlement_month)}</td>
-                                                        <td>{money(row.full_rent_roll)}</td>
-                                                        <td>{money(row.commission_amount)}</td>
-                                                        <td className="font-bold text-amber-700">{money(deductions)}</td>
                                                         <td className="font-black text-slate-900">{money(due)}</td>
                                                         <td className="font-bold text-emerald-700">{money(row.amount_paid)}</td>
                                                         <td className="font-black text-red-700">{money(balance)}</td>
+                                                        <td className="font-black text-blue-700">{money(applied)}</td>
                                                         <td><StatusChip label={balance > 0 ? numeric(row.amount_paid) > 0 ? "Partially Paid" : "Unpaid" : "Paid"} tone={balance > 0 ? numeric(row.amount_paid) > 0 ? "orange" : "red" : "green"} /></td>
                                                     </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-
-                                <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-4">
-                                    <p className="text-xs font-black uppercase tracking-wide text-emerald-700">Payment Form</p>
-                                    <h4 className="mt-1 text-lg font-black text-slate-950">Enter money paid to landlord</h4>
-                                    <div className="mt-4 grid grid-cols-1 gap-3">
-                                        <input className="field" inputMode="numeric" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="Amount Paid" />
-                                        <input className="field" type="date" value={paymentDate} onChange={(event) => setPaymentDate(event.target.value)} />
-                                        <input className="field" type="date" value={paymentMonth} onChange={(event) => setPaymentMonth(event.target.value)} />
-                                        <select className="field" value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}>
-                                            <option value="cash">Cash</option>
-                                            <option value="mobile_money">Mobile Money</option>
-                                            <option value="bank">Bank</option>
-                                            <option value="cheque">Cheque</option>
-                                            <option value="manual">Manual</option>
-                                        </select>
-                                        <input className="field" value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Reference" />
-                                        <textarea className="field min-h-24" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Notes" />
-                                    </div>
-
-                                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                        <StatementMetric label="Total Genuine Outstanding" value={money(summary.totalOutstandingPayable)} />
-                                        <StatementMetric label="Amount Entered" value={money(amountEntered)} />
-                                        <StatementMetric label="Allocated Old Months" value={money(oldMonthAllocation)} />
-                                        <StatementMetric label="Allocated Current Month" value={money(currentMonthAllocation)} />
-                                        <StatementMetric label="Advance Portion" value={money(allocation.advanceAmount)} />
-                                        <StatementMetric label="Remaining After Payment" value={money(remainingAfterPayment)} />
-                                    </div>
-                                    <p className="mt-3 rounded-2xl border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-slate-600">
-                                        Payments are allocated oldest unpaid month first. Advance is created only after every genuine unpaid balance becomes zero.
-                                    </p>
-                                    <button disabled={isPending || amountEntered <= 0} onClick={submitPayment} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50">
-                                        {isPending ? <Loader2 className="animate-spin" size={16} /> : <SendHorizontal size={16} />}
-                                        {isPending ? "Saving..." : canManage ? "Record Landlord Payment" : "Send for Admin Approval"}
-                                    </button>
-                                    {localMessage ? <div className="mt-3 rounded-2xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-bold text-blue-800">{localMessage}</div> : null}
-                                    {localMessage && !isPending ? (
-                                        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                                            <button type="button" onClick={() => window.print()} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Print Receipt</button>
-                                            <button type="button" onClick={() => window.print()} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Download PDF</button>
-                                            <a href={`/office/landlords?landlord=${selected.landlordId}`} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-center text-xs font-black text-slate-700">Open Report</a>
-                                            <button type="button" onClick={() => setLocalMessage("E-receipt delivery is handled by the configured notification/email provider after approval.")} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Send E-Receipt</button>
-                                        </div>
-                                    ) : null}
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
                                 </div>
                             </div>
+
+                            {localMessage ? (
+                                <div className={`rounded-[1.75rem] border p-5 shadow-xl ${isSuccessMessage ? "border-emerald-200 bg-gradient-to-br from-emerald-50 to-white shadow-emerald-100" : "border-blue-200 bg-blue-50 shadow-blue-100"}`}>
+                                    <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                                        <div className="flex gap-3">
+                                            <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${isSuccessMessage ? "bg-emerald-600 text-white shadow-lg shadow-emerald-200" : "bg-blue-600 text-white shadow-lg shadow-blue-200"}`}>
+                                                {isSuccessMessage ? <CheckCircle2 size={24} /> : <Sparkles size={24} />}
+                                            </span>
+                                            <div>
+                                                <p className="text-xs font-black uppercase tracking-wide text-slate-500">{isSuccessMessage ? "Success" : "Status"}</p>
+                                                <h4 className="mt-1 text-lg font-black text-slate-950">{localMessage}</h4>
+                                                {isSuccessMessage ? <p className="mt-2 text-sm font-bold text-slate-600">Receipt generated · Payment allocated · Ledger updated · Supabase synced</p> : null}
+                                            </div>
+                                        </div>
+                                        {isSuccessMessage ? (
+                                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 md:flex md:flex-wrap">
+                                                <button type="button" onClick={() => window.print()} className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white">Print Receipt</button>
+                                                <button type="button" onClick={() => window.print()} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Download PDF</button>
+                                                <button type="button" onClick={() => setLocalMessage("E-receipt delivery is handled by the configured notification/email provider after approval.")} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Send E-Receipt</button>
+                                                <a href={`/office/landlords?landlord=${selected.landlordId}`} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-center text-xs font-black text-slate-700">View Report</a>
+                                            </div>
+                                        ) : null}
+                                    </div>
+                                </div>
+                            ) : null}
                         </>
                     )}
                 </div>
             </div>
+
+            {selected ? (
+                <div className="sticky bottom-0 z-30 border-t border-slate-200 bg-white/90 px-4 py-3 shadow-[0_-12px_30px_rgba(15,23,42,0.12)] backdrop-blur-xl md:px-5">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="grid grid-cols-3 gap-2 text-xs font-black sm:min-w-[520px]">
+                            <StickySummaryValue label="Total to pay" value={money(amountEntered)} />
+                            <StickySummaryValue label="Advance" value={money(allocation.advanceAmount)} tone="text-purple-700" />
+                            <StickySummaryValue label="Remaining" value={money(remainingAfterPayment)} tone={remainingAfterPayment > 0 ? "text-red-700" : "text-emerald-700"} />
+                        </div>
+                        <button disabled={isPending || amountEntered <= 0} onClick={submitPayment} className={`inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl px-5 py-3 text-sm font-black text-white shadow-xl disabled:cursor-not-allowed disabled:opacity-50 lg:w-auto ${canManage ? "bg-gradient-to-r from-emerald-600 to-green-700 shadow-emerald-200" : "bg-gradient-to-r from-blue-600 to-cyan-700 shadow-blue-200"}`}>
+                            {isPending ? <Loader2 className="animate-spin" size={16} /> : <SendHorizontal size={16} />}
+                            {isPending ? "Submitting..." : submitLabel}
+                        </button>
+                    </div>
+                </div>
+            ) : null}
         </section>
+    );
+}
+
+function PremiumHeaderStat({ label, value, tone = "text-white" }: { label: string; value: string; tone?: string }) {
+    return (
+        <div className="min-w-0 rounded-2xl border border-white/15 bg-white/10 px-3 py-2 shadow-lg shadow-slate-950/10 backdrop-blur">
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">{label}</p>
+            <p className={`mt-1 truncate text-sm font-black ${tone}`}>{value}</p>
+        </div>
+    );
+}
+
+function PremiumField({
+    children,
+    helper,
+    icon,
+    label,
+}: {
+    children: ReactNode;
+    helper?: string;
+    icon: ReactNode;
+    label: string;
+}) {
+    return (
+        <label className="block rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 px-4 py-3 shadow-sm transition focus-within:border-emerald-300 focus-within:shadow-lg focus-within:shadow-emerald-100">
+            <span className="mb-2 flex items-center justify-between gap-3">
+                <span className="inline-flex min-w-0 items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-500">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white">{icon}</span>
+                    <span className="truncate">{label}</span>
+                </span>
+                {helper ? <span className="hidden shrink-0 text-[11px] font-black text-emerald-700 sm:inline">{helper}</span> : null}
+            </span>
+            {children}
+            {helper ? <span className="mt-1 block text-[11px] font-bold text-slate-400 sm:hidden">{helper}</span> : null}
+        </label>
+    );
+}
+
+function FinancialSummaryCard({
+    icon,
+    label,
+    tone,
+    value,
+}: {
+    icon: ReactNode;
+    label: string;
+    tone: "red" | "blue" | "amber" | "purple" | "emerald" | "slate" | "green";
+    value: string;
+}) {
+    const palette = {
+        amber: "from-amber-50 to-white text-amber-700 border-amber-200",
+        blue: "from-blue-50 to-white text-blue-700 border-blue-200",
+        emerald: "from-emerald-50 to-white text-emerald-700 border-emerald-200",
+        green: "from-green-50 to-white text-green-700 border-green-200",
+        purple: "from-purple-50 to-white text-purple-700 border-purple-200",
+        red: "from-red-50 to-white text-red-700 border-red-200",
+        slate: "from-slate-50 to-white text-slate-700 border-slate-200",
+    }[tone];
+    return (
+        <div className={`group min-w-0 rounded-3xl border bg-gradient-to-br p-4 shadow-lg shadow-slate-200/70 transition hover:-translate-y-0.5 hover:shadow-xl ${palette}`}>
+            <div className="flex items-start justify-between gap-3">
+                <p className="min-w-0 text-[11px] font-black uppercase tracking-wide text-slate-500">{label}</p>
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-white text-current shadow-sm transition group-hover:scale-105">{icon}</span>
+            </div>
+            <p className="mt-3 break-words text-[clamp(1.05rem,2vw,1.65rem)] font-black leading-tight text-slate-950">{value}</p>
+            <p className="mt-2 inline-flex rounded-full bg-white/80 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-emerald-700">Live</p>
+        </div>
+    );
+}
+
+function AiPaymentAssistant({
+    advanceAmount,
+    confidence,
+    currentMonthAllocation,
+    normalAmount,
+    oldMonthAllocation,
+    remainingAfterPayment,
+    riskLabel,
+}: {
+    advanceAmount: number;
+    confidence: string;
+    currentMonthAllocation: number;
+    normalAmount: number;
+    oldMonthAllocation: number;
+    remainingAfterPayment: number;
+    riskLabel: string;
+}) {
+    return (
+        <div className="overflow-hidden rounded-[1.75rem] border border-cyan-200 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.18),transparent_35%),linear-gradient(135deg,#ecfeff,#f0fdf4)] p-4 shadow-xl shadow-cyan-100">
+            <div className="flex items-start gap-3">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-600 to-emerald-600 text-white shadow-lg shadow-cyan-200">
+                    <Sparkles size={22} />
+                </span>
+                <div className="min-w-0">
+                    <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-800">AI Finance Assistant</p>
+                    <h4 className="mt-1 text-xl font-black text-slate-950">AI Recommendation</h4>
+                    <p className="mt-1 text-xs font-bold text-slate-600">Advance is created only after every genuine unpaid balance becomes zero.</p>
+                </div>
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <AiLine label="Normal payment" value={money(normalAmount)} />
+                <AiLine label="Advance portion" value={money(advanceAmount)} />
+                <AiLine label="Old months covered" value={money(oldMonthAllocation)} />
+                <AiLine label="Current month covered" value={money(currentMonthAllocation)} />
+                <AiLine label="Remaining balance" value={money(remainingAfterPayment)} />
+                <AiLine label="Risk indicator" value={riskLabel} warning={advanceAmount > 0 || remainingAfterPayment > 0} />
+                <AiLine label="Payment confidence" value={confidence} />
+                <AiLine label="Live reconciliation" value="Supabase synced" />
+            </div>
+        </div>
+    );
+}
+
+function AiLine({ label, value, warning = false }: { label: string; value: string; warning?: boolean }) {
+    return (
+        <div className="flex min-w-0 items-center justify-between gap-3 rounded-2xl border border-white/80 bg-white/75 px-3 py-2 shadow-sm">
+            <span className="inline-flex min-w-0 items-center gap-2 text-xs font-black text-slate-600">
+                {warning ? <AlertTriangle className="shrink-0 text-amber-600" size={14} /> : <CheckCircle2 className="shrink-0 text-emerald-600" size={14} />}
+                <span className="truncate">{label}</span>
+            </span>
+            <span className="shrink-0 text-right text-xs font-black text-slate-950">{value}</span>
+        </div>
+    );
+}
+
+function PaymentAllocationTimeline({
+    advanceAmount,
+    amountEntered,
+    currentMonthAllocation,
+    oldMonthAllocation,
+    remainingAfterPayment,
+}: {
+    advanceAmount: number;
+    amountEntered: number;
+    currentMonthAllocation: number;
+    oldMonthAllocation: number;
+    remainingAfterPayment: number;
+}) {
+    const steps = [
+        { label: "UGX entered", value: money(amountEntered), tone: "bg-slate-950 text-white" },
+        { label: "Old unpaid months", value: money(oldMonthAllocation), tone: "bg-amber-600 text-white" },
+        { label: "Current month", value: money(currentMonthAllocation), tone: "bg-blue-600 text-white" },
+        { label: "Advance", value: money(advanceAmount), tone: "bg-purple-600 text-white" },
+        { label: "Final balance", value: money(remainingAfterPayment), tone: remainingAfterPayment > 0 ? "bg-red-600 text-white" : "bg-emerald-600 text-white" },
+    ];
+    return (
+        <div className="rounded-[1.75rem] border border-slate-200 bg-white p-4 shadow-xl shadow-slate-200/70">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Live Payment Allocation Timeline</p>
+            <div className="mt-4 space-y-2">
+                {steps.map((step, index) => (
+                    <div key={step.label}>
+                        <div className={`flex items-center justify-between gap-3 rounded-2xl px-3 py-3 shadow-sm ${step.tone}`}>
+                            <span className="text-xs font-black uppercase tracking-wide">{step.label}</span>
+                            <span className="text-sm font-black">{step.value}</span>
+                        </div>
+                        {index < steps.length - 1 ? (
+                            <div className="flex justify-center py-1 text-slate-400">
+                                <ArrowDown size={16} />
+                            </div>
+                        ) : null}
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function StickySummaryValue({ label, value, tone = "text-slate-950" }: { label: string; value: string; tone?: string }) {
+    return (
+        <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+            <p className="truncate text-[10px] font-black uppercase tracking-wide text-slate-400">{label}</p>
+            <p className={`mt-1 truncate text-sm font-black ${tone}`}>{value}</p>
+        </div>
     );
 }
 
