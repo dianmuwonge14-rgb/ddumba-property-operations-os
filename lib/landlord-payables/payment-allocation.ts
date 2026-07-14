@@ -21,7 +21,11 @@ export type LandlordPaymentAllocationPlan = {
 export type LandlordPayableSummary = {
     activeAdvanceBalance: number;
     alreadyPaidAmount: number;
+    currentMonthAppliedDeductions: number;
+    currentMonthFinalNetPayable: number;
+    currentMonthGrossPayable: number;
     currentMonthNetPayable: number;
+    currentMonthPendingDeductions: number;
     currentMonthPayableId: string | null;
     currentMonthUnpaid: number;
     maxNormalPayment: number;
@@ -41,13 +45,69 @@ export function payableAmount(value: unknown) {
     return Number.isFinite(number) ? number : 0;
 }
 
+function kampalaBusinessDate() {
+    return new Intl.DateTimeFormat("en-CA", {
+        day: "2-digit",
+        month: "2-digit",
+        timeZone: "Africa/Kampala",
+        year: "numeric",
+    }).format(new Date());
+}
+
+function isCurrentKampalaMonth(month: string) {
+    return month.slice(0, 7) === kampalaBusinessDate().slice(0, 7);
+}
+
+function isBeforeKampalaDeductionDay() {
+    return Number(kampalaBusinessDate().slice(8, 10)) < 15;
+}
+
 export function isActiveLandlordPayable(row: LandlordPayableLike) {
     const status = String(row.status ?? "").toLowerCase();
     return !["archived", "reversed", "void", "voided", "cancelled", "canceled", "deleted", "removed"].includes(status);
 }
 
+export function landlordMonthlyDeductions(row: LandlordPayableLike) {
+    return Math.max(0,
+        payableAmount(row.vacant_room_deductions)
+        + payableAmount(row.vacated_tenant_debt_deductions)
+        + payableAmount(row.advance_deductions)
+        + payableAmount(row.other_deductions));
+}
+
+export function landlordMonthlyGrossPayable(row: LandlordPayableLike) {
+    const fullRentLessCommission = payableAmount(row.full_rent_roll) - payableAmount(row.commission_amount);
+    const monthlyNet = payableAmount(row.monthly_net_payable);
+    const net = payableAmount(row.net_payable);
+    return Math.max(0, fullRentLessCommission, monthlyNet, net);
+}
+
+export function landlordMonthlyFinalNetPayable(row: LandlordPayableLike) {
+    const net = payableAmount(row.net_payable);
+    if (net > 0) return net;
+    const monthlyNet = payableAmount(row.monthly_net_payable);
+    if (monthlyNet > 0) return monthlyNet;
+    return Math.max(0, landlordMonthlyGrossPayable(row) - landlordMonthlyDeductions(row));
+}
+
+export function landlordMonthlyAppliedDeductions(row: LandlordPayableLike) {
+    const gross = landlordMonthlyGrossPayable(row);
+    const finalNet = landlordMonthlyFinalNetPayable(row);
+    if (gross > finalNet) return gross - finalNet;
+    return landlordMonthlyDeductions(row);
+}
+
+export function landlordMonthlyPendingDeductions(row: LandlordPayableLike) {
+    const month = payableMonthKey(row);
+    if (!isCurrentKampalaMonth(month) || !isBeforeKampalaDeductionDay()) return 0;
+    return landlordMonthlyAppliedDeductions(row);
+}
+
 export function landlordMonthlyDue(row: LandlordPayableLike) {
-    const directMonthlyDue = Math.max(0, payableAmount(row.monthly_net_payable ?? row.net_payable));
+    const month = payableMonthKey(row);
+    const directMonthlyDue = isCurrentKampalaMonth(month) && isBeforeKampalaDeductionDay()
+        ? landlordMonthlyGrossPayable(row)
+        : landlordMonthlyFinalNetPayable(row);
     if (directMonthlyDue > 0) return directMonthlyDue;
     return Math.max(0, payableAmount(row.total_due) - payableAmount(row.opening_arrears));
 }
@@ -106,7 +166,11 @@ export function summarizeLandlordPayables({
     return {
         activeAdvanceBalance: Math.max(0, activeAdvanceBalance),
         alreadyPaidAmount: currentRows.reduce((total, row) => total + landlordMonthlyPaid(row), 0),
+        currentMonthAppliedDeductions: currentRows.reduce((total, row) => total + (landlordMonthlyAppliedDeductions(row) - landlordMonthlyPendingDeductions(row)), 0),
+        currentMonthFinalNetPayable: currentRows.reduce((total, row) => total + landlordMonthlyDue(row), 0),
+        currentMonthGrossPayable: currentRows.reduce((total, row) => total + landlordMonthlyGrossPayable(row), 0),
         currentMonthNetPayable: currentRows.reduce((total, row) => total + landlordMonthlyDue(row), 0),
+        currentMonthPendingDeductions: currentRows.reduce((total, row) => total + landlordMonthlyPendingDeductions(row), 0),
         currentMonthPayableId: currentUnpaidRow?.id ? String(currentUnpaidRow.id) : null,
         currentMonthUnpaid: currentRows.reduce((total, row) => total + landlordMonthlyUnpaid(row), 0),
         maxNormalPayment: totalOutstandingPayable,

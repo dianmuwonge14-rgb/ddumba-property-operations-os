@@ -15,8 +15,20 @@ test("landlord payments page records through canonical expense-routed action", (
 test("landlord payments page previews allocation using shared payable calculator", () => {
   assert.match(source, /summarizeLandlordPayables/);
   assert.match(source, /buildLandlordPaymentAllocationPlan/);
+  assert.match(source, /Current Month Gross Payable/);
+  assert.match(source, /Current Month Final Net Payable/);
+  assert.match(source, /Pending Deductions Before 15th/);
   assert.match(source, /oldest unpaid month first/i);
   assert.match(source, /Advance is created only after every genuine unpaid balance becomes zero/);
+});
+
+test("landlord payment receipt workflow appears only after successful direct payment", () => {
+  assert.match(source, /lastSubmission/);
+  assert.match(source, /LandlordPaymentReceiptPreview/);
+  assert.match(source, /Receipt ready · Payment allocated · Ledger updated · Supabase synced/);
+  assert.match(source, /Official payment receipt will be generated after Admin approval/);
+  assert.match(source, /print-landlord-payment-receipt/);
+  assert.match(source, /landlord-payment-receipt-print-area/);
 });
 
 test("landlord payments search includes phone, rooms, office, and location index", () => {

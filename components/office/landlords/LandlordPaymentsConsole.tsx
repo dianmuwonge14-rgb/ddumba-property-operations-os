@@ -23,7 +23,16 @@ import {
     type AdvanceRepaymentType,
     type PrincipalClearanceMethod,
 } from "@/lib/landlord-advances/calculator";
-import { buildLandlordPaymentAllocationPlan, landlordMonthlyUnpaid, summarizeLandlordPayables } from "@/lib/landlord-payables/payment-allocation";
+import {
+    buildLandlordPaymentAllocationPlan,
+    landlordMonthlyAppliedDeductions,
+    landlordMonthlyDue,
+    landlordMonthlyFinalNetPayable,
+    landlordMonthlyGrossPayable,
+    landlordMonthlyPendingDeductions,
+    landlordMonthlyUnpaid,
+    summarizeLandlordPayables,
+} from "@/lib/landlord-payables/payment-allocation";
 import type { LandlordAdvanceGroup, LandlordMonthlyPayable, LandlordPayableGroup, LandlordPayablesData, LandlordPaymentApprovalRequest, LandlordPaymentOption, LandlordUnpaidMonthGroup, PaidLandlordPayment } from "@/lib/landlord-payables/types";
 
 type Props = {
@@ -48,6 +57,26 @@ function compactSearch(value: string) {
 
 function monthlyUnpaid(row: LandlordMonthlyPayable) {
     return landlordMonthlyUnpaid(row as unknown as Record<string, unknown>);
+}
+
+function monthlyDue(row: LandlordMonthlyPayable) {
+    return landlordMonthlyDue(row as unknown as Record<string, unknown>);
+}
+
+function monthlyGrossPayable(row: LandlordMonthlyPayable) {
+    return landlordMonthlyGrossPayable(row as unknown as Record<string, unknown>);
+}
+
+function monthlyFinalNetPayable(row: LandlordMonthlyPayable) {
+    return landlordMonthlyFinalNetPayable(row as unknown as Record<string, unknown>);
+}
+
+function monthlyAppliedDeductions(row: LandlordMonthlyPayable) {
+    return landlordMonthlyAppliedDeductions(row as unknown as Record<string, unknown>);
+}
+
+function monthlyPendingDeductions(row: LandlordMonthlyPayable) {
+    return landlordMonthlyPendingDeductions(row as unknown as Record<string, unknown>);
 }
 
 function advanceTotal(advance: Record<string, unknown>) {
@@ -80,6 +109,12 @@ function dateLabel(value: string | null | undefined) {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
     return new Intl.DateTimeFormat("en-UG", { day: "2-digit", month: "short", year: "numeric" }).format(date);
+}
+
+function printLandlordReceipt() {
+    document.body.classList.add("print-landlord-payment-receipt");
+    window.print();
+    window.setTimeout(() => document.body.classList.remove("print-landlord-payment-receipt"), 500);
 }
 
 export default function LandlordPaymentsConsole({ data }: Props) {
@@ -431,6 +466,21 @@ function LandlordPaymentEntryPanel({
     const [reference, setReference] = useState("");
     const [notes, setNotes] = useState("");
     const [localMessage, setLocalMessage] = useState("");
+    const [lastSubmission, setLastSubmission] = useState<{
+        advanceAmount: number;
+        amountPaid: number;
+        approvedAt?: string | null;
+        id?: string | null;
+        normalPaymentAmount: number;
+        notes?: string;
+        paymentDate: string;
+        paymentMethod: string;
+        paymentMonth: string;
+        reference?: string;
+        receiptNumber: string;
+        remainingAfterPayment: number;
+        status: string;
+    } | null>(null);
     const [isPending, startTransition] = useTransition();
     const selectedRows = selected?.rows ?? [];
     const summary = useMemo(
@@ -454,8 +504,11 @@ function LandlordPaymentEntryPanel({
             .map((row) => ({
                 row,
                 balance: monthlyUnpaid(row),
-                due: numeric(row.monthly_net_payable ?? row.net_payable),
-                deductions: numeric(row.vacant_room_deductions) + numeric(row.vacated_tenant_debt_deductions) + numeric(row.advance_deductions) + numeric(row.other_deductions),
+                appliedDeductions: monthlyAppliedDeductions(row) - monthlyPendingDeductions(row),
+                due: monthlyDue(row),
+                finalNetPayable: monthlyFinalNetPayable(row),
+                grossPayable: monthlyGrossPayable(row),
+                pendingDeductions: monthlyPendingDeductions(row),
             }))
             .sort((a, b) => String(a.row.settlement_month).localeCompare(String(b.row.settlement_month))),
         [selectedRows],
@@ -473,11 +526,21 @@ function LandlordPaymentEntryPanel({
         .reduce((total, line) => total + line.applied, 0);
     const amountEntered = numeric(amount);
     const remainingAfterPayment = Math.max(0, summary.totalOutstandingPayable - amountEntered);
-    const currentMonthPayable = summary.currentMonthNetPayable || numeric(latestRow?.monthly_net_payable ?? latestRow?.net_payable);
     const previousMonthsOutstanding = Math.max(0, summary.totalOutstandingPayable - summary.currentMonthUnpaid);
-    const recoveryDeductions = selectedRows.reduce((total, row) => total + numeric(row.vacated_tenant_debt_deductions), 0);
-    const vacantRoomDeductions = selectedRows.reduce((total, row) => total + numeric(row.vacant_room_deductions), 0);
-    const totalNetPayable = selectedRows.reduce((total, row) => total + numeric(row.monthly_net_payable ?? row.net_payable), 0);
+    const currentRows = selectedRows.filter((row) => String(row.settlement_month).slice(0, 7) === paymentMonth.slice(0, 7));
+    const currentPendingDeductions = summary.currentMonthPendingDeductions;
+    const currentRecoveryDeductions = currentPendingDeductions > 0
+        ? 0
+        : currentRows.reduce((total, row) => total + numeric(row.vacated_tenant_debt_deductions), 0);
+    const currentVacantRoomDeductions = currentPendingDeductions > 0
+        ? 0
+        : currentRows.reduce((total, row) => total + numeric(row.vacant_room_deductions), 0);
+    const currentAdvanceRecovery = currentPendingDeductions > 0
+        ? 0
+        : currentRows.reduce((total, row) => total + numeric(row.advance_deductions), 0);
+    const currentOtherDeductions = currentPendingDeductions > 0
+        ? 0
+        : currentRows.reduce((total, row) => total + numeric(row.other_deductions), 0);
     const currentPaymentStatus = summary.totalOutstandingPayable <= 0 ? "Cleared" : numeric(latestRow?.amount_paid) > 0 ? "Partially Paid" : "Unpaid";
     const confidence = amountEntered <= 0 ? "Awaiting amount" : allocation.advanceAmount > 0 ? "Overpayment reviewed" : remainingAfterPayment > 0 ? "Partial payment" : "High confidence";
     const riskLabel = amountEntered <= 0 ? "Low input readiness" : allocation.advanceAmount > 0 ? "Advance agreement required" : remainingAfterPayment > 0 ? "Outstanding remains" : "Balanced payment";
@@ -494,6 +557,7 @@ function LandlordPaymentEntryPanel({
             return;
         }
         setLocalMessage("");
+        setLastSubmission(null);
         startTransition(async () => {
             try {
                 const result = await submitLandlordPaymentFromTerminal({
@@ -526,14 +590,29 @@ function LandlordPaymentEntryPanel({
                 const success = canManage
                     ? `Landlord payment recorded and approved. Normal payment: ${money(allocation.normalPaymentAmount)}; advance: ${money(allocation.advanceAmount)}.`
                     : "Landlord payment request sent to Admin. It will not affect ledgers until approval.";
+                const submittedId = typeof result.data?.id === "string" ? result.data.id : null;
+                const approvedAt = typeof result.data?.approved_at === "string" ? result.data.approved_at : null;
+                const status = typeof result.data?.status === "string" ? result.data.status : canManage ? "approved" : "pending";
+                setLastSubmission({
+                    advanceAmount: allocation.advanceAmount,
+                    amountPaid: amountEntered,
+                    approvedAt,
+                    id: submittedId,
+                    normalPaymentAmount: allocation.normalPaymentAmount,
+                    notes,
+                    paymentDate,
+                    paymentMethod,
+                    paymentMonth,
+                    reference,
+                    receiptNumber: submittedId ? `LP-${submittedId.slice(0, 8).toUpperCase()}` : `LP-${Date.now()}`,
+                    remainingAfterPayment,
+                    status,
+                });
                 setLocalMessage(success);
                 setMessage(success);
                 setAmount("");
                 setReference("");
                 setNotes("");
-                if (result.data?.id) {
-                    setTimeout(() => window.location.reload(), 700);
-                }
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : "Unable to record landlord payment.";
                 setLocalMessage(errorMessage);
@@ -644,14 +723,21 @@ function LandlordPaymentEntryPanel({
                         <>
                             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
                                 <FinancialSummaryCard icon={<WalletCards size={18} />} label="Total Genuine Outstanding" value={money(summary.totalOutstandingPayable)} tone="red" />
-                                <FinancialSummaryCard icon={<CalendarDays size={18} />} label="Current Month Payable" value={money(currentMonthPayable)} tone="blue" />
+                                <FinancialSummaryCard icon={<CalendarDays size={18} />} label="Current Month Gross Payable" value={money(summary.currentMonthGrossPayable)} tone="blue" />
                                 <FinancialSummaryCard icon={<TrendingDown size={18} />} label="Previous Months Outstanding" value={money(previousMonthsOutstanding)} tone="amber" />
                                 <FinancialSummaryCard icon={<BanknoteArrowDown size={18} />} label="Advance Balance" value={money(selectedAdvanceGroup?.remainingBalance ?? 0)} tone="purple" />
-                                <FinancialSummaryCard icon={<ShieldCheck size={18} />} label="Recovery Deductions" value={money(recoveryDeductions)} tone="emerald" />
-                                <FinancialSummaryCard icon={<Building2 size={18} />} label="Vacant Room Deductions" value={money(vacantRoomDeductions)} tone="slate" />
-                                <FinancialSummaryCard icon={<ReceiptText size={18} />} label="Net Payable" value={money(totalNetPayable)} tone="green" />
+                                <FinancialSummaryCard icon={<ShieldCheck size={18} />} label="Recovery Deductions Applied" value={money(currentRecoveryDeductions)} tone="emerald" />
+                                <FinancialSummaryCard icon={<Building2 size={18} />} label="Vacant Room Deductions Applied" value={money(currentVacantRoomDeductions)} tone="slate" />
+                                <FinancialSummaryCard icon={<ReceiptText size={18} />} label="Pending Deductions Before 15th" value={money(currentPendingDeductions)} tone="amber" />
+                                <FinancialSummaryCard icon={<CircleDollarSign size={18} />} label="Current Month Final Net Payable" value={money(summary.currentMonthFinalNetPayable)} tone="green" />
                                 <FinancialSummaryCard icon={<CircleDollarSign size={18} />} label="Remaining After Payment" value={money(remainingAfterPayment)} tone={remainingAfterPayment > 0 ? "red" : "green"} />
                             </div>
+                            {(currentAdvanceRecovery > 0 || currentOtherDeductions > 0) ? (
+                                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                    <FinancialSummaryCard icon={<BanknoteArrowDown size={18} />} label="Advance Recovery Applied" value={money(currentAdvanceRecovery)} tone="purple" />
+                                    <FinancialSummaryCard icon={<ShieldCheck size={18} />} label="Other Approved Deductions" value={money(currentOtherDeductions)} tone="slate" />
+                                </div>
+                            ) : null}
 
                             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(310px,0.82fr)]">
                                 <AiPaymentAssistant
@@ -688,7 +774,9 @@ function LandlordPaymentEntryPanel({
                                         <thead>
                                             <tr>
                                                 <th className="text-left">Month</th>
-                                                <th className="text-left">Net Payable</th>
+                                                <th className="text-left">Gross Payable</th>
+                                                <th className="text-left">Applied Deductions</th>
+                                                <th className="text-left">Final Net Payable</th>
                                                 <th className="text-left">Already Paid</th>
                                                 <th className="text-left">Remaining</th>
                                                 <th className="text-left">Payment Applied</th>
@@ -696,12 +784,14 @@ function LandlordPaymentEntryPanel({
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {monthlyRows.map(({ row, balance, due }) => {
+                                            {monthlyRows.map(({ row, appliedDeductions, balance, due, finalNetPayable, grossPayable, pendingDeductions }) => {
                                                 const applied = allocation.lines.find((line) => line.payableId === row.id)?.applied ?? 0;
                                                 return (
                                                     <tr key={row.id}>
                                                         <td className="font-black">{monthLabel(row.settlement_month)}</td>
-                                                        <td className="font-black text-slate-900">{money(due)}</td>
+                                                        <td className="font-black text-slate-900">{money(grossPayable)}</td>
+                                                        <td className="font-bold text-emerald-700">{money(appliedDeductions)}{pendingDeductions > 0 ? <span className="ml-2 text-[10px] font-black text-amber-700">Scheduled {money(pendingDeductions)}</span> : null}</td>
+                                                        <td className="font-black text-slate-900">{money(finalNetPayable)}{due !== finalNetPayable ? <span className="ml-2 text-[10px] font-black text-blue-700">Payable now {money(due)}</span> : null}</td>
                                                         <td className="font-bold text-emerald-700">{money(row.amount_paid)}</td>
                                                         <td className="font-black text-red-700">{money(balance)}</td>
                                                         <td className="font-black text-blue-700">{money(applied)}</td>
@@ -724,18 +814,41 @@ function LandlordPaymentEntryPanel({
                                             <div>
                                                 <p className="text-xs font-black uppercase tracking-wide text-slate-500">{isSuccessMessage ? "Success" : "Status"}</p>
                                                 <h4 className="mt-1 text-lg font-black text-slate-950">{localMessage}</h4>
-                                                {isSuccessMessage ? <p className="mt-2 text-sm font-bold text-slate-600">Receipt generated · Payment allocated · Ledger updated · Supabase synced</p> : null}
+                                                {isSuccessMessage && canManage ? <p className="mt-2 text-sm font-bold text-slate-600">Receipt ready · Payment allocated · Ledger updated · Supabase synced</p> : null}
+                                                {isSuccessMessage && !canManage ? <p className="mt-2 text-sm font-bold text-slate-600">Official payment receipt will be generated after Admin approval and financial application.</p> : null}
                                             </div>
                                         </div>
-                                        {isSuccessMessage ? (
+                                        {isSuccessMessage && canManage && lastSubmission ? (
                                             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 md:flex md:flex-wrap">
-                                                <button type="button" onClick={() => window.print()} className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white">Print Receipt</button>
-                                                <button type="button" onClick={() => window.print()} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Download PDF</button>
+                                                <button type="button" onClick={printLandlordReceipt} className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white">Print Receipt</button>
+                                                <button type="button" onClick={printLandlordReceipt} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Download PDF</button>
                                                 <button type="button" onClick={() => setLocalMessage("E-receipt delivery is handled by the configured notification/email provider after approval.")} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Send E-Receipt</button>
                                                 <a href={`/office/landlords?landlord=${selected.landlordId}`} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-center text-xs font-black text-slate-700">View Report</a>
                                             </div>
                                         ) : null}
                                     </div>
+                                    {isSuccessMessage && canManage && lastSubmission ? (
+                                        <LandlordPaymentReceiptPreview
+                                            advanceAmount={lastSubmission.advanceAmount}
+                                            amountPaid={lastSubmission.amountPaid}
+                                            approvedAt={lastSubmission.approvedAt}
+                                            currentMonthFinalNetPayable={summary.currentMonthFinalNetPayable}
+                                            currentMonthGrossPayable={summary.currentMonthGrossPayable}
+                                            landlordName={selected.landlordName}
+                                            notes={lastSubmission.notes}
+                                            officeName={selected.officeName}
+                                            paymentDate={lastSubmission.paymentDate}
+                                            paymentMethod={lastSubmission.paymentMethod}
+                                            paymentMonth={lastSubmission.paymentMonth}
+                                            previousMonthsOutstanding={previousMonthsOutstanding}
+                                            receiptNumber={lastSubmission.receiptNumber}
+                                            recoveryDeductions={currentRecoveryDeductions}
+                                            reference={lastSubmission.reference}
+                                            remainingAfterPayment={lastSubmission.remainingAfterPayment}
+                                            requestedAmount={lastSubmission.amountPaid}
+                                            vacantRoomDeductions={currentVacantRoomDeductions}
+                                        />
+                                    ) : null}
                                 </div>
                             ) : null}
                         </>
@@ -931,6 +1044,100 @@ function StickySummaryValue({ label, value, tone = "text-slate-950" }: { label: 
         <div className="min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
             <p className="truncate text-[10px] font-black uppercase tracking-wide text-slate-400">{label}</p>
             <p className={`mt-1 truncate text-sm font-black ${tone}`}>{value}</p>
+        </div>
+    );
+}
+
+function LandlordPaymentReceiptPreview({
+    advanceAmount,
+    amountPaid,
+    approvedAt,
+    currentMonthFinalNetPayable,
+    currentMonthGrossPayable,
+    landlordName,
+    notes,
+    officeName,
+    paymentDate,
+    paymentMethod,
+    paymentMonth,
+    previousMonthsOutstanding,
+    receiptNumber,
+    recoveryDeductions,
+    reference,
+    remainingAfterPayment,
+    vacantRoomDeductions,
+}: {
+    advanceAmount: number;
+    amountPaid: number;
+    approvedAt?: string | null;
+    currentMonthFinalNetPayable: number;
+    currentMonthGrossPayable: number;
+    landlordName: string;
+    notes?: string;
+    officeName: string;
+    paymentDate: string;
+    paymentMethod: string;
+    paymentMonth: string;
+    previousMonthsOutstanding: number;
+    receiptNumber: string;
+    recoveryDeductions: number;
+    reference?: string;
+    remainingAfterPayment: number;
+    requestedAmount: number;
+    vacantRoomDeductions: number;
+}) {
+    const verificationCode = `${receiptNumber}-${Math.round(amountPaid)}`.replace(/[^A-Z0-9-]/gi, "").toUpperCase();
+    return (
+        <div id="landlord-payment-receipt-print-area" className="mt-5 overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white text-slate-950 shadow-xl shadow-slate-200/70">
+            <div className="bg-[linear-gradient(135deg,#020617,#14532d_58%,#0f172a)] p-5 text-white">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                        <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-200">DDUMBA OS</p>
+                        <h3 className="mt-1 text-2xl font-black">Landlord Payment Receipt</h3>
+                        <p className="mt-1 text-sm font-bold text-slate-200">{officeName}</p>
+                    </div>
+                    <div className="rounded-2xl border border-white/15 bg-white/10 px-4 py-3 text-left sm:text-right">
+                        <p className="text-[10px] font-black uppercase tracking-wide text-slate-300">Receipt number</p>
+                        <p className="mt-1 text-lg font-black">{receiptNumber}</p>
+                    </div>
+                </div>
+            </div>
+            <div className="grid grid-cols-1 gap-4 p-5 lg:grid-cols-2">
+                <ReceiptLine label="Landlord" value={landlordName} />
+                <ReceiptLine label="Office" value={officeName} />
+                <ReceiptLine label="Payment Date" value={dateLabel(paymentDate)} />
+                <ReceiptLine label="Payment Month" value={monthLabel(paymentMonth)} />
+                <ReceiptLine label="Payment Method" value={paymentMethod.replaceAll("_", " ")} />
+                <ReceiptLine label="Reference" value={reference || "Not provided"} />
+                <ReceiptLine label="Current Month Gross Payable" value={money(currentMonthGrossPayable)} />
+                <ReceiptLine label="Vacant Room Deductions" value={money(vacantRoomDeductions)} />
+                <ReceiptLine label="Vacated Tenant / Recovery Deductions" value={money(recoveryDeductions)} />
+                <ReceiptLine label="Current Month Final Net Payable" value={money(currentMonthFinalNetPayable)} />
+                <ReceiptLine label="Previous Unpaid Balance" value={money(previousMonthsOutstanding)} />
+                <ReceiptLine label="Amount Paid" value={money(amountPaid)} strong />
+                <ReceiptLine label="Advance Portion" value={money(advanceAmount)} />
+                <ReceiptLine label="Remaining Outstanding" value={money(remainingAfterPayment)} strong={remainingAfterPayment > 0} />
+                <ReceiptLine label="Approved At" value={approvedAt ? dateLabel(approvedAt) : dateLabel(paymentDate)} />
+                <ReceiptLine label="Verification Code" value={verificationCode} />
+            </div>
+            {notes ? (
+                <div className="mx-5 mb-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs font-black uppercase tracking-wide text-slate-500">Notes</p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm font-bold text-slate-700">{notes}</p>
+                </div>
+            ) : null}
+            <div className="border-t border-slate-200 px-5 py-4 text-xs font-bold text-slate-500">
+                This receipt is generated from the saved Supabase landlord payment transaction. Keep it for audit and settlement verification.
+            </div>
+        </div>
+    );
+}
+
+function ReceiptLine({ label, strong = false, value }: { label: string; strong?: boolean; value: string }) {
+    return (
+        <div className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <p className="text-[10px] font-black uppercase tracking-wide text-slate-500">{label}</p>
+            <p className={`mt-1 text-sm [overflow-wrap:anywhere] ${strong ? "font-black text-slate-950" : "font-bold text-slate-700"}`}>{value}</p>
         </div>
     );
 }

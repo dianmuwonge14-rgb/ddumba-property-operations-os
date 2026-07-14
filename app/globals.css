@@ -992,6 +992,37 @@ button:not(:disabled):active {
     visibility: visible !important;
   }
 
+  body.print-landlord-payment-receipt * {
+    visibility: hidden !important;
+  }
+
+  body.print-landlord-payment-receipt {
+    background: #ffffff !important;
+  }
+
+  body.print-landlord-payment-receipt #landlord-payment-receipt-print-area,
+  body.print-landlord-payment-receipt #landlord-payment-receipt-print-area * {
+    visibility: visible !important;
+  }
+
+  body.print-landlord-payment-receipt #landlord-payment-receipt-print-area {
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  body.print-landlord-payment-receipt .app-sticky-header,
+  body.print-landlord-payment-receipt nav,
+  body.print-landlord-payment-receipt button,
+  body.print-landlord-payment-receipt .print\:hidden {
+    display: none !important;
+  }
+
   body:has(#landlord-report-print-area) #landlord-report-print-area {
     position: absolute !important;
     inset: 0 auto auto 0 !important;

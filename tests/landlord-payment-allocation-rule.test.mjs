@@ -8,7 +8,14 @@ function amount(value) {
 }
 
 function monthlyDue(row) {
-  const directMonthlyDue = Math.max(0, amount(row.monthly_net_payable ?? row.net_payable));
+  const deductions = amount(row.vacant_room_deductions) + amount(row.vacated_tenant_debt_deductions) + amount(row.advance_deductions) + amount(row.other_deductions);
+  const gross = Math.max(0, amount(row.full_rent_roll) - amount(row.commission_amount), amount(row.monthly_net_payable), amount(row.net_payable));
+  const finalNet = amount(row.net_payable) > 0
+    ? amount(row.net_payable)
+    : amount(row.monthly_net_payable) > 0
+      ? amount(row.monthly_net_payable)
+      : Math.max(0, gross - deductions);
+  const directMonthlyDue = row.useGrossBeforeDeductionDay ? gross : finalNet;
   if (directMonthlyDue > 0) return directMonthlyDue;
   return Math.max(0, amount(row.total_due) - amount(row.opening_arrears));
 }
@@ -141,6 +148,49 @@ test("expenses landlord payment preview does not recompute and double-deduct cur
   assert.match(previewBody, /summarizeLandlordPayables/);
   assert.doesNotMatch(previewBody, /getLiveLandlordMonthlyNetPayable/);
   assert.doesNotMatch(previewBody, /liveNet\.recoveryDeduction/);
+});
+
+test("previous-month landlord deductions reduce the genuine unpaid balance immediately", () => {
+  const plan = allocationPlan(0, [{
+    amount_paid: 0,
+    commission_amount: 150000,
+    full_rent_roll: 850000,
+    monthly_net_payable: 700000,
+    net_payable: 460000,
+    settlement_month: "2026-06-01",
+    vacated_tenant_debt_deductions: 160000,
+    vacant_room_deductions: 80000,
+  }]);
+  assert.equal(plan.outstanding, 460000);
+});
+
+test("current-month deductions before the 15th are scheduled and do not reduce payable now", () => {
+  const plan = allocationPlan(0, [{
+    amount_paid: 0,
+    commission_amount: 150000,
+    full_rent_roll: 850000,
+    monthly_net_payable: 700000,
+    net_payable: 460000,
+    settlement_month: "2026-07-01",
+    useGrossBeforeDeductionDay: true,
+    vacated_tenant_debt_deductions: 160000,
+    vacant_room_deductions: 80000,
+  }]);
+  assert.equal(plan.outstanding, 700000);
+});
+
+test("current-month deductions on or after the 15th reduce payable once", () => {
+  const plan = allocationPlan(0, [{
+    amount_paid: 0,
+    commission_amount: 150000,
+    full_rent_roll: 850000,
+    monthly_net_payable: 700000,
+    net_payable: 460000,
+    settlement_month: "2026-07-01",
+    vacated_tenant_debt_deductions: 160000,
+    vacant_room_deductions: 80000,
+  }]);
+  assert.equal(plan.outstanding, 460000);
 });
 
 test("landlord payment approval paths do not overwrite canonical monthly payable rows with live-net recalculation", () => {
