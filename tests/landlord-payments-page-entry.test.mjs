@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 const source = readFileSync(new URL("../components/office/landlords/LandlordPaymentsConsole.tsx", import.meta.url), "utf8");
+const profileSource = readFileSync(new URL("../components/office/landlords/LandlordProfile.tsx", import.meta.url), "utf8");
+const globalCss = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 const dataSource = readFileSync(new URL("../lib/landlord-payables/data.ts", import.meta.url), "utf8");
 
 test("landlord payments page records through canonical expense-routed action", () => {
@@ -40,4 +42,19 @@ test("landlord payments search includes phone, rooms, office, and location index
   assert.match(source, /option\?\.phone/);
   assert.match(source, /option\?\.roomNumbersText/);
   assert.match(source, /option\?\.locationText/);
+});
+
+test("landlord payment report uses a dedicated one-page A4 print sheet", () => {
+  assert.match(profileSource, /id="landlord-report-print-area"/);
+  assert.match(profileSource, /landlord-report-sheet/);
+  assert.match(profileSource, /landlord-report-header/);
+  assert.match(profileSource, /landlord-report-summary/);
+  assert.match(profileSource, /landlord-report-history/);
+  assert.match(profileSource, /landlord-report-lower-grid/);
+  assert.match(globalCss, /\.landlord-report-sheet/);
+  assert.match(globalCss, /width: 210mm !important/);
+  assert.match(globalCss, /height: 297mm !important/);
+  assert.match(globalCss, /padding: 9mm !important/);
+  assert.match(globalCss, /body:has\(#landlord-report-print-area\) \*/);
+  assert.match(globalCss, /report-box-empty/);
 });
