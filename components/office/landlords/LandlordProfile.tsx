@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { addRoomToLandlord, deleteOrArchiveLandlordRoom, generateLandlordStatement, markLandlordMonthlyPayablePaid, markLandlordSettlementPaid } from "@/app/actions/landlords";
 import type { CollectionTenantResult } from "@/lib/collections/types";
 import type { LandlordItem, LandlordRoomAssignmentOption } from "@/lib/landlords/types";
+import { landlordMonthlyDeductions, landlordMonthlyDue } from "@/lib/landlord-payables/payment-allocation";
 import AICollectionInsight from "@/components/office/collections/AICollectionInsight";
 import CollectionActionCentre from "@/components/office/collections/CollectionActionCentre";
 import TenantSnapshot from "@/components/office/collections/TenantSnapshot";
@@ -33,13 +34,16 @@ function amount(value: unknown) {
 
 function payableMonthBalance(payable: LandlordItem["monthlyPayables"][number]) {
     const dynamicPayable = payable as unknown as Record<string, unknown>;
-    const monthlyDue = amount(dynamicPayable.monthly_net_payable)
-        || amount(payable.net_payable)
+    const monthlyDue = landlordMonthlyDue(dynamicPayable)
         || Math.max(0, amount(dynamicPayable.total_due) - amount(dynamicPayable.opening_arrears));
     if (monthlyDue > 0 || amount(payable.amount_paid) > 0) {
         return Math.max(0, monthlyDue - Math.min(amount(payable.amount_paid), monthlyDue));
     }
     return Math.max(0, amount(payable.unpaid_balance));
+}
+
+function payableDeductions(payable: LandlordItem["monthlyPayables"][number]) {
+    return landlordMonthlyDeductions(payable as unknown as Record<string, unknown>);
 }
 
 function monthLabel(value: string | null | undefined) {
@@ -577,11 +581,7 @@ function LandlordProfile({
                                 <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-600">Multi-month payable history</p>
                                 <div className="mt-4 space-y-3 md:hidden print:hidden">
                                     {landlord.monthlyPayables.slice(0, 12).map((payable) => {
-                                        const deductions =
-                                            Number(payable.vacant_room_deductions ?? 0) +
-                                            Number(payable.vacated_tenant_debt_deductions ?? 0) +
-                                            Number(payable.advance_deductions ?? 0) +
-                                            Number(payable.other_deductions ?? 0);
+                                        const deductions = payableDeductions(payable);
                                         return (
                                             <div key={payable.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                                                 <ReportLine label="Month" value={monthLabel(payable.settlement_month)} strong />
@@ -611,11 +611,7 @@ function LandlordProfile({
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
                                             {landlord.monthlyPayables.slice(0, 12).map((payable) => {
-                                                const deductions =
-                                                    Number(payable.vacant_room_deductions ?? 0) +
-                                                    Number(payable.vacated_tenant_debt_deductions ?? 0) +
-                                                    Number(payable.advance_deductions ?? 0) +
-                                                    Number(payable.other_deductions ?? 0);
+                                                const deductions = payableDeductions(payable);
                                                 return (
                                                     <tr key={payable.id}>
                                                         <td className="px-3 py-2 font-black">{monthLabel(payable.settlement_month)}</td>

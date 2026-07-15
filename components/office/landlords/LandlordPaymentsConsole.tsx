@@ -529,9 +529,7 @@ function LandlordPaymentEntryPanel({
     const previousMonthsOutstanding = Math.max(0, summary.totalOutstandingPayable - summary.currentMonthUnpaid);
     const currentRows = selectedRows.filter((row) => String(row.settlement_month).slice(0, 7) === paymentMonth.slice(0, 7));
     const currentPendingDeductions = summary.currentMonthPendingDeductions;
-    const currentRecoveryDeductions = currentPendingDeductions > 0
-        ? 0
-        : currentRows.reduce((total, row) => total + numeric(row.vacated_tenant_debt_deductions), 0);
+    const currentRecoveryDeductions = summary.currentMonthAppliedDeductions;
     const currentVacantRoomDeductions = currentPendingDeductions > 0
         ? 0
         : currentRows.reduce((total, row) => total + numeric(row.vacant_room_deductions), 0);
@@ -726,8 +724,8 @@ function LandlordPaymentEntryPanel({
                                 <FinancialSummaryCard icon={<CalendarDays size={18} />} label="Current Month Gross Payable" value={money(summary.currentMonthGrossPayable)} tone="blue" />
                                 <FinancialSummaryCard icon={<TrendingDown size={18} />} label="Previous Months Outstanding" value={money(previousMonthsOutstanding)} tone="amber" />
                                 <FinancialSummaryCard icon={<BanknoteArrowDown size={18} />} label="Advance Balance" value={money(selectedAdvanceGroup?.remainingBalance ?? 0)} tone="purple" />
-                                <FinancialSummaryCard icon={<ShieldCheck size={18} />} label="Recovery Deductions Applied" value={money(currentRecoveryDeductions)} tone="emerald" />
-                                <FinancialSummaryCard icon={<Building2 size={18} />} label="Vacant Room Deductions Applied" value={money(currentVacantRoomDeductions)} tone="slate" />
+                                <FinancialSummaryCard icon={<ShieldCheck size={18} />} label="Recovery Deductions Applied" value={money(currentRecoveryDeductions)} tone="emerald" detail="Total deductions applied once." />
+                                <FinancialSummaryCard icon={<Building2 size={18} />} label="Vacant Room Deductions Applied" value={money(currentVacantRoomDeductions)} tone="slate" detail="Included in total recovery deductions. Not deducted separately." />
                                 <FinancialSummaryCard icon={<ReceiptText size={18} />} label="Pending Deductions Before 15th" value={money(currentPendingDeductions)} tone="amber" />
                                 <FinancialSummaryCard icon={<CircleDollarSign size={18} />} label="Current Month Final Net Payable" value={money(summary.currentMonthFinalNetPayable)} tone="green" />
                                 <FinancialSummaryCard icon={<CircleDollarSign size={18} />} label="Remaining After Payment" value={money(remainingAfterPayment)} tone={remainingAfterPayment > 0 ? "red" : "green"} />
@@ -911,11 +909,13 @@ function PremiumField({
 }
 
 function FinancialSummaryCard({
+    detail,
     icon,
     label,
     tone,
     value,
 }: {
+    detail?: string;
     icon: ReactNode;
     label: string;
     tone: "red" | "blue" | "amber" | "purple" | "emerald" | "slate" | "green";
@@ -937,6 +937,7 @@ function FinancialSummaryCard({
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-white text-current shadow-sm transition group-hover:scale-105">{icon}</span>
             </div>
             <p className="mt-3 break-words text-[clamp(1.05rem,2vw,1.65rem)] font-black leading-tight text-slate-950">{value}</p>
+            {detail ? <p className="mt-2 text-[11px] font-bold leading-snug text-slate-500">{detail}</p> : null}
             <p className="mt-2 inline-flex rounded-full bg-white/80 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-emerald-700">Live</p>
         </div>
     );
@@ -1665,7 +1666,7 @@ function MonthlyLedger({ group }: { group: LandlordPayableGroup | null }) {
                                 <StatementLine label="Net Payable" value={money(row.net_payable)} />
                                 <StatementLine label="Opening Arrears" value={money(row.opening_arrears ?? 0)} />
                                 <StatementLine label="Current Month Payable" value={money(row.monthly_net_payable ?? row.net_payable)} />
-                                <StatementLine label="Deductions" value={money(Number(row.vacant_room_deductions) + Number(row.vacated_tenant_debt_deductions) + Number(row.advance_deductions) + Number(row.other_deductions))} />
+                                <StatementLine label="Deductions" value={money(monthlyAppliedDeductions(row))} />
                                 <StatementLine label="Reason" value={row.reasons_notes ?? "Monthly landlord payable"} />
                                 <StatementLine label="Amount Paid" value={money(row.amount_paid)} />
                                 <StatementLine label="Final Balance" value={money(monthlyUnpaid(row))} />

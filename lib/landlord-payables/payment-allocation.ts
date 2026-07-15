@@ -67,12 +67,26 @@ export function isActiveLandlordPayable(row: LandlordPayableLike) {
     return !["archived", "reversed", "void", "voided", "cancelled", "canceled", "deleted", "removed"].includes(status);
 }
 
-export function landlordMonthlyDeductions(row: LandlordPayableLike) {
+function nearlyEqual(left: number, right: number) {
+    return Math.abs(left - right) < 1;
+}
+
+export function landlordMonthlyDeductionComponents(row: LandlordPayableLike) {
+    return {
+        advanceRecoveryComponent: Math.max(0, payableAmount(row.advance_deductions)),
+        otherDeductionComponent: Math.max(0, payableAmount(row.other_deductions)),
+        recoveryTotalOrComponent: Math.max(0, payableAmount(row.vacated_tenant_debt_deductions)),
+        vacantRoomComponent: Math.max(0, payableAmount(row.vacant_room_deductions)),
+    };
+}
+
+export function landlordMonthlyRawComponentDeductions(row: LandlordPayableLike) {
+    const components = landlordMonthlyDeductionComponents(row);
     return Math.max(0,
-        payableAmount(row.vacant_room_deductions)
-        + payableAmount(row.vacated_tenant_debt_deductions)
-        + payableAmount(row.advance_deductions)
-        + payableAmount(row.other_deductions));
+        components.vacantRoomComponent
+        + components.recoveryTotalOrComponent
+        + components.advanceRecoveryComponent
+        + components.otherDeductionComponent);
 }
 
 export function landlordMonthlyGrossPayable(row: LandlordPayableLike) {
@@ -82,11 +96,40 @@ export function landlordMonthlyGrossPayable(row: LandlordPayableLike) {
     return Math.max(0, fullRentLessCommission, monthlyNet, net);
 }
 
+export function landlordMonthlyDeductions(row: LandlordPayableLike) {
+    const gross = landlordMonthlyGrossPayable(row);
+    const storedNet = payableAmount(row.net_payable);
+    const storedApplied = storedNet > 0 ? Math.max(0, gross - storedNet) : 0;
+    const components = landlordMonthlyDeductionComponents(row);
+    const rawComponentTotal = landlordMonthlyRawComponentDeductions(row);
+
+    if (storedNet > 0 && storedApplied <= 0) return 0;
+
+    if (storedApplied > 0 && nearlyEqual(storedApplied, rawComponentTotal)) {
+        const hasAggregateRecovery = components.recoveryTotalOrComponent > 0
+            && components.vacantRoomComponent > 0
+            && components.recoveryTotalOrComponent >= components.vacantRoomComponent;
+        if (hasAggregateRecovery) {
+            return Math.max(
+                0,
+                components.recoveryTotalOrComponent
+                + components.advanceRecoveryComponent
+                + components.otherDeductionComponent,
+            );
+        }
+        return storedApplied;
+    }
+
+    if (storedApplied > 0) return storedApplied;
+
+    if (components.recoveryTotalOrComponent > 0 && components.vacantRoomComponent > 0 && components.recoveryTotalOrComponent >= components.vacantRoomComponent) {
+        return Math.max(0, components.recoveryTotalOrComponent + components.advanceRecoveryComponent + components.otherDeductionComponent);
+    }
+
+    return rawComponentTotal;
+}
+
 export function landlordMonthlyFinalNetPayable(row: LandlordPayableLike) {
-    const net = payableAmount(row.net_payable);
-    if (net > 0) return net;
-    const monthlyNet = payableAmount(row.monthly_net_payable);
-    if (monthlyNet > 0) return monthlyNet;
     return Math.max(0, landlordMonthlyGrossPayable(row) - landlordMonthlyDeductions(row));
 }
 

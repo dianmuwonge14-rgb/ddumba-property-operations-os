@@ -505,8 +505,14 @@ export async function refreshAffectedLandlordPayable(db: Db, input: {
     const activeAdvances = ((advancesResult.data ?? []) as Record<string, unknown>[])
         .filter((advance) => isActiveLandlordAdvance(advance));
     const requestedAdvance = activeAdvances.reduce((total, advance) => total + landlordAdvanceRemaining(advance), 0);
-    const advanceDeduction = Math.min(requestedAdvance, Math.max(0, landlordPortfolioNet - recoveryDeduction));
-    const netPayable = Math.max(0, landlordPortfolioNet - recoveryDeduction - advanceDeduction);
+    const recoveryIncludesVacantComponent = recoveryDeduction > 0
+        && vacantRoomDeductions > 0
+        && recoveryDeduction >= vacantRoomDeductions;
+    const payableBaseBeforeRecoveries = recoveryIncludesVacantComponent
+        ? landlordPortfolioNet + vacantRoomDeductions
+        : landlordPortfolioNet;
+    const advanceDeduction = Math.min(requestedAdvance, Math.max(0, payableBaseBeforeRecoveries - recoveryDeduction));
+    const netPayable = Math.max(0, payableBaseBeforeRecoveries - recoveryDeduction - advanceDeduction);
     const clearedMonth = extractClearedMonth(existing?.reasons_notes)
         || await getImportedPaymentMarker(db, {
             companyId: input.companyId,

@@ -18,6 +18,7 @@ test("landlord payments page previews allocation using shared payable calculator
   assert.match(source, /Current Month Gross Payable/);
   assert.match(source, /Current Month Final Net Payable/);
   assert.match(source, /Pending Deductions Before 15th/);
+  assert.match(source, /Included in total recovery deductions\. Not deducted separately\./);
   assert.match(source, /oldest unpaid month first/i);
   assert.match(source, /Advance is created only after every genuine unpaid balance becomes zero/);
 });

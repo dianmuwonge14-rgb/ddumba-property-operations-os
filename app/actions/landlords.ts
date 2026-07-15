@@ -1060,11 +1060,17 @@ export async function generateLandlordSettlement(input: GenerateSettlementInput)
     const carriedForwardRecoveryBalance = Math.max(0, requestedRecoveryDeduction - recoveryDeduction);
     const activeAdvances = await getActiveLandlordAdvances({ db, companyId, officeId, landlordId: landlord.id });
     const requestedAdvanceDeduction = activeAdvances.reduce((total, advance) => total + scheduledAdvanceDeductionForMonth(advance, settlementMonth), 0);
-    const payableAfterRecovery = Math.max(0, landlordGrossPayable - recoveryDeduction);
+    const recoveryIncludesVacantComponent = recoveryDeduction > 0
+        && emptyRoomDeductions > 0
+        && recoveryDeduction >= emptyRoomDeductions;
+    const payableBaseBeforeRecoveries = recoveryIncludesVacantComponent
+        ? landlordGrossPayable + emptyRoomDeductions
+        : landlordGrossPayable;
+    const payableAfterRecovery = Math.max(0, payableBaseBeforeRecoveries - recoveryDeduction);
     const advanceDeduction = Math.min(requestedAdvanceDeduction, payableAfterRecovery);
     const carriedForwardAdvanceBalance = Math.max(0, requestedAdvanceDeduction - advanceDeduction);
     const deductions = companyCommissionAmount + emptyRoomDeductions + recoveryDeduction + advanceDeduction;
-    const netPayable = Math.max(0, landlordGrossPayable - recoveryDeduction - advanceDeduction);
+    const netPayable = Math.max(0, payableBaseBeforeRecoveries - recoveryDeduction - advanceDeduction);
     const paymentStatus = netPayable <= 0 && (requestedRecoveryDeduction > 0 || requestedAdvanceDeduction > 0) ? "held" : "pending";
 
     const { data: period, error: periodError } = await supabase
@@ -1303,8 +1309,14 @@ export async function runMonthlyLandlordPayableSnapshot(input: MonthlyLandlordPa
                 .filter((advance) => String(advance.landlord_id) === landlordId)
                 .filter((advance) => String(advance.status ?? "pending") !== "fully_deducted");
             const requestedAdvance = activeAdvances.reduce((total, advance) => total + scheduledAdvanceDeductionForMonth(advance, settlementMonth), 0);
-            const advanceDeduction = Math.min(requestedAdvance, Math.max(0, landlordPortfolioNet - recoveryDeduction));
-            const netPayable = Math.max(0, landlordPortfolioNet - recoveryDeduction - advanceDeduction);
+            const recoveryIncludesVacantComponent = recoveryDeduction > 0
+                && vacantRoomDeductions > 0
+                && recoveryDeduction >= vacantRoomDeductions;
+            const payableBaseBeforeRecoveries = recoveryIncludesVacantComponent
+                ? landlordPortfolioNet + vacantRoomDeductions
+                : landlordPortfolioNet;
+            const advanceDeduction = Math.min(requestedAdvance, Math.max(0, payableBaseBeforeRecoveries - recoveryDeduction));
+            const netPayable = Math.max(0, payableBaseBeforeRecoveries - recoveryDeduction - advanceDeduction);
             const existing = await db
                 .from("landlord_monthly_payables")
                 .select("reasons_notes")
@@ -2558,8 +2570,14 @@ async function refreshCurrentMonthPayablesForLandlord({
             .filter((advance) => String(advance.office_id) === officeId)
             .filter((advance) => String(advance.status ?? "pending") !== "fully_deducted");
         const requestedAdvance = activeAdvances.reduce((total, advance) => total + scheduledAdvanceDeductionForMonth(advance, settlementMonth), 0);
-        const advanceDeduction = Math.min(requestedAdvance, Math.max(0, landlordPortfolioNet - recoveryDeduction));
-        const netPayable = Math.max(0, landlordPortfolioNet - recoveryDeduction - advanceDeduction);
+        const recoveryIncludesVacantComponent = recoveryDeduction > 0
+            && vacantRoomDeductions > 0
+            && recoveryDeduction >= vacantRoomDeductions;
+        const payableBaseBeforeRecoveries = recoveryIncludesVacantComponent
+            ? landlordPortfolioNet + vacantRoomDeductions
+            : landlordPortfolioNet;
+        const advanceDeduction = Math.min(requestedAdvance, Math.max(0, payableBaseBeforeRecoveries - recoveryDeduction));
+        const netPayable = Math.max(0, payableBaseBeforeRecoveries - recoveryDeduction - advanceDeduction);
         const clearedMonth = extractPaymentMarkerFromNotes(existing.data?.reasons_notes)
             || await getImportedPaymentMarker({
                 companyId,
