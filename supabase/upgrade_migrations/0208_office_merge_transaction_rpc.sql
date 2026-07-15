@@ -164,7 +164,16 @@ begin
         from information_schema.columns c
         where c.table_schema = 'public'
           and c.column_name = 'office_id'
-          and c.table_name not in ('offices', 'office_merge_batches', 'office_merge_audit')
+          and c.table_name not in (
+              'offices',
+              'office_merge_batches',
+              'office_merge_audit',
+              'audit_logs',
+              'security_events',
+              'tenant_ledger_entries',
+              'cash_transactions',
+              'receipts'
+          )
         group by c.table_name
         order by c.table_name
     loop
@@ -254,6 +263,59 @@ begin
             p_admin_user_id
         );
     end loop;
+
+    if to_regclass('public.audit_logs') is not null then
+        insert into public.office_merge_audit (
+            company_id,
+            merge_batch_id,
+            source_office_id,
+            source_office_name,
+            merged_into_office_id,
+            entity_table,
+            action,
+            before_data,
+            after_data,
+            admin_user_id
+        )
+        values (
+            p_company_id,
+            batch_id,
+            p_source_office_id,
+            source_office.office_name,
+            p_destination_office_id,
+            'audit_logs',
+            'append_only_history_preserved',
+            jsonb_build_object('office_id', p_source_office_id, 'office_name', source_office.office_name),
+            jsonb_build_object('office_id', p_source_office_id, 'note', 'audit_logs is append-only; original office reference preserved'),
+            p_admin_user_id
+        );
+    end if;
+
+    insert into public.office_merge_audit (
+        company_id,
+        merge_batch_id,
+        source_office_id,
+        source_office_name,
+        merged_into_office_id,
+        entity_table,
+        action,
+        before_data,
+        after_data,
+        admin_user_id
+    )
+    select
+        p_company_id,
+        batch_id,
+        p_source_office_id,
+        source_office.office_name,
+        p_destination_office_id,
+        append_only_table,
+        'append_only_history_preserved',
+        jsonb_build_object('office_id', p_source_office_id, 'office_name', source_office.office_name),
+        jsonb_build_object('office_id', p_source_office_id, 'note', append_only_table || ' is append-only; original office reference preserved'),
+        p_admin_user_id
+    from unnest(array['security_events','tenant_ledger_entries','cash_transactions','receipts']) as append_only_table
+    where to_regclass('public.' || append_only_table) is not null;
 
     update public.offices
     set status = 'archived',
