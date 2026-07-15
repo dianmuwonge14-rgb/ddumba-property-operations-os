@@ -5,6 +5,10 @@ import { test } from "node:test";
 const actionSource = readFileSync(new URL("../app/actions/admin-accounts.ts", import.meta.url), "utf8");
 const collectorActionSource = readFileSync(new URL("../app/actions/collectors.ts", import.meta.url), "utf8");
 const centreSource = readFileSync(new URL("../components/office/admin/OfficeAccountManagementCentre.tsx", import.meta.url), "utf8");
+const reactivateActionSource = actionSource.slice(
+  actionSource.indexOf("export async function reactivateOfficeAccount"),
+  actionSource.indexOf("export async function createOffice("),
+);
 
 test("admin office creation is guided and requires login credentials before completion", () => {
   assert.match(centreSource, /Create New/);
@@ -52,4 +56,36 @@ test("six digit PIN rule applies to office and collector creation", () => {
   assert.match(actionSource, /PIN confirmation does not match/);
   assert.match(centreSource, /confirmPin: String\(formData\.get\("confirmPin"\)/);
   assert.match(collectorActionSource, /PIN must contain exactly six digits/);
+});
+
+test("account deactivation requires a reason and blocks live access without deleting the account", () => {
+  assert.match(actionSource, /export async function deactivateOfficeAccount/);
+  assert.match(actionSource, /Deactivation reason is required/);
+  assert.match(actionSource, /You cannot deactivate your own account/);
+  assert.match(actionSource, /final active Super Admin cannot be deactivated/);
+  assert.match(actionSource, /System\/service accounts cannot be deactivated/);
+  assert.match(actionSource, /status: "inactive"/);
+  assert.match(actionSource, /pin_status: "revoked"/);
+  assert.match(actionSource, /account_status: "inactive"/);
+  assert.match(actionSource, /account_deactivated/);
+  assert.match(actionSource, /employees"\)\s*\.update\(\{ status: "inactive"/);
+});
+
+test("account reactivation restores existing account without recreating roles or offices", () => {
+  assert.match(actionSource, /export async function reactivateOfficeAccount/);
+  assert.match(actionSource, /Account is already active/);
+  assert.match(actionSource, /status: "active"/);
+  assert.match(actionSource, /pin_status: "active"/);
+  assert.match(actionSource, /account_status: "active"/);
+  assert.match(actionSource, /account_reactivated/);
+  assert.doesNotMatch(reactivateActionSource, /admin\.auth\.admin\.createUser/);
+});
+
+test("admin account management shows a confirmation panel and refreshes after status changes", () => {
+  assert.match(centreSource, /Deactivate account\?/);
+  assert.match(centreSource, /Required deactivation reason/);
+  assert.match(centreSource, /Access will stop immediately/);
+  assert.match(centreSource, /Reactivate account\?/);
+  assert.match(centreSource, /router\.refresh\(\)/);
+  assert.match(centreSource, /Deactivate Account/);
 });

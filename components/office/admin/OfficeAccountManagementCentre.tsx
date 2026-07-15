@@ -3,6 +3,7 @@
 import type React from "react";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
     AlertTriangle,
     BadgeCheck,
@@ -125,6 +126,7 @@ function roleByKey(raw: Props["raw"], keys: string[]) {
 }
 
 export default function OfficeAccountManagementCentre({ company, initialFocus, raw, serviceRoleConfigured }: Props) {
+    const router = useRouter();
     const [activeTab, setActiveTab] = useState<TabKey>("create");
     const [createMode, setCreateMode] = useState<CreateMode>(initialFocus === "collector" ? "collector" : initialFocus === "office" ? "office-account" : null);
     const [officeStep, setOfficeStep] = useState(1);
@@ -183,6 +185,7 @@ export default function OfficeAccountManagementCentre({ company, initialFocus, r
                 await action();
                 setTone("success");
                 setMessage(success);
+                router.refresh();
             } catch (error) {
                 setTone("error");
                 setMessage(error instanceof Error ? error.message : "Action failed.");
@@ -815,6 +818,32 @@ function AccountManagement({ disabled, lockedAccounts, officeOptions, pinCredent
     run: (action: () => Promise<unknown>, success: string) => void;
     users: Props["raw"]["users"];
 }) {
+    const [statusReason, setStatusReason] = useState("");
+    const [confirmStatusAction, setConfirmStatusAction] = useState<"deactivate" | "reactivate" | null>(null);
+    const selectedOffice = selectedUser ? officeOptions.find((item) => item.id === selectedUser.default_office_id) : null;
+    const selectedRole = selectedAssignment ? roleOptions.find((role) => role.id === selectedAssignment.role_id) : null;
+    const selectedUserActive = selectedUser?.status === "active";
+    const actionLabel = selectedUserActive ? "Deactivate Account" : "Reactivate Account";
+    const statusAction = selectedUserActive ? "deactivate" : "reactivate";
+
+    function closeStatusConfirm() {
+        setConfirmStatusAction(null);
+        setStatusReason("");
+    }
+
+    function submitStatusChange() {
+        if (!selectedUser || !confirmStatusAction) return;
+        const trimmedReason = statusReason.trim();
+        run(async () => {
+            if (confirmStatusAction === "deactivate") {
+                await deactivateOfficeAccount({ userId: selectedUser.id, reason: trimmedReason });
+                return;
+            }
+            await reactivateOfficeAccount({ userId: selectedUser.id, reason: trimmedReason || "Admin reactivated account" });
+        }, confirmStatusAction === "deactivate" ? "Account deactivated and access blocked." : "Account reactivated.");
+        closeStatusConfirm();
+    }
+
     return (
         <div className="space-y-5">
             <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4">
@@ -887,9 +916,66 @@ function AccountManagement({ disabled, lockedAccounts, officeOptions, pinCredent
                             <Submit disabled={disabled} label="Reset PIN / Password" />
                         </form>
                         <div className="grid gap-2 sm:grid-cols-2">
-                            <button type="button" onClick={() => run(() => reactivateOfficeAccount(selectedUser.id), "Account reactivated.")} disabled={disabled} className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-800 disabled:opacity-60">Activate</button>
-                            <button type="button" onClick={() => run(() => deactivateOfficeAccount(selectedUser.id), "Account deactivated and PIN revoked.")} disabled={disabled} className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-black text-red-700 disabled:opacity-60">Deactivate</button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setStatusReason("");
+                                    setConfirmStatusAction(statusAction);
+                                }}
+                                disabled={disabled}
+                                className={`rounded-2xl border px-4 py-3 text-sm font-black disabled:opacity-60 ${selectedUserActive ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}
+                            >
+                                {actionLabel}
+                            </button>
                         </div>
+                        {confirmStatusAction && (
+                            <div className="rounded-[1.5rem] border border-slate-200 bg-white p-5 shadow-xl">
+                                <div className="flex items-start gap-3">
+                                    <div className={`rounded-2xl p-3 ${confirmStatusAction === "deactivate" ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"}`}>
+                                        <AlertTriangle size={20} />
+                                    </div>
+                                    <div>
+                                        <p className="text-lg font-black text-slate-950">
+                                            {confirmStatusAction === "deactivate" ? "Deactivate account?" : "Reactivate account?"}
+                                        </p>
+                                        <p className="mt-1 text-sm font-bold text-slate-500">
+                                            {confirmStatusAction === "deactivate"
+                                                ? "Access will stop immediately on the next protected request. Historical records stay intact."
+                                                : "The existing role and office assignment will be preserved and login access will be restored."}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                                    <Review label="Account name" value={selectedUser.full_name} />
+                                    <Review label="Account type" value={selectedUser.account_type ?? "office"} />
+                                    <Review label="Assigned office" value={selectedOffice?.office_name ?? selectedOffice?.name ?? "Company"} />
+                                    <Review label="Current role" value={selectedRole?.name ?? "Role not assigned"} />
+                                </div>
+                                <label className="mt-4 block">
+                                    <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">
+                                        {confirmStatusAction === "deactivate" ? "Required deactivation reason" : "Reactivation reason"}
+                                    </span>
+                                    <textarea
+                                        value={statusReason}
+                                        onChange={(event) => setStatusReason(event.target.value)}
+                                        rows={3}
+                                        className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-900 outline-none ring-blue-500/20 transition focus:border-blue-300 focus:ring-4"
+                                        placeholder={confirmStatusAction === "deactivate" ? "Example: Staff left the company" : "Example: Admin restored access"}
+                                    />
+                                </label>
+                                <div className="mt-4 flex flex-wrap gap-2">
+                                    <button type="button" onClick={closeStatusConfirm} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700">Cancel</button>
+                                    <button
+                                        type="button"
+                                        onClick={submitStatusChange}
+                                        disabled={disabled || (confirmStatusAction === "deactivate" && !statusReason.trim())}
+                                        className={`rounded-2xl px-4 py-3 text-sm font-black text-white disabled:opacity-60 ${confirmStatusAction === "deactivate" ? "bg-red-700" : "bg-emerald-700"}`}
+                                    >
+                                        {disabled ? (confirmStatusAction === "deactivate" ? "Deactivating..." : "Reactivating...") : (confirmStatusAction === "deactivate" ? "Deactivate Account" : "Reactivate Account")}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 ) : <EmptyState title="Select an account" description="Choose an account to manage login status and credential reset." />}
             </div>

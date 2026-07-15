@@ -30,6 +30,11 @@ type ResetPinInput = {
     pin: string;
 };
 
+type AccountStatusInput = {
+    userId: string;
+    reason?: string;
+};
+
 type OfficeInput = {
     officeName: string;
     officeCode?: string;
@@ -177,6 +182,66 @@ async function assignRole(input: {
         user_id: input.userId,
     });
     if (error) throw new Error(error.message);
+}
+
+function normalizeStatus(value: unknown) {
+    return String(value ?? "").trim().toLowerCase();
+}
+
+function isProtectedServiceAccount(user: { account_type?: string | null; email?: string | null; full_name?: string | null }) {
+    const type = normalizeStatus(user.account_type);
+    const email = String(user.email ?? "").toLowerCase();
+    const name = String(user.full_name ?? "").toLowerCase();
+    return type.includes("service") || email.includes("service") || name.includes("service account");
+}
+
+async function userRoleKeys(companyId: string, userId: string) {
+    const admin = createSupabaseAdminClient();
+    const { data: assignments, error: assignmentError } = await admin
+        .from("user_office_roles")
+        .select("role_id")
+        .eq("company_id", companyId)
+        .eq("user_id", userId);
+    if (assignmentError) throw new Error(assignmentError.message);
+
+    const roleIds = (assignments ?? []).map((row) => row.role_id).filter(Boolean);
+    if (!roleIds.length) return [] as string[];
+
+    const { data: roles, error: roleError } = await admin.from("roles").select("key").in("id", roleIds);
+    if (roleError) throw new Error(roleError.message);
+    return (roles ?? []).map((role) => String(role.key ?? ""));
+}
+
+async function activeSuperAdminCount(companyId: string) {
+    const admin = createSupabaseAdminClient();
+    const { data: roles, error: roleError } = await admin
+        .from("roles")
+        .select("id")
+        .or(`key.eq.super_admin,key.eq.company_admin,key.eq.hq_executive`)
+        .or(`company_id.eq.${companyId},company_id.is.null`);
+    if (roleError) throw new Error(roleError.message);
+
+    const roleIds = (roles ?? []).map((role) => role.id).filter(Boolean);
+    if (!roleIds.length) return 0;
+
+    const { data: assignments, error: assignmentError } = await admin
+        .from("user_office_roles")
+        .select("user_id")
+        .eq("company_id", companyId)
+        .in("role_id", roleIds);
+    if (assignmentError) throw new Error(assignmentError.message);
+
+    const userIds = [...new Set((assignments ?? []).map((row) => row.user_id).filter(Boolean))];
+    if (!userIds.length) return 0;
+
+    const { count, error: userError } = await admin
+        .from("users")
+        .select("id", { count: "exact", head: true })
+        .eq("company_id", companyId)
+        .eq("status", "active")
+        .in("id", userIds);
+    if (userError) throw new Error(userError.message);
+    return count ?? 0;
 }
 
 export async function createOfficeAccount(input: OfficeAccountInput) {
@@ -345,49 +410,133 @@ export async function resetOfficeAccountPin(input: ResetPinInput) {
     revalidatePath("/office/admin");
 }
 
-export async function deactivateOfficeAccount(userId: string) {
+export async function deactivateOfficeAccount(input: AccountStatusInput | string) {
     const context = await requirePermission("settings.manage");
     if (!context.activeCompany?.id) throw new Error("Active company is required.");
 
+    const userId = typeof input === "string" ? input : input.userId;
+    const reason = typeof input === "string" ? "" : input.reason?.trim() ?? "";
+    if (!userId) throw new Error("Account could not be found.");
+    if (!reason) throw new Error("Deactivation reason is required.");
+    if (userId === context.profile?.id || userId === context.authUser?.id) {
+        throw new Error("You cannot deactivate your own account.");
+    }
+
     const admin = createSupabaseAdminClient();
     const { data: existing } = await admin.from("users").select("*").eq("id", userId).maybeSingle();
+    if (!existing || existing.company_id !== context.activeCompany.id) throw new Error("Account could not be found.");
+    if (normalizeStatus(existing.status) === "inactive") throw new Error("Account is already inactive.");
+    if (isProtectedServiceAccount(existing)) throw new Error("System/service accounts cannot be deactivated from this screen.");
+
+    const roleKeys = await userRoleKeys(context.activeCompany.id, userId);
+    if (roleKeys.some((key) => ["super_admin", "company_admin", "hq_executive"].includes(key))) {
+        const activeAdmins = await activeSuperAdminCount(context.activeCompany.id);
+        if (activeAdmins <= 1) throw new Error("The final active Super Admin cannot be deactivated.");
+    }
+
+    const now = new Date().toISOString();
     const { error } = await admin
         .from("users")
-        .update({ status: "inactive", updated_at: new Date().toISOString() })
+        .update({ status: "inactive", updated_at: now })
         .eq("id", userId)
         .eq("company_id", context.activeCompany.id);
 
     if (error) throw new Error(error.message);
 
-    await admin.from("pin_credentials").update({ status: "revoked", updated_at: new Date().toISOString() }).eq("user_id", userId);
+    const { error: employeeError } = await admin
+        .from("employees")
+        .update({ status: "inactive", updated_at: now })
+        .eq("company_id", context.activeCompany.id)
+        .eq("user_id", userId);
+    if (employeeError && !/column .*user_id|schema cache/i.test(employeeError.message)) throw new Error(employeeError.message);
+
+    const { error: pinError } = await admin
+        .from("pin_credentials")
+        .update({
+            status: "revoked",
+            is_locked: true,
+            locked_at: now,
+            updated_at: now,
+        })
+        .eq("user_id", userId);
+    if (pinError && !isPendingLockoutSchemaError(pinError)) throw new Error(pinError.message);
+
+    const { error: authError } = await admin.auth.admin.updateUserById(userId, {
+        user_metadata: {
+            account_status: "inactive",
+            deactivated_at: now,
+            deactivation_reason: reason,
+        },
+        app_metadata: {
+            account_status: "inactive",
+            deactivated_at: now,
+        },
+    });
+    if (authError) throw new Error(authError.message);
+
+    await admin.from("security_events").insert({
+        company_id: context.activeCompany.id,
+        office_id: existing.default_office_id,
+        user_id: userId,
+        event_type: "account_deactivated",
+        severity: "critical",
+        metadata: {
+            account_type: existing.account_type,
+            deactivated_by: context.profile?.id ?? null,
+            reason,
+        },
+    });
 
     await logUserAction({
         action: "office_account_deactivated",
         entityType: "user",
         entityId: userId,
         companyId: context.activeCompany.id,
+        officeId: existing.default_office_id,
         beforeData: existing,
-        afterData: { status: "inactive", pin_status: "revoked" },
+        afterData: {
+            account_type: existing.account_type,
+            status: "inactive",
+            pin_status: "revoked",
+            deactivated_at: now,
+            deactivated_by: context.profile?.id ?? null,
+            reason,
+        },
     });
 
     revalidatePath("/office/admin");
+    revalidatePath("/office/ceo");
 }
 
-export async function reactivateOfficeAccount(userId: string) {
+export async function reactivateOfficeAccount(input: AccountStatusInput | string) {
     const context = await requirePermission("settings.manage");
     if (!context.activeCompany?.id) throw new Error("Active company is required.");
 
+    const userId = typeof input === "string" ? input : input.userId;
+    const reason = typeof input === "string" ? "" : input.reason?.trim() ?? "";
+    if (!userId) throw new Error("Account could not be found.");
+
     const admin = createSupabaseAdminClient();
     const { data: existing } = await admin.from("users").select("*").eq("id", userId).maybeSingle();
+    if (!existing || existing.company_id !== context.activeCompany.id) throw new Error("Account could not be found.");
+    if (normalizeStatus(existing.status) === "active") throw new Error("Account is already active.");
+
+    const now = new Date().toISOString();
     const { error } = await admin
         .from("users")
-        .update({ status: "active", updated_at: new Date().toISOString() })
+        .update({ status: "active", updated_at: now })
         .eq("id", userId)
         .eq("company_id", context.activeCompany.id);
 
     if (error) throw new Error(error.message);
 
-    const now = new Date().toISOString();
+    const { error: employeeError } = await admin
+        .from("employees")
+        .update({ status: "active", updated_at: now })
+        .eq("company_id", context.activeCompany.id)
+        .eq("user_id", userId);
+    if (employeeError && !/column .*user_id|schema cache/i.test(employeeError.message)) throw new Error(employeeError.message);
+
     const { error: basePinError } = await admin
         .from("pin_credentials")
         .update({
@@ -411,16 +560,51 @@ export async function reactivateOfficeAccount(userId: string) {
         .eq("user_id", userId);
     if (metadataError && !isPendingLockoutSchemaError(metadataError)) throw new Error(metadataError.message);
 
+    const { error: authError } = await admin.auth.admin.updateUserById(userId, {
+        user_metadata: {
+            account_status: "active",
+            reactivated_at: now,
+            reactivation_reason: reason || null,
+        },
+        app_metadata: {
+            account_status: "active",
+            reactivated_at: now,
+        },
+    });
+    if (authError) throw new Error(authError.message);
+
+    await admin.from("security_events").insert({
+        company_id: context.activeCompany.id,
+        office_id: existing.default_office_id,
+        user_id: userId,
+        event_type: "account_reactivated",
+        severity: "info",
+        metadata: {
+            account_type: existing.account_type,
+            reactivated_by: context.profile?.id ?? null,
+            reason: reason || null,
+        },
+    });
+
     await logUserAction({
         action: "office_account_reactivated",
         entityType: "user",
         entityId: userId,
         companyId: context.activeCompany.id,
+        officeId: existing.default_office_id,
         beforeData: existing,
-        afterData: { status: "active", pin_status: "active" },
+        afterData: {
+            account_type: existing.account_type,
+            status: "active",
+            pin_status: "active",
+            reactivated_at: now,
+            reactivated_by: context.profile?.id ?? null,
+            reason: reason || null,
+        },
     });
 
     revalidatePath("/office/admin");
+    revalidatePath("/office/ceo");
 }
 
 export async function createOffice(input: OfficeInput) {
