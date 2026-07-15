@@ -10,6 +10,13 @@ function label(value: unknown, fallback = "Office") {
     return resolved || fallback;
 }
 
+async function countOfficeRows(db: { from: (table: string) => any }, table: string, companyId: string, officeId: string) {
+    const query = db.from(table).select("id", { count: "exact", head: true }).eq("office_id", officeId);
+    const result = await (table === "offices" ? query.eq("id", officeId).eq("company_id", companyId) : query.eq("company_id", companyId));
+    if (result.error) return { count: 0, warning: `${table}: ${result.error.message}` };
+    return { count: Number(result.count ?? 0), warning: null };
+}
+
 export async function getOfficeMergeData(): Promise<OfficeMergeData> {
     const context = await requireCompanyAdminMode();
     const { supabase } = await getScopedSupabase();
@@ -50,6 +57,14 @@ export async function getOfficeMergeData(): Promise<OfficeMergeData> {
         counts.properties = allProperties.filter((row) => String(row.office_id ?? "") === officeId && !["archived", "deleted", "inactive"].includes(String(row.status ?? "").toLowerCase())).length;
         counts.rooms = officeRooms.length;
         counts.tenants = allTenants.filter((row) => String(row.office_id ?? "") === officeId && !["archived", "deleted", "inactive", "vacated"].includes(String(row.status ?? "").toLowerCase())).length;
+        const countJobs = COUNT_TABLES
+            .filter((item) => !["landlords", "properties", "rooms", "tenants"].includes(item.key))
+            .map(async (item) => ({ item, result: await countOfficeRows(db, item.table, companyId, officeId) }));
+        const tableCounts = await Promise.all(countJobs);
+        for (const { item, result } of tableCounts) {
+            counts[item.key] = result.count;
+            if (result.warning) warnings.push(result.warning);
+        }
         offices.push({
             id: officeId,
             name: label(office.office_name ?? office.name),

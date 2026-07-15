@@ -5,190 +5,131 @@ import { logUserAction } from "@/lib/auth/audit";
 import { requireCompanyAdminMode } from "@/lib/auth/permissions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
-type LooseRow = Record<string, any>;
-
 type ExecuteOfficeMergeInput = {
-    sourceOfficeIds: string[];
-    newOfficeName: string;
+    sourceOfficeId: string;
+    destinationOfficeId: string;
     reasonNote?: string;
     confirmation: string;
     userHandling: "reassign" | "disable";
     affectedCounts: Record<string, number>;
 };
 
-const CONFIRMATION_PHRASE = "MERGE OFFICES";
+type OfficeMergeResult = {
+    batchId: string;
+    mergeReference: string;
+    sourceOfficeName: string;
+    destinationOfficeName: string;
+    transferredCounts: Record<string, number>;
+    accountsReassigned: number;
+    sourceStatus: string;
+    mergedAt: string;
+};
 
-const MERGE_TABLES = [
-    "landlords",
-    "properties",
-    "rooms",
-    "tenants",
-    "leases",
-    "collections",
-    "promises",
-    "expenses",
-    "attendance_events",
-    "office_daily_reports",
-    "landlord_monthly_payables",
-    "landlord_monthly_payable_payments",
-    "landlord_advances",
-    "landlord_debt_deductions",
-    "tenant_ledger_entries",
-    "notifications",
-    "audit_logs",
-    "employees",
-    "user_office_roles",
-    "landlord_summary",
-    "office_finance_summary",
-    "landlord_search_index",
-] as const;
+type LooseRow = Record<string, any>;
 
-function cleanIds(ids: string[]) {
-    return Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
+function normalize(value: unknown) {
+    return String(value ?? "").trim();
 }
 
-export async function executeOfficeMerge(input: ExecuteOfficeMergeInput) {
+export async function executeOfficeMerge(input: ExecuteOfficeMergeInput): Promise<OfficeMergeResult> {
     const context = await requireCompanyAdminMode();
-    if (!context.activeCompany?.id) throw new Error("Active company is required.");
-    if (input.confirmation.trim().toUpperCase() !== CONFIRMATION_PHRASE) {
-        throw new Error(`Type ${CONFIRMATION_PHRASE} to confirm this future merge action.`);
-    }
+    const companyId = context.activeCompany?.id;
+    if (!companyId) throw new Error("Active company is required.");
 
-    const sourceOfficeIds = cleanIds(input.sourceOfficeIds);
-    const newOfficeName = input.newOfficeName.trim();
-    if (sourceOfficeIds.length < 2) throw new Error("Select at least two source offices.");
-    if (!newOfficeName) throw new Error("New merged office name is required.");
+    const sourceOfficeId = normalize(input.sourceOfficeId);
+    const destinationOfficeId = normalize(input.destinationOfficeId);
+    const confirmation = normalize(input.confirmation);
+    if (!sourceOfficeId) throw new Error("Select a source office.");
+    if (!destinationOfficeId) throw new Error("Select a destination office.");
+    if (sourceOfficeId === destinationOfficeId) throw new Error("Source and destination cannot be the same.");
 
     const admin = createSupabaseAdminClient();
-    const db = admin as unknown as { from: (table: string) => any };
-    const companyId = context.activeCompany.id;
-    const { data: sourceOffices, error: officesError } = await db
+    const db = admin as unknown as { from: (table: string) => any; rpc: (fn: string, args: Record<string, unknown>) => any };
+
+    const { data: officeRows, error: officesError } = await db
         .from("offices")
         .select("id,name,office_name,status")
         .eq("company_id", companyId)
-        .in("id", sourceOfficeIds);
+        .in("id", [sourceOfficeId, destinationOfficeId]);
     if (officesError) throw new Error(officesError.message);
-    if ((sourceOffices ?? []).length !== sourceOfficeIds.length) throw new Error("One or more selected offices could not be found.");
 
-    const sourceOfficeRows = (sourceOffices ?? []) as LooseRow[];
-    const sourceOfficeNames = sourceOfficeRows.map((office) => String(office.office_name ?? office.name ?? "Office"));
-    const { data: batch, error: batchError } = await db
-        .from("office_merge_batches")
-        .insert({
-            company_id: companyId,
-            new_office_name: newOfficeName,
-            source_office_ids: sourceOfficeIds,
-            source_office_names: sourceOfficeNames,
-            status: "confirmed",
-            admin_user_id: context.profile?.id ?? null,
-            affected_counts: input.affectedCounts,
-            reason_note: input.reasonNote?.trim() || null,
-            warning_acknowledged: true,
-            confirmed_at: new Date().toISOString(),
-        })
-        .select("id")
-        .single();
-    if (batchError) throw new Error(batchError.message);
-
-    const { data: newOffice, error: newOfficeError } = await db
-        .from("offices")
-        .insert({
-            company_id: companyId,
-            office_name: newOfficeName,
-            name: newOfficeName,
-            status: "active",
-            original_office_id: sourceOfficeIds[0],
-            original_office_name: sourceOfficeNames.join(", "),
-            merge_batch_id: batch.id,
-            merged_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-        })
-        .select("id")
-        .single();
-    if (newOfficeError) throw new Error(newOfficeError.message);
-
-    const mergedAt = new Date().toISOString();
-    for (const sourceOffice of sourceOfficeRows) {
-        const sourceOfficeId = String(sourceOffice.id);
-        const sourceOfficeName = String(sourceOffice.office_name ?? sourceOffice.name ?? "Office");
-        for (const table of MERGE_TABLES) {
-            if (table === "user_office_roles" && input.userHandling === "disable") continue;
-            const { error } = await db
-                .from(table)
-                .update({
-                    office_id: newOffice.id,
-                    original_office_id: sourceOfficeId,
-                    original_office_name: sourceOfficeName,
-                    merged_into_office_id: newOffice.id,
-                    merged_at: mergedAt,
-                    merge_batch_id: batch.id,
-                })
-                .eq("company_id", companyId)
-                .eq("office_id", sourceOfficeId);
-            if (error) {
-                await db.from("office_merge_batches").update({ status: "failed", error_message: `${table}: ${error.message}` }).eq("id", batch.id);
-                throw new Error(`${table}: ${error.message}`);
-            }
-            await db.from("office_merge_audit").insert({
-                company_id: companyId,
-                merge_batch_id: batch.id,
-                source_office_id: sourceOfficeId,
-                source_office_name: sourceOfficeName,
-                merged_into_office_id: newOffice.id,
-                entity_table: table,
-                action: "office_scope_moved",
-                before_data: { office_id: sourceOfficeId, office_name: sourceOfficeName },
-                after_data: { office_id: newOffice.id, office_name: newOfficeName },
-                admin_user_id: context.profile?.id ?? null,
-            });
-        }
+    const offices = ((officeRows ?? []) as LooseRow[]).map((office) => ({
+        id: String(office.id),
+        name: normalize(office.office_name ?? office.name) || "Office",
+        status: normalize(office.status || "active").toLowerCase(),
+    }));
+    const sourceOffice = offices.find((office) => office.id === sourceOfficeId);
+    const destinationOffice = offices.find((office) => office.id === destinationOfficeId);
+    if (!sourceOffice) throw new Error("Source office could not be found.");
+    if (!destinationOffice) throw new Error("Destination office could not be found.");
+    if (["archived", "deleted", "merged"].includes(sourceOffice.status)) throw new Error("Source office is not active enough to merge.");
+    if (["archived", "deleted", "merged"].includes(destinationOffice.status)) throw new Error("Destination office is inactive or merged. Reactivate it before merging.");
+    if (![sourceOffice.name.toUpperCase(), "MERGE"].includes(confirmation.toUpperCase())) {
+        throw new Error(`Type ${sourceOffice.name} or MERGE to confirm this office merge.`);
     }
 
-    if (input.userHandling === "disable") {
-        for (const sourceOffice of sourceOfficeRows) {
-            await db
-                .from("user_office_roles")
-                .update({
-                    original_office_id: sourceOffice.id,
-                    original_office_name: String(sourceOffice.office_name ?? sourceOffice.name ?? "Office"),
-                    merged_into_office_id: newOffice.id,
-                    merged_at: mergedAt,
-                    merge_batch_id: batch.id,
-                })
-                .eq("company_id", companyId)
-                .eq("office_id", sourceOffice.id);
-        }
-    }
-
-    await db
+    const activeOfficesResult = await db
         .from("offices")
-        .update({
-            status: "archived",
-            merged_into_office_id: newOffice.id,
-            merged_at: mergedAt,
-            merge_batch_id: batch.id,
-            updated_at: mergedAt,
-        })
+        .select("id", { count: "exact", head: true })
         .eq("company_id", companyId)
-        .in("id", sourceOfficeIds);
+        .not("status", "in", "(archived,deleted,merged,inactive)");
+    if (activeOfficesResult.error) throw new Error(activeOfficesResult.error.message);
+    if (Number(activeOfficesResult.count ?? 0) < 2) throw new Error("The final active company office cannot be merged.");
 
-    await db
-        .from("office_merge_batches")
-        .update({ status: "completed", new_office_id: newOffice.id, completed_at: mergedAt })
-        .eq("id", batch.id);
+    const rpcResult = await db.rpc("ddumba_merge_offices", {
+        p_company_id: companyId,
+        p_source_office_id: sourceOfficeId,
+        p_destination_office_id: destinationOfficeId,
+        p_admin_user_id: context.profile?.id ?? null,
+        p_reason_note: normalize(input.reasonNote) || null,
+        p_confirmation: confirmation,
+        p_user_handling: input.userHandling,
+        p_expected_counts: input.affectedCounts ?? {},
+    });
+
+    if (rpcResult.error) {
+        const message = String(rpcResult.error.message ?? "Office merge failed. No records were changed.");
+        if (message.toLowerCase().includes("ddumba_merge_offices")) {
+            throw new Error("Database setup is incomplete. Apply the office merge transaction migration before merging offices.");
+        }
+        throw new Error(message);
+    }
+
+    const result = (rpcResult.data ?? {}) as LooseRow;
+    const mergeResult: OfficeMergeResult = {
+        batchId: normalize(result.batch_id),
+        mergeReference: normalize(result.merge_reference) || "MERGE",
+        sourceOfficeName: normalize(result.source_office_name) || sourceOffice.name,
+        destinationOfficeName: normalize(result.destination_office_name) || destinationOffice.name,
+        transferredCounts: (result.transferred_counts ?? input.affectedCounts ?? {}) as Record<string, number>,
+        accountsReassigned: Number(result.accounts_reassigned ?? input.affectedCounts?.officeUsers ?? 0),
+        sourceStatus: normalize(result.source_status) || "merged",
+        mergedAt: normalize(result.merged_at) || new Date().toISOString(),
+    };
 
     await logUserAction({
         action: "office_merge_completed",
         entityType: "office_merge_batch",
-        entityId: batch.id,
+        entityId: mergeResult.batchId,
         companyId,
-        officeId: newOffice.id,
-        beforeData: { sourceOfficeIds, sourceOfficeNames },
-        afterData: { newOfficeId: newOffice.id, newOfficeName, affectedCounts: input.affectedCounts },
+        officeId: destinationOfficeId,
+        beforeData: { sourceOfficeId, sourceOfficeName: sourceOffice.name },
+        afterData: {
+            destinationOfficeId,
+            destinationOfficeName: destinationOffice.name,
+            affectedCounts: input.affectedCounts,
+            mergeReference: mergeResult.mergeReference,
+        },
     });
 
+    revalidatePath("/office", "layout");
     revalidatePath("/office/admin/office-merge");
     revalidatePath("/office/admin");
-    revalidatePath("/office");
-    return { batchId: batch.id, newOfficeId: newOffice.id };
+    revalidatePath("/office/ceo");
+    revalidatePath("/office/cash-banking");
+    revalidatePath("/office/landlords");
+    revalidatePath("/office/properties");
+    revalidatePath("/office/payments");
+    revalidatePath("/office/receipts");
+    return mergeResult;
 }
