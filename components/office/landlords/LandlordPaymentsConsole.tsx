@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import type { ReactNode } from "react";
-import { AlertTriangle, ArrowDown, BadgeDollarSign, BanknoteArrowDown, Building2, CalendarDays, CheckCircle2, CircleDollarSign, CreditCard, FileText, Landmark, Loader2, Phone, Plus, Printer, ReceiptText, RefreshCw, Search, SendHorizontal, ShieldCheck, Sparkles, TrendingDown, WalletCards } from "lucide-react";
+import { AlertTriangle, BadgeDollarSign, BanknoteArrowDown, Building2, CalendarDays, CheckCircle2, CircleDollarSign, CreditCard, FileText, Landmark, Loader2, Phone, Plus, Printer, ReceiptText, RefreshCw, Search, SendHorizontal, ShieldCheck, Sparkles, TrendingDown, WalletCards } from "lucide-react";
 import {
     addLandlordAdvance,
     clearLandlordAdvancePrincipal,
@@ -813,7 +813,7 @@ function LandlordPaymentEntryPanel({
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(310px,0.82fr)]">
+                            <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(310px,0.82fr)]">
                                 <AiPaymentAssistant
                                     advanceAmount={allocation.advanceAmount}
                                     advanceRecoveryAmount={allocation.advanceRecoveryAmount}
@@ -839,7 +839,7 @@ function LandlordPaymentEntryPanel({
                                 />
                             </div>
 
-                            <div className="rounded-[1.75rem] border border-slate-200 bg-white p-4 shadow-xl shadow-slate-200/60">
+                            <div className="-mt-2 rounded-[1.75rem] border border-slate-200 bg-white p-4 shadow-xl shadow-slate-200/60">
                                 <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                                     <div>
                                         <p className="text-xs font-black uppercase tracking-wide text-slate-500">Payment Breakdown</p>
@@ -1123,34 +1123,70 @@ function PaymentAllocationTimeline({
     remainingAdvanceBalance: number;
     remainingAfterPayment: number;
 }) {
-    const steps = [
-        { label: "Genuine payable", value: money(genuinePayable), tone: "bg-slate-950 text-white" },
-        { label: "Existing advance recovery", value: money(advanceRecoveryAmount), tone: "bg-indigo-600 text-white" },
-        { label: "Cash paid to landlord", value: money(cashPaidToLandlord || amountEntered), tone: "bg-emerald-600 text-white" },
-        { label: "Old unpaid months", value: money(oldMonthAllocation), tone: "bg-amber-600 text-white" },
-        { label: "Current month", value: money(currentMonthAllocation), tone: "bg-blue-600 text-white" },
-        { label: "New advance", value: money(advanceAmount), tone: "bg-purple-600 text-white" },
-        { label: "Remaining old advance", value: money(remainingAdvanceBalance), tone: "bg-violet-600 text-white" },
-        { label: "Final balance", value: money(remainingAfterPayment), tone: remainingAfterPayment > 0 ? "bg-red-600 text-white" : "bg-emerald-700 text-white" },
+    const steps: Array<{
+        icon: ReactNode;
+        label: string;
+        status: string;
+        tone: "slate" | "indigo" | "emerald" | "amber" | "blue" | "purple" | "violet" | "green";
+        value: string;
+    }> = [
+        { icon: <WalletCards size={15} />, label: "Genuine Payable", status: "Live payable", tone: "slate", value: money(genuinePayable) },
+        { icon: <TrendingDown size={15} />, label: "Old Unpaid Months", status: "Oldest first", tone: "amber", value: money(oldMonthAllocation) },
+        { icon: <BanknoteArrowDown size={15} />, label: "Existing Advance Recovery", status: "Controlled", tone: "indigo", value: money(advanceRecoveryAmount) },
+        { icon: <CalendarDays size={15} />, label: "Current Month", status: "This settlement", tone: "blue", value: money(currentMonthAllocation) },
+        { icon: <CircleDollarSign size={15} />, label: "Cash Paid to Landlord", status: "Cash movement", tone: "emerald", value: money(cashPaidToLandlord || amountEntered) },
+        { icon: <BadgeDollarSign size={15} />, label: "New Advance", status: "Only if excess", tone: "purple", value: money(advanceAmount) },
+        { icon: <Landmark size={15} />, label: "Remaining Old Advance", status: "After recovery", tone: "violet", value: money(remainingAdvanceBalance) },
+        { icon: <CheckCircle2 size={15} />, label: "Final Balance", status: remainingAfterPayment > 0 ? "Still due" : "Cleared", tone: "green", value: money(remainingAfterPayment) },
     ];
     return (
-        <div className="rounded-[1.75rem] border border-slate-200 bg-white p-4 shadow-xl shadow-slate-200/70">
-            <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Live Payment Allocation Timeline</p>
-            <div className="mt-4 space-y-2">
-                {steps.map((step, index) => (
-                    <div key={step.label}>
-                        <div className={`flex items-center justify-between gap-3 rounded-2xl px-3 py-3 shadow-sm ${step.tone}`}>
-                            <span className="text-xs font-black uppercase tracking-wide">{step.label}</span>
-                            <span className="text-sm font-black">{step.value}</span>
-                        </div>
-                        {index < steps.length - 1 ? (
-                            <div className="flex justify-center py-1 text-slate-400">
-                                <ArrowDown size={16} />
-                            </div>
-                        ) : null}
-                    </div>
+        <div className="rounded-[1.75rem] border border-slate-200 bg-white p-3 shadow-xl shadow-slate-200/70">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">Live Payment Allocation Timeline</p>
+                <div className="inline-flex w-fit flex-wrap items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-slate-500">
+                    <span>Payable</span><span className="text-slate-300">→</span><span>Recovery</span><span className="text-slate-300">→</span><span>Cash</span><span className="text-slate-300">→</span><span>Final Position</span>
+                </div>
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-2 min-[360px]:grid-cols-2 xl:grid-cols-4">
+                {steps.map((step) => (
+                    <TimelineCompactCard key={step.label} {...step} />
                 ))}
             </div>
+        </div>
+    );
+}
+
+function TimelineCompactCard({
+    icon,
+    label,
+    status,
+    tone,
+    value,
+}: {
+    icon: ReactNode;
+    label: string;
+    status: string;
+    tone: "slate" | "indigo" | "emerald" | "amber" | "blue" | "purple" | "violet" | "green";
+    value: string;
+}) {
+    const palette = {
+        amber: "border-amber-200 bg-amber-50/80 text-amber-700",
+        blue: "border-blue-200 bg-blue-50/80 text-blue-700",
+        emerald: "border-emerald-200 bg-emerald-50/80 text-emerald-700",
+        green: "border-green-200 bg-green-50/80 text-green-700",
+        indigo: "border-indigo-200 bg-indigo-50/80 text-indigo-700",
+        purple: "border-purple-200 bg-purple-50/80 text-purple-700",
+        slate: "border-slate-300 bg-slate-50 text-slate-800",
+        violet: "border-violet-200 bg-violet-50/80 text-violet-700",
+    }[tone];
+    return (
+        <div className={`min-h-[86px] min-w-0 rounded-2xl border p-2.5 shadow-sm ${palette}`}>
+            <div className="flex min-w-0 items-center gap-2">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-white/85 shadow-sm">{icon}</span>
+                <p className="min-w-0 truncate text-[10px] font-black uppercase tracking-wide text-slate-500">{label}</p>
+            </div>
+            <p className="mt-2 break-words text-[clamp(0.92rem,1.55vw,1.16rem)] font-black leading-tight text-slate-950">{value}</p>
+            <p className="mt-1 truncate text-[10px] font-black uppercase tracking-wide opacity-80">{status}</p>
         </div>
     );
 }
