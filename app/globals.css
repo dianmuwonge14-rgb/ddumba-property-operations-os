@@ -14,20 +14,122 @@ body {
 .tenant-receipt-slip {
   width: min(100%, 80mm);
   max-width: 80mm;
-  min-height: 120mm;
-  padding: 4.5mm;
+  padding: 3.6mm;
   border: 1px solid #0f172a;
-  border-radius: 14px;
-  box-shadow: 0 22px 60px rgba(15, 23, 42, 0.18);
+  border-radius: 12px;
+  box-shadow: 0 22px 60px rgba(15, 23, 42, 0.20);
+  box-sizing: border-box;
   font-family: var(--font-geist-mono), "SFMono-Regular", ui-monospace, monospace;
-  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.22;
+  overflow: hidden;
   overflow-wrap: anywhere;
+}
+
+.tenant-receipt-slip,
+.tenant-receipt-slip * {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.receipt-section {
+  margin-top: 2.5mm;
+}
+
+.receipt-section:first-child {
+  margin-top: 0;
+}
+
+.receipt-section-title,
+.receipt-label {
+  color: #475569;
+  font-size: 8.5px;
+  font-weight: 900;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.receipt-row {
+  display: grid;
+  grid-template-columns: minmax(0, 42%) minmax(0, 58%);
+  align-items: start;
+  gap: 1.4mm;
+  padding: 0.45mm 0;
+  font-size: 10px;
+}
+
+.receipt-row-stacked {
+  display: block;
+  padding: 0.8mm 0;
+}
+
+.receipt-value {
+  color: #020617;
+  font-weight: 800;
+  line-height: 1.18;
+  text-align: right;
+  white-space: normal;
+}
+
+.receipt-row-stacked .receipt-value {
+  display: block;
+  margin-top: 0.35mm;
+  text-align: left;
+}
+
+.receipt-value-strong,
+.receipt-money-row-highlight .receipt-value {
+  font-weight: 950;
+}
+
+.receipt-money-row {
+  font-size: 10px;
+}
+
+.receipt-money-value {
+  font-size: clamp(9px, 2.45vw, 11px);
+  letter-spacing: -0.01em;
+}
+
+.receipt-money-row-highlight {
+  margin: 0.7mm 0;
+  border-block: 1px dashed #0f172a;
+  padding-block: 1mm;
+}
+
+.receipt-amount-section {
+  border-block: 1px dashed #0f172a;
+  padding-block: 1.6mm;
+}
+
+.receipt-coverage-card {
+  border: 1px solid #cbd5e1;
+  border-radius: 2mm;
+  background: #f8fafc;
+  padding: 1.4mm;
+}
+
+.receipt-qr {
+  display: block;
+  width: 24mm;
+  height: 24mm;
+  object-fit: contain;
+  padding: 1.5mm;
+  border: 1px solid #0f172a;
+  background: #ffffff;
+}
+
+.receipt-muted {
+  color: #64748b;
 }
 
 @media print {
   @page tenant-payment-receipt-page {
     size: 80mm auto;
-    margin: 3mm;
+    margin: 0;
   }
 
   body.print-tenant-payment-receipt,
@@ -51,7 +153,6 @@ body {
     inset: 0 auto auto 0 !important;
     width: 80mm !important;
     max-width: 80mm !important;
-    min-height: auto !important;
     margin: 0 !important;
     padding: 3mm !important;
     border: 0 !important;
@@ -60,6 +161,25 @@ body {
     background: #ffffff !important;
     color: #000000 !important;
     print-color-adjust: economy !important;
+  }
+
+  body.print-tenant-payment-receipt.receipt-paper-58mm #tenant-payment-receipt {
+    width: 58mm !important;
+    max-width: 58mm !important;
+    padding: 2.5mm !important;
+  }
+
+  body.print-tenant-payment-receipt #tenant-payment-receipt .receipt-section {
+    margin-top: 2mm !important;
+  }
+
+  body.print-tenant-payment-receipt #tenant-payment-receipt .receipt-coverage-card {
+    background: #ffffff !important;
+  }
+
+  body.print-tenant-payment-receipt #tenant-payment-receipt .receipt-qr {
+    width: 22mm !important;
+    height: 22mm !important;
   }
 
   body.print-tenant-payment-receipt #tenant-payment-receipt .bg-slate-950,

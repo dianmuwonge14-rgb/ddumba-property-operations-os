@@ -9,6 +9,7 @@ const expensesAction = readFileSync(new URL("../app/actions/expenses.ts", import
 const landlordsAction = readFileSync(new URL("../app/actions/landlords.ts", import.meta.url), "utf8");
 const paymentEntry = readFileSync(new URL("../components/office/payments/FastPaymentsEntry.tsx", import.meta.url), "utf8");
 const receiptHistory = readFileSync(new URL("../components/office/receipts/ReceiptHistoryConsole.tsx", import.meta.url), "utf8");
+const sharedReceipt = readFileSync(new URL("../components/office/receipts/TenantPaymentReceipt.tsx", import.meta.url), "utf8");
 const receiptStyles = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 
 test("payment receipt schema prevents duplicate receipts per transaction", () => {
@@ -41,12 +42,13 @@ test("landlord payment save creates receipt metadata where applicable", () => {
 
 test("payment entry shows receipt confirmation actions after successful payment", () => {
   assert.match(paymentEntry, /ReceiptConfirmationModal/);
-  assert.match(paymentEntry, /PAYMENT RECORDED SUCCESSFULLY/);
-  assert.match(paymentEntry, /tenant-payment-receipt/);
-  assert.match(paymentEntry, /tenant-receipt-slip/);
-  assert.match(paymentEntry, /Print Receipt/);
-  assert.match(paymentEntry, /Download PDF/);
-  assert.match(paymentEntry, /Send by Email/);
+  assert.match(paymentEntry, /TenantPaymentReceiptModal/);
+  assert.match(sharedReceipt, /PAYMENT RECORDED SUCCESSFULLY/);
+  assert.match(sharedReceipt, /tenant-payment-receipt/);
+  assert.match(sharedReceipt, /tenant-receipt-slip/);
+  assert.match(sharedReceipt, /Print Receipt/);
+  assert.match(sharedReceipt, /Download PDF/);
+  assert.match(sharedReceipt, /Send E-Receipt/);
   assert.match(paymentEntry, /Send by WhatsApp\/SMS/);
 });
 
@@ -58,12 +60,33 @@ test("tenant receipts include supermarket-style coverage and print scope", () =>
   assert.match(receiptService, /advanceAmount/);
   assert.match(receiptStyles, /print-tenant-payment-receipt/);
   assert.match(receiptStyles, /size: 80mm auto/);
+  assert.match(receiptStyles, /receipt-paper-58mm/);
+  assert.doesNotMatch(sharedReceipt, /Company contact not set/);
 });
 
 test("receipt history can preview and reprint only the saved receipt slip", () => {
-  assert.match(receiptHistory, /ReceiptPreview/);
-  assert.match(receiptHistory, /tenant-payment-receipt/);
+  assert.match(receiptHistory, /TenantPaymentReceiptModal/);
   assert.match(receiptHistory, /receipt=\$\{receipt\.id\}&payment=\$\{receipt\.paymentId\}/);
   assert.match(receiptHistory, /Corrections/);
   assert.match(receiptHistory, /snapshot\.landlordName/);
+});
+
+test("receipt modal supports safe close interactions and focus restoration", () => {
+  assert.match(sharedReceipt, /aria-modal="true"/);
+  assert.match(sharedReceipt, /event\.target === event\.currentTarget/);
+  assert.match(sharedReceipt, /event\.key === "Escape"/);
+  assert.match(sharedReceipt, /previousFocusRef\.current\?\.focus/);
+  assert.match(sharedReceipt, /Close Receipt/);
+  assert.match(sharedReceipt, /document\.body\.style\.overflow = "hidden"/);
+});
+
+test("receipt layout protects long values, coverage rows, and print scope", () => {
+  assert.match(sharedReceipt, /receipt-row-stacked/);
+  assert.match(sharedReceipt, /receipt-coverage-card/);
+  assert.match(sharedReceipt, /ReceiptMoneyRow/);
+  assert.match(sharedReceipt, /api\.qrserver\.com\/v1\/create-qr-code/);
+  assert.match(receiptStyles, /grid-template-columns: minmax\(0, 42%\) minmax\(0, 58%\)/);
+  assert.match(receiptStyles, /overflow-wrap: anywhere/);
+  assert.match(receiptStyles, /visibility: hidden !important/);
+  assert.match(receiptStyles, /#tenant-payment-receipt/);
 });
