@@ -227,8 +227,11 @@ export default function OfficeAccountManagementCentre({ company, initialFocus, r
                 fullName: String(formData.get("fullName") ?? ""),
                 email: String(formData.get("email") ?? ""),
                 pin: String(formData.get("pin") ?? ""),
+                confirmPin: String(formData.get("confirmPin") ?? ""),
                 officeId,
                 roleId,
+                accountType,
+                status: String(formData.get("status") ?? "active"),
             }),
             accountType === "admin" ? "Admin account created." : "Office account created.",
         );

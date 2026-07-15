@@ -10,8 +10,11 @@ type OfficeAccountInput = {
     fullName: string;
     email: string;
     pin: string;
+    confirmPin?: string;
     officeId: string;
     roleId: string;
+    accountType?: "office" | "admin";
+    status?: string;
 };
 
 type UpdateOfficeAccountInput = {
@@ -123,6 +126,20 @@ async function roleScope(supabase: Awaited<ReturnType<typeof createSupabaseServe
     return ["company_admin", "super_admin", "hq_executive"].includes(data?.key ?? "") ? "company" : "office";
 }
 
+async function defaultOfficeRoleId(companyId: string) {
+    const admin = createSupabaseAdminClient();
+    const { data, error } = await admin
+        .from("roles")
+        .select("id, company_id")
+        .eq("key", "office_manager")
+        .or(`company_id.eq.${companyId},company_id.is.null`)
+        .order("company_id", { ascending: false, nullsFirst: false })
+        .limit(1)
+        .maybeSingle();
+    if (error) throw new Error(error.message);
+    return data?.id ?? null;
+}
+
 async function assignRole(input: {
     companyId: string;
     officeId: string;
@@ -165,10 +182,15 @@ async function assignRole(input: {
 export async function createOfficeAccount(input: OfficeAccountInput) {
     const context = await requirePermission("settings.manage");
     if (!context.activeCompany?.id) throw new Error("Active company is required.");
+    if (typeof input.confirmPin === "string" && input.pin.trim() !== input.confirmPin.trim()) {
+        throw new Error("PIN confirmation does not match.");
+    }
     assertOfficePin(input.pin);
 
     const loginName = input.fullName.trim();
     const email = input.email.trim().toLowerCase() || suggestedLoginEmail(loginName, context.activeCompany.id);
+    const accountType = input.accountType ?? "office";
+    const status = input.status || "active";
     if (!loginName) throw new Error("Account name is required.");
     if (!input.officeId || !input.roleId) throw new Error("Office and role are required.");
 
@@ -187,7 +209,7 @@ export async function createOfficeAccount(input: OfficeAccountInput) {
         user_metadata: {
             full_name: loginName,
             default_office_id: input.officeId,
-            account_type: "office",
+            account_type: accountType,
             login_name: loginName,
         },
     });
@@ -202,13 +224,14 @@ export async function createOfficeAccount(input: OfficeAccountInput) {
         default_office_id: input.officeId,
         email,
         full_name: loginName,
-        status: "active",
+        account_type: accountType,
+        status,
         updated_at: new Date().toISOString(),
     });
 
     if (userError) throw new Error(userError.message);
 
-    await setPinCredential(authUser.user.id, input.pin, "active", context.profile?.id ?? null);
+    await setPinCredential(authUser.user.id, input.pin, status === "locked" ? "locked" : "active", context.profile?.id ?? null);
     const scope = await roleScope(supabase, input.roleId);
 
     await assignRole({
@@ -225,7 +248,7 @@ export async function createOfficeAccount(input: OfficeAccountInput) {
         user_id: authUser.user.id,
         event_type: "office_account_created",
         severity: "info",
-        metadata: { role_id: input.roleId, created_by: context.profile?.id ?? null },
+        metadata: { account_type: accountType, role_id: input.roleId, created_by: context.profile?.id ?? null },
     });
 
     await logUserAction({
@@ -460,11 +483,26 @@ export async function createOfficeWithLogin(input: OfficeWithLoginInput) {
     let createdUserId: string | null = null;
 
     const [{ data: existingOfficeByName }, { data: existingOfficeByCode }, { data: existingUserByEmail }, { data: existingUserByLogin }] = await Promise.all([
-        admin.from("offices").select("id").eq("company_id", companyId).ilike("office_name", officeName).limit(1).maybeSingle(),
-        admin.from("offices").select("id").eq("company_id", companyId).or(`office_code.eq.${officeCode},code.eq.${officeCode}`).limit(1).maybeSingle(),
+        admin.from("offices").select("id, office_name, name").eq("company_id", companyId).ilike("office_name", officeName).limit(1).maybeSingle(),
+        admin.from("offices").select("id, office_name, name").eq("company_id", companyId).or(`office_code.eq.${officeCode},code.eq.${officeCode}`).limit(1).maybeSingle(),
         admin.from("users").select("id").eq("company_id", companyId).eq("email", loginEmail).limit(1).maybeSingle(),
         admin.from("users").select("id").eq("company_id", companyId).ilike("full_name", loginName).limit(1).maybeSingle(),
     ]);
+    const existingOffice = existingOfficeByName ?? existingOfficeByCode ?? null;
+    if (existingOffice?.id) {
+        const [{ data: officeUsers }, { data: officeRoles }] = await Promise.all([
+            admin.from("users").select("id").eq("company_id", companyId).eq("default_office_id", existingOffice.id),
+            admin.from("user_office_roles").select("id").eq("company_id", companyId).eq("office_id", existingOffice.id),
+        ]);
+        const userIds = (officeUsers ?? []).map((user) => user.id);
+        const { data: pins } = userIds.length
+            ? await admin.from("pin_credentials").select("id, status").in("user_id", userIds)
+            : { data: [] as Array<{ id: string; status: string | null }> };
+        const incomplete = !officeUsers?.length || !officeRoles?.length || !(pins ?? []).some((pin) => pin.status !== "revoked");
+        if (incomplete) {
+            throw new Error("Incomplete office setup already exists. Open Incomplete Setups and complete the login instead.");
+        }
+    }
     if (existingOfficeByName?.id) throw new Error("Office name already exists.");
     if (existingOfficeByCode?.id) throw new Error("Office code already exists.");
     if (existingUserByEmail?.id || existingUserByLogin?.id) throw new Error("Login name already exists.");
@@ -489,13 +527,7 @@ export async function createOfficeWithLogin(input: OfficeWithLoginInput) {
         if (officeError || !office?.id) throw new Error(officeError?.message ?? "Office was not created because office setup failed.");
         createdOfficeId = office.id;
 
-        const { data: role } = await admin
-            .from("roles")
-            .select("id")
-            .eq("company_id", companyId)
-            .eq("key", "office_manager")
-            .maybeSingle();
-        const fallbackRoleId = role?.id ?? "";
+        const fallbackRoleId = await defaultOfficeRoleId(companyId) ?? "";
         if (!fallbackRoleId) throw new Error("Office Manager role is missing. Apply default roles migration first.");
 
         const { data: authUser, error: authError } = await admin.auth.admin.createUser({
@@ -572,6 +604,14 @@ export async function createOfficeWithLogin(input: OfficeWithLoginInput) {
             createdBy: context.profile?.full_name ?? context.profile?.email ?? "Admin",
         };
     } catch (error) {
+        console.error("createOfficeWithLogin failed", {
+            message: error instanceof Error ? error.message : String(error),
+            officeName,
+            officeCode,
+            loginName,
+            createdOfficeId,
+            createdUserId,
+        });
         if (createdUserId) {
             await admin.auth.admin.deleteUser(createdUserId).catch(() => undefined);
             await ignoreCleanupError(admin.from("users").delete().eq("id", createdUserId));

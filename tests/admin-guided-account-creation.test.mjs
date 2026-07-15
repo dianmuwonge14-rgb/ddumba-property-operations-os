@@ -19,12 +19,15 @@ test("admin office creation is guided and requires login credentials before comp
 
 test("office creation action creates office and login together with rollback cleanup", () => {
   assert.match(actionSource, /export async function createOfficeWithLogin/);
+  assert.match(actionSource, /defaultOfficeRoleId/);
+  assert.match(actionSource, /company_id\.is\.null/);
   assert.match(actionSource, /admin\.auth\.admin\.createUser/);
   assert.match(actionSource, /setPinCredential/);
   assert.match(actionSource, /assignRole/);
   assert.match(actionSource, /office_created_with_login/);
   assert.match(actionSource, /ignoreCleanupError/);
   assert.match(actionSource, /deleteUser/);
+  assert.match(actionSource, /createOfficeWithLogin failed/);
   assert.match(actionSource, /Office was not created because login setup failed/);
 });
 
@@ -40,10 +43,13 @@ test("incomplete office setups are surfaced instead of duplicating offices", () 
   assert.match(centreSource, /Nakiwogo was found in Incomplete Setup/);
   assert.match(centreSource, /Complete Setup/);
   assert.match(centreSource, /instead of creating a duplicate office/i);
+  assert.match(actionSource, /Incomplete office setup already exists/);
 });
 
 test("six digit PIN rule applies to office and collector creation", () => {
   assert.match(actionSource, /function assertOfficePin/);
   assert.match(actionSource, /\/\^\\d\{6\}\$\//);
+  assert.match(actionSource, /PIN confirmation does not match/);
+  assert.match(centreSource, /confirmPin: String\(formData\.get\("confirmPin"\)/);
   assert.match(collectorActionSource, /PIN must contain exactly six digits/);
 });
