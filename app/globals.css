@@ -20,6 +20,10 @@ html {
   --font-geist-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-geist-mono: "SFMono-Regular", "Roboto Mono", Consolas, "Liberation Mono", Menlo, monospace;
   --app-header-offset: 9.75rem;
+  --enterprise-canvas-max: 1600px;
+  --enterprise-page-padding: clamp(12px, 1.7vw, 24px);
+  --enterprise-section-gap: clamp(14px, 1.7vw, 22px);
+  --enterprise-card-gap: clamp(12px, 1.4vw, 18px);
   --sticky-header-bg:
     linear-gradient(135deg, rgba(2, 6, 23, 0.99) 0%, rgba(15, 23, 42, 0.98) 48%, rgba(17, 24, 39, 0.98) 100%);
   --sticky-header-border: rgba(148, 163, 184, 0.28);
@@ -209,9 +213,9 @@ th {
 }
 
 .enterprise-shell {
-  width: min(1800px, 100%);
+  width: min(var(--enterprise-canvas-max), 100%);
   margin: 0 auto;
-  padding: clamp(14px, 3vw, 24px);
+  padding: var(--enterprise-page-padding);
   position: relative;
   z-index: 1;
 }
@@ -223,8 +227,79 @@ th {
   min-width: 0;
 }
 
+.office-main-content {
+  display: flow-root;
+}
+
+.office-main-content > main:not(.enterprise-page):not(.collector-page-shell) {
+  width: min(var(--enterprise-canvas-max), 100%);
+  max-width: var(--enterprise-canvas-max) !important;
+  margin-inline: auto;
+  padding-inline: var(--enterprise-page-padding);
+}
+
+.enterprise-shell,
+.enterprise-shell > *,
+.office-main-content > *,
+.collector-page-shell,
+.collector-page-body,
+.enterprise-card,
+.enterprise-panel,
+.enterprise-dark-panel {
+  min-width: 0;
+}
+
+.enterprise-shell > .mx-auto[class*="max-w-"],
+.enterprise-shell > section.mx-auto[class*="max-w-"],
+.enterprise-shell > div.mx-auto[class*="max-w-"],
+.enterprise-shell > article.mx-auto[class*="max-w-"],
+.enterprise-shell > main.mx-auto[class*="max-w-"] {
+  width: 100%;
+  max-width: var(--enterprise-canvas-max) !important;
+}
+
+.enterprise-shell > section + section,
+.enterprise-shell > div + section,
+.enterprise-shell > section + div,
+.enterprise-shell > div + div {
+  margin-top: min(var(--enterprise-section-gap), 1.375rem);
+}
+
+.enterprise-shell .grid,
+.enterprise-shell .flex,
+.office-main-content .grid,
+.office-main-content .flex {
+  min-width: 0;
+}
+
+.enterprise-shell .grid > *,
+.office-main-content .grid > *,
+.collector-page-body .grid > * {
+  min-width: 0;
+}
+
+.enterprise-kpi-grid,
+.enterprise-card-grid {
+  display: grid;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+  gap: var(--enterprise-card-gap);
+}
+
+.enterprise-balanced-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--enterprise-section-gap);
+}
+
+.enterprise-tight-stack {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--enterprise-section-gap);
+}
+
 .collector-account-scope {
-  --collector-shell-width: min(1680px, 100%);
+  --collector-shell-width: min(var(--enterprise-canvas-max), 100%);
   --collector-card-radius: clamp(18px, 2.4vw, 28px);
 }
 
@@ -407,7 +482,32 @@ th {
 
 @media (min-width: 1024px) {
   .enterprise-shell {
-    padding: 32px;
+    padding: var(--enterprise-page-padding);
+  }
+}
+
+@media (min-width: 640px) {
+  .enterprise-kpi-grid,
+  .enterprise-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .enterprise-balanced-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1180px) {
+  .enterprise-kpi-grid,
+  .enterprise-card-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1440px) {
+  .enterprise-kpi-grid,
+  .enterprise-card-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
@@ -731,7 +831,7 @@ textarea:focus {
   }
 
   .enterprise-shell {
-    padding: 12px;
+    padding: var(--enterprise-page-padding);
   }
 
   .enterprise-card,

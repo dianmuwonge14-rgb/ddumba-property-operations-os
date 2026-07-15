@@ -91,7 +91,7 @@ export function CommandHeader({
     children?: React.ReactNode;
 }) {
     return (
-        <div className="relative z-10 mb-8 overflow-hidden rounded-[32px] border border-white/10 bg-slate-950/88 p-5 text-white shadow-2xl shadow-black/35 backdrop-blur-2xl sm:p-6 2xl:flex 2xl:items-end 2xl:justify-between 2xl:gap-6">
+        <div className="relative z-10 mb-5 overflow-hidden rounded-[28px] border border-white/10 bg-slate-950/88 p-5 text-white shadow-2xl shadow-black/35 backdrop-blur-2xl sm:p-6 2xl:flex 2xl:items-end 2xl:justify-between 2xl:gap-6">
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_0%,rgba(59,130,246,0.38),transparent_30%),radial-gradient(circle_at_92%_18%,rgba(20,184,166,0.22),transparent_26%),linear-gradient(135deg,rgba(255,255,255,0.08),transparent_38%)]" />
             <div className="relative min-w-0">
                 <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-black uppercase text-cyan-100 shadow-sm sm:text-xs">
