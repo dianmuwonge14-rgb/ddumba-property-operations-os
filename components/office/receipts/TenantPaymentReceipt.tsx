@@ -14,6 +14,12 @@ export type TenantReceiptViewModel = {
 
 type ReceiptAction = () => void | Promise<void>;
 
+const RECEIPT_EXPORT_ROOT_ID = "tenant-payment-receipt-export";
+const RECEIPT_SCREEN_ID = "tenant-payment-receipt";
+const RECEIPT_PRINT_CLASS = "print-tenant-payment-receipt";
+const RECEIPT_PDF_EXPORT_CLASS = "receipt-pdf-export-sandbox";
+const MM_TO_PT = 72 / 25.4;
+
 type ModalProps = {
     actionExtras?: React.ReactNode;
     downloadDisabled?: boolean;
@@ -58,12 +64,198 @@ function receiptVerificationUrl(receipt: TenantReceiptViewModel) {
 }
 
 export function printTenantPaymentReceipt(afterPrint?: () => void) {
-    document.body.classList.add("print-tenant-payment-receipt");
+    const exportRoot = document.getElementById(RECEIPT_EXPORT_ROOT_ID);
+    if (!exportRoot) {
+        window.alert("Receipt could not be printed because the receipt export area is not ready.");
+        return;
+    }
+    document.body.classList.add(RECEIPT_PRINT_CLASS);
     window.print();
     window.setTimeout(() => {
-        document.body.classList.remove("print-tenant-payment-receipt");
+        document.body.classList.remove(RECEIPT_PRINT_CLASS);
         afterPrint?.();
     }, 500);
+}
+
+export async function downloadTenantPaymentReceiptPdf(fileName = "tenant-payment-receipt.pdf") {
+    const source = document.getElementById(RECEIPT_EXPORT_ROOT_ID);
+    if (!source) throw new Error("Receipt PDF could not be created because the receipt export area is not ready.");
+
+    const sandbox = document.createElement("div");
+    sandbox.className = RECEIPT_PDF_EXPORT_CLASS;
+    sandbox.setAttribute("aria-hidden", "true");
+    const clone = source.cloneNode(true) as HTMLElement;
+    clone.id = `${RECEIPT_EXPORT_ROOT_ID}-pdf-source`;
+    sandbox.appendChild(clone);
+    document.body.appendChild(sandbox);
+
+    try {
+        await waitForReceiptAssets(clone);
+        const widthPx = Math.ceil(clone.scrollWidth || clone.getBoundingClientRect().width);
+        const heightPx = Math.ceil(clone.scrollHeight || clone.getBoundingClientRect().height);
+        const canvas = await renderReceiptElementToCanvas(clone, widthPx, heightPx);
+        const jpegData = canvas.toDataURL("image/jpeg", 0.94).split(",")[1] ?? "";
+        const receiptHeightMm = Math.max(1, (heightPx / Math.max(widthPx, 1)) * 80);
+        const pdf = createSingleImagePdf({
+            imageBase64: jpegData,
+            imageHeightPx: canvas.height,
+            imageWidthPx: canvas.width,
+            pageHeightPt: receiptHeightMm * MM_TO_PT,
+            pageWidthPt: 80 * MM_TO_PT,
+        });
+        downloadBlob(pdf, sanitizePdfFileName(fileName));
+    } finally {
+        sandbox.remove();
+    }
+}
+
+async function waitForReceiptAssets(root: HTMLElement) {
+    await document.fonts?.ready?.catch(() => undefined);
+    const images = Array.from(root.querySelectorAll("img"));
+    await Promise.all(images.map(async (image) => {
+        if (image.complete && image.naturalWidth > 0) return;
+        await new Promise<void>((resolve) => {
+            image.addEventListener("load", () => resolve(), { once: true });
+            image.addEventListener("error", () => resolve(), { once: true });
+        });
+    }));
+}
+
+async function renderReceiptElementToCanvas(element: HTMLElement, widthPx: number, heightPx: number) {
+    await inlineReceiptImages(element);
+    const scale = Math.max(2, Math.min(3, window.devicePixelRatio || 2));
+    const styleText = receiptExportStyleText();
+    const html = `<style>${styleText}</style>${element.outerHTML}`;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${widthPx}" height="${heightPx}" viewBox="0 0 ${widthPx} ${heightPx}"><foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml">${html}</div></foreignObject></svg>`;
+    const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+    try {
+        const image = await loadImage(url);
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.ceil(widthPx * scale);
+        canvas.height = Math.ceil(heightPx * scale);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("Receipt PDF renderer could not start.");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.scale(scale, scale);
+        ctx.drawImage(image, 0, 0, widthPx, heightPx);
+        return canvas;
+    } finally {
+        URL.revokeObjectURL(url);
+    }
+}
+
+async function inlineReceiptImages(root: HTMLElement) {
+    const images = Array.from(root.querySelectorAll("img"));
+    await Promise.all(images.map(async (image) => {
+        const src = image.getAttribute("src");
+        if (!src || src.startsWith("data:")) return;
+        try {
+            const response = await fetch(src, { mode: "cors" });
+            if (!response.ok) return;
+            const blob = await response.blob();
+            const dataUrl = await blobToDataUrl(blob);
+            image.setAttribute("src", dataUrl);
+        } catch {
+            // Keep the visible image source if the QR provider cannot be inlined.
+        }
+    }));
+    await waitForReceiptAssets(root);
+}
+
+function loadImage(src: string) {
+    return new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error("Receipt PDF image could not be rendered."));
+        image.src = src;
+    });
+}
+
+function blobToDataUrl(blob: Blob) {
+    return new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error ?? new Error("Receipt image could not be prepared."));
+        reader.readAsDataURL(blob);
+    });
+}
+
+function receiptExportStyleText() {
+    const styleText = Array.from(document.styleSheets)
+        .map((sheet) => {
+            try {
+                return Array.from(sheet.cssRules).map((rule) => rule.cssText).join("\n");
+            } catch {
+                return "";
+            }
+        })
+        .join("\n");
+    return `${styleText}\nbody{margin:0;background:white}.tenant-receipt-slip{margin:0!important;box-shadow:none!important}`;
+}
+
+function createSingleImagePdf({ imageBase64, imageHeightPx, imageWidthPx, pageHeightPt, pageWidthPt }: {
+    imageBase64: string;
+    imageHeightPx: number;
+    imageWidthPx: number;
+    pageHeightPt: number;
+    pageWidthPt: number;
+}) {
+    const imageBytes = base64ToBytes(imageBase64);
+    const imageBuffer = imageBytes.buffer.slice(imageBytes.byteOffset, imageBytes.byteOffset + imageBytes.byteLength);
+    const chunks: Array<string | ArrayBuffer> = [];
+    const offsets: number[] = [];
+    let length = 0;
+    const push = (chunk: string | ArrayBuffer) => {
+        chunks.push(chunk);
+        length += typeof chunk === "string" ? chunk.length : chunk.byteLength;
+    };
+    const object = (body: string | ArrayBuffer, prefix: string, suffix = "\nendobj\n") => {
+        offsets.push(length);
+        push(prefix);
+        push(body);
+        push(suffix);
+    };
+
+    push("%PDF-1.4\n");
+    object("<< /Type /Catalog /Pages 2 0 R >>\n", "1 0 obj\n");
+    object("<< /Type /Pages /Kids [3 0 R] /Count 1 >>\n", "2 0 obj\n");
+    object(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${fixed(pageWidthPt)} ${fixed(pageHeightPt)}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>\n`, "3 0 obj\n");
+    object(imageBuffer, `4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${imageWidthPx} /Height ${imageHeightPx} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${imageBytes.byteLength} >>\nstream\n`, "\nendstream\nendobj\n");
+    const content = `q\n${fixed(pageWidthPt)} 0 0 ${fixed(pageHeightPt)} 0 0 cm\n/Im0 Do\nQ\n`;
+    object(content, `5 0 obj\n<< /Length ${content.length} >>\nstream\n`, "endstream\nendobj\n");
+    const xrefOffset = length;
+    push(`xref\n0 ${offsets.length + 1}\n0000000000 65535 f \n`);
+    for (const offset of offsets) push(`${String(offset).padStart(10, "0")} 00000 n \n`);
+    push(`trailer\n<< /Size ${offsets.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
+    return new Blob(chunks, { type: "application/pdf" });
+}
+
+function base64ToBytes(base64: string) {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return bytes;
+}
+
+function fixed(value: number) {
+    return Number(value).toFixed(2);
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 500);
+}
+
+function sanitizePdfFileName(fileName: string) {
+    const clean = fileName.replace(/[^\w.-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+    return clean.toLowerCase().endsWith(".pdf") ? clean : `${clean || "tenant-payment-receipt"}.pdf`;
 }
 
 export function TenantPaymentReceiptModal({
@@ -109,13 +301,13 @@ export function TenantPaymentReceiptModal({
     return (
         <div
             aria-modal="true"
-            className="tenant-receipt-modal fixed inset-0 z-[140] overflow-y-auto bg-slate-950/82 p-3 backdrop-blur-md sm:p-5 print:static print:bg-white print:p-0"
+            className="tenant-receipt-modal receipt-modal-backdrop fixed inset-0 z-[140] overflow-y-auto bg-slate-950/82 p-3 backdrop-blur-md sm:p-5 print:static print:bg-white print:p-0"
             onMouseDown={closeFromBackdrop}
             role="dialog"
         >
             <div className="tenant-receipt-modal-panel mx-auto flex min-h-full w-full max-w-5xl items-start justify-center py-2 sm:py-4 print:block print:min-h-0 print:max-w-none print:p-0">
                 <div className="w-full rounded-[28px] border border-white/10 bg-white p-3 text-slate-950 shadow-2xl sm:p-4 print:w-auto print:rounded-none print:border-0 print:bg-white print:p-0 print:shadow-none">
-                    <div className="tenant-receipt-actions sticky top-2 z-10 mb-3 rounded-[22px] border border-slate-200 bg-white/95 p-3 shadow-lg shadow-slate-900/10 backdrop-blur print:hidden">
+                    <div className="tenant-receipt-actions receipt-action-bar receipt-preview-controls receipt-modal-header sticky top-2 z-10 mb-3 rounded-[22px] border border-slate-200 bg-white/95 p-3 shadow-lg shadow-slate-900/10 backdrop-blur print:hidden">
                         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                             <div className="min-w-0">
                                 <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">{title}</p>
@@ -133,7 +325,7 @@ export function TenantPaymentReceiptModal({
                                         <Mail size={15} /> Send E-Receipt
                                     </button>
                                 ) : null}
-                                <button ref={closeButtonRef} type="button" onClick={onClose} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800">
+                                <button ref={closeButtonRef} type="button" onClick={onClose} className="receipt-close-button inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800">
                                     <X size={15} /> Close Receipt
                                 </button>
                             </div>
@@ -161,7 +353,8 @@ export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptVi
     const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=128x128&margin=10&data=${encodeURIComponent(receiptVerificationUrl(receipt))}`;
 
     return (
-        <article id="tenant-payment-receipt" className="tenant-receipt-slip mx-auto bg-white text-slate-950">
+        <article id={RECEIPT_EXPORT_ROOT_ID} className="tenant-receipt-export-root">
+        <div id={RECEIPT_SCREEN_ID} className="tenant-receipt-slip mx-auto bg-white text-slate-950">
             <header className="receipt-section text-center">
                 <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-full border border-slate-900 bg-slate-950 text-[13px] font-black text-white print:bg-white print:text-black">DD</div>
                 <h3 className="mt-1.5 text-[15px] font-black leading-tight">{safeText(snapshot.companyName) ?? "DDUMBA OS"}</h3>
@@ -218,10 +411,11 @@ export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptVi
             </section>
 
             <footer className="receipt-section text-center">
-                <img alt={`Receipt QR ${receipt.verificationCode}`} className="receipt-qr mx-auto" src={qrUrl} />
+                <img alt={`Receipt QR ${receipt.verificationCode}`} className="receipt-qr mx-auto" crossOrigin="anonymous" src={qrUrl} />
                 <p className="mt-2 text-[9px] font-black uppercase tracking-wide">Thank you for your payment</p>
                 <p className="receipt-muted mt-1 text-[8px] font-bold leading-tight">Generated from the saved DDUMBA OS Supabase transaction. Keep this slip for tenant, office, collector, and audit verification.</p>
             </footer>
+        </div>
         </article>
     );
 }

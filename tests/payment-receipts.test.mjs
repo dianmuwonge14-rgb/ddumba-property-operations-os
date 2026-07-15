@@ -44,6 +44,7 @@ test("payment entry shows receipt confirmation actions after successful payment"
   assert.match(paymentEntry, /ReceiptConfirmationModal/);
   assert.match(paymentEntry, /TenantPaymentReceiptModal/);
   assert.match(sharedReceipt, /PAYMENT RECORDED SUCCESSFULLY/);
+  assert.match(sharedReceipt, /tenant-payment-receipt-export/);
   assert.match(sharedReceipt, /tenant-payment-receipt/);
   assert.match(sharedReceipt, /tenant-receipt-slip/);
   assert.match(sharedReceipt, /Print Receipt/);
@@ -59,6 +60,7 @@ test("tenant receipts include supermarket-style coverage and print scope", () =>
   assert.match(receiptService, /amountAppliedToCurrentRent/);
   assert.match(receiptService, /advanceAmount/);
   assert.match(receiptStyles, /print-tenant-payment-receipt/);
+  assert.match(receiptStyles, /#tenant-payment-receipt-export/);
   assert.match(receiptStyles, /size: 80mm auto/);
   assert.match(receiptStyles, /receipt-paper-58mm/);
   assert.doesNotMatch(sharedReceipt, /Company contact not set/);
@@ -66,6 +68,7 @@ test("tenant receipts include supermarket-style coverage and print scope", () =>
 
 test("receipt history can preview and reprint only the saved receipt slip", () => {
   assert.match(receiptHistory, /TenantPaymentReceiptModal/);
+  assert.match(receiptHistory, /downloadTenantPaymentReceiptPdf/);
   assert.match(receiptHistory, /receipt=\$\{receipt\.id\}&payment=\$\{receipt\.paymentId\}/);
   assert.match(receiptHistory, /Corrections/);
   assert.match(receiptHistory, /snapshot\.landlordName/);
@@ -88,5 +91,28 @@ test("receipt layout protects long values, coverage rows, and print scope", () =
   assert.match(receiptStyles, /grid-template-columns: minmax\(0, 42%\) minmax\(0, 58%\)/);
   assert.match(receiptStyles, /overflow-wrap: anywhere/);
   assert.match(receiptStyles, /visibility: hidden !important/);
-  assert.match(receiptStyles, /#tenant-payment-receipt/);
+  assert.match(receiptStyles, /#tenant-payment-receipt-export/);
+  assert.match(receiptStyles, /receipt-preview-controls/);
+  assert.match(receiptStyles, /receipt-action-bar/);
+});
+
+test("receipt PDF export targets only the dedicated receipt root", () => {
+  assert.match(sharedReceipt, /downloadTenantPaymentReceiptPdf/);
+  assert.match(sharedReceipt, /document\.getElementById\(RECEIPT_EXPORT_ROOT_ID\)/);
+  assert.match(sharedReceipt, /RECEIPT_PDF_EXPORT_CLASS/);
+  assert.match(sharedReceipt, /receipt-pdf-export-sandbox/);
+  assert.match(sharedReceipt, /createSingleImagePdf/);
+  assert.match(sharedReceipt, /pageWidthPt: 80 \* MM_TO_PT/);
+  assert.match(sharedReceipt, /receiptHeightMm \* MM_TO_PT/);
+  assert.doesNotMatch(sharedReceipt, /document\.body\.cloneNode/);
+  assert.doesNotMatch(sharedReceipt, /html2canvas\(document\.body/);
+});
+
+test("receipt print and PDF exports omit page chrome and modal controls", () => {
+  assert.match(receiptStyles, /body\.print-tenant-payment-receipt \*/);
+  assert.match(receiptStyles, /#tenant-payment-receipt-export,\s*\n\s*body\.print-tenant-payment-receipt #tenant-payment-receipt-export \*/);
+  assert.match(receiptStyles, /\.receipt-pdf-export-sandbox/);
+  assert.match(receiptStyles, /body\.print-tenant-payment-receipt \.receipt-preview-controls/);
+  assert.match(receiptStyles, /body\.print-tenant-payment-receipt \.receipt-close-button/);
+  assert.match(receiptStyles, /body\.print-tenant-payment-receipt \.receipt-action-bar/);
 });

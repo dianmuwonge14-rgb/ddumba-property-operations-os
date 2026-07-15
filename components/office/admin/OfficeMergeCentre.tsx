@@ -1,8 +1,7 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState } from "react";
 import { AlertTriangle, Archive, Building2, CheckCircle2, GitMerge, Loader2, ShieldCheck, XCircle } from "lucide-react";
-import { executeOfficeMerge } from "@/app/actions/office-merge";
 import { StatusChip } from "@/components/office/shared/EnterpriseUI";
 import { COUNT_TABLES } from "@/lib/office-merge/constants";
 import type { OfficeMergeData, OfficeMergeSourceOffice } from "@/lib/office-merge/types";
@@ -11,7 +10,26 @@ type Props = {
     data: OfficeMergeData;
 };
 
-type MergeResult = Awaited<ReturnType<typeof executeOfficeMerge>>;
+type MergeResult = {
+    accountsReassigned: number;
+    batchId: string;
+    destinationOfficeName: string;
+    mergeReference: string;
+    mergedAt: string;
+    sourceOfficeName: string;
+    sourceStatus: string;
+    transferredCounts: Record<string, number>;
+};
+
+type OfficeMergeApiResponse = {
+    code?: string;
+    destinationOfficeName?: string;
+    durationMs?: number;
+    message?: string;
+    results?: Array<Omit<MergeResult, "destinationOfficeName">>;
+    stage?: string;
+    success: boolean;
+};
 
 function money(value: number) {
     return `UGX ${Math.round(Number.isFinite(value) ? value : 0).toLocaleString()}`;
@@ -30,7 +48,8 @@ export default function OfficeMergeCentre({ data }: Props) {
     const [showConfirm, setShowConfirm] = useState(false);
     const [message, setMessage] = useState<{ tone: "success" | "error" | "info"; text: string } | null>(null);
     const [mergeResult, setMergeResult] = useState<MergeResult | null>(null);
-    const [isPending, startTransition] = useTransition();
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [progressText, setProgressText] = useState<string | null>(null);
 
     const sourceOffice = useMemo(() => data.offices.find((office) => office.id === sourceOfficeId) ?? null, [data.offices, sourceOfficeId]);
     const destinationOffice = useMemo(() => data.offices.find((office) => office.id === destinationOfficeId) ?? null, [data.offices, destinationOfficeId]);
@@ -49,7 +68,7 @@ export default function OfficeMergeCentre({ data }: Props) {
     }, [destinationOffice, destinationOfficeId, sourceOffice, sourceOfficeId]);
 
     const confirmIsValid = Boolean(sourceOffice && [sourceOffice.name.toUpperCase(), "MERGE"].includes(confirmation.trim().toUpperCase()));
-    const canOpenConfirmation = !validationMessage && !isPending;
+    const canOpenConfirmation = !validationMessage && !isSubmitting;
     const canExecute = canOpenConfirmation && confirmIsValid;
 
     function openConfirmation() {
@@ -62,33 +81,65 @@ export default function OfficeMergeCentre({ data }: Props) {
         setShowConfirm(true);
     }
 
-    function submitMerge() {
+    async function submitMerge() {
         if (!sourceOffice || !destinationOffice) {
             setMessage({ tone: "error", text: "Select a source and destination office before merging." });
             return;
         }
         setMessage(null);
-        startTransition(async () => {
-            try {
-                const result = await executeOfficeMerge({
-                    sourceOfficeId,
+        setIsSubmitting(true);
+        setProgressText("Starting merge request...");
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 65000);
+        try {
+            const response = await fetch("/api/admin/office-merge", {
+                body: JSON.stringify({
+                    confirmation,
                     destinationOfficeId,
                     reasonNote,
-                    confirmation,
+                    sourceOfficeId,
                     userHandling,
-                    affectedCounts: {
-                        ...affectedCounts,
-                        rentRoll,
-                        sourceOffices: 1,
-                    },
-                });
-                setMergeResult(result);
-                setShowConfirm(false);
-                setMessage({ tone: "success", text: "Office merge completed successfully." });
-            } catch (error) {
-                setMessage({ tone: "error", text: error instanceof Error ? error.message : "Office merge failed. No records were changed." });
+                }),
+                credentials: "same-origin",
+                headers: { "content-type": "application/json" },
+                method: "POST",
+                signal: controller.signal,
+            });
+            const payload = await response.json().catch(() => null) as OfficeMergeApiResponse | null;
+            if (!response.ok || !payload?.success) {
+                const messageText = payload?.message
+                    ? `${payload.message}${payload.stage ? ` Stage: ${payload.stage}.` : ""}${payload.code ? ` Reference: ${payload.code}.` : ""}`
+                    : response.status === 401
+                        ? "Your Admin session expired. Please sign in again."
+                        : "The server could not start the merge request. No records were changed.";
+                setMessage({ tone: "error", text: messageText });
+                return;
             }
-        });
+            const result = payload.results?.[0];
+            if (!result) {
+                setMessage({ tone: "error", text: "The merge completed but did not return a merge batch reference." });
+                return;
+            }
+            setMergeResult({
+                ...result,
+                destinationOfficeName: payload.destinationOfficeName ?? destinationOffice.name,
+            });
+            setShowConfirm(false);
+            setMessage({ tone: "success", text: `Office merge completed successfully in ${Math.max(1, Math.round(Number(payload.durationMs ?? 0) / 1000))}s.` });
+        } catch (error) {
+            const text = error instanceof DOMException && error.name === "AbortError"
+                ? "The merge request timed out before the browser received a response. Check Recent Merge Batches before retrying."
+                : error instanceof TypeError
+                    ? "Network connection failed while starting the merge. Check your connection, then retry or inspect Recent Merge Batches."
+                    : error instanceof Error
+                        ? error.message
+                        : "Office merge failed. No records were changed.";
+            setMessage({ tone: "error", text });
+        } finally {
+            window.clearTimeout(timeout);
+            setIsSubmitting(false);
+            setProgressText(null);
+        }
     }
 
     function reset() {
@@ -184,7 +235,7 @@ export default function OfficeMergeCentre({ data }: Props) {
                                 </label>
                             </div>
                             <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
-                                <button type="button" onClick={reset} disabled={isPending} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 disabled:opacity-50">
+                                <button type="button" onClick={reset} disabled={isSubmitting} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 disabled:opacity-50">
                                     <XCircle size={16} /> Clear Selection
                                 </button>
                                 <button type="button" onClick={openConfirmation} disabled={!canOpenConfirmation} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white shadow-lg shadow-slate-300 disabled:cursor-not-allowed disabled:bg-slate-300">
@@ -285,15 +336,15 @@ export default function OfficeMergeCentre({ data }: Props) {
             </div>
 
             {showConfirm && sourceOffice && destinationOffice ? (
-                <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/70 p-4 backdrop-blur-sm" onClick={(event) => event.target === event.currentTarget && !isPending ? setShowConfirm(false) : null}>
+                <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/70 p-4 backdrop-blur-sm" onClick={(event) => event.target === event.currentTarget && !isSubmitting ? setShowConfirm(false) : null}>
                     <section className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-[2rem] border border-white/20 bg-white p-5 shadow-2xl">
                         <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-start sm:justify-between">
                             <div>
                                 <p className="text-xs font-black uppercase tracking-[0.2em] text-red-600">Final confirmation</p>
                                 <h2 className="text-2xl font-black text-slate-950">Merge {sourceOffice.name} into {destinationOffice.name}?</h2>
-                                <p className="mt-1 text-sm font-bold text-slate-500">This will send one server request and run the merge inside a database transaction.</p>
+                                <p className="mt-1 text-sm font-bold text-slate-500">This sends only office IDs to the server. The server reloads live Supabase data and runs the merge transaction.</p>
                             </div>
-                            <button type="button" onClick={() => setShowConfirm(false)} disabled={isPending} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 disabled:opacity-50">
+                            <button type="button" onClick={() => setShowConfirm(false)} disabled={isSubmitting} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 disabled:opacity-50">
                                 <XCircle size={16} /> Cancel
                             </button>
                         </div>
@@ -316,13 +367,21 @@ export default function OfficeMergeCentre({ data }: Props) {
                             </div>
                         </div>
                         {message?.tone === "error" ? <Message tone={message.tone} text={message.text} /> : null}
+                        {progressText ? (
+                            <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm font-black text-blue-900">
+                                <div className="flex items-center gap-2">
+                                    <Loader2 className="animate-spin" size={16} />
+                                    {progressText}
+                                </div>
+                            </div>
+                        ) : null}
                         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
-                            <button type="button" onClick={() => setShowConfirm(false)} disabled={isPending} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 disabled:opacity-50">
+                            <button type="button" onClick={() => setShowConfirm(false)} disabled={isSubmitting} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 disabled:opacity-50">
                                 Cancel
                             </button>
-                            <button type="button" onClick={submitMerge} disabled={!canExecute || isPending} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-emerald-200 disabled:cursor-not-allowed disabled:bg-slate-300">
-                                {isPending ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-                                {isPending ? "Merging offices..." : "Confirm Office Merge"}
+                            <button type="button" onClick={submitMerge} disabled={!canExecute || isSubmitting} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow-lg shadow-emerald-200 disabled:cursor-not-allowed disabled:bg-slate-300">
+                                {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+                                {isSubmitting ? "Starting merge..." : "Confirm Office Merge"}
                             </button>
                         </div>
                     </section>

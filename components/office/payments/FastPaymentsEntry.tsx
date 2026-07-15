@@ -8,7 +8,7 @@ import { recordCollectorPayment } from "@/app/actions/collectors";
 import { logReceiptPrintOrDownload, logReceiptShareLink, sendReceiptByEmail } from "@/app/actions/receipts";
 import { replaceTenantFromPaymentsEntry } from "@/app/actions/room-occupancy";
 import { vacateTenant } from "@/app/actions/tenants";
-import { printTenantPaymentReceipt, TenantPaymentReceiptModal } from "@/components/office/receipts/TenantPaymentReceipt";
+import { downloadTenantPaymentReceiptPdf, printTenantPaymentReceipt, TenantPaymentReceiptModal } from "@/components/office/receipts/TenantPaymentReceipt";
 import TenantContactCard from "@/components/office/shared/TenantContactCard";
 import type { AdvanceRentAssistantItem, CollectionTenantResult, FastPaymentRecentItem, FastPaymentRecentTotals } from "@/lib/collections/types";
 import type { Company, Office, UserProfile } from "@/lib/auth/types";
@@ -1157,8 +1157,12 @@ function ReceiptConfirmationModal({
     };
     const downloadPdf = () => {
         startReceiptTransition(async () => {
-            await logReceiptPrintOrDownload({ channel: "download_pdf", receiptId: receipt.id }).catch(() => null);
-            printTenantPaymentReceipt();
+            try {
+                await logReceiptPrintOrDownload({ channel: "download_pdf", receiptId: receipt.id }).catch(() => null);
+                await downloadTenantPaymentReceiptPdf(`${receipt.receiptNumber}.pdf`);
+            } catch (error) {
+                onChange({ ...modal, message: error instanceof Error ? error.message : "Receipt PDF could not be downloaded." });
+            }
         });
     };
     const sendEmail = () => {

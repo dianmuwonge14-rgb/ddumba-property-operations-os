@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Download, Eye, History, Mail, Printer, ReceiptText, Search } from "lucide-react";
 import { logReceiptPrintOrDownload } from "@/app/actions/receipts";
-import { printTenantPaymentReceipt, TenantPaymentReceiptModal } from "@/components/office/receipts/TenantPaymentReceipt";
+import { downloadTenantPaymentReceiptPdf, printTenantPaymentReceipt, TenantPaymentReceiptModal } from "@/components/office/receipts/TenantPaymentReceipt";
 import type { ReceiptHistoryItem } from "@/lib/receipts/data";
 
 type Props = {
@@ -46,8 +46,12 @@ export default function ReceiptHistoryConsole({ error, receipts }: Props) {
         void logReceiptPrintOrDownload({ channel, receiptId: receipt.id });
         setSelected(receipt);
         window.setTimeout(() => {
-            printTenantPaymentReceipt(channel === "print" ? () => setSelected(null) : undefined);
-        }, 50);
+            if (channel === "print") {
+                printTenantPaymentReceipt(() => setSelected(null));
+                return;
+            }
+            void downloadTenantPaymentReceiptPdf(`${receipt.receiptNumber}.pdf`);
+        }, 80);
     };
 
     return (
