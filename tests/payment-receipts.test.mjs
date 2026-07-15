@@ -8,6 +8,8 @@ const collectionsAction = readFileSync(new URL("../app/actions/collections.ts", 
 const expensesAction = readFileSync(new URL("../app/actions/expenses.ts", import.meta.url), "utf8");
 const landlordsAction = readFileSync(new URL("../app/actions/landlords.ts", import.meta.url), "utf8");
 const paymentEntry = readFileSync(new URL("../components/office/payments/FastPaymentsEntry.tsx", import.meta.url), "utf8");
+const receiptHistory = readFileSync(new URL("../components/office/receipts/ReceiptHistoryConsole.tsx", import.meta.url), "utf8");
+const receiptStyles = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 
 test("payment receipt schema prevents duplicate receipts per transaction", () => {
   assert.match(migration, /create table if not exists public\.payment_receipts/);
@@ -39,8 +41,29 @@ test("landlord payment save creates receipt metadata where applicable", () => {
 
 test("payment entry shows receipt confirmation actions after successful payment", () => {
   assert.match(paymentEntry, /ReceiptConfirmationModal/);
+  assert.match(paymentEntry, /PAYMENT RECORDED SUCCESSFULLY/);
+  assert.match(paymentEntry, /tenant-payment-receipt/);
+  assert.match(paymentEntry, /tenant-receipt-slip/);
   assert.match(paymentEntry, /Print Receipt/);
-  assert.match(paymentEntry, /Download PDF Receipt/);
+  assert.match(paymentEntry, /Download PDF/);
   assert.match(paymentEntry, /Send by Email/);
   assert.match(paymentEntry, /Send by WhatsApp\/SMS/);
+});
+
+test("tenant receipts include supermarket-style coverage and print scope", () => {
+  assert.match(receiptService, /coverage_start/);
+  assert.match(receiptService, /coveragePeriods/);
+  assert.match(receiptService, /amountAppliedToOutstanding/);
+  assert.match(receiptService, /amountAppliedToCurrentRent/);
+  assert.match(receiptService, /advanceAmount/);
+  assert.match(receiptStyles, /print-tenant-payment-receipt/);
+  assert.match(receiptStyles, /size: 80mm auto/);
+});
+
+test("receipt history can preview and reprint only the saved receipt slip", () => {
+  assert.match(receiptHistory, /ReceiptPreview/);
+  assert.match(receiptHistory, /tenant-payment-receipt/);
+  assert.match(receiptHistory, /receipt=\$\{receipt\.id\}&payment=\$\{receipt\.paymentId\}/);
+  assert.match(receiptHistory, /Corrections/);
+  assert.match(receiptHistory, /snapshot\.landlordName/);
 });

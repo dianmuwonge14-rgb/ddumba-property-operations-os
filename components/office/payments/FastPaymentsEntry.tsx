@@ -1145,19 +1145,25 @@ function ReceiptConfirmationModal({
     onClose: () => void;
 }) {
     const [isSending, startReceiptTransition] = useTransition();
+    const [previewOpen, setPreviewOpen] = useState(true);
     if (!modal) return null;
     const receipt = modal.receipt;
     const snapshot = receipt.snapshot;
+    const withReceiptPrintScope = (callback: () => void) => {
+        document.body.classList.add("print-tenant-payment-receipt");
+        callback();
+        window.setTimeout(() => document.body.classList.remove("print-tenant-payment-receipt"), 500);
+    };
     const printReceipt = () => {
         startReceiptTransition(async () => {
             await logReceiptPrintOrDownload({ channel: "print", receiptId: receipt.id }).catch(() => null);
-            window.print();
+            withReceiptPrintScope(() => window.print());
         });
     };
     const downloadPdf = () => {
         startReceiptTransition(async () => {
             await logReceiptPrintOrDownload({ channel: "download_pdf", receiptId: receipt.id }).catch(() => null);
-            window.print();
+            withReceiptPrintScope(() => window.print());
         });
     };
     const sendEmail = () => {
@@ -1189,74 +1195,43 @@ function ReceiptConfirmationModal({
 
     return (
         <div className="fixed inset-0 z-[100] overflow-y-auto bg-slate-950/80 p-4 backdrop-blur print:static print:bg-white print:p-0">
-            <div className="mx-auto max-w-3xl rounded-[28px] bg-white p-4 text-slate-950 shadow-2xl print:max-w-none print:rounded-none print:p-0 print:shadow-none">
+            <div className="mx-auto max-w-5xl rounded-[28px] bg-white p-4 text-slate-950 shadow-2xl print:max-w-none print:rounded-none print:p-0 print:shadow-none">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-2 print:hidden">
                     <div>
-                        <p className="text-xs font-black uppercase tracking-[0.2em] text-blue-700">Payment saved</p>
-                        <h2 className="text-2xl font-black">Receipt ready</h2>
+                        <p className="text-xs font-black uppercase tracking-[0.2em] text-emerald-700">PAYMENT RECORDED SUCCESSFULLY</p>
+                        <h2 className="text-2xl font-black">Supermarket-style tenant receipt ready</h2>
+                        <p className="mt-1 text-sm font-bold text-slate-500">Generated from the final saved Supabase transaction. No receipt is issued for failed, pending, rejected, or reversed payments.</p>
                     </div>
                     <button type="button" onClick={onClose} className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-black text-slate-700">Close</button>
                 </div>
 
-                <article className="rounded-2xl border-2 border-slate-900 bg-white p-5 print:rounded-none print:border-slate-900">
-                    <header className="flex flex-wrap items-start justify-between gap-4 border-b-2 border-slate-900 pb-4">
-                        <div>
-                            <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">DDUMBA OS / {snapshot.companyName}</p>
-                            <h3 className="mt-1 text-3xl font-black">Payment Receipt</h3>
-                            <p className="mt-1 text-sm font-bold text-slate-600">{snapshot.companyContact ?? "Company contact not set"}</p>
+                <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+                    <div className="rounded-[26px] border border-slate-200 bg-slate-50 p-4 print:hidden">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                            <ReceiptMetric label="Receipt number" value={receipt.receiptNumber} />
+                            <ReceiptMetric label="Amount paid" value={money(snapshot.amountPaid)} />
+                            <ReceiptMetric label="Remaining balance" value={money(snapshot.remainingOutstandingBalance)} />
+                            <ReceiptMetric label="Advance balance" value={money(snapshot.advanceBalance)} />
                         </div>
-                        <div className="text-left sm:text-right">
-                            <p className="text-xs font-black uppercase text-slate-500">Receipt No.</p>
-                            <p className="text-xl font-black text-blue-700">{receipt.receiptNumber}</p>
-                            <p className="mt-1 text-xs font-bold text-slate-500">{snapshot.paymentDateTime ? new Date(snapshot.paymentDateTime).toLocaleString() : "No timestamp"}</p>
+                        <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                            <p className="text-sm font-black text-emerald-900">Receipt generated · Payment allocated · Ledger updated · Supabase synced</p>
+                            <p className="mt-1 text-xs font-bold text-emerald-700">Use the actions below to print, save as PDF, or send an e-receipt. Sending failures never undo the saved payment.</p>
                         </div>
-                    </header>
+                    </div>
 
-                    <section className="mt-5 grid gap-3 sm:grid-cols-2">
-                        <ReceiptField label="Office" value={snapshot.officeName ?? "Office"} />
-                        <ReceiptField label="Room" value={snapshot.roomNumber ?? "No room"} />
-                        <ReceiptField label="Tenant" value={snapshot.tenantName ?? "Unnamed tenant"} />
-                        <ReceiptField label="Tenant phone" value={snapshot.tenantPhone ?? "No phone"} />
-                        <ReceiptField label="Landlord" value={snapshot.landlordName ?? "No landlord"} />
-                        <ReceiptField label="Payment method" value={snapshot.paymentMethod?.replaceAll("_", " ") ?? "Payment"} />
-                    </section>
-
-                    <section className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                        <ReceiptMetric label="Amount paid" value={money(snapshot.amountPaid)} />
-                        <ReceiptMetric label="Previous outstanding" value={money(snapshot.previousOutstandingBalance)} />
-                        <ReceiptMetric label="Amount applied" value={money(snapshot.amountApplied)} />
-                        <ReceiptMetric label="Remaining balance" value={money(snapshot.remainingOutstandingBalance)} />
-                        <ReceiptMetric label="Monthly rent" value={money(snapshot.monthlyRent)} />
-                        <ReceiptMetric label="Advance balance" value={money(snapshot.advanceBalance)} />
-                        <ReceiptMetric label="Coverage period" value={snapshot.coveragePeriod ?? "Current due"} />
-                        <ReceiptMetric label="Status" value={snapshot.status} />
-                    </section>
-
-                    <section className="mt-5 grid gap-3 sm:grid-cols-2">
-                        <ReceiptField label="Reference" value={snapshot.referenceNumber ?? "No reference"} />
-                        <ReceiptField label="Recorded by" value={snapshot.recordedByName ?? "DDUMBA OS"} />
-                        <ReceiptField label="Verification code" value={receipt.verificationCode} />
-                        <ReceiptField label="Notes" value={snapshot.notes ?? "No notes"} />
-                    </section>
-
-                    <footer className="mt-8 flex flex-wrap items-end justify-between gap-5 border-t border-slate-200 pt-5">
-                        <div>
-                            <p className="text-xs font-black uppercase text-slate-500">Verification QR placeholder</p>
-                            <div className="mt-2 grid h-24 w-24 grid-cols-4 gap-1 rounded-xl border border-slate-900 bg-white p-2">
-                                {Array.from({ length: 16 }).map((_, index) => (
-                                    <span key={index} className={(index + receipt.verificationCode.length) % 3 === 0 ? "bg-slate-950" : "bg-slate-200"} />
-                                ))}
-                            </div>
+                    {previewOpen ? <TenantPaymentReceiptSlip receipt={receipt} /> : (
+                        <div className="flex min-h-80 items-center justify-center rounded-[26px] border border-dashed border-slate-300 bg-slate-50 print:hidden">
+                            <button type="button" onClick={() => setPreviewOpen(true)} className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white">Preview Receipt</button>
                         </div>
-                        <p className="max-w-md text-xs font-bold text-slate-500">This receipt was generated from the final saved Supabase transaction. Keep it for tenant, office, collector, and audit verification.</p>
-                    </footer>
-                </article>
+                    )}
+                </div>
 
-                <div className="mt-4 grid gap-3 print:hidden sm:grid-cols-2">
+                <div className="mt-4 grid gap-3 print:hidden sm:grid-cols-2 lg:grid-cols-4">
                     <input value={modal.email} onChange={(event) => onChange({ ...modal, email: event.target.value })} className="h-12 rounded-2xl border border-slate-200 px-4 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-100" placeholder="Tenant email" />
                     <input value={modal.phone} onChange={(event) => onChange({ ...modal, phone: event.target.value })} className="h-12 rounded-2xl border border-slate-200 px-4 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-100" placeholder="Tenant phone" />
+                    <button type="button" onClick={() => setPreviewOpen((value) => !value)} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700">{previewOpen ? "Hide Preview" : "Preview Receipt"}</button>
                     <button type="button" onClick={printReceipt} disabled={isSending} className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white disabled:opacity-50">Print Receipt</button>
-                    <button type="button" onClick={downloadPdf} disabled={isSending} className="rounded-2xl bg-blue-700 px-4 py-3 text-sm font-black text-white disabled:opacity-50">Download PDF Receipt</button>
+                    <button type="button" onClick={downloadPdf} disabled={isSending} className="rounded-2xl bg-blue-700 px-4 py-3 text-sm font-black text-white disabled:opacity-50">Download PDF</button>
                     <button type="button" onClick={sendEmail} disabled={isSending || modal.sending} className="rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-black text-white disabled:opacity-50">Send by Email</button>
                     <button type="button" onClick={() => share("whatsapp")} disabled={isSending} className="rounded-2xl bg-green-600 px-4 py-3 text-sm font-black text-white disabled:opacity-50">Send by WhatsApp/SMS</button>
                 </div>
@@ -1266,11 +1241,80 @@ function ReceiptConfirmationModal({
     );
 }
 
-function ReceiptField({ label, value }: { label: string; value: string }) {
+function TenantPaymentReceiptSlip({ receipt }: { receipt: PaymentReceiptSummary }) {
+    const snapshot = receipt.snapshot;
+    const coveragePeriods = snapshot.coveragePeriods?.length
+        ? snapshot.coveragePeriods
+        : snapshot.coveragePeriod ? [{ amount: snapshot.amountApplied, label: snapshot.coveragePeriod, type: "coverage" }] : [];
     return (
-        <div className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-            <p className="text-[10px] font-black uppercase tracking-wide text-slate-500">{label}</p>
-            <p className="mt-1 break-words text-sm font-black text-slate-950">{value}</p>
+        <article id="tenant-payment-receipt" className="tenant-receipt-slip mx-auto bg-white text-slate-950">
+            <header className="text-center">
+                <p className="text-[11px] font-black uppercase tracking-[0.28em]">DDUMBA OS</p>
+                <h3 className="mt-1 text-lg font-black leading-tight">{snapshot.companyName}</h3>
+                <p className="text-[10px] font-bold">{snapshot.companyContact ?? "Company contact not set"}</p>
+                <p className="mt-2 border-y border-dashed border-slate-900 py-1 text-[11px] font-black uppercase">Tenant Payment Receipt</p>
+            </header>
+
+            <section className="mt-3 space-y-1.5 text-[11px]">
+                <ReceiptLine label="Receipt No" value={receipt.receiptNumber} strong />
+                <ReceiptLine label="Verification" value={receipt.verificationCode} />
+                <ReceiptLine label="Date/Time" value={snapshot.paymentDateTime ? new Date(snapshot.paymentDateTime).toLocaleString("en-UG", { timeZone: "Africa/Kampala" }) : "No timestamp"} />
+                <ReceiptLine label="Office" value={snapshot.officeName ?? "Office"} />
+                <ReceiptLine label="Room" value={snapshot.roomNumber ?? "No room"} />
+                <ReceiptLine label="Tenant" value={snapshot.tenantName ?? "Unnamed tenant"} />
+                <ReceiptLine label="Phone" value={snapshot.tenantPhone ?? "No phone"} />
+                <ReceiptLine label="Landlord" value={snapshot.landlordName ?? "No landlord"} />
+            </section>
+
+            <section className="mt-3 border-y border-dashed border-slate-900 py-2 text-[11px]">
+                <ReceiptMoneyLine label="Monthly rent" value={snapshot.monthlyRent} />
+                <ReceiptMoneyLine label="Previous outstanding" value={snapshot.previousOutstandingBalance} />
+                <ReceiptMoneyLine label="Applied to outstanding" value={snapshot.amountAppliedToOutstanding ?? 0} />
+                <ReceiptMoneyLine label="Applied to current rent" value={snapshot.amountAppliedToCurrentRent ?? Math.max(0, snapshot.amountApplied - (snapshot.amountAppliedToOutstanding ?? 0))} />
+                <ReceiptMoneyLine label="Advance rent" value={snapshot.advanceAmount ?? snapshot.advanceBalance} />
+                <ReceiptMoneyLine label="Amount paid" value={snapshot.amountPaid} strong />
+                <ReceiptMoneyLine label="Remaining balance" value={snapshot.remainingOutstandingBalance} strong />
+                <ReceiptMoneyLine label="Advance balance" value={snapshot.advanceBalance} />
+            </section>
+
+            <section className="mt-3 text-[11px]">
+                <p className="font-black uppercase">Coverage</p>
+                {coveragePeriods.length ? coveragePeriods.map((period, index) => (
+                    <div key={`${period.label}-${index}`} className="mt-1 flex justify-between gap-2 border-b border-dotted border-slate-300 pb-1">
+                        <span className="min-w-0 flex-1">{period.label} · {period.type}</span>
+                        <span className="font-black">{money(period.amount)}</span>
+                    </div>
+                )) : <p className="mt-1 font-bold">Coverage period not recorded.</p>}
+            </section>
+
+            <section className="mt-3 space-y-1.5 border-y border-dashed border-slate-900 py-2 text-[11px]">
+                <ReceiptLine label="Method" value={snapshot.paymentMethod?.replaceAll("_", " ") ?? "Payment"} />
+                <ReceiptLine label="Reference" value={snapshot.referenceNumber ?? "No reference"} />
+                <ReceiptLine label="Recorded by" value={snapshot.recordedByName ?? "DDUMBA OS"} />
+                {snapshot.collectorName ? <ReceiptLine label="Collector" value={snapshot.collectorName} /> : null}
+                <ReceiptLine label="Approved by" value={snapshot.approvedByName ?? snapshot.recordedByName ?? "DDUMBA OS"} />
+                <ReceiptLine label="Status" value={snapshot.status} />
+                <ReceiptLine label="Notes" value={snapshot.notes ?? "No notes"} />
+            </section>
+
+            <footer className="mt-3 text-center">
+                <div className="mx-auto grid h-20 w-20 grid-cols-5 gap-0.5 border border-slate-900 bg-white p-1">
+                    {Array.from({ length: 25 }).map((_, index) => (
+                        <span key={index} className={(index + receipt.verificationCode.length) % 3 === 0 || index % 7 === 0 ? "bg-slate-950" : "bg-slate-100"} />
+                    ))}
+                </div>
+                <p className="mt-2 text-[10px] font-black uppercase tracking-wide">Thank you for your payment</p>
+                <p className="mt-1 text-[9px] font-bold leading-tight">Generated from the saved DDUMBA OS Supabase transaction. Keep this slip for tenant, office, collector, and audit verification.</p>
+            </footer>
+        </article>
+    );
+}
+
+function ReceiptLine({ label, strong = false, value }: { label: string; strong?: boolean; value: string }) {
+    return (
+        <div className="flex items-start justify-between gap-2">
+            <span className="font-bold uppercase text-slate-600">{label}</span>
+            <span className={`max-w-[58%] text-right leading-tight ${strong ? "font-black" : "font-bold"}`}>{value}</span>
         </div>
     );
 }
@@ -1280,6 +1324,15 @@ function ReceiptMetric({ label, value }: { label: string; value: string }) {
         <div className="min-w-0 rounded-2xl border border-slate-900 bg-slate-950 p-3 text-white">
             <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">{label}</p>
             <p className="mt-1 break-words text-base font-black">{value}</p>
+        </div>
+    );
+}
+
+function ReceiptMoneyLine({ label, strong = false, value }: { label: string; strong?: boolean; value: number }) {
+    return (
+        <div className={`flex items-center justify-between gap-2 ${strong ? "text-[12px]" : ""}`}>
+            <span className="font-bold uppercase text-slate-600">{label}</span>
+            <span className="font-black">{money(value)}</span>
         </div>
     );
 }

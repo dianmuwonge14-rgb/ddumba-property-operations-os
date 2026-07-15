@@ -33,6 +33,7 @@ export type ReceiptHistoryItem = {
     recordedByName: string | null;
     remainingOutstandingBalance: number;
     roomNumber: string | null;
+    snapshot: PaymentReceiptSnapshot;
     status: string;
     tenantName: string | null;
     tenantPhone: string | null;
@@ -88,6 +89,7 @@ export const getReceiptHistoryData = cache(async function getReceiptHistoryData(
             recordedByName: row.receipt_snapshot?.recordedByName ?? null,
             remainingOutstandingBalance: Number(row.receipt_snapshot?.remainingOutstandingBalance ?? 0),
             roomNumber: row.receipt_snapshot?.roomNumber ?? null,
+            snapshot: row.receipt_snapshot,
             status: row.status,
             tenantName: row.receipt_snapshot?.tenantName ?? null,
             tenantPhone: row.receipt_snapshot?.tenantPhone ?? null,

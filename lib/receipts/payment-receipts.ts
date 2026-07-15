@@ -22,15 +22,26 @@ export type PaymentReceiptSummary = {
 
 export type PaymentReceiptSnapshot = {
     advanceBalance: number;
+    advanceAmount: number;
     amountApplied: number;
+    amountAppliedToCurrentRent: number;
+    amountAppliedToOutstanding: number;
     amountPaid: number;
     companyContact: string | null;
     companyName: string;
     coveragePeriod: string | null;
+    coveragePeriods: Array<{
+        amount: number;
+        label: string;
+        type: string;
+    }>;
     landlordName: string | null;
     monthlyRent: number;
     notes: string | null;
     officeName: string | null;
+    approvedAt: string | null;
+    approvedByName: string | null;
+    collectorName: string | null;
     paymentDateTime: string | null;
     paymentMethod: string | null;
     previousOutstandingBalance: number;
@@ -88,6 +99,24 @@ function monthLabel(value: string | null) {
     return new Intl.DateTimeFormat("en-UG", { month: "short", timeZone: "Africa/Kampala", year: "numeric" }).format(parsed);
 }
 
+function dateLabel(value: string | null) {
+    if (!value) return null;
+    const parsed = new Date(`${value.slice(0, 10)}T00:00:00+03:00`);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return new Intl.DateTimeFormat("en-UG", { day: "2-digit", month: "short", timeZone: "Africa/Kampala", year: "numeric" }).format(parsed);
+}
+
+function allocationLabel(row: LooseRow) {
+    const start = text(row.coverage_start ?? row.period_start ?? row.rent_period_start);
+    const end = text(row.coverage_end ?? row.period_end ?? row.rent_period_end);
+    if (start && end) return `${dateLabel(start)} - ${dateLabel(end)}`;
+    return monthLabel(text(row.allocation_month ?? row.rent_month ?? row.payment_month)) ?? "Rent coverage";
+}
+
+function allocationType(row: LooseRow) {
+    return String(row.allocation_type ?? "current_month").replaceAll("_", " ");
+}
+
 function receiptSummary(row: LooseRow): PaymentReceiptSummary {
     const snapshot = row.receipt_snapshot as PaymentReceiptSnapshot;
     return {
@@ -133,31 +162,50 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
     const landlord = landlordId ? await getOne(db, "landlords", landlordId, companyId, "*") : null;
     const allocationRows = await db
         .from("tenant_rent_allocations")
-        .select("allocation_month,allocation_type,amount_allocated")
+        .select("*")
         .eq("company_id", companyId)
         .eq("payment_id", payment.id);
     if (allocationRows.error && !isMissingSchemaError(allocationRows.error)) throw new Error(allocationRows.error.message);
     const allocations = (allocationRows.data ?? []) as LooseRow[];
-    const firstMonth = allocations.map((row) => text(row.allocation_month)).filter(Boolean).sort()[0] ?? null;
-    const lastMonth = allocations.map((row) => text(row.allocation_month)).filter(Boolean).sort().at(-1) ?? null;
-    const coveragePeriod = firstMonth && lastMonth
-        ? firstMonth === lastMonth ? monthLabel(firstMonth) : `${monthLabel(firstMonth)} - ${monthLabel(lastMonth)}`
+    const coveragePeriods = allocations.map((row) => ({
+        amount: amount(row.amount_allocated),
+        label: allocationLabel(row),
+        type: allocationType(row),
+    })).filter((row) => row.amount > 0);
+    const firstCoverage = coveragePeriods[0]?.label ?? null;
+    const lastCoverage = coveragePeriods.at(-1)?.label ?? null;
+    const coveragePeriod = firstCoverage && lastCoverage
+        ? firstCoverage === lastCoverage ? firstCoverage : `${firstCoverage}; ${lastCoverage}`
         : null;
     const advanceBalance = allocations
         .filter((row) => String(row.allocation_type ?? "") === "advance_month")
         .reduce((total, row) => total + amount(row.amount_allocated), 0);
+    const amountAppliedToOutstanding = amount(payment.used_to_clear_outstanding) || allocations
+        .filter((row) => /arrears|outstanding|debt/i.test(String(row.allocation_type ?? "")))
+        .reduce((total, row) => total + amount(row.amount_allocated), 0);
+    const amountAppliedToCurrentRent = allocations
+        .filter((row) => /current|rent/i.test(String(row.allocation_type ?? "")))
+        .reduce((total, row) => total + amount(row.amount_allocated), 0) || Math.max(0, amount(payment.amount_paid ?? payment.amount) - amountAppliedToOutstanding - advanceBalance);
+    const collectorName = /collector/i.test(String(recordedBy.data?.account_type ?? "")) ? text(recordedBy.data?.full_name) : null;
 
     return {
         advanceBalance,
+        advanceAmount: advanceBalance,
         amountApplied: amount(payment.used_to_clear_outstanding) || amount(payment.amount_paid ?? payment.amount),
+        amountAppliedToCurrentRent,
+        amountAppliedToOutstanding,
         amountPaid: amount(payment.amount_paid ?? payment.amount),
         companyContact: text(company?.phone) ?? text(company?.email) ?? null,
         companyName: text(company?.name) ?? "DDUMBA OS",
         coveragePeriod,
+        coveragePeriods,
         landlordName: text(landlord?.full_name),
         monthlyRent: amount(room?.monthly_rent ?? tenant?.monthly_rent),
         notes: text(payment.notes),
         officeName: text(office?.office_name) ?? text(office?.name),
+        approvedAt: text(payment.approved_at) ?? text(payment.paid_at) ?? text(payment.payment_date),
+        approvedByName: text(payment.approved_by_name) ?? null,
+        collectorName,
         paymentDateTime: text(payment.paid_at) ?? text(payment.payment_date),
         paymentMethod: text(payment.payment_method),
         previousOutstandingBalance: amount(payment.balance_before_payment ?? payment.expected_amount),
@@ -247,15 +295,22 @@ export async function createLandlordPaymentReceipt(paymentId: string, options: {
     if (recordedBy.error && !isMissingSchemaError(recordedBy.error)) throw new Error(recordedBy.error.message);
     const snapshot: PaymentReceiptSnapshot = {
         advanceBalance: String(payment.status ?? "").toLowerCase() === "overpaid" ? amount(payment.amount) : 0,
+        advanceAmount: String(payment.status ?? "").toLowerCase() === "overpaid" ? amount(payment.amount) : 0,
         amountApplied: amount(payment.amount),
+        amountAppliedToCurrentRent: 0,
+        amountAppliedToOutstanding: amount(payment.amount),
         amountPaid: amount(payment.amount),
         companyContact: text(company?.phone) ?? text(company?.email) ?? null,
         companyName: text(company?.name) ?? "DDUMBA OS",
         coveragePeriod: null,
+        coveragePeriods: [],
         landlordName: text(landlord?.full_name),
         monthlyRent: 0,
         notes: text(payment.notes),
         officeName: text(office?.office_name) ?? text(office?.name),
+        approvedAt: text(payment.approved_at) ?? text(payment.paid_at),
+        approvedByName: text(recordedBy.data?.full_name),
+        collectorName: null,
         paymentDateTime: text(payment.paid_at),
         paymentMethod: text(payment.payment_method),
         previousOutstandingBalance: 0,
