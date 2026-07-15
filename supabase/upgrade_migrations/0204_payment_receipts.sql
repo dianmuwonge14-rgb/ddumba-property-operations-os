@@ -10,7 +10,7 @@ create table if not exists public.payment_receipts (
     payment_id uuid not null,
     receipt_number text not null,
     status text not null default 'issued'
-        check (status in ('issued','corrected','replaced','cancelled','reissued')),
+        check (status in ('issued','corrected','replaced','cancelled','reissued','reversed')),
     receipt_snapshot jsonb not null default '{}'::jsonb,
     verification_code text not null,
     corrected_from_receipt_id uuid references public.payment_receipts(id) on delete set null,
@@ -22,6 +22,13 @@ create table if not exists public.payment_receipts (
     unique(company_id, receipt_number),
     unique(company_id, payment_type, payment_id)
 );
+
+alter table public.payment_receipts
+    drop constraint if exists payment_receipts_status_check;
+
+alter table public.payment_receipts
+    add constraint payment_receipts_status_check
+    check (status in ('issued','corrected','replaced','cancelled','reissued','reversed'));
 
 create table if not exists public.payment_receipt_delivery_logs (
     id uuid primary key default gen_random_uuid(),
