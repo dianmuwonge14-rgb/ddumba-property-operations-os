@@ -52,6 +52,8 @@ test("office merge UI exposes the premium six-step workflow panels", () => {
 
 test("office merge client sends one compact JSON request with ids only", () => {
   assert.match(centreSource, /fetch\("\/api\/admin\/office-merge"/);
+  assert.match(centreSource, /action: "process"/);
+  assert.match(centreSource, /jobId: payload\.jobId/);
   assert.match(centreSource, /sourceOfficeIds,/);
   assert.match(centreSource, /newOfficeName: cleanedOfficeName/);
   assert.match(centreSource, /newOfficePin,/);
@@ -94,8 +96,22 @@ test("office merge API returns structured JSON errors instead of redirects or Ne
   assert.match(routeSource, /pinConfigured: true/);
   assert.doesNotMatch(routeSource, /pin_hash.*json/i);
   assert.match(routeSource, /loadServerCounts/);
-  assert.match(routeSource, /db\.rpc\("ddumba_merge_offices"/);
+  assert.match(routeSource, /processMergeJob/);
+  assert.match(routeSource, /OFFICE_MERGE_JOB_STARTED/);
+  assert.match(routeSource, /OFFICE_MERGE_RUNNING/);
   assert.doesNotMatch(routeSource, /redirect\(/);
+});
+
+test("office merge API uses durable chunked jobs instead of one long browser request", () => {
+  assert.match(routeSource, /MERGE_ROW_BATCH_SIZE/);
+  assert.match(routeSource, /office_merge_batches/);
+  assert.match(routeSource, /createMergeJob/);
+  assert.match(routeSource, /updateRowsForTable/);
+  assert.match(routeSource, /currentSourceIndex/);
+  assert.match(routeSource, /currentTableIndex/);
+  assert.match(routeSource, /OFFICE_MERGE_JOB_RESUMED/);
+  assert.match(routeSource, /affected_counts: \{ job: state/);
+  assert.doesNotMatch(routeSource, /p_confirmation: "MERGE"/);
 });
 
 test("server action validates office selection and delegates to transactional RPC", () => {

@@ -44,13 +44,20 @@ type MergeResult = {
 };
 
 type OfficeMergeApiResponse = {
+    async?: boolean;
     code?: string;
     destinationOfficeId?: string;
     destinationOfficeName?: string;
     durationMs?: number;
+    jobId?: string;
     message?: string;
     newOfficeCode?: string;
     pinConfigured?: boolean;
+    progress?: {
+        currentStage?: string;
+        percentage?: number;
+        recordsProcessed?: number;
+    };
     results?: Array<Omit<MergeResult, "destinationOfficeName">>;
     stage?: string;
     success: boolean;
@@ -117,6 +124,12 @@ function sumCounts(offices: OfficeMergeSourceOffice[]) {
     return totals;
 }
 
+function hasMaterialOfficeData(office: OfficeMergeSourceOffice) {
+    return COUNT_TABLES
+        .filter((item) => item.key !== "auditLogs")
+        .some((item) => Number(office.counts[item.key] ?? 0) > 0);
+}
+
 export default function OfficeMergeCentre({ data }: Props) {
     const [sourceOfficeIds, setSourceOfficeIds] = useState<string[]>([]);
     const [newOfficeName, setNewOfficeName] = useState("");
@@ -147,8 +160,8 @@ export default function OfficeMergeCentre({ data }: Props) {
     const rentRoll = sourceOffices.reduce((total, office) => total + office.rentRoll, 0);
     const cleanedOfficeName = newOfficeName.trim().replace(/\s+/g, " ");
     const effectiveOfficeCode = (newOfficeCode.trim() || cleanedOfficeName).toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-    const duplicateOfficeName = Boolean(cleanedOfficeName && data.offices.some((office) => !isInactive(office.status) && normalize(office.name) === normalize(cleanedOfficeName)));
-    const duplicateOfficeCode = Boolean(effectiveOfficeCode && data.offices.some((office) => !isInactive(office.status) && normalize(office.code) === normalize(effectiveOfficeCode)));
+    const duplicateOfficeName = Boolean(cleanedOfficeName && data.offices.some((office) => !isInactive(office.status) && normalize(office.name) === normalize(cleanedOfficeName) && hasMaterialOfficeData(office)));
+    const duplicateOfficeCode = Boolean(effectiveOfficeCode && data.offices.some((office) => !isInactive(office.status) && normalize(office.code) === normalize(effectiveOfficeCode) && hasMaterialOfficeData(office)));
     const pinIsWeak = /^(\d)\1{5}$/.test(newOfficePin) || ["012345", "123456", "234567", "345678", "456789", "987654", "876543", "765432", "654321"].includes(newOfficePin);
     const confirmationIsValid = confirmation.trim().toUpperCase() === "MERGE OFFICES";
     const locationOptions = useMemo(() => Array.from(new Set(data.offices.map((office) => office.location).filter(Boolean))).sort(), [data.offices]);
@@ -220,8 +233,6 @@ export default function OfficeMergeCentre({ data }: Props) {
         setMessage(null);
         setIsSubmitting(true);
         setProgressText("Starting secure merge...");
-        const controller = new AbortController();
-        const timeout = window.setTimeout(() => controller.abort(), 65000);
         try {
             const response = await fetch("/api/admin/office-merge", {
                 body: JSON.stringify({
@@ -238,7 +249,6 @@ export default function OfficeMergeCentre({ data }: Props) {
                 credentials: "same-origin",
                 headers: { "content-type": "application/json" },
                 method: "POST",
-                signal: controller.signal,
             });
             const payload = await response.json().catch(() => null) as OfficeMergeApiResponse | null;
             if (!response.ok || !payload?.success) {
@@ -250,19 +260,50 @@ export default function OfficeMergeCentre({ data }: Props) {
                 setMessage({ tone: "error", text: messageText });
                 return;
             }
-            const result = payload.results?.[0];
+            let finalPayload = payload;
+            if (payload.async && payload.jobId) {
+                const maxSteps = 1200;
+                for (let step = 0; step < maxSteps; step += 1) {
+                    const progressLabel = finalPayload.progress
+                        ? `${finalPayload.progress.currentStage ?? "Processing merge"} · ${finalPayload.progress.percentage ?? 1}% · ${Number(finalPayload.progress.recordsProcessed ?? 0).toLocaleString()} records moved`
+                        : `Processing merge job ${payload.jobId.slice(0, 8).toUpperCase()}`;
+                    setProgressText(progressLabel);
+                    const processResponse = await fetch("/api/admin/office-merge", {
+                        body: JSON.stringify({ action: "process", jobId: payload.jobId }),
+                        credentials: "same-origin",
+                        headers: { "content-type": "application/json" },
+                        method: "POST",
+                    });
+                    const processPayload = await processResponse.json().catch(() => null) as OfficeMergeApiResponse | null;
+                    if (!processResponse.ok || !processPayload?.success) {
+                        const messageText = processPayload?.message
+                            ? `${processPayload.message}${processPayload.code ? ` Reference: ${processPayload.code}.` : ""}`
+                            : "Merge processing stopped. The existing merge job can be resumed from Recent Merge Batches.";
+                        setMessage({ tone: "error", text: messageText });
+                        return;
+                    }
+                    finalPayload = processPayload;
+                    if (processPayload.code === "OFFICE_MERGE_COMPLETED") break;
+                    await new Promise((resolve) => window.setTimeout(resolve, 80));
+                }
+                if (finalPayload.code !== "OFFICE_MERGE_COMPLETED") {
+                    setMessage({ tone: "error", text: "Merge did not finish within the browser processing window. The durable job was preserved and can be resumed safely." });
+                    return;
+                }
+            }
+            const result = finalPayload.results?.[0];
             if (!result) {
                 setMessage({ tone: "error", text: "Merge completed but no merge batch reference was returned. Check Recent Merge Batches before retrying." });
                 return;
             }
             setMergeResult({
                 ...result,
-                destinationOfficeName: payload.destinationOfficeName ?? cleanedOfficeName,
-                newOfficeCode: payload.newOfficeCode,
-                pinConfigured: payload.pinConfigured,
+                destinationOfficeName: finalPayload.destinationOfficeName ?? cleanedOfficeName,
+                newOfficeCode: finalPayload.newOfficeCode,
+                pinConfigured: finalPayload.pinConfigured,
             });
             setShowConfirm(false);
-            setMessage({ tone: "success", text: `Office merge completed successfully in ${Math.max(1, Math.round(Number(payload.durationMs ?? 0) / 1000))}s.` });
+            setMessage({ tone: "success", text: `Office merge completed successfully. Job ${result.batchId.slice(0, 8).toUpperCase()} reconciled and archived the source offices.` });
         } catch (error) {
             const text = error instanceof DOMException && error.name === "AbortError"
                 ? "Merge request timed out. Check Recent Merge Batches before retrying; the operation may still be completing safely."
@@ -273,7 +314,6 @@ export default function OfficeMergeCentre({ data }: Props) {
                         : "Office merge failed. No records were changed.";
             setMessage({ tone: "error", text });
         } finally {
-            window.clearTimeout(timeout);
             setIsSubmitting(false);
             setProgressText(null);
         }
