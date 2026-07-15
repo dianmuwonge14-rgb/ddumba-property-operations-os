@@ -81,6 +81,11 @@ function money(value: number | null | undefined) {
     return `UGX ${Math.round(Number(value ?? 0)).toLocaleString()}`;
 }
 
+function compactDate(value: string | null | undefined) {
+    if (!value || !isDateOnly(value.slice(0, 10))) return "Not set";
+    return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(new Date(`${value.slice(0, 10)}T00:00:00Z`));
+}
+
 function normalize(value: string | null | undefined) {
     return String(value ?? "").trim().toLowerCase();
 }
@@ -1807,6 +1812,18 @@ function TenantBalance({ isAdmin, onEditOutstanding, tenant }: { isAdmin: boolea
             <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
                 <p className="text-xs font-black uppercase text-blue-500">Current Month Rent</p>
                 <p className="mt-1 text-2xl font-black text-blue-700">{money(tenant.monthlyRent)}</p>
+                {tenant.currentRentPeriod ? (
+                    <p className="mt-1 text-[11px] font-black text-blue-500">
+                        Period: {compactDate(tenant.currentRentPeriod.start)} - {compactDate(tenant.currentRentPeriod.end)}
+                    </p>
+                ) : null}
+            </div>
+            <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4">
+                <p className="text-xs font-black uppercase text-sky-500">Billing Anniversary</p>
+                <p className="mt-1 text-2xl font-black text-sky-700">
+                    {tenant.billingAnniversaryDay ? `${tenant.billingAnniversaryDay}${tenant.billingAnniversaryDay === 1 ? "st" : tenant.billingAnniversaryDay === 2 ? "nd" : tenant.billingAnniversaryDay === 3 ? "rd" : "th"}` : "Not set"}
+                </p>
+                <p className="mt-1 text-[11px] font-black text-sky-500">Next charge: {compactDate(tenant.nextRentChargeDate)}</p>
             </div>
             <div className="rounded-2xl border border-cyan-100 bg-cyan-50 p-4">
                 <p className="text-xs font-black uppercase text-cyan-500">Current Month Paid</p>
@@ -1889,6 +1906,11 @@ function TenantBalance({ isAdmin, onEditOutstanding, tenant }: { isAdmin: boolea
                                     {allocation.previouslyPaidAmount > 0 ? (
                                         <p className="mt-0.5 text-[11px] font-bold text-slate-400">
                                             Includes previous {money(allocation.previouslyPaidAmount)} + last payment {money(allocation.lastPaymentAmount)}
+                                        </p>
+                                    ) : null}
+                                    {allocation.coverageStart && allocation.coverageEnd ? (
+                                        <p className="mt-0.5 text-[11px] font-bold text-slate-500">
+                                            Coverage {compactDate(allocation.coverageStart)} - {compactDate(allocation.coverageEnd)}
                                         </p>
                                     ) : null}
                                 </div>

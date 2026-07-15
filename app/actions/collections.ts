@@ -8,6 +8,7 @@ import { createTenantPaymentReceipt } from "@/lib/receipts/payment-receipts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getTenantCollectionContext } from "@/lib/collections/data";
+import { buildTenantPaymentCoverageAllocations } from "@/lib/collections/move-in-allocation";
 import { recordCollectionLedgerAndCash } from "@/lib/collections/payment-ledger";
 import { recalculateTenantScore } from "@/lib/tenants/scoring";
 import type {
@@ -103,7 +104,7 @@ async function getFastTenantPaymentContext(input: {
     const { supabase, companyId, tenantId } = input;
     const { data: tenant, error: tenantError } = await supabase
         .from("tenants")
-        .select("id, company_id, office_id, property_id, room_id, full_name, monthly_rent, balance, status")
+        .select("id, company_id, office_id, property_id, room_id, full_name, monthly_rent, balance, status, created_at")
         .eq("id", tenantId)
         .eq("company_id", companyId)
         .maybeSingle();
@@ -121,7 +122,7 @@ async function getFastTenantPaymentContext(input: {
             : Promise.resolve({ data: null, error: null }),
         supabase
             .from("leases")
-            .select("id, company_id, office_id, property_id, room_id, tenant_id, monthly_rent, status")
+            .select("id, company_id, office_id, property_id, room_id, tenant_id, start_date, monthly_rent, status")
             .eq("tenant_id", tenantId)
             .eq("company_id", companyId)
             .eq("status", "active")
@@ -646,48 +647,6 @@ function paymentLabelForKind(kind: RecordCollectionInput["paymentKind"], source:
     }
 }
 
-function buildTenantRentAllocations(input: {
-    amount: number;
-    balanceBefore: number;
-    monthlyRent: number;
-    paymentDate: string;
-}) {
-    const allocations: Array<{ allocationMonth: string; allocationType: "arrears" | "current_month" | "advance_month"; amount: number }> = [];
-    let remaining = Math.max(0, input.amount);
-    const currentMonth = monthStartDate(input.paymentDate);
-    const currentMonthDue = Math.max(0, input.monthlyRent);
-    const totalDueBeforePayment = Math.max(0, input.balanceBefore);
-    const currentOutstandingDue = Math.min(currentMonthDue || totalDueBeforePayment, totalDueBeforePayment);
-    const arrearsDue = Math.max(0, totalDueBeforePayment - currentOutstandingDue);
-    if (arrearsDue > 0 && remaining > 0) {
-        const arrearsMonthCount = currentMonthDue > 0 ? Math.max(1, Math.ceil(arrearsDue / currentMonthDue)) : 1;
-        let arrearsRemaining = arrearsDue;
-        for (let index = arrearsMonthCount; index >= 1 && remaining > 0; index -= 1) {
-            const monthDue = currentMonthDue > 0 ? Math.min(currentMonthDue, arrearsRemaining) : arrearsRemaining;
-            const arrearsPaid = Math.min(remaining, monthDue);
-            if (arrearsPaid > 0) {
-                allocations.push({ allocationMonth: addMonths(currentMonth, -index), allocationType: "arrears", amount: arrearsPaid });
-                remaining -= arrearsPaid;
-            }
-            arrearsRemaining -= monthDue;
-        }
-    }
-    const currentPaid = Math.min(remaining, currentOutstandingDue);
-    if (currentPaid > 0) {
-        allocations.push({ allocationMonth: currentMonth, allocationType: "current_month", amount: currentPaid });
-        remaining -= currentPaid;
-    }
-    let advanceMonthIndex = 1;
-    while (remaining > 0.004) {
-        const allocationAmount = currentMonthDue > 0 ? Math.min(remaining, currentMonthDue) : remaining;
-        allocations.push({ allocationMonth: addMonths(currentMonth, advanceMonthIndex), allocationType: "advance_month", amount: allocationAmount });
-        remaining -= allocationAmount;
-        advanceMonthIndex += 1;
-        if (advanceMonthIndex > 120) break;
-    }
-    return allocations;
-}
-
 export async function recordCollection(input: RecordCollectionInput) {
     const context = await requireAuth();
     const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
@@ -773,10 +732,11 @@ export async function recordCollection(input: RecordCollectionInput) {
         throw new Error(error.message);
     }
 
-    const rentAllocations = buildTenantRentAllocations({
+    const rentAllocations = buildTenantPaymentCoverageAllocations({
         amount,
         balanceBefore,
         monthlyRent: tenantContext.monthlyRent,
+        moveInDate: tenantContext.lease?.start_date ?? tenantContext.tenant.created_at?.slice(0, 10) ?? paymentDate,
         paymentDate,
     });
     const currentMonth = monthStartDate(paymentDate);
@@ -844,10 +804,14 @@ export async function recordCollection(input: RecordCollectionInput) {
             amount_allocated: allocation.amount,
             allocation_source: allocation.allocationSource,
             company_id: context.activeCompany!.id,
+            coverage_end: "coverageEnd" in allocation ? allocation.coverageEnd : null,
+            coverage_index: "coverageIndex" in allocation ? allocation.coverageIndex : 0,
+            coverage_start: "coverageStart" in allocation ? allocation.coverageStart : null,
             is_historical_credit: allocation.isHistoricalCredit,
             office_id: resolvedOfficeId,
             payment_id: data.id,
             room_id: tenantContext.room?.id ?? tenantContext.tenant.room_id ?? null,
+            source_lease_id: "coverageStart" in allocation ? tenantContext.lease?.id ?? null : null,
             tenant_id: tenantContext.tenant.id,
         }))));
     }

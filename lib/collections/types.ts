@@ -59,12 +59,17 @@ export type CollectionTenantResult = {
     amountUsedToClearOutstanding: number;
     amountAllocatedToNextMonth: number;
     monthlyRent: number;
+    billingAnniversaryDay?: number | null;
+    currentRentPeriod?: { start: string; end: string } | null;
+    nextRentChargeDate?: string | null;
     currentMonthPaid: number;
     advanceRentBalance: number;
-    advanceRentMonths: Array<{ month: string; label: string; amount: number }>;
+    advanceRentMonths: Array<{ month: string; label: string; amount: number; coverageStart?: string | null; coverageEnd?: string | null }>;
     rentMonthAllocations: Array<{
         month: string;
         label: string;
+        coverageStart?: string | null;
+        coverageEnd?: string | null;
         amountDue: number;
         amountPaid: number;
         previouslyPaidAmount: number;

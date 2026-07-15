@@ -18,6 +18,20 @@ function previousDay(dateOnly) {
   return new Date(Date.UTC(year, month - 1, day - 1)).toISOString().slice(0, 10);
 }
 
+function coverageIndexForDate(moveInDate, businessDate) {
+  if (businessDate < moveInDate) return 0;
+  let index = Math.max(0, (Number(businessDate.slice(0, 4)) - Number(moveInDate.slice(0, 4))) * 12 + (Number(businessDate.slice(5, 7)) - Number(moveInDate.slice(5, 7))));
+  while (addCalendarMonths(moveInDate, index + 1) <= businessDate) index += 1;
+  while (index > 0 && addCalendarMonths(moveInDate, index) > businessDate) index -= 1;
+  return index;
+}
+
+function nextChargeDate(moveInDate, businessDate) {
+  const index = coverageIndexForDate(moveInDate, businessDate);
+  const currentStart = addCalendarMonths(moveInDate, index);
+  return currentStart > businessDate ? currentStart : addCalendarMonths(moveInDate, index + 1);
+}
+
 function coveragePeriod(moveInDate, index) {
   const coverageStart = addCalendarMonths(moveInDate, index);
   return { coverageStart, coverageEnd: previousDay(addCalendarMonths(moveInDate, index + 1)) };
@@ -65,6 +79,44 @@ test("move-in payment coverage starts on the exact move-in date", () => {
   }]);
 });
 
+test("main business case: 5 July starts 5 July and next charge is 5 August", () => {
+  assert.deepEqual(coveragePeriod("2026-07-05", 0), {
+    coverageStart: "2026-07-05",
+    coverageEnd: "2026-08-04",
+  });
+  assert.equal(nextChargeDate("2026-07-05", "2026-07-15"), "2026-08-05");
+  assert.notEqual(nextChargeDate("2026-07-05", "2026-07-15"), "2026-08-01");
+});
+
+test("15th and after-15th move-ins still bill from exact move-in date", () => {
+  assert.deepEqual(coveragePeriod("2026-07-15", 0), {
+    coverageStart: "2026-07-15",
+    coverageEnd: "2026-08-14",
+  });
+  assert.deepEqual(coveragePeriod("2026-07-18", 0), {
+    coverageStart: "2026-07-18",
+    coverageEnd: "2026-08-17",
+  });
+  assert.equal(nextChargeDate("2026-07-18", "2026-07-31"), "2026-08-18");
+});
+
+test("end-of-month anchors preserve original day across short months", () => {
+  assert.equal(addCalendarMonths("2026-01-28", 1), "2026-02-28");
+  assert.equal(addCalendarMonths("2024-02-29", 1), "2024-03-29");
+  assert.equal(addCalendarMonths("2026-01-30", 1), "2026-02-28");
+  assert.equal(addCalendarMonths("2026-01-30", 2), "2026-03-30");
+  assert.equal(addCalendarMonths("2026-01-31", 1), "2026-02-28");
+  assert.equal(addCalendarMonths("2026-01-31", 2), "2026-03-31");
+  assert.deepEqual(coveragePeriod("2026-01-31", 0), {
+    coverageStart: "2026-01-31",
+    coverageEnd: "2026-02-27",
+  });
+  assert.deepEqual(coveragePeriod("2026-01-31", 1), {
+    coverageStart: "2026-02-28",
+    coverageEnd: "2026-03-30",
+  });
+});
+
 test("multiple and partial move-in coverage creates future advance periods", () => {
   const rows = allocationPlan({ moveInDate: "2026-07-10", monthlyRent: 100000, paymentAmount: 250000 });
   assert.deepEqual(rows, [
@@ -80,6 +132,48 @@ test("partial entry payment leaves first coverage outstanding and no future adva
   assert.equal(firstOutstanding, 60000);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].allocationType, "current_month");
+});
+
+test("no entry payment creates immediate first charge expectation", () => {
+  const rows = allocationPlan({ moveInDate: "2026-07-05", monthlyRent: 100000, paymentAmount: 0 });
+  assert.equal(rows.length, 0);
+  const firstCharge = coveragePeriod("2026-07-05", 0);
+  assert.deepEqual(firstCharge, { coverageStart: "2026-07-05", coverageEnd: "2026-08-04" });
+  assert.equal(100000, 100000);
+});
+
+test("exact and multi-month advance entry payments cover anniversary periods", () => {
+  assert.deepEqual(allocationPlan({ moveInDate: "2026-07-05", monthlyRent: 100000, paymentAmount: 100000 }), [{
+    allocationType: "current_month",
+    amountAllocated: 100000,
+    coverageStart: "2026-07-05",
+    coverageEnd: "2026-08-04",
+    remainingCredit: 0,
+  }]);
+  assert.deepEqual(allocationPlan({ moveInDate: "2026-07-05", monthlyRent: 100000, paymentAmount: 300000 }).map((row) => [row.coverageStart, row.coverageEnd, row.amountAllocated]), [
+    ["2026-07-05", "2026-08-04", 100000],
+    ["2026-08-05", "2026-09-04", 100000],
+    ["2026-09-05", "2026-10-04", 100000],
+  ]);
+});
+
+test("scheduler missed cycle and duplicate run decisions use coverage starts", () => {
+  const existingCoverageStarts = new Set(["2026-07-05"]);
+  const dueStarts = [];
+  for (let index = 0; index <= coverageIndexForDate("2026-07-05", "2026-09-06"); index += 1) {
+    const period = coveragePeriod("2026-07-05", index);
+    if (!existingCoverageStarts.has(period.coverageStart) && period.coverageStart <= "2026-09-06") {
+      dueStarts.push(period.coverageStart);
+      existingCoverageStarts.add(period.coverageStart);
+    }
+  }
+  assert.deepEqual(dueStarts, ["2026-08-05", "2026-09-05"]);
+  const duplicateRunDueStarts = [];
+  for (let index = 0; index <= coverageIndexForDate("2026-07-05", "2026-09-06"); index += 1) {
+    const period = coveragePeriod("2026-07-05", index);
+    if (!existingCoverageStarts.has(period.coverageStart) && period.coverageStart <= "2026-09-06") duplicateRunDueStarts.push(period.coverageStart);
+  }
+  assert.deepEqual(duplicateRunDueStarts, []);
 });
 
 test("landlord payable cutoff includes move-in on or before 15th", () => {

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { logUserAction } from "@/lib/auth/audit";
 import { canAccessOffice, hasPermission, requireAuth } from "@/lib/auth/permissions";
 import { recordCollectionLedgerAndCash } from "@/lib/collections/payment-ledger";
-import { summarizeMoveInPaymentCoverage } from "@/lib/collections/move-in-allocation";
+import { billingAnchorDay, coveragePeriodForMoveIn, monthStart, summarizeMoveInPaymentCoverage } from "@/lib/collections/move-in-allocation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { recalculateTenantScore } from "@/lib/tenants/scoring";
 import { refreshAffectedLandlordPayable } from "@/app/actions/room-rent";
@@ -69,6 +69,85 @@ function collectionNumber() {
 
 function isMissingCoverageColumnError(error: { message?: string } | null | undefined) {
     return /coverage_start|coverage_end|coverage_index|remaining_credit|source_lease_id|schema cache|Could not find/i.test(error?.message ?? "");
+}
+
+async function createMoveInRentCharge(input: {
+    actorId: string | null;
+    companyId: string;
+    leaseId: string;
+    landlordId: string | null;
+    monthlyRent: number;
+    moveInDate: string;
+    officeId: string;
+    paidAmount: number;
+    roomId: string;
+    supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
+    tenantId: string;
+}) {
+    const db = input.supabase as unknown as DynamicDb;
+    const monthlyRent = Math.max(0, Number(input.monthlyRent));
+    const amountPaid = Math.min(monthlyRent, Math.max(0, Number(input.paidAmount)));
+    const outstandingAmount = Math.max(0, monthlyRent - amountPaid);
+    const period = coveragePeriodForMoveIn(input.moveInDate, 0);
+    const now = new Date().toISOString();
+    const rentMonthPayload = {
+        amount_paid: amountPaid,
+        company_id: input.companyId,
+        coverage_end: period.coverageEnd,
+        coverage_index: 0,
+        coverage_start: period.coverageStart,
+        due_date: period.coverageStart,
+        due_day: billingAnchorDay(input.moveInDate),
+        landlord_id: input.landlordId,
+        lease_id: input.leaseId,
+        office_id: input.officeId,
+        outstanding_amount: outstandingAmount,
+        rent_amount: monthlyRent,
+        rent_month: monthStart(period.coverageStart),
+        room_id: input.roomId,
+        source: "move_in_first_charge",
+        status: outstandingAmount <= 0 ? "paid" : amountPaid > 0 ? "partial" : "unpaid",
+        tenant_id: input.tenantId,
+        updated_at: now,
+    };
+    const rentMonthInsert = await db.from("tenant_rent_months").upsert(rentMonthPayload, { onConflict: "company_id,tenant_id,rent_month" });
+    if (rentMonthInsert.error) {
+        if (!/coverage_start|coverage_end|coverage_index|schema cache|Could not find/i.test(rentMonthInsert.error.message ?? "")) {
+            throw new Error(rentMonthInsert.error.message);
+        }
+        const fallbackInsert = await db.from("tenant_rent_months").upsert({
+            ...rentMonthPayload,
+            coverage_end: undefined,
+            coverage_index: undefined,
+            coverage_start: undefined,
+        }, { onConflict: "company_id,tenant_id,rent_month" });
+        if (fallbackInsert.error && !/does not exist|schema cache|Could not find/i.test(fallbackInsert.error.message ?? "")) {
+            throw new Error(fallbackInsert.error.message);
+        }
+    }
+
+    if (outstandingAmount > 0) {
+        const ledgerInsert = await db.from("tenant_balance_ledger").insert({
+            amount: outstandingAmount,
+            balance_after: outstandingAmount,
+            balance_before: 0,
+            company_id: input.companyId,
+            created_by: input.actorId,
+            description: `Move-in rent charged for ${period.coverageStart} to ${period.coverageEnd}.`,
+            entry_type: "debit",
+            office_id: input.officeId,
+            rent_month: monthStart(period.coverageStart),
+            room_id: input.roomId,
+            source_id: input.leaseId,
+            source_type: "move_in_first_charge",
+            tenant_id: input.tenantId,
+        });
+        if (ledgerInsert.error && !/does not exist|schema cache|Could not find/i.test(ledgerInsert.error.message ?? "")) {
+            throw new Error(ledgerInsert.error.message);
+        }
+    }
+
+    return { amountPaid, outstandingAmount, period };
 }
 
 async function recordMoveInEntryPayment(input: {
@@ -176,11 +255,14 @@ async function recordMoveInEntryPayment(input: {
 
     const firstAllocation = coverage.allocations[0] ?? null;
     if (firstAllocation) {
-        const rentMonthInsert = await db.from("tenant_rent_months").upsert({
+        const rentMonthPayload = {
             amount_paid: coverage.firstPeriodPaid,
             company_id: input.companyId,
+            coverage_end: firstAllocation.coverageEnd,
+            coverage_index: firstAllocation.coverageIndex,
+            coverage_start: firstAllocation.coverageStart,
             due_date: input.moveInDate,
-            due_day: Math.min(28, Math.max(1, Number(input.moveInDate.slice(8, 10)) || 1)),
+            due_day: billingAnchorDay(input.moveInDate),
             landlord_id: input.landlordId,
             lease_id: input.leaseId,
             office_id: input.officeId,
@@ -192,9 +274,21 @@ async function recordMoveInEntryPayment(input: {
             status: balanceAfterPayment <= 0 ? "paid" : coverage.firstPeriodPaid > 0 ? "partial" : "unpaid",
             tenant_id: input.tenantId,
             updated_at: paidAt,
-        }, { onConflict: "company_id,tenant_id,rent_month" });
-        if (rentMonthInsert.error && !/does not exist|schema cache|Could not find/i.test(rentMonthInsert.error.message ?? "")) {
-            throw new Error(rentMonthInsert.error.message);
+        };
+        const rentMonthInsert = await db.from("tenant_rent_months").upsert(rentMonthPayload, { onConflict: "company_id,tenant_id,rent_month" });
+        if (rentMonthInsert.error) {
+            if (!/coverage_start|coverage_end|coverage_index|schema cache|Could not find/i.test(rentMonthInsert.error.message ?? "")) {
+                throw new Error(rentMonthInsert.error.message);
+            }
+            const fallbackInsert = await db.from("tenant_rent_months").upsert({
+                ...rentMonthPayload,
+                coverage_end: undefined,
+                coverage_index: undefined,
+                coverage_start: undefined,
+            }, { onConflict: "company_id,tenant_id,rent_month" });
+            if (fallbackInsert.error && !/does not exist|schema cache|Could not find/i.test(fallbackInsert.error.message ?? "")) {
+                throw new Error(fallbackInsert.error.message);
+            }
         }
     }
 
@@ -367,9 +461,10 @@ export async function replaceTenantFromPaymentsEntry(input: ReplaceTenantFromPay
         vacateDate: moveInDate,
     });
 
-    const billingDay = new Date(`${moveInDate}T00:00:00`).getDate();
+    const billingDay = billingAnchorDay(moveInDate);
+    const openingBalance = Math.max(0, monthlyRent - paymentMade);
     const tenantPayload = {
-        balance: 0,
+        balance: openingBalance,
         company_id: companyId,
         full_name: newTenantName,
         monthly_rent: monthlyRent,
@@ -419,7 +514,7 @@ export async function replaceTenantFromPaymentsEntry(input: ReplaceTenantFromPay
             effective_start_date: moveInDate,
             explicitly_payable: false,
             monthly_rent: monthlyRent,
-            outstanding_balance: 0,
+            outstanding_balance: openingBalance,
             payable_notes: "Tenant replaced from Payments Entry. Old tenant debt is handled through landlord recovery.",
             status: "occupied",
             updated_at: now,
@@ -493,6 +588,20 @@ export async function replaceTenantFromPaymentsEntry(input: ReplaceTenantFromPay
             supabase,
             tenantId: newTenant.id,
             tenantName: newTenant.full_name ?? newTenantName,
+        });
+    } else {
+        await createMoveInRentCharge({
+            actorId,
+            companyId,
+            leaseId: newLease.id,
+            landlordId: roomBefore.landlord_id ?? null,
+            monthlyRent,
+            moveInDate,
+            officeId,
+            paidAmount: 0,
+            roomId,
+            supabase,
+            tenantId: newTenant.id,
         });
     }
 
@@ -575,8 +684,11 @@ export async function markRoomOccupied(input: MarkRoomOccupiedInput) {
     if (!propertyId) throw new Error("Room must be linked to a property/location before occupancy.");
     if (!room.office_id) throw new Error("Room must be linked to an office before occupancy.");
 
-    const openingBalance = Math.max(0, balanceDemanded - moneyCollected);
-    const billingDay = new Date(`${moveInDate}T00:00:00`).getDate();
+    if (balanceDemanded < monthlyRent) {
+        throw new Error("Balance demanded must include at least the first full monthly rent from the move-in date.");
+    }
+    const openingBalance = Math.max(0, monthlyRent - moneyCollected);
+    const billingDay = billingAnchorDay(moveInDate);
     const tenantPayload = {
         balance: openingBalance,
         company_id: companyId,
@@ -662,44 +774,36 @@ export async function markRoomOccupied(input: MarkRoomOccupiedInput) {
 
     let collection: Record<string, unknown> | null = null;
     if (moneyCollected > 0) {
-        const { data, error } = await supabase
-            .from("collections")
-            .insert({
-                amount: moneyCollected,
-                amount_paid: moneyCollected,
-                balance: openingBalance,
-                collection_number: collectionNumber(),
-                company_id: companyId,
-                expected_amount: balanceDemanded,
-                lease_id: lease.id,
-                notes: input.notes || "Move-in entry payment",
-                office_id: room.office_id,
-                paid_at: now,
-                payment_date: moveInDate,
-                payment_method: input.paymentMethod ?? "cash",
-                property_id: propertyId,
-                recorded_by: actorId,
-                reference_number: input.referenceNumber || null,
-                room_id: room.id,
-                status: "paid",
-                tenant_id: tenant.id,
-                type: "move_in",
-            })
-            .select("*")
-            .single();
-        if (error) throw new Error(error.message);
-        collection = data;
-
-        await recordCollectionLedgerAndCash({
-            amount: moneyCollected,
-            balanceAfter: openingBalance,
-            balanceBefore: balanceDemanded,
-            collectionId: data.id,
+        collection = await recordMoveInEntryPayment({
+            actorId,
             companyId,
-            description: input.notes || "Move-in entry payment",
             leaseId: lease.id,
+            landlordId: room.landlord_id ?? null,
+            monthlyRent,
+            moveInDate,
+            notes: input.notes || "Move-in entry payment",
             officeId: room.office_id,
-            recordedBy: actorId,
+            paymentAmount: moneyCollected,
+            paymentDate: moveInDate,
+            paymentMethod: input.paymentMethod ?? "cash",
+            propertyId,
+            referenceNumber: input.referenceNumber || null,
+            roomId: room.id,
+            supabase,
+            tenantId: tenant.id,
+            tenantName: tenant.full_name ?? tenantName,
+        });
+    } else {
+        await createMoveInRentCharge({
+            actorId,
+            companyId,
+            leaseId: lease.id,
+            landlordId: room.landlord_id ?? null,
+            monthlyRent,
+            moveInDate,
+            officeId: room.office_id,
+            paidAmount: 0,
+            roomId: room.id,
             supabase,
             tenantId: tenant.id,
         });
