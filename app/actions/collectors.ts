@@ -15,7 +15,7 @@ type DynamicDb = {
 };
 
 function assertPin(pin: string) {
-    if (!/^\d{4,12}$/.test(pin)) throw new Error("PIN must be 4 to 12 digits.");
+    if (!/^\d{6}$/.test(pin)) throw new Error("PIN must contain exactly six digits.");
 }
 
 function assertAmount(value: number, label: string) {

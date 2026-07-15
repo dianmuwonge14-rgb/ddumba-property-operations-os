@@ -38,6 +38,14 @@ type OfficeInput = {
     status?: string;
 };
 
+type OfficeWithLoginInput = OfficeInput & {
+    loginName: string;
+    pin: string;
+    confirmPin: string;
+    loginEmail?: string;
+    requirePasswordChange?: boolean;
+};
+
 type UpdateOfficeInput = OfficeInput & {
     officeId: string;
 };
@@ -51,6 +59,21 @@ function assertPin(pin: string) {
     if (!/^\d{4,12}$/.test(pin)) {
         throw new Error("PIN must be 4 to 12 digits.");
     }
+}
+
+function assertOfficePin(pin: string) {
+    if (!/^\d{6}$/.test(pin)) {
+        throw new Error("PIN must contain exactly six digits.");
+    }
+}
+
+function normalizeCode(value: string) {
+    return value.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function suggestedLoginEmail(loginName: string, companyId: string) {
+    const safe = loginName.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, ".").replace(/^\.+|\.+$/g, "") || `office-${Date.now()}`;
+    return `${safe}+${companyId.slice(0, 8)}@ddumba.local`;
 }
 
 function isPendingLockoutSchemaError(error: { message?: string } | null) {
@@ -85,6 +108,14 @@ async function setPinCredential(userId: string, pin: string, status = "active", 
         })
         .eq("user_id", userId);
     if (metadataError && !isPendingLockoutSchemaError(metadataError)) throw new Error(metadataError.message);
+}
+
+async function ignoreCleanupError(operation: PromiseLike<unknown>) {
+    try {
+        await operation;
+    } catch {
+        // Best-effort rollback cleanup. The original creation error is rethrown below.
+    }
 }
 
 async function roleScope(supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>, roleId: string) {
@@ -134,22 +165,30 @@ async function assignRole(input: {
 export async function createOfficeAccount(input: OfficeAccountInput) {
     const context = await requirePermission("settings.manage");
     if (!context.activeCompany?.id) throw new Error("Active company is required.");
-    assertPin(input.pin);
+    assertOfficePin(input.pin);
 
-    const email = input.email.trim().toLowerCase();
-    if (!email.includes("@")) throw new Error("A valid email is required.");
+    const loginName = input.fullName.trim();
+    const email = input.email.trim().toLowerCase() || suggestedLoginEmail(loginName, context.activeCompany.id);
+    if (!loginName) throw new Error("Account name is required.");
     if (!input.officeId || !input.roleId) throw new Error("Office and role are required.");
 
     const admin = createSupabaseAdminClient();
     const supabase = await createSupabaseServerClient();
+    const [{ data: existingEmail }, { data: existingLoginName }] = await Promise.all([
+        admin.from("users").select("id").eq("company_id", context.activeCompany.id).eq("email", email).limit(1).maybeSingle(),
+        admin.from("users").select("id").eq("company_id", context.activeCompany.id).ilike("full_name", loginName).limit(1).maybeSingle(),
+    ]);
+    if (existingEmail?.id || existingLoginName?.id) throw new Error("Login name already exists.");
+
     const { data: authUser, error: authError } = await admin.auth.admin.createUser({
         email,
         password: input.pin,
         email_confirm: true,
         user_metadata: {
-            full_name: input.fullName,
+            full_name: loginName,
             default_office_id: input.officeId,
             account_type: "office",
+            login_name: loginName,
         },
     });
 
@@ -162,7 +201,7 @@ export async function createOfficeAccount(input: OfficeAccountInput) {
         company_id: context.activeCompany.id,
         default_office_id: input.officeId,
         email,
-        full_name: input.fullName,
+        full_name: loginName,
         status: "active",
         updated_at: new Date().toISOString(),
     });
@@ -195,7 +234,7 @@ export async function createOfficeAccount(input: OfficeAccountInput) {
         entityId: authUser.user.id,
         companyId: context.activeCompany.id,
         officeId: input.officeId,
-        afterData: { email, full_name: input.fullName, role_id: input.roleId },
+        afterData: { email, full_name: loginName, role_id: input.roleId },
     });
 
     revalidatePath("/office/admin");
@@ -396,6 +435,154 @@ export async function createOffice(input: OfficeInput) {
 
     revalidatePath("/office/admin");
     revalidatePath("/office/spreadsheet");
+}
+
+export async function createOfficeWithLogin(input: OfficeWithLoginInput) {
+    const context = await requirePermission("settings.manage");
+    if (!context.activeCompany?.id) throw new Error("Active company is required.");
+    const companyId = context.activeCompany.id;
+    const officeName = input.officeName.trim();
+    const loginName = input.loginName.trim();
+    const pin = input.pin.trim();
+    const confirmPin = input.confirmPin.trim();
+    const officeCode = normalizeCode(input.officeCode || officeName);
+    if (!officeName) throw new Error("Office name is required.");
+    if (!officeCode) throw new Error("Office code is required.");
+    if (!loginName) throw new Error("Office login name is required.");
+    if (pin !== confirmPin) throw new Error("PIN confirmation does not match.");
+    assertOfficePin(pin);
+
+    const admin = createSupabaseAdminClient();
+    const supabase = await createSupabaseServerClient();
+    const loginEmail = (input.loginEmail?.trim().toLowerCase() || suggestedLoginEmail(loginName, companyId));
+    const now = new Date().toISOString();
+    let createdOfficeId: string | null = null;
+    let createdUserId: string | null = null;
+
+    const [{ data: existingOfficeByName }, { data: existingOfficeByCode }, { data: existingUserByEmail }, { data: existingUserByLogin }] = await Promise.all([
+        admin.from("offices").select("id").eq("company_id", companyId).ilike("office_name", officeName).limit(1).maybeSingle(),
+        admin.from("offices").select("id").eq("company_id", companyId).or(`office_code.eq.${officeCode},code.eq.${officeCode}`).limit(1).maybeSingle(),
+        admin.from("users").select("id").eq("company_id", companyId).eq("email", loginEmail).limit(1).maybeSingle(),
+        admin.from("users").select("id").eq("company_id", companyId).ilike("full_name", loginName).limit(1).maybeSingle(),
+    ]);
+    if (existingOfficeByName?.id) throw new Error("Office name already exists.");
+    if (existingOfficeByCode?.id) throw new Error("Office code already exists.");
+    if (existingUserByEmail?.id || existingUserByLogin?.id) throw new Error("Login name already exists.");
+
+    try {
+        const officePayload = {
+            company_id: companyId,
+            office_name: officeName,
+            name: officeName,
+            office_code: officeCode,
+            code: officeCode,
+            manager_name: input.managerName?.trim() || null,
+            city: input.city?.trim() || null,
+            region: input.region?.trim() || null,
+            collection_target: numeric(input.collectionTarget),
+            expense_budget: numeric(input.expenseBudget),
+            status: input.status || "active",
+            created_at: now,
+            updated_at: now,
+        };
+        const { data: office, error: officeError } = await admin.from("offices").insert(officePayload).select("id").single();
+        if (officeError || !office?.id) throw new Error(officeError?.message ?? "Office was not created because office setup failed.");
+        createdOfficeId = office.id;
+
+        const { data: role } = await admin
+            .from("roles")
+            .select("id")
+            .eq("company_id", companyId)
+            .eq("key", "office_manager")
+            .maybeSingle();
+        const fallbackRoleId = role?.id ?? "";
+        if (!fallbackRoleId) throw new Error("Office Manager role is missing. Apply default roles migration first.");
+
+        const { data: authUser, error: authError } = await admin.auth.admin.createUser({
+            email: loginEmail,
+            password: pin,
+            email_confirm: true,
+            user_metadata: {
+                account_type: "office",
+                default_office_id: createdOfficeId,
+                full_name: loginName,
+                login_name: loginName,
+                require_password_change: Boolean(input.requirePasswordChange),
+            },
+        });
+        if (authError || !authUser.user) throw new Error(authError?.message ?? "Office was not created because login setup failed.");
+        createdUserId = authUser.user.id;
+
+        const userPayload = {
+            account_type: "office",
+            company_id: companyId,
+            default_office_id: createdOfficeId,
+            email: loginEmail,
+            full_name: loginName,
+            status: "active",
+            updated_at: now,
+        };
+        const { error: userError } = await admin.from("users").upsert({ id: createdUserId, ...userPayload });
+        if (userError) throw new Error(userError.message);
+
+        await setPinCredential(createdUserId, pin, "active", context.profile?.id ?? null);
+        await assignRole({
+            companyId,
+            officeId: createdOfficeId,
+            roleId: fallbackRoleId,
+            scope: await roleScope(supabase, fallbackRoleId),
+            userId: createdUserId,
+        });
+
+        await Promise.allSettled([
+            admin.from("security_events").insert({
+                company_id: companyId,
+                office_id: createdOfficeId,
+                user_id: createdUserId,
+                event_type: "office_created_with_login",
+                severity: "info",
+                metadata: {
+                    created_by: context.profile?.id ?? null,
+                    login_name: loginName,
+                    office_code: officeCode,
+                    require_password_change: Boolean(input.requirePasswordChange),
+                },
+            }),
+            logUserAction({
+                action: "office_created_with_login",
+                entityType: "office",
+                entityId: createdOfficeId,
+                companyId,
+                officeId: createdOfficeId,
+                afterData: { ...officePayload, login_name: loginName, login_email: loginEmail, user_id: createdUserId },
+            }),
+        ]);
+
+        revalidatePath("/office/admin");
+        revalidatePath("/office/ceo");
+        revalidatePath("/office/spreadsheet");
+        return {
+            officeId: createdOfficeId,
+            officeName,
+            officeCode,
+            loginName,
+            loginEmail,
+            status: officePayload.status,
+            createdAt: now,
+            createdBy: context.profile?.full_name ?? context.profile?.email ?? "Admin",
+        };
+    } catch (error) {
+        if (createdUserId) {
+            await admin.auth.admin.deleteUser(createdUserId).catch(() => undefined);
+            await ignoreCleanupError(admin.from("users").delete().eq("id", createdUserId));
+            await ignoreCleanupError(admin.from("pin_credentials").delete().eq("user_id", createdUserId));
+            await ignoreCleanupError(admin.from("user_office_roles").delete().eq("user_id", createdUserId));
+        }
+        if (createdOfficeId) {
+            await ignoreCleanupError(admin.from("offices").delete().eq("id", createdOfficeId).eq("company_id", companyId));
+        }
+        throw error instanceof Error ? error : new Error("Office was not created because login setup failed.");
+    }
 }
 
 export async function updateOffice(input: UpdateOfficeInput) {
