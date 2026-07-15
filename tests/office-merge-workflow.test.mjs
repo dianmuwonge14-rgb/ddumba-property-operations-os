@@ -9,12 +9,13 @@ const migrationSource = readFileSync(new URL("../supabase/upgrade_migrations/020
 
 test("office merge UI creates a new merged office with source office multi-select", () => {
   assert.match(centreSource, /sourceOfficeIds/);
-  assert.match(centreSource, /Source offices/);
-  assert.match(centreSource, /New merged office name/);
+  assert.match(centreSource, /OFFICE CONSOLIDATION CENTRE/);
+  assert.match(centreSource, /OfficeSelectionCard/);
+  assert.match(centreSource, /New office name/);
   assert.match(centreSource, /newOfficeName/);
   assert.match(centreSource, /newOfficePin/);
   assert.match(centreSource, /confirmNewOfficePin/);
-  assert.match(centreSource, /New PIN configured/);
+  assert.match(centreSource, /Secure PIN configured/);
   assert.match(centreSource, /MERGE OFFICES/);
   assert.doesNotMatch(centreSource, /Destination office/);
 });
@@ -23,9 +24,30 @@ test("merge button opens a confirmation modal before sending the server request"
   assert.match(centreSource, /openConfirmation/);
   assert.match(centreSource, /setShowConfirm\(true\)/);
   assert.match(centreSource, /Final confirmation/);
-  assert.match(centreSource, /Confirm Office Merge/);
-  assert.match(centreSource, /Starting merge/);
-  assert.match(centreSource, /disabled=\{!canExecute \|\| isSubmitting\}/);
+  assert.match(centreSource, /ConfirmationModal/);
+  assert.match(centreSource, /Merge Offices/);
+  assert.match(centreSource, /Starting secure merge/);
+  assert.match(centreSource, /canExecute=\{canExecute\}/);
+  assert.match(centreSource, /disabled=\{!props\.canExecute \|\| props\.isSubmitting\}/);
+});
+
+test("office merge UI exposes the premium six-step workflow panels", () => {
+  assert.match(centreSource, /MergeStepIndicator/);
+  assert.match(centreSource, /Select Offices/);
+  assert.match(centreSource, /Configure New Office/);
+  assert.match(centreSource, /Transfer Accounts/);
+  assert.match(centreSource, /Review Live Preview/);
+  assert.match(centreSource, /Confirm and Merge/);
+  assert.match(centreSource, /Track Completion/);
+  assert.match(centreSource, /NewMergedOfficeForm/);
+  assert.match(centreSource, /AccountTransferPanel/);
+  assert.match(centreSource, /LiveMergePreview/);
+  assert.match(centreSource, /FinancialIntegrityPanel/);
+  assert.match(centreSource, /ConflictReviewPanel/);
+  assert.match(centreSource, /FinalMergeConfirmation/);
+  assert.match(centreSource, /MergeProgressTimeline/);
+  assert.match(centreSource, /MergeCompletionSummary/);
+  assert.match(centreSource, /MergeHistoryPanel/);
 });
 
 test("office merge client sends one compact JSON request with ids only", () => {
@@ -36,18 +58,19 @@ test("office merge client sends one compact JSON request with ids only", () => {
   assert.match(centreSource, /confirmNewOfficePin,/);
   assert.match(centreSource, /accountHandling,/);
   assert.match(centreSource, /credentials: "same-origin"/);
-  assert.match(centreSource, /Network connection failed while starting the merge/);
+  assert.match(centreSource, /Merge service unavailable or network connection failed/);
   assert.doesNotMatch(centreSource, /executeOfficeMerge\(/);
-  assert.doesNotMatch(centreSource, /affectedCounts:/);
+  const requestBody = centreSource.slice(centreSource.indexOf("body: JSON.stringify({"), centreSource.indexOf("credentials: \"same-origin\""));
+  assert.doesNotMatch(requestBody, /affectedCounts/);
   assert.match(centreSource, /Office merge completed successfully/);
 });
 
 test("office merge validation requires usable new office credentials", () => {
-  assert.match(centreSource, /New merged office name is required/);
-  assert.match(centreSource, /Office name already exists/);
-  assert.match(centreSource, /PIN must contain exactly six digits/);
-  assert.match(centreSource, /Choose a stronger six-digit PIN/);
-  assert.match(centreSource, /PIN confirmation does not match/);
+  assert.match(centreSource, /New office name missing/);
+  assert.match(centreSource, /Duplicate office name/);
+  assert.match(centreSource, /PIN format invalid/);
+  assert.match(centreSource, /Weak PIN/);
+  assert.match(centreSource, /PIN confirmation mismatch/);
   assert.match(routeSource, /assertOfficePin/);
   assert.match(routeSource, /isWeakPin/);
   assert.match(routeSource, /OFFICE_MERGE_DUPLICATE_OFFICE_NAME/);

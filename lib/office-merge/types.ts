@@ -1,6 +1,8 @@
 export type OfficeMergeSourceOffice = {
     id: string;
     name: string;
+    code: string;
+    location: string;
     status: string;
     rentRoll: number;
     counts: Record<string, number>;
