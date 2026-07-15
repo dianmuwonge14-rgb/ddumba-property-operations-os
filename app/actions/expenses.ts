@@ -244,6 +244,7 @@ async function postOfficeCashOutflow(input: {
 }
 
 async function getLandlordPaymentPreview(input: {
+    advanceRecoveryAmount?: number;
     amount: number;
     companyId: string;
     db: { from: (table: string) => any };
@@ -293,7 +294,13 @@ async function getLandlordPaymentPreview(input: {
         currentMonth: paymentMonth,
         payables,
     });
+    const selectedAdvanceRecovery = Math.min(
+        Math.max(0, Number(input.advanceRecoveryAmount ?? 0)),
+        activeAdvanceBalance,
+        payableSummary.totalOutstandingPayable,
+    );
     const allocationPlan = buildLandlordPaymentAllocationPlan({
+        advanceRecoveryAmount: selectedAdvanceRecovery,
         amount: input.amount,
         currentMonth: paymentMonth,
         payables,
@@ -304,8 +311,8 @@ async function getLandlordPaymentPreview(input: {
     const openingArrears = amount(currentPayable?.opening_arrears);
     const pendingRequestAmount = ((pendingResult.data ?? []) as Record<string, unknown>[])
         .reduce((total, request) => total + amount(request.requested_amount), 0);
-    const normalPaymentAmount = Math.min(Math.max(0, input.amount), outstandingAmount);
-    const advanceAmount = Math.max(0, Math.max(0, input.amount) - outstandingAmount);
+    const normalPaymentAmount = allocationPlan.normalPaymentAmount;
+    const advanceAmount = allocationPlan.advanceAmount;
     const duplicatePaymentRisk = ((pendingResult.data ?? []) as Record<string, unknown>[])
         .some((request) => Math.round(amount(request.requested_amount)) === Math.round(input.amount));
     const flagReason = advanceAmount > 0 && normalPaymentAmount > 0
@@ -319,6 +326,7 @@ async function getLandlordPaymentPreview(input: {
     return {
         activeAdvanceBalance,
         advanceAmount,
+        advanceRecoveryAmount: allocationPlan.advanceRecoveryAmount,
         alreadyPaidAmount,
         currentNetPayable,
         duplicatePaymentRisk,
@@ -327,8 +335,11 @@ async function getLandlordPaymentPreview(input: {
         normalPaymentAmount,
         openingArrears,
         outstandingAmount,
+        payableAfterAdvanceRecovery: allocationPlan.payableAfterAdvanceRecovery,
         paymentMonth,
         pendingRequestAmount,
+        remainingAdvanceBalance: Math.max(0, activeAdvanceBalance - allocationPlan.advanceRecoveryAmount),
+        remainingAfterPayment: allocationPlan.remainingAfterPayment,
     };
 }
 
@@ -473,6 +484,7 @@ async function resolveLandlordPaymentOfficeId(input: {
 }
 
 export async function previewLandlordPaymentExpense(input: {
+    advanceRecoveryAmount?: number;
     amount: number;
     landlordId: string;
     officeId?: string | null;
@@ -500,6 +512,7 @@ export async function previewLandlordPaymentExpense(input: {
         return {
             activeAdvanceBalance: 0,
             advanceAmount: 0,
+            advanceRecoveryAmount: 0,
             alreadyPaidAmount: 0,
             currentNetPayable: 0,
             duplicatePaymentRisk: false,
@@ -508,8 +521,11 @@ export async function previewLandlordPaymentExpense(input: {
             normalPaymentAmount: 0,
             openingArrears: 0,
             outstandingAmount: 0,
+            payableAfterAdvanceRecovery: 0,
             paymentMonth,
             pendingRequestAmount: 0,
+            remainingAdvanceBalance: 0,
+            remainingAfterPayment: 0,
         };
     }
 
@@ -527,6 +543,7 @@ export async function previewLandlordPaymentExpense(input: {
     }
 
     return getLandlordPaymentPreview({
+        advanceRecoveryAmount: input.advanceRecoveryAmount,
         amount: value,
         companyId,
         db,
@@ -584,6 +601,7 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
     }
 
     const preview = await getLandlordPaymentPreview({
+        advanceRecoveryAmount: input.advanceRecoveryAmount,
         amount,
         companyId,
         db,
@@ -608,9 +626,7 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
         }
     }
 
-    const { data: request, error: requestError } = await db
-        .from("landlord_payment_expense_requests")
-        .insert({
+    const requestPayload = {
             company_id: companyId,
             office_id: officeId,
             landlord_id: input.landlordId,
@@ -619,6 +635,10 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
             requested_amount: amount,
             normal_payment_amount: preview.normalPaymentAmount,
             advance_amount: preview.advanceAmount,
+            advance_recovery_amount: preview.advanceRecoveryAmount,
+            advance_balance_before: preview.activeAdvanceBalance,
+            advance_balance_after: preview.remainingAdvanceBalance,
+            cash_payment_amount: preview.normalPaymentAmount,
             current_net_payable: preview.currentNetPayable,
             already_paid_amount: preview.alreadyPaidAmount,
             outstanding_amount: preview.outstandingAmount,
@@ -633,9 +653,27 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
             notes: input.notes || null,
             status: "pending",
             submitted_by: actorId,
-        })
+        };
+    let requestInsert = await db
+        .from("landlord_payment_expense_requests")
+        .insert(requestPayload)
         .select("*")
         .single();
+    if (requestInsert.error && isMissingSchemaError(requestInsert.error)) {
+        const {
+            advance_balance_after: _advanceBalanceAfter,
+            advance_balance_before: _advanceBalanceBefore,
+            advance_recovery_amount: _advanceRecoveryAmount,
+            cash_payment_amount: _cashPaymentAmount,
+            ...fallbackPayload
+        } = requestPayload;
+        requestInsert = await db
+            .from("landlord_payment_expense_requests")
+            .insert(fallbackPayload)
+            .select("*")
+            .single();
+    }
+    const { data: request, error: requestError } = requestInsert;
     if (requestError) {
         console.error("Landlord payment approval request insert failed:", requestError.message);
         throw new Error(`Approval request could not be created: ${requestError.message}`);
@@ -1276,6 +1314,7 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
     const reference = `EXP-LP-${request.id.slice(0, 8)}`;
     const storedNormalPaymentAmount = Math.max(0, Number(request.normal_payment_amount ?? 0));
     const storedAdvanceAmount = Math.max(0, Number(request.advance_amount ?? 0));
+    const storedAdvanceRecoveryAmount = Math.max(0, Number(request.advance_recovery_amount ?? 0));
     const requestedAmount = Math.max(0, Number(request.requested_amount ?? storedNormalPaymentAmount + storedAdvanceAmount));
     const paymentMonth = monthStart(String(request.payment_month ?? request.payment_date ?? reviewedAt));
     const payablesResult = await db
@@ -1289,7 +1328,28 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
         .order("settlement_month", { ascending: true });
     if (payablesResult.error) throw new Error(payablesResult.error.message);
     const approvalPayables = (payablesResult.data ?? []) as Record<string, unknown>[];
+    const advancesResult = await db
+        .from("landlord_advances")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("office_id", request.office_id)
+        .eq("landlord_id", request.landlord_id);
+    if (advancesResult.error) throw new Error(advancesResult.error.message);
+    const activeAdvanceBalance = ((advancesResult.data ?? []) as Record<string, unknown>[])
+        .filter(isApprovedActiveAdvance)
+        .reduce((total, advance) => total + advanceRemaining(advance), 0);
+    const liveSummary = summarizeLandlordPayables({
+        activeAdvanceBalance,
+        currentMonth: paymentMonth,
+        payables: approvalPayables,
+    });
+    const approvedAdvanceRecoveryAmount = Math.min(
+        storedAdvanceRecoveryAmount,
+        activeAdvanceBalance,
+        liveSummary.totalOutstandingPayable,
+    );
     const approvalPlan = buildLandlordPaymentAllocationPlan({
+        advanceRecoveryAmount: approvedAdvanceRecoveryAmount,
         amount: requestedAmount,
         currentMonth: paymentMonth,
         payables: approvalPayables,
@@ -1358,7 +1418,10 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
             payableId = payable.id;
         }
         approvedPaymentId = await applyApprovedLandlordPaymentToLedger({
+            advanceRecoveryAmount: approvalPlan.advanceRecoveryAmount,
             amount: normalPaymentAmount,
+            advanceBalanceAfter: Math.max(0, activeAdvanceBalance - approvalPlan.advanceRecoveryAmount),
+            advanceBalanceBefore: activeAdvanceBalance,
             companyId,
             db,
             landlordId: request.landlord_id,
@@ -1371,6 +1434,25 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
             paymentMonth,
             startingMonthlyPayableId: payableId,
             notes: `Approved from Expenses landlord payment request. ${request.notes ?? ""}`.trim(),
+        });
+    } else if (approvalPlan.advanceRecoveryAmount > 0) {
+        approvedPaymentId = await applyApprovedLandlordPaymentToLedger({
+            advanceRecoveryAmount: approvalPlan.advanceRecoveryAmount,
+            amount: 0,
+            advanceBalanceAfter: Math.max(0, activeAdvanceBalance - approvalPlan.advanceRecoveryAmount),
+            advanceBalanceBefore: activeAdvanceBalance,
+            companyId,
+            db,
+            landlordId: request.landlord_id,
+            officeId: request.office_id,
+            paidAt: request.payment_date,
+            paidBy: actorId,
+            paymentMethod: request.payment_method ?? "cash",
+            reference,
+            requestId: request.id,
+            paymentMonth,
+            startingMonthlyPayableId: payableId,
+            notes: `Approved advance recovery only from Expenses landlord payment request. ${request.notes ?? ""}`.trim(),
         });
     }
 
@@ -1385,20 +1467,22 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
         });
     }
 
-    const { data, error } = await db
-        .from("landlord_payment_expense_requests")
-        .update({
+    const approvalUpdatePayload = {
             status: "approved",
             monthly_payable_id: payableId,
             normal_payment_amount: normalPaymentAmount,
             advance_amount: advanceAmount,
+            advance_recovery_amount: approvalPlan.advanceRecoveryAmount,
+            advance_balance_before: activeAdvanceBalance,
+            advance_balance_after: Math.max(0, activeAdvanceBalance - approvalPlan.advanceRecoveryAmount),
+            cash_payment_amount: normalPaymentAmount,
             already_paid_amount: approvalPayables
                 .filter((row) => String(row.settlement_month ?? "").slice(0, 10) === paymentMonth)
                 .reduce((total, row) => total + landlordMonthlyPaid(row), 0),
             current_net_payable: approvalPayables
                 .filter((row) => String(row.settlement_month ?? "").slice(0, 10) === paymentMonth)
                 .reduce((total, row) => total + landlordMonthlyDue(row), 0),
-            outstanding_amount: Math.max(0, approvalPlan.totalUnpaidPayable - normalPaymentAmount),
+            outstanding_amount: approvalPlan.remainingAfterPayment,
             reviewed_by: actorId,
             reviewed_at: reviewedAt,
             approved_at: reviewedAt,
@@ -1407,11 +1491,31 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
             approved_landlord_payment_id: approvedPaymentId,
             approved_advance_id: approvedAdvanceId,
             updated_at: reviewedAt,
-        })
+        };
+    let approvalUpdate = await db
+        .from("landlord_payment_expense_requests")
+        .update(approvalUpdatePayload)
         .eq("id", request.id)
         .eq("status", "pending")
         .select("*")
         .maybeSingle();
+    if (approvalUpdate.error && isMissingSchemaError(approvalUpdate.error)) {
+        const {
+            advance_balance_after: _advanceBalanceAfter,
+            advance_balance_before: _advanceBalanceBefore,
+            advance_recovery_amount: _advanceRecoveryAmount,
+            cash_payment_amount: _cashPaymentAmount,
+            ...fallbackApprovalUpdate
+        } = approvalUpdatePayload;
+        approvalUpdate = await db
+            .from("landlord_payment_expense_requests")
+            .update(fallbackApprovalUpdate)
+            .eq("id", request.id)
+            .eq("status", "pending")
+            .select("*")
+            .maybeSingle();
+    }
+    const { data, error } = approvalUpdate;
     if (error) throw new Error(error.message);
     if (!data) throw new Error("This landlord payment request has already been reviewed.");
     await markLandlordPaymentApprovalNotificationsReviewed(db, {
@@ -1581,7 +1685,140 @@ async function findPayableForLandlordPayment(input: { db: { from: (table: string
     }) ?? (data ?? [])[0] ?? null;
 }
 
+async function insertOptionalIgnoringDuplicate(db: { from: (table: string) => any }, table: string, row: Record<string, unknown>) {
+    const { error } = await db.from(table).insert(row);
+    if (error && error.code !== "23505" && !isMissingSchemaError(error)) {
+        throw new Error(`${table} insert failed: ${error.message}`);
+    }
+}
+
+async function applyLandlordAdvanceRecovery(input: {
+    actorId: string | null;
+    companyId: string;
+    db: { from: (table: string) => any };
+    landlordId: string;
+    officeId: string;
+    paymentId: string;
+    plan: ReturnType<typeof buildLandlordPaymentAllocationPlan>;
+    recoveryDate: string;
+    requestId: string;
+}) {
+    let remainingRecovery = input.plan.advanceRecoveryAmount;
+    if (remainingRecovery <= 0) return;
+
+    const advancesResult = await input.db
+        .from("landlord_advances")
+        .select("*")
+        .eq("company_id", input.companyId)
+        .eq("office_id", input.officeId)
+        .eq("landlord_id", input.landlordId)
+        .order("date_given", { ascending: true });
+    if (advancesResult.error) throw new Error(advancesResult.error.message);
+
+    const activeAdvances = ((advancesResult.data ?? []) as Record<string, unknown>[])
+        .filter(isApprovedActiveAdvance)
+        .map((advance) => ({ advance, remaining: advanceRemaining(advance) }))
+        .filter((advance) => advance.remaining > 0);
+    const activeAdvanceTotal = activeAdvances.reduce((total, advance) => total + advance.remaining, 0);
+    if (remainingRecovery > activeAdvanceTotal + 0.5) {
+        throw new Error("Selected advance recovery is greater than the live active advance balance.");
+    }
+
+    const recoveryLines = input.plan.lines.filter((line) => line.advanceRecoveryApplied > 0);
+    let lineIndex = 0;
+    let remainingOnLine = recoveryLines[0]?.advanceRecoveryApplied ?? 0;
+
+    for (const { advance, remaining } of activeAdvances) {
+        if (remainingRecovery <= 0) break;
+        const advanceId = String(advance.id ?? "");
+        const advanceBefore = advanceRemaining(advance);
+        let remainingForThisAdvance = Math.min(remainingRecovery, remaining);
+        const appliedToAdvance = remainingForThisAdvance;
+        const deductedBefore = amount(advance.deducted_amount);
+        const advanceAfter = Math.max(0, advanceBefore - appliedToAdvance);
+        const deductedAfter = deductedBefore + appliedToAdvance;
+
+        while (remainingForThisAdvance > 0 && lineIndex < recoveryLines.length) {
+            const line = recoveryLines[lineIndex];
+            const slice = Math.min(remainingForThisAdvance, remainingOnLine);
+            await insertOptionalIgnoringDuplicate(input.db, "landlord_advance_recovery_allocations", {
+                advance_balance_after: Math.max(0, advanceBefore - (appliedToAdvance - remainingForThisAdvance + slice)),
+                advance_balance_before: Math.max(0, advanceBefore - (appliedToAdvance - remainingForThisAdvance)),
+                approved_at: input.recoveryDate,
+                approved_by: input.actorId,
+                company_id: input.companyId,
+                created_by: input.actorId,
+                effective_month: line.month,
+                idempotency_key: `${input.requestId}:${advanceId}:${line.payableId}`,
+                landlord_advance_id: advanceId,
+                landlord_id: input.landlordId,
+                landlord_payment_id: input.paymentId,
+                landlord_payment_request_id: input.requestId,
+                monthly_payable_id: line.payableId,
+                office_id: input.officeId,
+                recovery_amount: slice,
+                requested_by: input.actorId,
+                status: "approved",
+            });
+            await insertOptionalIgnoringDuplicate(input.db, "landlord_advance_deductions", {
+                advance_id: advanceId,
+                amount: slice,
+                company_id: input.companyId,
+                created_by: input.actorId,
+                deduction_month: line.month,
+                landlord_id: input.landlordId,
+                monthly_payable_id: line.payableId,
+                notes: `Controlled recovery from landlord payment ${input.paymentId} / request ${input.requestId}`,
+                office_id: input.officeId,
+                status: "deducted",
+            });
+            remainingForThisAdvance -= slice;
+            remainingOnLine -= slice;
+            if (remainingOnLine <= 0) {
+                lineIndex += 1;
+                remainingOnLine = recoveryLines[lineIndex]?.advanceRecoveryApplied ?? 0;
+            }
+        }
+
+        remainingRecovery -= appliedToAdvance;
+        const updatePayload = {
+            deducted_amount: deductedAfter,
+            deducted_at: input.recoveryDate,
+            lifecycle_status: advanceAfter <= 0 ? "cleared" : "active",
+            remaining_interest_balance: Math.max(0, amount(advance.remaining_interest_balance)),
+            remaining_principal_balance: Math.max(0, amount(advance.remaining_principal_balance) - appliedToAdvance),
+            remaining_total_balance: advanceAfter,
+            status: advanceAfter <= 0 ? "fully_deducted" : "partially_deducted",
+            updated_at: new Date().toISOString(),
+            updated_by: input.actorId,
+        };
+        let update = await input.db
+            .from("landlord_advances")
+            .update(updatePayload)
+            .eq("id", advanceId);
+        if (update.error && isMissingSchemaError(update.error)) {
+            update = await input.db
+                .from("landlord_advances")
+                .update({
+                    deducted_amount: deductedAfter,
+                    deducted_at: input.recoveryDate,
+                    status: advanceAfter <= 0 ? "fully_deducted" : "partially_deducted",
+                    updated_at: new Date().toISOString(),
+                })
+                .eq("id", advanceId);
+        }
+        if (update.error) throw new Error(update.error.message);
+    }
+
+    if (remainingRecovery > 0.5) {
+        throw new Error("Advance recovery could not be fully allocated to active advances.");
+    }
+}
+
 async function applyApprovedLandlordPaymentToLedger(input: {
+    advanceBalanceAfter?: number;
+    advanceBalanceBefore?: number;
+    advanceRecoveryAmount?: number;
     amount: number;
     companyId: string;
     db: { from: (table: string) => any };
@@ -1609,11 +1846,12 @@ async function applyApprovedLandlordPaymentToLedger(input: {
     if (rowsResult.error) throw new Error(rowsResult.error.message);
 
     const plan = buildLandlordPaymentAllocationPlan({
+        advanceRecoveryAmount: input.advanceRecoveryAmount ?? 0,
         amount: input.amount,
         currentMonth: input.paymentMonth,
         payables: (rowsResult.data ?? []) as Record<string, unknown>[],
     });
-    if (plan.normalPaymentAmount <= 0 || plan.lines.length === 0) {
+    if ((plan.normalPaymentAmount <= 0 && plan.advanceRecoveryAmount <= 0) || plan.lines.length === 0) {
         throw new Error("No genuine unpaid landlord payable was found for this payment.");
     }
 
@@ -1624,7 +1862,8 @@ async function applyApprovedLandlordPaymentToLedger(input: {
         const monthlyNetPayable = landlordMonthlyDue(row);
         const openingArrears = amount(row.opening_arrears);
         const totalDue = amount(row.total_due) || monthlyNetPayable;
-        const nextPaid = landlordMonthlyPaid(row) + line.applied;
+        const lineTotalApplied = line.applied + line.advanceRecoveryApplied;
+        const nextPaid = landlordMonthlyPaid(row) + lineTotalApplied;
         const unpaidBalance = Math.max(0, monthlyNetPayable - Math.min(nextPaid, monthlyNetPayable));
         const status = unpaidBalance <= 0 ? "paid" : nextPaid > 0 ? "partial" : "unpaid";
         const update = await input.db
@@ -1652,10 +1891,15 @@ async function applyApprovedLandlordPaymentToLedger(input: {
             .from("landlord_monthly_payable_payments")
             .insert({
                 amount: line.applied,
+                advance_recovery_amount: line.advanceRecoveryApplied,
+                cash_payment_amount: line.applied,
                 company_id: input.companyId,
                 landlord_id: input.landlordId,
                 monthly_payable_id: line.payableId,
-                notes: input.notes ?? `Allocated to ${line.month}`,
+                notes: [
+                    input.notes ?? `Allocated to ${line.month}`,
+                    line.advanceRecoveryApplied > 0 ? `Existing landlord advance recovered: UGX ${Math.round(line.advanceRecoveryApplied).toLocaleString()}` : "",
+                ].filter(Boolean).join("\n"),
                 office_id: input.officeId,
                 paid_at: input.paidAt,
                 paid_by: input.paidBy,
@@ -1663,17 +1907,42 @@ async function applyApprovedLandlordPaymentToLedger(input: {
                 reference: input.reference,
                 settlement_id: row.settlement_id ? String(row.settlement_id) : null,
             });
-        if (lineInsert.error) throw new Error(lineInsert.error.message);
+        if (lineInsert.error && isMissingSchemaError(lineInsert.error)) {
+            const fallbackLineInsert = await input.db
+                .from("landlord_monthly_payable_payments")
+                .insert({
+                    amount: line.applied,
+                    company_id: input.companyId,
+                    landlord_id: input.landlordId,
+                    monthly_payable_id: line.payableId,
+                    notes: [
+                        input.notes ?? `Allocated to ${line.month}`,
+                        line.advanceRecoveryApplied > 0 ? `Existing landlord advance recovered: UGX ${Math.round(line.advanceRecoveryApplied).toLocaleString()}` : "",
+                    ].filter(Boolean).join("\n"),
+                    office_id: input.officeId,
+                    paid_at: input.paidAt,
+                    paid_by: input.paidBy,
+                    payment_method: input.paymentMethod,
+                    reference: input.reference,
+                    settlement_id: row.settlement_id ? String(row.settlement_id) : null,
+                });
+            if (fallbackLineInsert.error) throw new Error(fallbackLineInsert.error.message);
+        } else if (lineInsert.error) throw new Error(lineInsert.error.message);
     }
 
-    const remainingAfterPayment = Math.max(0, plan.totalUnpaidPayable - input.amount);
-    const paymentInsert = await input.db
+    const remainingAfterPayment = plan.remainingAfterPayment;
+    let paymentInsert = await input.db
         .from("landlord_payments")
         .insert({
+            advance_balance_after: input.advanceBalanceAfter ?? 0,
+            advance_balance_before: input.advanceBalanceBefore ?? 0,
+            advance_recovery_amount: plan.advanceRecoveryAmount,
             amount: input.amount,
+            cash_payment_amount: input.amount,
             company_id: input.companyId,
             created_by: input.paidBy,
             landlord_id: input.landlordId,
+            new_advance_amount: plan.advanceAmount,
             office_id: input.officeId,
             paid_at: input.paidAt,
             payment_method: input.paymentMethod,
@@ -1683,7 +1952,38 @@ async function applyApprovedLandlordPaymentToLedger(input: {
         })
         .select("id")
         .single();
+    if (paymentInsert.error && isMissingSchemaError(paymentInsert.error)) {
+        paymentInsert = await input.db
+            .from("landlord_payments")
+            .insert({
+                amount: input.amount,
+                company_id: input.companyId,
+                created_by: input.paidBy,
+                landlord_id: input.landlordId,
+                office_id: input.officeId,
+                paid_at: input.paidAt,
+                payment_method: input.paymentMethod,
+                payout_reference: input.reference,
+                settlement_id: null,
+                status: remainingAfterPayment > 0 ? "partial" : "paid",
+            })
+            .select("id")
+            .single();
+    }
     if (paymentInsert.error) throw new Error(paymentInsert.error.message);
+    if (plan.advanceRecoveryAmount > 0) {
+        await applyLandlordAdvanceRecovery({
+            actorId: input.paidBy,
+            companyId: input.companyId,
+            db: input.db,
+            landlordId: input.landlordId,
+            officeId: input.officeId,
+            paymentId: String(paymentInsert.data.id),
+            plan,
+            recoveryDate: input.paidAt,
+            requestId: input.requestId,
+        });
+    }
     try {
         await createLandlordPaymentReceipt(String(paymentInsert.data.id), { issuedBy: input.paidBy });
     } catch (error) {

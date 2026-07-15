@@ -111,6 +111,10 @@ export type NotificationLandlordPaymentRequest = {
     requested_amount: number | string;
     normal_payment_amount?: number | string;
     advance_amount?: number | string;
+    advance_recovery_amount?: number | string;
+    advance_balance_after?: number | string;
+    advance_balance_before?: number | string;
+    cash_payment_amount?: number | string;
     current_net_payable?: number | string;
     already_paid_amount?: number | string;
     outstanding_amount?: number | string;
@@ -352,7 +356,7 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
 
     let landlordPaymentRequestQuery = db
         .from("landlord_payment_expense_requests")
-        .select("id,company_id,office_id,landlord_id,expense_id,monthly_payable_id,requested_amount,normal_payment_amount,advance_amount,current_net_payable,already_paid_amount,outstanding_amount,active_advance_balance,pending_request_amount,flag_reason,payment_month,payment_date,payment_method,notes,status,submitted_by,reviewed_by,reviewed_at,admin_comment,approved_landlord_payment_id,approved_advance_id,advance_agreement,created_at,updated_at")
+        .select("*")
         .eq("company_id", context.activeCompany.id)
         .order("created_at", { ascending: false })
         .limit(INITIAL_APPROVAL_LIMIT);
@@ -495,6 +499,7 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
         const scopedRows = paymentMonth ? rows.filter((row) => String(row.settlement_month ?? "").slice(0, 10) <= paymentMonth) : rows;
         const summary = summarizeLandlordPayables({ currentMonth: paymentMonth || null, payables: scopedRows });
         const plan = buildLandlordPaymentAllocationPlan({
+            advanceRecoveryAmount: Number(request.advance_recovery_amount ?? 0) || 0,
             amount: Number(request.requested_amount ?? 0) || 0,
             currentMonth: paymentMonth || undefined,
             payables: scopedRows,
@@ -507,6 +512,9 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
                 .reduce((total, row) => total + landlordMonthlyDue(row), 0),
             normal_payment_amount: plan.normalPaymentAmount,
             advance_amount: plan.advanceAmount,
+            advance_recovery_amount: plan.advanceRecoveryAmount,
+            advance_balance_after: Math.max(0, Number(request.active_advance_balance ?? 0) - plan.advanceRecoveryAmount),
+            cash_payment_amount: plan.cashPayableToLandlord,
             outstanding_amount: summary.totalOutstandingPayable,
             flag_reason: plan.advanceAmount > 0
                 ? plan.normalPaymentAmount > 0 ? "partial_overpayment_live_recalculated" : "overpayment_creates_advance_live_recalculated"

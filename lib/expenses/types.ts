@@ -83,6 +83,9 @@ export type ExpensesPageData = {
         amount: number;
         normalPaymentAmount: number;
         advanceAmount: number;
+        advanceRecoveryAmount: number;
+        cashPaymentAmount: number;
+        remainingAdvanceBalance: number;
         currentNetPayable: number;
         alreadyPaidAmount: number;
         outstandingAmount: number;
@@ -164,6 +167,7 @@ export type CreateExpenseInput = {
 export type CreateLandlordPaidExpenseRequestInput = {
     amount: number;
     advanceAgreement?: Record<string, unknown>;
+    advanceRecoveryAmount?: number;
     expenseDate: string;
     landlordId: string;
     officeId?: string | null;

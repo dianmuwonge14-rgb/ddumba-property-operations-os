@@ -1498,8 +1498,9 @@ function LandlordPaymentApprovalTable({
                             <td><span className="font-black text-blue-700">{money(request.requested_amount)}</span></td>
                             <td>
                                 <div className="space-y-1 text-xs font-bold">
-                                    <p className="text-emerald-700">Payment: {money(request.normal_payment_amount ?? request.requested_amount)}</p>
-                                    <p className={Number(request.advance_amount ?? 0) > 0 ? "text-amber-700" : "text-slate-400"}>Advance: {money(request.advance_amount ?? 0)}</p>
+                                    <p className="text-emerald-700">Cash: {money(request.cash_payment_amount ?? request.normal_payment_amount ?? request.requested_amount)}</p>
+                                    <p className={Number(request.advance_recovery_amount ?? 0) > 0 ? "text-indigo-700" : "text-slate-400"}>Old advance recovery: {money(request.advance_recovery_amount ?? 0)}</p>
+                                    <p className={Number(request.advance_amount ?? 0) > 0 ? "text-amber-700" : "text-slate-400"}>New advance: {money(request.advance_amount ?? 0)}</p>
                                 </div>
                             </td>
                             <td>
@@ -2503,8 +2504,10 @@ function LandlordPaymentRequestModal({
                         <Detail label="Office" value={office} />
                         <Detail label="Landlord" value={landlord} />
                         <Detail label="Amount" value={money(request.requested_amount)} />
-                        <Detail label="Normal Payment Portion" value={money(request.normal_payment_amount ?? request.requested_amount)} />
-                        <Detail label="Advance Portion" value={money(request.advance_amount ?? 0)} />
+                        <Detail label="Cash Payment Portion" value={money(request.cash_payment_amount ?? request.normal_payment_amount ?? request.requested_amount)} />
+                        <Detail label="Existing Advance Recovery" value={money(request.advance_recovery_amount ?? 0)} />
+                        <Detail label="New Advance Portion" value={money(request.advance_amount ?? 0)} />
+                        <Detail label="Advance Balance After" value={money(request.advance_balance_after ?? 0)} />
                         <Detail label="Current Net Payable" value={money(request.current_net_payable ?? 0)} />
                         <Detail label="Already Paid" value={money(request.already_paid_amount ?? 0)} />
                         <Detail label="Outstanding" value={money(request.outstanding_amount ?? 0)} />

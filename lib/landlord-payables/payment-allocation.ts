@@ -2,19 +2,25 @@ export type LandlordPayableLike = Record<string, unknown>;
 
 export type LandlordPaymentAllocationLine = {
     applied: number;
+    advanceRecoveryApplied: number;
     month: string;
     payableId: string;
+    totalApplied: number;
     unpaidBeforePayment: number;
 };
 
 export type LandlordPaymentAllocationPlan = {
     advanceAmount: number;
+    advanceRecoveryAmount: number;
     appliedAmount: number;
+    cashPayableToLandlord: number;
     currentMonthPayableId: string | null;
     currentMonthUnpaid: number;
     lines: LandlordPaymentAllocationLine[];
     normalPaymentAmount: number;
     oldestUnpaidPayableId: string | null;
+    payableAfterAdvanceRecovery: number;
+    remainingAfterPayment: number;
     totalUnpaidPayable: number;
 };
 
@@ -224,10 +230,12 @@ export function summarizeLandlordPayables({
 }
 
 export function buildLandlordPaymentAllocationPlan({
+    advanceRecoveryAmount = 0,
     amount,
     currentMonth,
     payables,
 }: {
+    advanceRecoveryAmount?: number;
     amount: number;
     currentMonth?: string;
     payables: LandlordPayableLike[];
@@ -240,33 +248,50 @@ export function buildLandlordPaymentAllocationPlan({
         .sort((a, b) => a.month.localeCompare(b.month));
 
     const totalUnpaidPayable = sortedUnpaidRows.reduce((total, item) => total + item.unpaid, 0);
+    const selectedAdvanceRecovery = Math.min(
+        Math.max(0, advanceRecoveryAmount),
+        totalUnpaidPayable,
+    );
+    let remainingAdvanceRecovery = selectedAdvanceRecovery;
+    const payableAfterAdvanceRecovery = Math.max(0, totalUnpaidPayable - selectedAdvanceRecovery);
     let remainingPayment = Math.max(0, amount);
     const lines: LandlordPaymentAllocationLine[] = [];
 
     for (const item of sortedUnpaidRows) {
-        if (remainingPayment <= 0) break;
-        const applied = Math.min(remainingPayment, item.unpaid);
+        if (remainingPayment <= 0 && remainingAdvanceRecovery <= 0) break;
+        const advanceRecoveryApplied = Math.min(remainingAdvanceRecovery, item.unpaid);
+        remainingAdvanceRecovery -= advanceRecoveryApplied;
+        const unpaidAfterRecovery = Math.max(0, item.unpaid - advanceRecoveryApplied);
+        const applied = Math.min(remainingPayment, unpaidAfterRecovery);
         remainingPayment -= applied;
+        if (applied <= 0 && advanceRecoveryApplied <= 0) continue;
         lines.push({
             applied,
+            advanceRecoveryApplied,
             month: item.month,
             payableId: String(item.row.id ?? ""),
+            totalApplied: applied + advanceRecoveryApplied,
             unpaidBeforePayment: item.unpaid,
         });
     }
 
-    const normalPaymentAmount = Math.min(Math.max(0, amount), totalUnpaidPayable);
-    const advanceAmount = Math.max(0, Math.max(0, amount) - totalUnpaidPayable);
+    const normalPaymentAmount = Math.min(Math.max(0, amount), payableAfterAdvanceRecovery);
+    const advanceAmount = Math.max(0, Math.max(0, amount) - payableAfterAdvanceRecovery);
+    const remainingAfterPayment = Math.max(0, payableAfterAdvanceRecovery - normalPaymentAmount);
     const currentMonthRow = sortedUnpaidRows.find((item) => item.month === currentMonth);
 
     return {
         advanceAmount,
+        advanceRecoveryAmount: selectedAdvanceRecovery,
         appliedAmount: normalPaymentAmount,
+        cashPayableToLandlord: normalPaymentAmount,
         currentMonthPayableId: currentMonthRow?.row.id ? String(currentMonthRow.row.id) : null,
         currentMonthUnpaid: currentMonthRow?.unpaid ?? 0,
         lines,
         normalPaymentAmount,
         oldestUnpaidPayableId: lines[0]?.payableId ?? null,
+        payableAfterAdvanceRecovery,
+        remainingAfterPayment,
         totalUnpaidPayable,
     };
 }

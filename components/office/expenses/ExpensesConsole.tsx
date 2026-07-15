@@ -1248,8 +1248,9 @@ function LandlordPaymentRequestLedger({ requests }: { requests: ExpensesPageData
                             <th className="px-4 py-3">Landlord</th>
                             <th className="px-4 py-3">Office</th>
                             <th className="px-4 py-3 text-right">Amount</th>
-                            <th className="px-4 py-3 text-right">Payment</th>
-                            <th className="px-4 py-3 text-right">Advance</th>
+                            <th className="px-4 py-3 text-right">Cash Payment</th>
+                            <th className="px-4 py-3 text-right">Advance Recovery</th>
+                            <th className="px-4 py-3 text-right">New Advance</th>
                             <th className="px-4 py-3">Method</th>
                             <th className="px-4 py-3">Status</th>
                             <th className="px-4 py-3">Admin comment</th>
@@ -1262,7 +1263,8 @@ function LandlordPaymentRequestLedger({ requests }: { requests: ExpensesPageData
                                 <td className="px-4 py-3 font-black text-slate-950">{request.landlordName}</td>
                                 <td className="px-4 py-3 font-bold text-slate-500">{request.officeName}</td>
                                 <td className="px-4 py-3 text-right font-black text-slate-950">{money(request.amount)}</td>
-                                <td className="px-4 py-3 text-right font-black text-emerald-700">{money(request.normalPaymentAmount)}</td>
+                                <td className="px-4 py-3 text-right font-black text-emerald-700">{money(request.cashPaymentAmount)}</td>
+                                <td className="px-4 py-3 text-right font-black text-indigo-700">{money(request.advanceRecoveryAmount)}</td>
                                 <td className="px-4 py-3 text-right font-black text-amber-700">{money(request.advanceAmount)}</td>
                                 <td className="px-4 py-3 font-bold capitalize text-slate-500">{request.paymentMethod.replaceAll("_", " ")}</td>
                                 <td className="px-4 py-3"><StatusBadge status={request.status} /></td>

@@ -465,11 +465,15 @@ function LandlordPaymentEntryPanel({
     const [paymentMethod, setPaymentMethod] = useState("cash");
     const [reference, setReference] = useState("");
     const [notes, setNotes] = useState("");
+    const [advanceRecoveryMode, setAdvanceRecoveryMode] = useState<"none" | "full" | "custom">("none");
+    const [customAdvanceRecovery, setCustomAdvanceRecovery] = useState("");
     const [localMessage, setLocalMessage] = useState("");
     const [lastSubmission, setLastSubmission] = useState<{
         advanceAmount: number;
         amountPaid: number;
         approvedAt?: string | null;
+        advanceRecoveryAmount: number;
+        cashPaidToLandlord: number;
         id?: string | null;
         normalPaymentAmount: number;
         notes?: string;
@@ -479,6 +483,7 @@ function LandlordPaymentEntryPanel({
         reference?: string;
         receiptNumber: string;
         remainingAfterPayment: number;
+        remainingAdvanceBalance: number;
         status: string;
     } | null>(null);
     const [isPending, startTransition] = useTransition();
@@ -491,14 +496,24 @@ function LandlordPaymentEntryPanel({
         }),
         [paymentMonth, selectedAdvanceGroup?.remainingBalance, selectedRows],
     );
+    const amountEntered = numeric(amount);
+    const activeAdvanceBalance = selectedAdvanceGroup?.remainingBalance ?? 0;
+    const maxAdvanceRecovery = Math.max(0, Math.min(activeAdvanceBalance, summary.totalOutstandingPayable));
+    const advanceRecoverySelected = advanceRecoveryMode === "full"
+        ? maxAdvanceRecovery
+        : advanceRecoveryMode === "custom"
+            ? Math.min(Math.max(0, numeric(customAdvanceRecovery)), maxAdvanceRecovery)
+            : 0;
     const allocation = useMemo(
         () => buildLandlordPaymentAllocationPlan({
+            advanceRecoveryAmount: advanceRecoverySelected,
             amount: numeric(amount),
             currentMonth: paymentMonth,
             payables: selectedRows as unknown as Record<string, unknown>[],
         }),
-        [amount, paymentMonth, selectedRows],
+        [advanceRecoverySelected, amount, paymentMonth, selectedRows],
     );
+    const remainingAdvanceBalance = Math.max(0, activeAdvanceBalance - allocation.advanceRecoveryAmount);
     const monthlyRows = useMemo(
         () => selectedRows
             .map((row) => ({
@@ -524,8 +539,7 @@ function LandlordPaymentEntryPanel({
     const currentMonthAllocation = allocation.lines
         .filter((line) => line.month.slice(0, 7) === paymentMonth.slice(0, 7))
         .reduce((total, line) => total + line.applied, 0);
-    const amountEntered = numeric(amount);
-    const remainingAfterPayment = Math.max(0, summary.totalOutstandingPayable - amountEntered);
+    const remainingAfterPayment = allocation.remainingAfterPayment;
     const previousMonthsOutstanding = Math.max(0, summary.totalOutstandingPayable - summary.currentMonthUnpaid);
     const currentRows = selectedRows.filter((row) => String(row.settlement_month).slice(0, 7) === paymentMonth.slice(0, 7));
     const currentPendingDeductions = summary.currentMonthPendingDeductions;
@@ -568,6 +582,7 @@ function LandlordPaymentEntryPanel({
                         paymentPlan: "one_time",
                         reason: notes || "Landlord payment overpayment converted to advance from Landlord Payments.",
                     } : undefined,
+                    advanceRecoveryAmount: allocation.advanceRecoveryAmount,
                     amount: amountEntered,
                     expenseDate: paymentDate,
                     landlordId: selected.landlordId,
@@ -586,15 +601,17 @@ function LandlordPaymentEntryPanel({
                     return;
                 }
                 const success = canManage
-                    ? `Landlord payment recorded and approved. Normal payment: ${money(allocation.normalPaymentAmount)}; advance: ${money(allocation.advanceAmount)}.`
+                    ? `Landlord payment recorded and approved. Cash payment: ${money(allocation.normalPaymentAmount)}; recovered advance: ${money(allocation.advanceRecoveryAmount)}; new advance: ${money(allocation.advanceAmount)}.`
                     : "Landlord payment request sent to Admin. It will not affect ledgers until approval.";
                 const submittedId = typeof result.data?.id === "string" ? result.data.id : null;
                 const approvedAt = typeof result.data?.approved_at === "string" ? result.data.approved_at : null;
                 const status = typeof result.data?.status === "string" ? result.data.status : canManage ? "approved" : "pending";
                 setLastSubmission({
                     advanceAmount: allocation.advanceAmount,
+                    advanceRecoveryAmount: allocation.advanceRecoveryAmount,
                     amountPaid: amountEntered,
                     approvedAt,
+                    cashPaidToLandlord: allocation.normalPaymentAmount,
                     id: submittedId,
                     normalPaymentAmount: allocation.normalPaymentAmount,
                     notes,
@@ -604,11 +621,14 @@ function LandlordPaymentEntryPanel({
                     reference,
                     receiptNumber: submittedId ? `LP-${submittedId.slice(0, 8).toUpperCase()}` : `LP-${Date.now()}`,
                     remainingAfterPayment,
+                    remainingAdvanceBalance,
                     status,
                 });
                 setLocalMessage(success);
                 setMessage(success);
                 setAmount("");
+                setAdvanceRecoveryMode("none");
+                setCustomAdvanceRecovery("");
                 setReference("");
                 setNotes("");
             } catch (error) {
@@ -737,21 +757,84 @@ function LandlordPaymentEntryPanel({
                                 </div>
                             ) : null}
 
+                            <div className="rounded-[1.75rem] border border-indigo-200 bg-[radial-gradient(circle_at_top_left,rgba(99,102,241,0.16),transparent_34%),linear-gradient(135deg,#eef2ff,#ffffff)] p-4 shadow-xl shadow-indigo-100">
+                                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                    <div className="min-w-0">
+                                        <p className="text-xs font-black uppercase tracking-[0.18em] text-indigo-700">Landlord Advance Position</p>
+                                        <h4 className="mt-1 text-xl font-black text-slate-950">Advance Recovery Decision</h4>
+                                        <p className="mt-1 text-xs font-bold text-slate-600">Recover only the amount the company chooses. Existing advance recovery is separate from any new advance issued today.</p>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[520px]">
+                                        <AdvanceMiniMetric label="Originally Given" value={money(selectedAdvanceGroup?.totalAdvanced ?? 0)} />
+                                        <AdvanceMiniMetric label="Already Recovered" value={money(selectedAdvanceGroup?.totalDeducted ?? 0)} />
+                                        <AdvanceMiniMetric label="Active Balance" value={money(activeAdvanceBalance)} />
+                                        <AdvanceMiniMetric label="Recoverable Now" value={money(maxAdvanceRecovery)} />
+                                    </div>
+                                </div>
+                                <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.62fr)]">
+                                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                                        {[
+                                            { key: "none", label: "Do not use advance", help: "Cash pays the landlord balance." },
+                                            { key: "full", label: "Recover full available", help: `Up to ${money(maxAdvanceRecovery)}.` },
+                                            { key: "custom", label: "Recover custom", help: "Choose exact amount." },
+                                        ].map((option) => (
+                                            <button
+                                                key={option.key}
+                                                type="button"
+                                                onClick={() => setAdvanceRecoveryMode(option.key as "none" | "full" | "custom")}
+                                                className={`rounded-2xl border px-3 py-3 text-left transition ${advanceRecoveryMode === option.key ? "border-indigo-400 bg-indigo-600 text-white shadow-lg shadow-indigo-200" : "border-slate-200 bg-white text-slate-800 hover:border-indigo-300"}`}
+                                            >
+                                                <p className="text-sm font-black">{option.label}</p>
+                                                <p className={`mt-1 text-xs font-bold ${advanceRecoveryMode === option.key ? "text-indigo-100" : "text-slate-500"}`}>{option.help}</p>
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <div className="space-y-2">
+                                        {advanceRecoveryMode === "custom" ? (
+                                            <PremiumField label="Amount to recover from landlord advance" icon={<BanknoteArrowDown size={18} />} helper={`Max ${money(maxAdvanceRecovery)}`}>
+                                                <input
+                                                    className="w-full border-0 bg-transparent text-sm font-black text-slate-950 outline-none placeholder:text-slate-400"
+                                                    inputMode="numeric"
+                                                    max={maxAdvanceRecovery}
+                                                    min={0}
+                                                    onChange={(event) => setCustomAdvanceRecovery(event.target.value)}
+                                                    placeholder="0"
+                                                    value={customAdvanceRecovery}
+                                                />
+                                            </PremiumField>
+                                        ) : null}
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <AdvanceMiniMetric label="Recovery Now" value={money(allocation.advanceRecoveryAmount)} tone="text-indigo-700" />
+                                            <AdvanceMiniMetric label="Cash to Landlord" value={money(allocation.cashPayableToLandlord)} tone="text-emerald-700" />
+                                            <AdvanceMiniMetric label="Remaining Advance" value={money(remainingAdvanceBalance)} tone="text-purple-700" />
+                                            <AdvanceMiniMetric label="New Advance" value={money(allocation.advanceAmount)} tone="text-amber-700" />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
                             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(310px,0.82fr)]">
                                 <AiPaymentAssistant
                                     advanceAmount={allocation.advanceAmount}
+                                    advanceRecoveryAmount={allocation.advanceRecoveryAmount}
+                                    cashPaidToLandlord={allocation.cashPayableToLandlord}
                                     confidence={confidence}
                                     currentMonthAllocation={currentMonthAllocation}
                                     normalAmount={allocation.normalPaymentAmount}
                                     oldMonthAllocation={oldMonthAllocation}
+                                    remainingAdvanceBalance={remainingAdvanceBalance}
                                     remainingAfterPayment={remainingAfterPayment}
                                     riskLabel={riskLabel}
                                 />
                                 <PaymentAllocationTimeline
                                     amountEntered={amountEntered}
                                     advanceAmount={allocation.advanceAmount}
+                                    advanceRecoveryAmount={allocation.advanceRecoveryAmount}
+                                    cashPaidToLandlord={allocation.cashPayableToLandlord}
                                     currentMonthAllocation={currentMonthAllocation}
+                                    genuinePayable={summary.totalOutstandingPayable}
                                     oldMonthAllocation={oldMonthAllocation}
+                                    remainingAdvanceBalance={remainingAdvanceBalance}
                                     remainingAfterPayment={remainingAfterPayment}
                                 />
                             </div>
@@ -777,13 +860,15 @@ function LandlordPaymentEntryPanel({
                                                 <th className="text-left">Final Net Payable</th>
                                                 <th className="text-left">Already Paid</th>
                                                 <th className="text-left">Remaining</th>
-                                                <th className="text-left">Payment Applied</th>
+                                                <th className="text-left">Cash Applied</th>
+                                                <th className="text-left">Advance Recovery</th>
                                                 <th className="text-left">Status</th>
                                             </tr>
                                         </thead>
                                         <tbody>
                                             {monthlyRows.map(({ row, appliedDeductions, balance, due, finalNetPayable, grossPayable, pendingDeductions }) => {
                                                 const applied = allocation.lines.find((line) => line.payableId === row.id)?.applied ?? 0;
+                                                const advanceRecoveryApplied = allocation.lines.find((line) => line.payableId === row.id)?.advanceRecoveryApplied ?? 0;
                                                 return (
                                                     <tr key={row.id}>
                                                         <td className="font-black">{monthLabel(row.settlement_month)}</td>
@@ -793,6 +878,7 @@ function LandlordPaymentEntryPanel({
                                                         <td className="font-bold text-emerald-700">{money(row.amount_paid)}</td>
                                                         <td className="font-black text-red-700">{money(balance)}</td>
                                                         <td className="font-black text-blue-700">{money(applied)}</td>
+                                                        <td className="font-black text-indigo-700">{money(advanceRecoveryApplied)}</td>
                                                         <td><StatusChip label={balance > 0 ? numeric(row.amount_paid) > 0 ? "Partially Paid" : "Unpaid" : "Paid"} tone={balance > 0 ? numeric(row.amount_paid) > 0 ? "orange" : "red" : "green"} /></td>
                                                     </tr>
                                                 );
@@ -857,9 +943,10 @@ function LandlordPaymentEntryPanel({
             {selected ? (
                 <div className="sticky bottom-0 z-30 border-t border-slate-200 bg-white/90 px-4 py-3 shadow-[0_-12px_30px_rgba(15,23,42,0.12)] backdrop-blur-xl md:px-5">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                        <div className="grid grid-cols-3 gap-2 text-xs font-black sm:min-w-[520px]">
-                            <StickySummaryValue label="Total to pay" value={money(amountEntered)} />
-                            <StickySummaryValue label="Advance" value={money(allocation.advanceAmount)} tone="text-purple-700" />
+                        <div className="grid grid-cols-2 gap-2 text-xs font-black sm:min-w-[680px] sm:grid-cols-4">
+                            <StickySummaryValue label="Cash to landlord" value={money(allocation.cashPayableToLandlord || amountEntered)} />
+                            <StickySummaryValue label="Recover old advance" value={money(allocation.advanceRecoveryAmount)} tone="text-indigo-700" />
+                            <StickySummaryValue label="New advance" value={money(allocation.advanceAmount)} tone="text-purple-700" />
                             <StickySummaryValue label="Remaining" value={money(remainingAfterPayment)} tone={remainingAfterPayment > 0 ? "text-red-700" : "text-emerald-700"} />
                         </div>
                         <button disabled={isPending || amountEntered <= 0} onClick={submitPayment} className={`inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl px-5 py-3 text-sm font-black text-white shadow-xl disabled:cursor-not-allowed disabled:opacity-50 lg:w-auto ${canManage ? "bg-gradient-to-r from-emerald-600 to-green-700 shadow-emerald-200" : "bg-gradient-to-r from-blue-600 to-cyan-700 shadow-blue-200"}`}>
@@ -943,20 +1030,35 @@ function FinancialSummaryCard({
     );
 }
 
+function AdvanceMiniMetric({ label, tone = "text-slate-950", value }: { label: string; tone?: string; value: string }) {
+    return (
+        <div className="min-w-0 rounded-2xl border border-white/70 bg-white/80 px-3 py-2 shadow-sm">
+            <p className="truncate text-[10px] font-black uppercase tracking-wide text-slate-500">{label}</p>
+            <p className={`mt-1 break-words text-sm font-black ${tone}`}>{value}</p>
+        </div>
+    );
+}
+
 function AiPaymentAssistant({
     advanceAmount,
+    advanceRecoveryAmount,
+    cashPaidToLandlord,
     confidence,
     currentMonthAllocation,
     normalAmount,
     oldMonthAllocation,
+    remainingAdvanceBalance,
     remainingAfterPayment,
     riskLabel,
 }: {
     advanceAmount: number;
+    advanceRecoveryAmount: number;
+    cashPaidToLandlord: number;
     confidence: string;
     currentMonthAllocation: number;
     normalAmount: number;
     oldMonthAllocation: number;
+    remainingAdvanceBalance: number;
     remainingAfterPayment: number;
     riskLabel: string;
 }) {
@@ -973,11 +1075,13 @@ function AiPaymentAssistant({
                 </div>
             </div>
             <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <AiLine label="Normal payment" value={money(normalAmount)} />
-                <AiLine label="Advance portion" value={money(advanceAmount)} />
+                <AiLine label="Cash payment to landlord" value={money(cashPaidToLandlord)} />
+                <AiLine label="Existing advance recovered" value={money(advanceRecoveryAmount)} />
+                <AiLine label="New advance portion" value={money(advanceAmount)} />
                 <AiLine label="Old months covered" value={money(oldMonthAllocation)} />
                 <AiLine label="Current month covered" value={money(currentMonthAllocation)} />
                 <AiLine label="Remaining balance" value={money(remainingAfterPayment)} />
+                <AiLine label="Remaining old advance" value={money(remainingAdvanceBalance)} />
                 <AiLine label="Risk indicator" value={riskLabel} warning={advanceAmount > 0 || remainingAfterPayment > 0} />
                 <AiLine label="Payment confidence" value={confidence} />
                 <AiLine label="Live reconciliation" value="Supabase synced" />
@@ -999,24 +1103,35 @@ function AiLine({ label, value, warning = false }: { label: string; value: strin
 }
 
 function PaymentAllocationTimeline({
+    advanceRecoveryAmount,
     advanceAmount,
     amountEntered,
+    cashPaidToLandlord,
     currentMonthAllocation,
+    genuinePayable,
     oldMonthAllocation,
+    remainingAdvanceBalance,
     remainingAfterPayment,
 }: {
+    advanceRecoveryAmount: number;
     advanceAmount: number;
     amountEntered: number;
+    cashPaidToLandlord: number;
     currentMonthAllocation: number;
+    genuinePayable: number;
     oldMonthAllocation: number;
+    remainingAdvanceBalance: number;
     remainingAfterPayment: number;
 }) {
     const steps = [
-        { label: "UGX entered", value: money(amountEntered), tone: "bg-slate-950 text-white" },
+        { label: "Genuine payable", value: money(genuinePayable), tone: "bg-slate-950 text-white" },
+        { label: "Existing advance recovery", value: money(advanceRecoveryAmount), tone: "bg-indigo-600 text-white" },
+        { label: "Cash paid to landlord", value: money(cashPaidToLandlord || amountEntered), tone: "bg-emerald-600 text-white" },
         { label: "Old unpaid months", value: money(oldMonthAllocation), tone: "bg-amber-600 text-white" },
         { label: "Current month", value: money(currentMonthAllocation), tone: "bg-blue-600 text-white" },
-        { label: "Advance", value: money(advanceAmount), tone: "bg-purple-600 text-white" },
-        { label: "Final balance", value: money(remainingAfterPayment), tone: remainingAfterPayment > 0 ? "bg-red-600 text-white" : "bg-emerald-600 text-white" },
+        { label: "New advance", value: money(advanceAmount), tone: "bg-purple-600 text-white" },
+        { label: "Remaining old advance", value: money(remainingAdvanceBalance), tone: "bg-violet-600 text-white" },
+        { label: "Final balance", value: money(remainingAfterPayment), tone: remainingAfterPayment > 0 ? "bg-red-600 text-white" : "bg-emerald-700 text-white" },
     ];
     return (
         <div className="rounded-[1.75rem] border border-slate-200 bg-white p-4 shadow-xl shadow-slate-200/70">

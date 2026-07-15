@@ -38,7 +38,7 @@ function monthlyUnpaid(row) {
   return Math.max(0, amount(row.unpaid_balance));
 }
 
-function allocationPlan(paymentAmount, rows) {
+function allocationPlan(paymentAmount, rows, advanceRecoveryAmount = 0) {
   const unpaidRows = rows
     .filter((row) => !["archived", "reversed", "voided", "cancelled"].includes(String(row.status ?? "").toLowerCase()))
     .map((row) => ({ ...row, unpaid: monthlyUnpaid(row) }))
@@ -46,19 +46,27 @@ function allocationPlan(paymentAmount, rows) {
     .sort((a, b) => String(a.settlement_month).localeCompare(String(b.settlement_month)));
 
   const totalUnpaid = unpaidRows.reduce((total, row) => total + row.unpaid, 0);
+  let remainingRecovery = Math.min(Math.max(0, advanceRecoveryAmount), totalUnpaid);
+  const payableAfterRecovery = Math.max(0, totalUnpaid - remainingRecovery);
   let remaining = paymentAmount;
   const lines = [];
   for (const row of unpaidRows) {
-    if (remaining <= 0) break;
-    const applied = Math.min(remaining, row.unpaid);
+    if (remaining <= 0 && remainingRecovery <= 0) break;
+    const advanceRecoveryApplied = Math.min(remainingRecovery, row.unpaid);
+    remainingRecovery -= advanceRecoveryApplied;
+    const applied = Math.min(remaining, Math.max(0, row.unpaid - advanceRecoveryApplied));
     remaining -= applied;
-    lines.push({ month: row.settlement_month, applied });
+    if (applied > 0 || advanceRecoveryApplied > 0) {
+      lines.push({ month: row.settlement_month, applied, advanceRecoveryApplied });
+    }
   }
   return {
-    advance: Math.max(paymentAmount - totalUnpaid, 0),
-    applied: Math.min(paymentAmount, totalUnpaid),
+    advance: Math.max(paymentAmount - payableAfterRecovery, 0),
+    advanceRecovery: Math.min(Math.max(0, advanceRecoveryAmount), totalUnpaid),
+    applied: Math.min(paymentAmount, payableAfterRecovery),
     lines,
-    outstanding: Math.max(totalUnpaid - paymentAmount, 0),
+    outstanding: Math.max(payableAfterRecovery - paymentAmount, 0),
+    payableAfterRecovery,
   };
 }
 
@@ -90,8 +98,8 @@ test("landlord payment clears multiple unpaid months oldest first", () => {
     { settlement_month: "2026-06-01", monthly_net_payable: 280000, amount_paid: 280000 },
   ]);
   assert.deepEqual(plan.lines, [
-    { month: "2026-05-01", applied: 280000 },
-    { month: "2026-07-01", applied: 220000 },
+    { month: "2026-05-01", applied: 280000, advanceRecoveryApplied: 0 },
+    { month: "2026-07-01", applied: 220000, advanceRecoveryApplied: 0 },
   ]);
   assert.equal(plan.advance, 0);
   assert.equal(plan.outstanding, 140000);
@@ -102,7 +110,7 @@ test("fully paid previous landlord month is excluded from reports and allocation
     { settlement_month: "2026-06-01", monthly_net_payable: 360000, amount_paid: 360000 },
     { settlement_month: "2026-07-01", monthly_net_payable: 360000, amount_paid: 0 },
   ]);
-  assert.deepEqual(plan.lines, [{ month: "2026-07-01", applied: 300000 }]);
+  assert.deepEqual(plan.lines, [{ month: "2026-07-01", applied: 300000, advanceRecoveryApplied: 0 }]);
   assert.equal(plan.advance, 0);
 });
 
@@ -272,6 +280,33 @@ test("landlord payment approval paths do not overwrite canonical monthly payable
   assert.doesNotMatch(directPaymentBody, /reconcileLandlordPayableWithLiveNet/);
 });
 
+test("controlled landlord advance recovery reduces payable without creating a new advance", () => {
+  const plan = allocationPlan(500000, [{ settlement_month: "2026-07-01", monthly_net_payable: 800000, amount_paid: 0 }], 300000);
+  assert.equal(plan.advanceRecovery, 300000);
+  assert.equal(plan.payableAfterRecovery, 500000);
+  assert.equal(plan.applied, 500000);
+  assert.equal(plan.advance, 0);
+  assert.equal(plan.outstanding, 0);
+  assert.deepEqual(plan.lines, [{ month: "2026-07-01", applied: 500000, advanceRecoveryApplied: 300000 }]);
+});
+
+test("controlled landlord advance recovery clamps to payable and old advance balance", () => {
+  const plan = allocationPlan(0, [{ settlement_month: "2026-07-01", monthly_net_payable: 800000, amount_paid: 0 }], 1200000);
+  assert.equal(plan.advanceRecovery, 800000);
+  assert.equal(plan.payableAfterRecovery, 0);
+  assert.equal(plan.applied, 0);
+  assert.equal(plan.advance, 0);
+  assert.equal(plan.outstanding, 0);
+});
+
+test("new advance is separate from existing advance recovery", () => {
+  const plan = allocationPlan(600000, [{ settlement_month: "2026-07-01", monthly_net_payable: 800000, amount_paid: 0 }], 300000);
+  assert.equal(plan.advanceRecovery, 300000);
+  assert.equal(plan.applied, 500000);
+  assert.equal(plan.advance, 100000);
+  assert.equal(plan.outstanding, 0);
+});
+
 test("admin landlord payment submission resolves the selected landlord office", () => {
   const expensesSource = readFileSync(new URL("../app/actions/expenses.ts", import.meta.url), "utf8");
   assert.match(expensesSource, /resolveLandlordPaymentOfficeId/);
@@ -284,6 +319,7 @@ test("landlord payment forms submit selected office id to shared action", () => 
   const landlordPaymentsSource = readFileSync(new URL("../components/office/landlords/LandlordPaymentsConsole.tsx", import.meta.url), "utf8");
   const expensesConsoleSource = readFileSync(new URL("../components/office/expenses/ExpensesConsole.tsx", import.meta.url), "utf8");
   assert.match(landlordPaymentsSource, /officeId: selectedOfficeId/);
+  assert.match(landlordPaymentsSource, /advanceRecoveryAmount: allocation\.advanceRecoveryAmount/);
   assert.match(landlordPaymentsSource, /submitLandlordPaymentFromTerminal/);
   assert.match(expensesConsoleSource, /officeId: selectedLandlordOption\?\.officeId/);
 });
