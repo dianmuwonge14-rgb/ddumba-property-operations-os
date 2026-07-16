@@ -14,9 +14,8 @@ export type TenantReceiptViewModel = {
 
 type ReceiptAction = () => void | Promise<void>;
 
-const RECEIPT_EXPORT_ROOT_ID = "tenant-payment-receipt-export";
+const RECEIPT_EXPORT_ROOT_ID = "tenant-receipt-print-root";
 const RECEIPT_SCREEN_ID = "tenant-payment-receipt";
-const RECEIPT_PRINT_CLASS = "print-tenant-payment-receipt";
 const RECEIPT_PDF_EXPORT_CLASS = "receipt-pdf-export-sandbox";
 const MM_TO_PT = 72 / 25.4;
 
@@ -63,23 +62,59 @@ function receiptVerificationUrl(receipt: TenantReceiptViewModel) {
     return `${window.location.origin}${path}`;
 }
 
-export function printTenantPaymentReceipt(afterPrint?: () => void) {
+export async function printTenantPaymentReceipt(afterPrint?: () => void) {
     const exportRoot = document.getElementById(RECEIPT_EXPORT_ROOT_ID);
     if (!exportRoot) {
         window.alert("Receipt could not be printed because the receipt export area is not ready.");
         return;
     }
-    document.body.classList.add(RECEIPT_PRINT_CLASS);
-    window.print();
-    window.setTimeout(() => {
-        document.body.classList.remove(RECEIPT_PRINT_CLASS);
-        afterPrint?.();
-    }, 500);
+    const paperWidthMm = receiptPaperWidthMm();
+    const printWindow = window.open("", "tenant-receipt-print", "width=420,height=800");
+    if (!printWindow) {
+        window.alert("Printing was blocked by the browser. Allow pop-ups for Ddumba OS and try again.");
+        return;
+    }
+
+    try {
+        printWindow.document.open();
+        printWindow.document.write(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tenant Receipt</title>
+    <style>${receiptPrintWindowStyle(paperWidthMm)}</style>
+  </head>
+  <body>
+    ${exportRoot.outerHTML}
+  </body>
+</html>`);
+        printWindow.document.close();
+        await waitForPrintWindowAssets(printWindow);
+
+        let cleanedUp = false;
+        const cleanup = () => {
+            if (cleanedUp) return;
+            cleanedUp = true;
+            afterPrint?.();
+            window.setTimeout(() => printWindow.close(), 50);
+        };
+        printWindow.onafterprint = cleanup;
+        printWindow.focus();
+        printWindow.print();
+        window.setTimeout(() => {
+            if (printWindow.closed) cleanup();
+        }, 1000);
+    } catch (error) {
+        printWindow.close();
+        window.alert(error instanceof Error ? error.message : "Receipt could not be printed. Please try again.");
+    }
 }
 
 export async function downloadTenantPaymentReceiptPdf(fileName = "tenant-payment-receipt.pdf") {
     const source = document.getElementById(RECEIPT_EXPORT_ROOT_ID);
     if (!source) throw new Error("Receipt PDF could not be created because the receipt export area is not ready.");
+    const paperWidthMm = receiptPaperWidthMm();
 
     const sandbox = document.createElement("div");
     sandbox.className = RECEIPT_PDF_EXPORT_CLASS;
@@ -95,18 +130,39 @@ export async function downloadTenantPaymentReceiptPdf(fileName = "tenant-payment
         const heightPx = Math.ceil(clone.scrollHeight || clone.getBoundingClientRect().height);
         const canvas = await renderReceiptElementToCanvas(clone, widthPx, heightPx);
         const jpegData = canvas.toDataURL("image/jpeg", 0.94).split(",")[1] ?? "";
-        const receiptHeightMm = Math.max(1, (heightPx / Math.max(widthPx, 1)) * 80);
+        const receiptHeightMm = Math.max(1, (heightPx / Math.max(widthPx, 1)) * paperWidthMm);
         const pdf = createSingleImagePdf({
             imageBase64: jpegData,
             imageHeightPx: canvas.height,
             imageWidthPx: canvas.width,
             pageHeightPt: receiptHeightMm * MM_TO_PT,
-            pageWidthPt: 80 * MM_TO_PT,
+            pageWidthPt: paperWidthMm * MM_TO_PT,
         });
         downloadBlob(pdf, sanitizePdfFileName(fileName));
     } finally {
         sandbox.remove();
     }
+}
+
+function receiptPaperWidthMm(): 58 | 80 {
+    if (typeof window === "undefined") return 80;
+    const configured = window.localStorage.getItem("ddumba.receiptPaperWidthMm")
+        ?? window.localStorage.getItem("tenantReceiptPaperWidthMm")
+        ?? "";
+    return configured.trim() === "58" ? 58 : 80;
+}
+
+async function waitForPrintWindowAssets(printWindow: Window) {
+    await printWindow.document.fonts?.ready?.catch(() => undefined);
+    const images = Array.from(printWindow.document.images);
+    await Promise.all(images.map((image) => new Promise<void>((resolve) => {
+        if (image.complete) {
+            resolve();
+            return;
+        }
+        image.onload = () => resolve();
+        image.onerror = () => resolve();
+    })));
 }
 
 async function waitForReceiptAssets(root: HTMLElement) {
@@ -192,6 +248,167 @@ function receiptExportStyleText() {
         })
         .join("\n");
     return `${styleText}\nbody{margin:0;background:white}.tenant-receipt-slip{margin:0!important;box-shadow:none!important}`;
+}
+
+function receiptPrintWindowStyle(paperWidthMm: 58 | 80) {
+    return `
+@page {
+  size: ${paperWidthMm}mm auto;
+  margin: 0;
+}
+* {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: ${paperWidthMm}mm;
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+  background: #ffffff;
+  color: #000000;
+}
+body {
+  font-family: Arial, Helvetica, sans-serif;
+}
+#${RECEIPT_EXPORT_ROOT_ID} {
+  display: block;
+  width: ${paperWidthMm}mm;
+  max-width: ${paperWidthMm}mm;
+  height: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  background: #ffffff;
+  color: #000000;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+#${RECEIPT_SCREEN_ID} {
+  width: ${paperWidthMm}mm;
+  max-width: ${paperWidthMm}mm;
+  margin: 0;
+  padding: ${paperWidthMm === 58 ? "2.5mm" : "4mm"};
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  overflow: visible;
+  background: #ffffff;
+  color: #000000;
+  font-family: Arial, Helvetica, sans-serif;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.22;
+}
+.tenant-receipt-slip,
+.tenant-receipt-slip * {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.receipt-section {
+  margin-top: 2mm;
+}
+.receipt-section:first-child {
+  margin-top: 0;
+}
+.receipt-section-title,
+.receipt-label {
+  color: #475569;
+  font-size: 8.5px;
+  font-weight: 900;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+.receipt-row {
+  display: grid;
+  grid-template-columns: minmax(0, 42%) minmax(0, 58%);
+  align-items: start;
+  gap: 1.4mm;
+  padding: 0.45mm 0;
+  font-size: 10px;
+}
+.receipt-row-stacked {
+  display: block;
+  padding: 0.8mm 0;
+}
+.receipt-value {
+  color: #020617;
+  font-weight: 800;
+  line-height: 1.18;
+  text-align: right;
+  white-space: normal;
+}
+.receipt-row-stacked .receipt-value {
+  display: block;
+  margin-top: 0.35mm;
+  text-align: left;
+}
+.receipt-value-strong,
+.receipt-money-row-highlight .receipt-value {
+  font-weight: 950;
+}
+.receipt-money-row {
+  font-size: 10px;
+}
+.receipt-money-value {
+  font-size: 10px;
+  letter-spacing: 0;
+}
+.receipt-money-row-highlight {
+  margin: 0.7mm 0;
+  border-block: 1px dashed #0f172a;
+  padding-block: 1mm;
+}
+.receipt-amount-section {
+  border-block: 1px dashed #0f172a;
+  padding-block: 1.6mm;
+}
+.receipt-coverage-card {
+  border: 1px solid #cbd5e1;
+  border-radius: 2mm;
+  background: #ffffff;
+  padding: 1.4mm;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+.receipt-qr {
+  display: block;
+  width: 22mm;
+  height: 22mm;
+  object-fit: contain;
+  padding: 1.5mm;
+  border: 1px solid #0f172a;
+  background: #ffffff;
+}
+.receipt-muted {
+  color: #64748b;
+}
+img,
+svg,
+canvas {
+  max-width: 100%;
+  height: auto;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+.receipt-preview-controls,
+.receipt-close-button,
+.receipt-modal-backdrop,
+.receipt-modal-header,
+.receipt-action-bar,
+.no-print {
+  display: none !important;
+}
+`;
 }
 
 function createSingleImagePdf({ imageBase64, imageHeightPx, imageWidthPx, pageHeightPt, pageWidthPt }: {
