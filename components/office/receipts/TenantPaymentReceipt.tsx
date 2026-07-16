@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { Download, Mail, Printer, X } from "lucide-react";
 import type { PaymentReceiptSnapshot } from "@/lib/receipts/payment-receipts";
@@ -13,6 +13,17 @@ export type TenantReceiptViewModel = {
 };
 
 type ReceiptAction = () => void | Promise<void>;
+type ReceiptPrinterSettings = {
+    autoOpenPrint: boolean;
+    autoPrintAfterPayment: boolean;
+    copies: number;
+    cutPaper: boolean;
+    duplicateCopy: boolean;
+    method: "browser" | "qz";
+    preferredPrinterName: string;
+    printQrCode: boolean;
+    widthMm: 58 | 80;
+};
 
 const RECEIPT_EXPORT_ROOT_ID = "tenant-receipt-print-root";
 const RECEIPT_SCREEN_ID = "tenant-payment-receipt";
@@ -62,6 +73,49 @@ function receiptVerificationUrl(receipt: TenantReceiptViewModel) {
     return `${window.location.origin}${path}`;
 }
 
+function defaultPrinterSettings(): ReceiptPrinterSettings {
+    return {
+        autoOpenPrint: false,
+        autoPrintAfterPayment: false,
+        copies: 1,
+        cutPaper: false,
+        duplicateCopy: false,
+        method: "browser",
+        preferredPrinterName: "",
+        printQrCode: true,
+        widthMm: 80,
+    };
+}
+
+function printerSettingsKey(receipt: TenantReceiptViewModel) {
+    const snapshot = receipt.snapshot;
+    const office = (snapshot.officeName ?? "company").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const company = (snapshot.companyName ?? "ddumba").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    return `ddumba.receiptPrinterSettings.${company}.${office || "office"}`;
+}
+
+function readPrinterSettings(receipt: TenantReceiptViewModel): ReceiptPrinterSettings {
+    if (typeof window === "undefined") return defaultPrinterSettings();
+    const raw = window.localStorage.getItem(printerSettingsKey(receipt));
+    if (!raw) return defaultPrinterSettings();
+    try {
+        const parsed = JSON.parse(raw) as Partial<ReceiptPrinterSettings>;
+        return {
+            ...defaultPrinterSettings(),
+            ...parsed,
+            copies: Math.max(1, Math.min(3, Number(parsed.copies ?? 1) || 1)),
+            widthMm: parsed.widthMm === 58 ? 58 : 80,
+        };
+    } catch {
+        return defaultPrinterSettings();
+    }
+}
+
+function savePrinterSettings(receipt: TenantReceiptViewModel, settings: ReceiptPrinterSettings) {
+    window.localStorage.setItem(printerSettingsKey(receipt), JSON.stringify(settings));
+    window.localStorage.setItem("ddumba.receiptPaperWidthMm", String(settings.widthMm));
+}
+
 export async function printTenantPaymentReceipt(afterPrint?: () => void) {
     const exportRoot = document.getElementById(RECEIPT_EXPORT_ROOT_ID);
     if (!exportRoot) {
@@ -77,13 +131,13 @@ export async function printTenantPaymentReceipt(afterPrint?: () => void) {
 
     try {
         printWindow.document.open();
-        printWindow.document.write(`<!doctype html>
+    printWindow.document.write(`<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Tenant Receipt</title>
-    <style>${receiptPrintWindowStyle(paperWidthMm)}</style>
+    <style id="receipt-print-style">${receiptPrintWindowStyle(paperWidthMm)}</style>
   </head>
   <body>
     ${exportRoot.outerHTML}
@@ -91,6 +145,12 @@ export async function printTenantPaymentReceipt(afterPrint?: () => void) {
 </html>`);
         printWindow.document.close();
         await waitForPrintWindowAssets(printWindow);
+        await waitForPrintWindowLayout(printWindow);
+        const receiptRoot = printWindow.document.getElementById(RECEIPT_EXPORT_ROOT_ID) as HTMLElement | null;
+        const pageHeightMm = receiptRoot ? measuredReceiptPageHeightMm(receiptRoot, paperWidthMm) : 260;
+        const styleElement = printWindow.document.getElementById("receipt-print-style");
+        if (styleElement) styleElement.textContent = receiptPrintWindowStyle(paperWidthMm, pageHeightMm);
+        await waitForPrintWindowLayout(printWindow);
 
         let cleanedUp = false;
         const cleanup = () => {
@@ -163,6 +223,21 @@ async function waitForPrintWindowAssets(printWindow: Window) {
         image.onload = () => resolve();
         image.onerror = () => resolve();
     })));
+}
+
+function waitForPrintWindowLayout(printWindow: Window) {
+    return new Promise<void>((resolve) => {
+        printWindow.requestAnimationFrame(() => {
+            printWindow.requestAnimationFrame(() => resolve());
+        });
+    });
+}
+
+function measuredReceiptPageHeightMm(receiptRoot: HTMLElement, paperWidthMm: 58 | 80) {
+    const rect = receiptRoot.getBoundingClientRect();
+    const widthPx = Math.max(1, rect.width || receiptRoot.scrollWidth);
+    const heightPx = Math.max(1, receiptRoot.scrollHeight, rect.height);
+    return Math.ceil((heightPx / widthPx) * paperWidthMm) + 4;
 }
 
 async function waitForReceiptAssets(root: HTMLElement) {
@@ -250,10 +325,11 @@ function receiptExportStyleText() {
     return `${styleText}\nbody{margin:0;background:white}.tenant-receipt-slip{margin:0!important;box-shadow:none!important}`;
 }
 
-function receiptPrintWindowStyle(paperWidthMm: 58 | 80) {
+function receiptPrintWindowStyle(paperWidthMm: 58 | 80, pageHeightMm?: number) {
+    const pageSize = pageHeightMm ? `${paperWidthMm}mm ${pageHeightMm}mm` : `${paperWidthMm}mm auto`;
     return `
 @page {
-  size: ${paperWidthMm}mm auto;
+  size: ${pageSize};
   margin: 0;
 }
 * {
@@ -290,6 +366,7 @@ body {
   color: #000000;
   break-inside: avoid;
   page-break-inside: avoid;
+  transform: none;
 }
 #${RECEIPT_SCREEN_ID} {
   width: ${paperWidthMm}mm;
@@ -475,6 +552,37 @@ function sanitizePdfFileName(fileName: string) {
     return clean.toLowerCase().endsWith(".pdf") ? clean : `${clean || "tenant-payment-receipt"}.pdf`;
 }
 
+async function qzTrayPrinters(): Promise<string[]> {
+    const qz = (window as unknown as { qz?: any }).qz;
+    if (!qz) throw new Error("Direct thermal printing is not connected. Use Browser Print or open Printer Settings.");
+    if (!qz.websocket?.isActive?.()) await qz.websocket.connect();
+    const printers = await qz.printers.find();
+    return Array.isArray(printers) ? printers.map(String) : [String(printers)].filter(Boolean);
+}
+
+async function printDirectlyWithQz(receipt: TenantReceiptViewModel, settings: ReceiptPrinterSettings) {
+    const qz = (window as unknown as { qz?: any }).qz;
+    if (!qz) throw new Error("Direct thermal printing is not connected. Use Browser Print or open Printer Settings.");
+    if (!settings.preferredPrinterName.trim()) throw new Error("Select a preferred thermal printer before direct printing.");
+    const source = document.getElementById(RECEIPT_EXPORT_ROOT_ID);
+    if (!source) throw new Error("Receipt could not be prepared. Reopen the receipt and try again.");
+    if (!qz.websocket?.isActive?.()) await qz.websocket.connect();
+    const config = qz.configs.create(settings.preferredPrinterName, {
+        copies: Math.max(1, settings.copies),
+        rasterize: false,
+        size: { width: settings.widthMm },
+    });
+    const html = `<!doctype html><html><head><meta charset="utf-8"><style>${receiptPrintWindowStyle(settings.widthMm)}</style></head><body>${source.outerHTML}</body></html>`;
+    await qz.print(config, [{
+        data: html,
+        format: "html",
+        type: "pixel",
+    }]);
+    if (settings.cutPaper) {
+        await qz.print(config, [{ data: "\x1DVA0", type: "raw", format: "command" }]).catch(() => undefined);
+    }
+}
+
 export function TenantPaymentReceiptModal({
     actionExtras,
     downloadDisabled,
@@ -491,6 +599,11 @@ export function TenantPaymentReceiptModal({
 }: ModalProps) {
     const closeButtonRef = useRef<HTMLButtonElement | null>(null);
     const previousFocusRef = useRef<HTMLElement | null>(null);
+    const [availablePrinters, setAvailablePrinters] = useState<string[]>([]);
+    const [isPreparingPrint, setIsPreparingPrint] = useState(false);
+    const [printerMessage, setPrinterMessage] = useState<string | null>(null);
+    const [printerSettings, setPrinterSettings] = useState<ReceiptPrinterSettings>(() => defaultPrinterSettings());
+    const [showPrinterSettings, setShowPrinterSettings] = useState(false);
 
     useEffect(() => {
         previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -510,6 +623,66 @@ export function TenantPaymentReceiptModal({
             previousFocusRef.current?.focus?.();
         };
     }, [onClose]);
+
+    useEffect(() => {
+        setPrinterSettings(readPrinterSettings(receipt));
+        setPrinterMessage(null);
+        setAvailablePrinters([]);
+    }, [receipt.id]);
+
+    function updatePrinterSettings(patch: Partial<ReceiptPrinterSettings>) {
+        setPrinterSettings((current) => {
+            const next = { ...current, ...patch };
+            savePrinterSettings(receipt, next);
+            return next;
+        });
+    }
+
+    const handleBrowserPrint = async () => {
+        setPrinterMessage("Choose your thermal printer under Destination, then press Print. If Destination is Save as PDF, the browser button will say Save; select your printer to print the receipt.");
+        setIsPreparingPrint(true);
+        try {
+            savePrinterSettings(receipt, printerSettings);
+            await Promise.resolve(onPrint());
+        } finally {
+            setIsPreparingPrint(false);
+        }
+    };
+
+    const detectPrinters = async () => {
+        setPrinterMessage("Detecting thermal printers...");
+        try {
+            const printers = await qzTrayPrinters();
+            setAvailablePrinters(printers);
+            setPrinterMessage(printers.length ? "Printers detected. Select your thermal printer and save settings." : "No printers were reported by QZ Tray.");
+        } catch (error) {
+            setAvailablePrinters([]);
+            setPrinterMessage(error instanceof Error ? error.message : "Direct thermal printing is not connected. Use Browser Print or open Printer Settings.");
+        }
+    };
+
+    const handleDirectPrint = async () => {
+        setIsPreparingPrint(true);
+        setPrinterMessage("Preparing direct thermal print...");
+        try {
+            await printDirectlyWithQz(receipt, printerSettings);
+            setPrinterMessage("Receipt sent directly to the selected thermal printer.");
+        } catch (error) {
+            setPrinterMessage(error instanceof Error ? error.message : "Direct thermal printing failed. Use Browser Print or check Printer Settings.");
+        } finally {
+            setIsPreparingPrint(false);
+        }
+    };
+
+    const testPrint = async () => {
+        setPrinterMessage("Sending test receipt to the selected printer...");
+        try {
+            await printDirectlyWithQz(receipt, printerSettings);
+            setPrinterMessage("Test print sent successfully.");
+        } catch (error) {
+            setPrinterMessage(error instanceof Error ? error.message : "Test print failed. Use Browser Print or check QZ Tray.");
+        }
+    };
 
     const closeFromBackdrop = (event: React.MouseEvent<HTMLDivElement>) => {
         if (event.target === event.currentTarget) onClose();
@@ -531,8 +704,11 @@ export function TenantPaymentReceiptModal({
                                 <p className="mt-1 text-sm font-bold text-slate-500">{subtitle}</p>
                             </div>
                             <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">
-                                <button type="button" onClick={onPrint} disabled={printDisabled} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-3 py-2 text-xs font-black text-white disabled:opacity-50">
-                                    <Printer size={15} /> Print Receipt
+                                <button type="button" onClick={handleBrowserPrint} disabled={printDisabled || isPreparingPrint} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-3 py-2 text-xs font-black text-white disabled:opacity-50">
+                                    <Printer size={15} /> {isPreparingPrint ? "Preparing receipt..." : "Print with Browser"}
+                                </button>
+                                <button type="button" onClick={handleDirectPrint} disabled={printDisabled || isPreparingPrint} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-violet-700 px-3 py-2 text-xs font-black text-white disabled:opacity-50">
+                                    <Printer size={15} /> Print Directly
                                 </button>
                                 <button type="button" onClick={onDownloadPdf} disabled={downloadDisabled} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-blue-700 px-3 py-2 text-xs font-black text-white disabled:opacity-50">
                                     <Download size={15} /> Download PDF
@@ -547,7 +723,58 @@ export function TenantPaymentReceiptModal({
                                 </button>
                             </div>
                         </div>
+                        <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs font-bold leading-relaxed text-blue-950">
+                            Browser print uses your browser Destination. If Destination is <strong>Save as PDF</strong>, the browser button says <strong>Save</strong>. Choose the installed thermal printer under Destination to make it say <strong>Print</strong>.
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                            <button type="button" onClick={() => setShowPrinterSettings((value) => !value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800">
+                                Printer Settings
+                            </button>
+                            <span className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-600">Width: {printerSettings.widthMm}mm</span>
+                            {printerSettings.preferredPrinterName ? <span className="rounded-xl bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700">Preferred: {printerSettings.preferredPrinterName}</span> : null}
+                        </div>
+                        {showPrinterSettings ? (
+                            <div className="mt-3 grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs font-bold text-slate-700 md:grid-cols-2 lg:grid-cols-3">
+                                <label className="grid gap-1">
+                                    <span>Printer method</span>
+                                    <select value={printerSettings.method} onChange={(event) => updatePrinterSettings({ method: event.target.value === "qz" ? "qz" : "browser" })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold">
+                                        <option value="browser">Browser print</option>
+                                        <option value="qz">QZ Tray direct print</option>
+                                    </select>
+                                </label>
+                                <label className="grid gap-1">
+                                    <span>Preferred printer name</span>
+                                    <input value={printerSettings.preferredPrinterName} onChange={(event) => updatePrinterSettings({ preferredPrinterName: event.target.value })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold" placeholder="Thermal printer name" />
+                                </label>
+                                <label className="grid gap-1">
+                                    <span>Receipt width</span>
+                                    <select value={printerSettings.widthMm} onChange={(event) => updatePrinterSettings({ widthMm: event.target.value === "58" ? 58 : 80 })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold">
+                                        <option value={80}>80mm</option>
+                                        <option value={58}>58mm</option>
+                                    </select>
+                                </label>
+                                <label className="grid gap-1">
+                                    <span>Copies</span>
+                                    <input value={printerSettings.copies} onChange={(event) => updatePrinterSettings({ copies: Math.max(1, Math.min(3, Number(event.target.value) || 1)) })} type="number" min={1} max={3} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold" />
+                                </label>
+                                <label className="flex items-center gap-2 rounded-xl bg-white px-3 py-2"><input checked={printerSettings.autoOpenPrint} onChange={(event) => updatePrinterSettings({ autoOpenPrint: event.target.checked })} type="checkbox" /> Auto-open print after payment</label>
+                                <label className="flex items-center gap-2 rounded-xl bg-white px-3 py-2"><input checked={printerSettings.autoPrintAfterPayment} onChange={(event) => updatePrinterSettings({ autoPrintAfterPayment: event.target.checked })} type="checkbox" /> Auto-print after payment</label>
+                                <label className="flex items-center gap-2 rounded-xl bg-white px-3 py-2"><input checked={printerSettings.cutPaper} onChange={(event) => updatePrinterSettings({ cutPaper: event.target.checked })} type="checkbox" /> Cut paper after print</label>
+                                <label className="flex items-center gap-2 rounded-xl bg-white px-3 py-2"><input checked={printerSettings.printQrCode} onChange={(event) => updatePrinterSettings({ printQrCode: event.target.checked })} type="checkbox" /> Print QR code</label>
+                                <label className="flex items-center gap-2 rounded-xl bg-white px-3 py-2"><input checked={printerSettings.duplicateCopy} onChange={(event) => updatePrinterSettings({ duplicateCopy: event.target.checked })} type="checkbox" /> Print duplicate copy</label>
+                                <div className="flex flex-wrap gap-2 md:col-span-2 lg:col-span-3">
+                                    <button type="button" onClick={detectPrinters} className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white">Detect Printers</button>
+                                    {availablePrinters.map((printer) => (
+                                        <button key={printer} type="button" onClick={() => updatePrinterSettings({ preferredPrinterName: printer })} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">{printer}</button>
+                                    ))}
+                                    <button type="button" onClick={() => { savePrinterSettings(receipt, printerSettings); setPrinterMessage("Printer settings saved for this office and browser."); }} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white">Save Printer Settings</button>
+                                    <button type="button" onClick={testPrint} className="rounded-xl bg-violet-700 px-3 py-2 text-xs font-black text-white">Test Print</button>
+                                    <button type="button" onClick={() => { const defaults = defaultPrinterSettings(); updatePrinterSettings(defaults); setAvailablePrinters([]); setPrinterMessage("Printer settings reset for this office and browser."); }} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Reset Settings</button>
+                                </div>
+                            </div>
+                        ) : null}
                         {actionExtras ? <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{actionExtras}</div> : null}
+                        {printerMessage ? <p className="mt-3 rounded-2xl bg-cyan-50 px-4 py-3 text-sm font-black text-cyan-900">{printerMessage}</p> : null}
                         {message ? <p className="mt-3 rounded-2xl bg-slate-100 px-4 py-3 text-sm font-black text-slate-700">{message}</p> : null}
                     </div>
                     <div className="tenant-receipt-preview-scroll max-h-[calc(100vh-150px)] overflow-y-auto overflow-x-hidden rounded-[24px] bg-slate-100/80 p-3 sm:p-5 print:max-h-none print:overflow-visible print:bg-white print:p-0">

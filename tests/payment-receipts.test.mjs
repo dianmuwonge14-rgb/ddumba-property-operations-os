@@ -47,7 +47,8 @@ test("payment entry shows receipt confirmation actions after successful payment"
   assert.match(sharedReceipt, /tenant-receipt-print-root/);
   assert.match(sharedReceipt, /tenant-payment-receipt/);
   assert.match(sharedReceipt, /tenant-receipt-slip/);
-  assert.match(sharedReceipt, /Print Receipt/);
+  assert.match(sharedReceipt, /Print with Browser/);
+  assert.match(sharedReceipt, /Print Directly/);
   assert.match(sharedReceipt, /Download PDF/);
   assert.match(sharedReceipt, /Send E-Receipt/);
   assert.match(paymentEntry, /Send by WhatsApp\/SMS/);
@@ -113,7 +114,11 @@ test("receipt print opens a clean receipt-only thermal window", () => {
   assert.match(sharedReceipt, /printWindow\.document\.write/);
   assert.match(sharedReceipt, /receiptPrintWindowStyle\(paperWidthMm\)/);
   assert.match(sharedReceipt, /waitForPrintWindowAssets\(printWindow\)/);
+  assert.match(sharedReceipt, /waitForPrintWindowLayout\(printWindow\)/);
+  assert.match(sharedReceipt, /measuredReceiptPageHeightMm\(receiptRoot, paperWidthMm\)/);
+  assert.match(sharedReceipt, /styleElement\.textContent = receiptPrintWindowStyle\(paperWidthMm, pageHeightMm\)/);
   assert.match(sharedReceipt, /printWindow\.print\(\)/);
+  assert.match(sharedReceipt, /printWindow\.onafterprint = cleanup/);
   assert.match(sharedReceipt, /Printing was blocked by the browser/);
   assert.doesNotMatch(sharedReceipt, /window\.print\(\)/);
 });
@@ -125,6 +130,27 @@ test("receipt print and PDF exports omit page chrome and modal controls", () => 
   assert.match(sharedReceipt, /\.receipt-preview-controls/);
   assert.match(sharedReceipt, /\.receipt-close-button/);
   assert.match(sharedReceipt, /\.receipt-action-bar/);
-  assert.match(sharedReceipt, /@page \{\s*size: \$\{paperWidthMm\}mm auto;/);
+  assert.match(sharedReceipt, /const pageSize = pageHeightMm \? `\$\{paperWidthMm\}mm \$\{pageHeightMm\}mm` : `\$\{paperWidthMm\}mm auto`/);
   assert.match(sharedReceipt, /localStorage\.getItem\("ddumba\.receiptPaperWidthMm"\)/);
+});
+
+test("receipt modal explains browser Save as PDF behavior and saves printer settings per office", () => {
+  assert.match(sharedReceipt, /If Destination is <strong>Save as PDF<\/strong>/);
+  assert.match(sharedReceipt, /Choose your thermal printer under Destination, then press Print/);
+  assert.match(sharedReceipt, /ddumba\.receiptPrinterSettings/);
+  assert.match(sharedReceipt, /Printer Settings/);
+  assert.match(sharedReceipt, /Save Printer Settings/);
+  assert.match(sharedReceipt, /Receipt width/);
+  assert.match(sharedReceipt, /Auto-open print after payment/);
+  assert.match(sharedReceipt, /Auto-print after payment/);
+});
+
+test("receipt direct thermal print uses QZ Tray when available and falls back clearly", () => {
+  assert.match(sharedReceipt, /qzTrayPrinters/);
+  assert.match(sharedReceipt, /printDirectlyWithQz/);
+  assert.match(sharedReceipt, /Direct thermal printing is not connected/);
+  assert.match(sharedReceipt, /Detect Printers/);
+  assert.match(sharedReceipt, /Test Print/);
+  assert.match(sharedReceipt, /Reset Settings/);
+  assert.match(sharedReceipt, /qz\.websocket\.connect/);
 });
