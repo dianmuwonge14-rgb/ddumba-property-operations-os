@@ -123,15 +123,28 @@ export async function printTenantPaymentReceipt(afterPrint?: () => void) {
         return;
     }
     const paperWidthMm = receiptPaperWidthMm();
-    const printWindow = window.open("", "tenant-receipt-print", "width=420,height=800");
+    const printFrame = document.createElement("iframe");
+    printFrame.title = "Tenant receipt print frame";
+    printFrame.setAttribute("aria-hidden", "true");
+    printFrame.style.position = "fixed";
+    printFrame.style.right = "0";
+    printFrame.style.bottom = "0";
+    printFrame.style.width = "0";
+    printFrame.style.height = "0";
+    printFrame.style.border = "0";
+    printFrame.style.opacity = "0";
+    printFrame.style.pointerEvents = "none";
+    document.body.appendChild(printFrame);
+    const printWindow = printFrame.contentWindow;
     if (!printWindow) {
-        window.alert("Printing was blocked by the browser. Allow pop-ups for Ddumba OS and try again.");
+        printFrame.remove();
+        window.alert("Receipt could not be prepared. Reopen the receipt and try again.");
         return;
     }
 
     try {
         printWindow.document.open();
-    printWindow.document.write(`<!doctype html>
+        printWindow.document.write(`<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -157,16 +170,14 @@ export async function printTenantPaymentReceipt(afterPrint?: () => void) {
             if (cleanedUp) return;
             cleanedUp = true;
             afterPrint?.();
-            window.setTimeout(() => printWindow.close(), 50);
+            window.setTimeout(() => printFrame.remove(), 50);
         };
         printWindow.onafterprint = cleanup;
         printWindow.focus();
         printWindow.print();
-        window.setTimeout(() => {
-            if (printWindow.closed) cleanup();
-        }, 1000);
+        window.setTimeout(() => cleanup(), 60000);
     } catch (error) {
-        printWindow.close();
+        printFrame.remove();
         window.alert(error instanceof Error ? error.message : "Receipt could not be printed. Please try again.");
     }
 }

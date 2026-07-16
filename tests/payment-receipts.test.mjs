@@ -109,8 +109,10 @@ test("receipt PDF export targets only the dedicated receipt root", () => {
   assert.doesNotMatch(sharedReceipt, /html2canvas\(document\.body/);
 });
 
-test("receipt print opens a clean receipt-only thermal window", () => {
-  assert.match(sharedReceipt, /window\.open\("", "tenant-receipt-print", "width=420,height=800"\)/);
+test("receipt print renders a clean receipt-only thermal iframe", () => {
+  assert.match(sharedReceipt, /document\.createElement\("iframe"\)/);
+  assert.match(sharedReceipt, /Tenant receipt print frame/);
+  assert.match(sharedReceipt, /printFrame\.contentWindow/);
   assert.match(sharedReceipt, /printWindow\.document\.write/);
   assert.match(sharedReceipt, /receiptPrintWindowStyle\(paperWidthMm\)/);
   assert.match(sharedReceipt, /waitForPrintWindowAssets\(printWindow\)/);
@@ -119,7 +121,8 @@ test("receipt print opens a clean receipt-only thermal window", () => {
   assert.match(sharedReceipt, /styleElement\.textContent = receiptPrintWindowStyle\(paperWidthMm, pageHeightMm\)/);
   assert.match(sharedReceipt, /printWindow\.print\(\)/);
   assert.match(sharedReceipt, /printWindow\.onafterprint = cleanup/);
-  assert.match(sharedReceipt, /Printing was blocked by the browser/);
+  assert.match(sharedReceipt, /printFrame\.remove\(\)/);
+  assert.doesNotMatch(sharedReceipt, /window\.open\(/);
   assert.doesNotMatch(sharedReceipt, /window\.print\(\)/);
 });
 
