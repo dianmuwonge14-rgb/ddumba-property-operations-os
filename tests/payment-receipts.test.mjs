@@ -149,11 +149,17 @@ test("receipt modal explains browser Save as PDF behavior and saves printer sett
 });
 
 test("receipt direct thermal print uses QZ Tray when available and falls back clearly", () => {
+  assert.match(sharedReceipt, /QZ_TRAY_SCRIPT_URLS/);
+  assert.match(sharedReceipt, /cdn\.jsdelivr\.net\/npm\/qz-tray/);
+  assert.match(sharedReceipt, /unpkg\.com\/qz-tray/);
+  assert.match(sharedReceipt, /loadQzTrayBridge/);
+  assert.match(sharedReceipt, /ensureQzConnected/);
   assert.match(sharedReceipt, /qzTrayPrinters/);
   assert.match(sharedReceipt, /printDirectlyWithQz/);
   assert.match(sharedReceipt, /Direct thermal printing is not connected/);
   assert.match(sharedReceipt, /Detect Printers/);
   assert.match(sharedReceipt, /Test Print/);
   assert.match(sharedReceipt, /Reset Settings/);
+  assert.match(sharedReceipt, /host: \["localhost", "127\.0\.0\.1"\]/);
   assert.match(sharedReceipt, /qz\.websocket\.connect/);
 });

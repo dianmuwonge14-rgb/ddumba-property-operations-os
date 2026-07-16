@@ -28,7 +28,18 @@ type ReceiptPrinterSettings = {
 const RECEIPT_EXPORT_ROOT_ID = "tenant-receipt-print-root";
 const RECEIPT_SCREEN_ID = "tenant-payment-receipt";
 const RECEIPT_PDF_EXPORT_CLASS = "receipt-pdf-export-sandbox";
+const QZ_TRAY_SCRIPT_URLS = [
+    "https://cdn.jsdelivr.net/npm/qz-tray@2.2.4/qz-tray.js",
+    "https://unpkg.com/qz-tray@2.2.4/qz-tray.js",
+];
 const MM_TO_PT = 72 / 25.4;
+
+declare global {
+    interface Window {
+        qz?: any;
+        __ddumbaQzTrayLoader?: Promise<any>;
+    }
+}
 
 type ModalProps = {
     actionExtras?: React.ReactNode;
@@ -563,21 +574,74 @@ function sanitizePdfFileName(fileName: string) {
     return clean.toLowerCase().endsWith(".pdf") ? clean : `${clean || "tenant-payment-receipt"}.pdf`;
 }
 
+async function loadQzTrayBridge(): Promise<any> {
+    if (typeof window === "undefined") throw new Error("Direct thermal printing is available only in the browser.");
+    if (window.qz) return window.qz;
+    if (window.__ddumbaQzTrayLoader) return window.__ddumbaQzTrayLoader;
+
+    window.__ddumbaQzTrayLoader = new Promise((resolve, reject) => {
+        let urlIndex = 0;
+        const tryNext = () => {
+            const script = document.createElement("script");
+            script.async = true;
+            script.src = QZ_TRAY_SCRIPT_URLS[urlIndex] ?? "";
+            script.onload = () => {
+                if (window.qz) {
+                    resolve(window.qz);
+                    return;
+                }
+                reject(new Error("QZ Tray loaded but did not expose the browser bridge."));
+            };
+            script.onerror = () => {
+                script.remove();
+                urlIndex += 1;
+                if (urlIndex < QZ_TRAY_SCRIPT_URLS.length) {
+                    tryNext();
+                    return;
+                }
+                reject(new Error("QZ Tray browser bridge could not be loaded. Use Browser Print or check your internet connection."));
+            };
+            document.head.appendChild(script);
+        };
+        tryNext();
+    }).catch((error) => {
+        window.__ddumbaQzTrayLoader = undefined;
+        throw error;
+    });
+
+    return window.__ddumbaQzTrayLoader;
+}
+
+async function getQzTray() {
+    const qz = await loadQzTrayBridge();
+    qz.api?.setPromiseType?.((resolver: (resolve: (value: unknown) => void, reject: (reason?: unknown) => void) => void) => new Promise(resolver));
+    return qz;
+}
+
+async function ensureQzConnected(qz: any) {
+    if (qz.websocket?.isActive?.()) return;
+    await qz.websocket.connect({
+        host: ["localhost", "127.0.0.1"],
+        port: { secure: [8181, 8182], insecure: [8182, 8181] },
+        retries: 1,
+    });
+}
+
 async function qzTrayPrinters(): Promise<string[]> {
-    const qz = (window as unknown as { qz?: any }).qz;
+    const qz = await getQzTray();
     if (!qz) throw new Error("Direct thermal printing is not connected. Use Browser Print or open Printer Settings.");
-    if (!qz.websocket?.isActive?.()) await qz.websocket.connect();
+    await ensureQzConnected(qz);
     const printers = await qz.printers.find();
     return Array.isArray(printers) ? printers.map(String) : [String(printers)].filter(Boolean);
 }
 
 async function printDirectlyWithQz(receipt: TenantReceiptViewModel, settings: ReceiptPrinterSettings) {
-    const qz = (window as unknown as { qz?: any }).qz;
+    const qz = await getQzTray();
     if (!qz) throw new Error("Direct thermal printing is not connected. Use Browser Print or open Printer Settings.");
     if (!settings.preferredPrinterName.trim()) throw new Error("Select a preferred thermal printer before direct printing.");
     const source = document.getElementById(RECEIPT_EXPORT_ROOT_ID);
     if (!source) throw new Error("Receipt could not be prepared. Reopen the receipt and try again.");
-    if (!qz.websocket?.isActive?.()) await qz.websocket.connect();
+    await ensureQzConnected(qz);
     const config = qz.configs.create(settings.preferredPrinterName, {
         copies: Math.max(1, settings.copies),
         rasterize: false,
