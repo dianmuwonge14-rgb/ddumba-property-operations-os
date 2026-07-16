@@ -21,6 +21,7 @@ type ReceiptPrinterSettings = {
     duplicateCopy: boolean;
     method: "browser" | "qz";
     preferredPrinterName: string;
+    printableWidthMm: 48 | 72;
     printQrCode: boolean;
     widthMm: 58 | 80;
 };
@@ -92,7 +93,8 @@ function defaultPrinterSettings(): ReceiptPrinterSettings {
         cutPaper: false,
         duplicateCopy: false,
         method: "browser",
-        preferredPrinterName: "",
+        preferredPrinterName: "POS 80",
+        printableWidthMm: 72,
         printQrCode: true,
         widthMm: 80,
     };
@@ -115,6 +117,7 @@ function readPrinterSettings(receipt: TenantReceiptViewModel): ReceiptPrinterSet
             ...defaultPrinterSettings(),
             ...parsed,
             copies: Math.max(1, Math.min(3, Number(parsed.copies ?? 1) || 1)),
+            printableWidthMm: parsed.printableWidthMm === 48 ? 48 : 72,
             widthMm: parsed.widthMm === 58 ? 58 : 80,
         };
     } catch {
@@ -134,6 +137,10 @@ export async function printTenantPaymentReceipt(afterPrint?: () => void) {
         return;
     }
     const paperWidthMm = receiptPaperWidthMm();
+    await printReceiptMarkup(exportRoot.outerHTML, paperWidthMm, printableReceiptWidthMm(paperWidthMm), afterPrint);
+}
+
+async function printReceiptMarkup(receiptHtml: string, paperWidthMm: 58 | 80, printableWidthMm: 48 | 72, afterPrint?: () => void) {
     const printFrame = document.createElement("iframe");
     printFrame.title = "Tenant receipt print frame";
     printFrame.setAttribute("aria-hidden", "true");
@@ -161,10 +168,10 @@ export async function printTenantPaymentReceipt(afterPrint?: () => void) {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Tenant Receipt</title>
-    <style id="receipt-print-style">${receiptPrintWindowStyle(paperWidthMm)}</style>
+    <style id="receipt-print-style">${receiptPrintWindowStyle(paperWidthMm, undefined, printableWidthMm)}</style>
   </head>
   <body>
-    ${exportRoot.outerHTML}
+    ${receiptHtml}
   </body>
 </html>`);
         printWindow.document.close();
@@ -173,7 +180,7 @@ export async function printTenantPaymentReceipt(afterPrint?: () => void) {
         const receiptRoot = printWindow.document.getElementById(RECEIPT_EXPORT_ROOT_ID) as HTMLElement | null;
         const pageHeightMm = receiptRoot ? measuredReceiptPageHeightMm(receiptRoot, paperWidthMm) : 260;
         const styleElement = printWindow.document.getElementById("receipt-print-style");
-        if (styleElement) styleElement.textContent = receiptPrintWindowStyle(paperWidthMm, pageHeightMm);
+        if (styleElement) styleElement.textContent = receiptPrintWindowStyle(paperWidthMm, pageHeightMm, printableWidthMm);
         await waitForPrintWindowLayout(printWindow);
 
         let cleanedUp = false;
@@ -191,6 +198,38 @@ export async function printTenantPaymentReceipt(afterPrint?: () => void) {
         printFrame.remove();
         window.alert(error instanceof Error ? error.message : "Receipt could not be printed. Please try again.");
     }
+}
+
+export async function printTenantReceiptTest(receipt: TenantReceiptViewModel, settings?: ReceiptPrinterSettings) {
+    const paperWidthMm = settings?.widthMm ?? receiptPaperWidthMm();
+    const printableWidthMm = settings?.printableWidthMm ?? printableReceiptWidthMm(paperWidthMm);
+    const now = new Date().toLocaleString("en-UG", {
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        month: "short",
+        timeZone: "Africa/Kampala",
+        year: "numeric",
+    });
+    const testHtml = `<article id="${RECEIPT_EXPORT_ROOT_ID}" class="tenant-receipt-export-root">
+  <div id="${RECEIPT_SCREEN_ID}" class="tenant-receipt-slip mx-auto bg-white text-slate-950">
+    <header class="receipt-section text-center">
+      <div class="mx-auto flex h-9 w-9 items-center justify-center rounded-full border border-slate-900 bg-slate-950 text-[13px] font-black text-white">DD</div>
+      <h3 class="mt-1.5 text-[15px] font-black leading-tight">DDUMBA OS</h3>
+      <p class="mt-2 border-y border-dashed border-slate-900 py-1 text-[10px] font-black uppercase tracking-[0.08em]">POS 80 TEST</p>
+    </header>
+    <section class="receipt-section">
+      <div class="receipt-row"><span class="receipt-label">Office</span><span class="receipt-value">${escapeReceiptHtml(receipt.snapshot.officeName ?? "Current office")}</span></div>
+      <div class="receipt-row"><span class="receipt-label">Date/Time</span><span class="receipt-value">${escapeReceiptHtml(now)}</span></div>
+      <div class="receipt-row"><span class="receipt-label">Width</span><span class="receipt-value">${paperWidthMm}mm paper / ${printableWidthMm}mm content</span></div>
+    </section>
+    <section class="receipt-section receipt-amount-section text-center">
+      <p class="text-[12px] font-black">PRINT TEST SUCCESSFUL</p>
+      <p class="receipt-muted mt-1 text-[9px] font-bold">If this prints as one receipt, browser printing is ready for POS 80.</p>
+    </section>
+  </div>
+</article>`;
+    await printReceiptMarkup(testHtml, paperWidthMm, printableWidthMm);
 }
 
 export async function downloadTenantPaymentReceiptPdf(fileName = "tenant-payment-receipt.pdf") {
@@ -232,6 +271,20 @@ function receiptPaperWidthMm(): 58 | 80 {
         ?? window.localStorage.getItem("tenantReceiptPaperWidthMm")
         ?? "";
     return configured.trim() === "58" ? 58 : 80;
+}
+
+function printableReceiptWidthMm(paperWidthMm: 58 | 80): 48 | 72 {
+    return paperWidthMm === 58 ? 48 : 72;
+}
+
+function escapeReceiptHtml(value: string) {
+    return value.replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+    })[char] ?? char);
 }
 
 async function waitForPrintWindowAssets(printWindow: Window) {
@@ -347,7 +400,7 @@ function receiptExportStyleText() {
     return `${styleText}\nbody{margin:0;background:white}.tenant-receipt-slip{margin:0!important;box-shadow:none!important}`;
 }
 
-function receiptPrintWindowStyle(paperWidthMm: 58 | 80, pageHeightMm?: number) {
+function receiptPrintWindowStyle(paperWidthMm: 58 | 80, pageHeightMm?: number, printableWidthMm = printableReceiptWidthMm(paperWidthMm)) {
     const pageSize = pageHeightMm ? `${paperWidthMm}mm ${pageHeightMm}mm` : `${paperWidthMm}mm auto`;
     return `
 @page {
@@ -377,11 +430,11 @@ body {
 }
 #${RECEIPT_EXPORT_ROOT_ID} {
   display: block;
-  width: ${paperWidthMm}mm;
-  max-width: ${paperWidthMm}mm;
+  width: ${printableWidthMm}mm;
+  max-width: ${printableWidthMm}mm;
   height: auto;
   min-height: 0;
-  margin: 0;
+  margin: 0 auto;
   padding: 0;
   overflow: visible;
   background: #ffffff;
@@ -391,10 +444,10 @@ body {
   transform: none;
 }
 #${RECEIPT_SCREEN_ID} {
-  width: ${paperWidthMm}mm;
-  max-width: ${paperWidthMm}mm;
+  width: ${printableWidthMm}mm;
+  max-width: ${printableWidthMm}mm;
   margin: 0;
-  padding: ${paperWidthMm === 58 ? "2.5mm" : "4mm"};
+  padding: ${paperWidthMm === 58 ? "2mm" : "2mm"};
   border: 0;
   border-radius: 0;
   box-shadow: none;
@@ -714,11 +767,12 @@ export function TenantPaymentReceiptModal({
     }
 
     const handleBrowserPrint = async () => {
-        setPrinterMessage("Choose your thermal printer under Destination, then press Print. If Destination is Save as PDF, the browser button will say Save; select your printer to print the receipt.");
+        setPrinterMessage("Preparing receipt...");
         setIsPreparingPrint(true);
         try {
             savePrinterSettings(receipt, printerSettings);
             await Promise.resolve(onPrint());
+            setPrinterMessage("Print dialog opened. Select POS 80 under Destination, confirm the preview shows one page, then press Print. Was the receipt printed correctly?");
         } finally {
             setIsPreparingPrint(false);
         }
@@ -749,14 +803,26 @@ export function TenantPaymentReceiptModal({
         }
     };
 
-    const testPrint = async () => {
-        setPrinterMessage("Sending test receipt to the selected printer...");
+    const testBrowserPrint = async () => {
+        setPrinterMessage("Preparing POS 80 browser print test...");
+        setIsPreparingPrint(true);
         try {
-            await printDirectlyWithQz(receipt, printerSettings);
-            setPrinterMessage("Test print sent successfully.");
+            savePrinterSettings(receipt, printerSettings);
+            await printTenantReceiptTest(receipt, printerSettings);
+            setPrinterMessage("POS 80 test print dialog opened. Select POS 80 under Destination, confirm one page, then press Print.");
         } catch (error) {
-            setPrinterMessage(error instanceof Error ? error.message : "Test print failed. Use Browser Print or check QZ Tray.");
+            setPrinterMessage(error instanceof Error ? error.message : "Test receipt could not be prepared. Reopen the receipt and try again.");
+        } finally {
+            setIsPreparingPrint(false);
         }
+    };
+
+    const openPrinterHelp = () => {
+        setPrinterMessage("On the office computer connected to POS 80: open Chrome print Destination, choose POS 80, set Portrait, 80mm receipt paper, Margins None or Minimum, Scale 100%, then press Print. If Destination remains Save as PDF, change it to POS 80.");
+    };
+
+    const testReceiptPreview = () => {
+        setPrinterMessage(`Test receipt preview is ready. This preview will print on ${printerSettings.widthMm}mm paper with ${printerSettings.printableWidthMm}mm printable content. Use Open Browser Print Test to verify the browser dialog.`);
     };
 
     const closeFromBackdrop = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -799,13 +865,14 @@ export function TenantPaymentReceiptModal({
                             </div>
                         </div>
                         <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs font-bold leading-relaxed text-blue-950">
-                            Browser print uses your browser Destination. If Destination is <strong>Save as PDF</strong>, the browser button says <strong>Save</strong>. Choose the installed thermal printer under Destination to make it say <strong>Print</strong>.
+                            Select <strong>POS 80</strong> under Destination, confirm the preview shows <strong>one page</strong>, then press <strong>Print</strong>. If <strong>Save as PDF</strong> is selected, change Destination to <strong>POS 80</strong>.
                         </div>
                         <div className="mt-3 flex flex-wrap items-center gap-2">
                             <button type="button" onClick={() => setShowPrinterSettings((value) => !value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800">
                                 Printer Settings
                             </button>
                             <span className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-600">Width: {printerSettings.widthMm}mm</span>
+                            <span className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-600">Printable: {printerSettings.printableWidthMm}mm</span>
                             {printerSettings.preferredPrinterName ? <span className="rounded-xl bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700">Preferred: {printerSettings.preferredPrinterName}</span> : null}
                         </div>
                         {showPrinterSettings ? (
@@ -818,7 +885,7 @@ export function TenantPaymentReceiptModal({
                                     </select>
                                 </label>
                                 <label className="grid gap-1">
-                                    <span>Preferred printer name</span>
+                                    <span>Preferred printer label</span>
                                     <input value={printerSettings.preferredPrinterName} onChange={(event) => updatePrinterSettings({ preferredPrinterName: event.target.value })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold" placeholder="Thermal printer name" />
                                 </label>
                                 <label className="grid gap-1">
@@ -826,6 +893,13 @@ export function TenantPaymentReceiptModal({
                                     <select value={printerSettings.widthMm} onChange={(event) => updatePrinterSettings({ widthMm: event.target.value === "58" ? 58 : 80 })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold">
                                         <option value={80}>80mm</option>
                                         <option value={58}>58mm</option>
+                                    </select>
+                                </label>
+                                <label className="grid gap-1">
+                                    <span>Printable width</span>
+                                    <select value={printerSettings.printableWidthMm} onChange={(event) => updatePrinterSettings({ printableWidthMm: event.target.value === "48" ? 48 : 72 })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold">
+                                        <option value={72}>72mm for POS 80</option>
+                                        <option value={48}>48mm for 58mm printer</option>
                                     </select>
                                 </label>
                                 <label className="grid gap-1">
@@ -842,10 +916,19 @@ export function TenantPaymentReceiptModal({
                                     {availablePrinters.map((printer) => (
                                         <button key={printer} type="button" onClick={() => updatePrinterSettings({ preferredPrinterName: printer })} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">{printer}</button>
                                     ))}
+                                    <button type="button" onClick={testReceiptPreview} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Test Receipt Preview</button>
                                     <button type="button" onClick={() => { savePrinterSettings(receipt, printerSettings); setPrinterMessage("Printer settings saved for this office and browser."); }} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white">Save Printer Settings</button>
-                                    <button type="button" onClick={testPrint} className="rounded-xl bg-violet-700 px-3 py-2 text-xs font-black text-white">Test Print</button>
+                                    <button type="button" onClick={testBrowserPrint} className="rounded-xl bg-violet-700 px-3 py-2 text-xs font-black text-white">Open Browser Print Test</button>
+                                    <button type="button" onClick={openPrinterHelp} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Printing Help</button>
                                     <button type="button" onClick={() => { const defaults = defaultPrinterSettings(); updatePrinterSettings(defaults); setAvailablePrinters([]); setPrinterMessage("Printer settings reset for this office and browser."); }} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Reset Settings</button>
                                 </div>
+                            </div>
+                        ) : null}
+                        {printerMessage?.includes("Was the receipt printed correctly?") ? (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                                <button type="button" onClick={() => setPrinterMessage("Great. Keep the printed receipt with the tenant, office, collector, and audit records.")} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white">Yes</button>
+                                <button type="button" onClick={handleBrowserPrint} className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white">Print Again</button>
+                                <button type="button" onClick={openPrinterHelp} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Open Printer Help</button>
                             </div>
                         ) : null}
                         {actionExtras ? <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{actionExtras}</div> : null}

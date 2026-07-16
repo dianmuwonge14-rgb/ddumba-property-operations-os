@@ -204,11 +204,11 @@ body {
     page: tenant-payment-receipt-page;
     position: absolute !important;
     inset: 0 auto auto 0 !important;
-    width: 80mm !important;
-    max-width: 80mm !important;
+    width: 72mm !important;
+    max-width: 72mm !important;
     height: auto !important;
     max-height: none !important;
-    margin: 0 !important;
+    margin: 0 4mm !important;
     padding: 0 !important;
     border: 0 !important;
     border-radius: 0 !important;
@@ -222,21 +222,27 @@ body {
   }
 
   body.print-tenant-payment-receipt #tenant-payment-receipt {
-    width: 80mm !important;
-    max-width: 80mm !important;
+    width: 72mm !important;
+    max-width: 72mm !important;
     margin: 0 !important;
-    padding: 4mm !important;
+    padding: 2mm !important;
     border: 0 !important;
     border-radius: 0 !important;
     box-shadow: none !important;
     overflow: visible !important;
   }
 
-  body.print-tenant-payment-receipt.receipt-paper-58mm #tenant-receipt-print-root,
+  body.print-tenant-payment-receipt.receipt-paper-58mm #tenant-receipt-print-root {
+    width: 48mm !important;
+    max-width: 48mm !important;
+    padding: 0 !important;
+    margin: 0 5mm !important;
+  }
+
   body.print-tenant-payment-receipt.receipt-paper-58mm #tenant-payment-receipt {
-    width: 58mm !important;
-    max-width: 58mm !important;
-    padding: 2.5mm !important;
+    width: 48mm !important;
+    max-width: 48mm !important;
+    padding: 2mm !important;
   }
 
   body.print-tenant-payment-receipt .receipt-preview-controls,

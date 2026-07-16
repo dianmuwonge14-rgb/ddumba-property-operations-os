@@ -63,6 +63,7 @@ test("tenant receipts include supermarket-style coverage and print scope", () =>
   assert.match(receiptStyles, /print-tenant-payment-receipt/);
   assert.match(receiptStyles, /#tenant-receipt-print-root/);
   assert.match(receiptStyles, /size: 80mm auto/);
+  assert.match(receiptStyles, /width: 72mm !important/);
   assert.match(receiptStyles, /receipt-paper-58mm/);
   assert.doesNotMatch(sharedReceipt, /Company contact not set/);
 });
@@ -114,11 +115,13 @@ test("receipt print renders a clean receipt-only thermal iframe", () => {
   assert.match(sharedReceipt, /Tenant receipt print frame/);
   assert.match(sharedReceipt, /printFrame\.contentWindow/);
   assert.match(sharedReceipt, /printWindow\.document\.write/);
-  assert.match(sharedReceipt, /receiptPrintWindowStyle\(paperWidthMm\)/);
+  assert.match(sharedReceipt, /receiptPrintWindowStyle\(paperWidthMm, undefined, printableWidthMm\)/);
   assert.match(sharedReceipt, /waitForPrintWindowAssets\(printWindow\)/);
   assert.match(sharedReceipt, /waitForPrintWindowLayout\(printWindow\)/);
   assert.match(sharedReceipt, /measuredReceiptPageHeightMm\(receiptRoot, paperWidthMm\)/);
-  assert.match(sharedReceipt, /styleElement\.textContent = receiptPrintWindowStyle\(paperWidthMm, pageHeightMm\)/);
+  assert.match(sharedReceipt, /styleElement\.textContent = receiptPrintWindowStyle\(paperWidthMm, pageHeightMm, printableWidthMm\)/);
+  assert.match(sharedReceipt, /printReceiptMarkup/);
+  assert.match(sharedReceipt, /printTenantReceiptTest/);
   assert.match(sharedReceipt, /printWindow\.print\(\)/);
   assert.match(sharedReceipt, /printWindow\.onafterprint = cleanup/);
   assert.match(sharedReceipt, /printFrame\.remove\(\)/);
@@ -134,18 +137,28 @@ test("receipt print and PDF exports omit page chrome and modal controls", () => 
   assert.match(sharedReceipt, /\.receipt-close-button/);
   assert.match(sharedReceipt, /\.receipt-action-bar/);
   assert.match(sharedReceipt, /const pageSize = pageHeightMm \? `\$\{paperWidthMm\}mm \$\{pageHeightMm\}mm` : `\$\{paperWidthMm\}mm auto`/);
+  assert.match(sharedReceipt, /width: \$\{printableWidthMm\}mm/);
   assert.match(sharedReceipt, /localStorage\.getItem\("ddumba\.receiptPaperWidthMm"\)/);
 });
 
 test("receipt modal explains browser Save as PDF behavior and saves printer settings per office", () => {
-  assert.match(sharedReceipt, /If Destination is <strong>Save as PDF<\/strong>/);
-  assert.match(sharedReceipt, /Choose your thermal printer under Destination, then press Print/);
+  assert.match(sharedReceipt, /If <strong>Save as PDF<\/strong> is selected/);
+  assert.match(sharedReceipt, /Select <strong>POS 80<\/strong> under Destination/);
+  assert.match(sharedReceipt, /Print dialog opened\. Select POS 80 under Destination/);
+  assert.match(sharedReceipt, /Was the receipt printed correctly\?/);
   assert.match(sharedReceipt, /ddumba\.receiptPrinterSettings/);
   assert.match(sharedReceipt, /Printer Settings/);
   assert.match(sharedReceipt, /Save Printer Settings/);
+  assert.match(sharedReceipt, /Preferred printer label/);
+  assert.match(sharedReceipt, /printableWidthMm/);
+  assert.match(sharedReceipt, /72mm for POS 80/);
   assert.match(sharedReceipt, /Receipt width/);
+  assert.match(sharedReceipt, /Test Receipt Preview/);
+  assert.match(sharedReceipt, /Open Browser Print Test/);
+  assert.match(sharedReceipt, /Printing Help/);
   assert.match(sharedReceipt, /Auto-open print after payment/);
   assert.match(sharedReceipt, /Auto-print after payment/);
+  assert.doesNotMatch(sharedReceipt, /Receipt printed successfully/);
 });
 
 test("receipt direct thermal print uses QZ Tray when available and falls back clearly", () => {
@@ -158,7 +171,7 @@ test("receipt direct thermal print uses QZ Tray when available and falls back cl
   assert.match(sharedReceipt, /printDirectlyWithQz/);
   assert.match(sharedReceipt, /Direct thermal printing is not connected/);
   assert.match(sharedReceipt, /Detect Printers/);
-  assert.match(sharedReceipt, /Test Print/);
+  assert.match(sharedReceipt, /Open Browser Print Test/);
   assert.match(sharedReceipt, /Reset Settings/);
   assert.match(sharedReceipt, /host: \["localhost", "127\.0\.0\.1"\]/);
   assert.match(sharedReceipt, /qz\.websocket\.connect/);
