@@ -90,10 +90,10 @@ function defaultPrinterSettings(): ReceiptPrinterSettings {
         autoOpenPrint: false,
         autoPrintAfterPayment: false,
         copies: 1,
-        cutPaper: false,
+        cutPaper: true,
         duplicateCopy: false,
         method: "browser",
-        preferredPrinterName: "POS 80",
+        preferredPrinterName: "POS-80",
         printableWidthMm: 72,
         printQrCode: true,
         widthMm: 80,
@@ -692,23 +692,154 @@ async function printDirectlyWithQz(receipt: TenantReceiptViewModel, settings: Re
     const qz = await getQzTray();
     if (!qz) throw new Error("Direct thermal printing is not connected. Use Browser Print or open Printer Settings.");
     if (!settings.preferredPrinterName.trim()) throw new Error("Select a preferred thermal printer before direct printing.");
-    const source = document.getElementById(RECEIPT_EXPORT_ROOT_ID);
-    if (!source) throw new Error("Receipt could not be prepared. Reopen the receipt and try again.");
     await ensureQzConnected(qz);
     const config = qz.configs.create(settings.preferredPrinterName, {
         copies: Math.max(1, settings.copies),
-        rasterize: false,
-        size: { width: settings.widthMm },
+        encoding: "CP437",
+        jobName: `DDUMBA receipt ${receipt.receiptNumber}`,
     });
-    const html = `<!doctype html><html><head><meta charset="utf-8"><style>${receiptPrintWindowStyle(settings.widthMm)}</style></head><body>${source.outerHTML}</body></html>`;
-    await qz.print(config, [{
-        data: html,
-        format: "html",
-        type: "pixel",
-    }]);
-    if (settings.cutPaper) {
-        await qz.print(config, [{ data: "\x1DVA0", type: "raw", format: "command" }]).catch(() => undefined);
+    await qz.print(config, [{ data: buildEscPosReceipt(receipt, settings), format: "command", type: "raw" }]);
+}
+
+async function printEscPosTestWithQz(receipt: TenantReceiptViewModel, settings: ReceiptPrinterSettings) {
+    const qz = await getQzTray();
+    if (!qz) throw new Error("Direct thermal printing is not connected. Install and start QZ Tray on the computer connected to POS-80.");
+    if (!settings.preferredPrinterName.trim()) throw new Error("Select POS-80 or the installed Xprinter queue before direct test printing.");
+    await ensureQzConnected(qz);
+    const config = qz.configs.create(settings.preferredPrinterName, {
+        copies: Math.max(1, settings.copies),
+        encoding: "CP437",
+        jobName: "DDUMBA POS-80 ESC/POS test",
+    });
+    await qz.print(config, [{ data: buildEscPosTestReceipt(receipt, settings), format: "command", type: "raw" }]);
+}
+
+function buildEscPosReceipt(receipt: TenantReceiptViewModel, settings: ReceiptPrinterSettings) {
+    const snapshot = receipt.snapshot;
+    const coverage = snapshot.coveragePeriods?.length ? snapshot.coveragePeriods : snapshot.coveragePeriod ? [{ amount: snapshot.amountApplied, label: snapshot.coveragePeriod, type: "coverage" }] : [];
+    const lines = [
+        escPosInit(),
+        escPosAlign("center"),
+        escPosBold(true),
+        escPosLine(safeEscPos(snapshot.companyName) ?? "DDUMBA OS"),
+        escPosLine("TENANT PAYMENT RECEIPT"),
+        escPosBold(false),
+        escPosLine("-".repeat(32)),
+        escPosAlign("left"),
+        escPosPair("Receipt", receipt.receiptNumber),
+        escPosPair("Date", formatDateTime(snapshot.paymentDateTime)),
+        escPosPair("Office", snapshot.officeName ?? "Office"),
+        escPosPair("Room", snapshot.roomNumber ?? "No room"),
+        escPosPair("Tenant", snapshot.tenantName ?? "Unnamed tenant"),
+        escPosPair("Phone", snapshot.tenantPhone ?? "No phone"),
+        escPosPair("Landlord", snapshot.landlordName ?? "No landlord"),
+        escPosLine("-".repeat(32)),
+        escPosPair("Monthly rent", money(snapshot.monthlyRent)),
+        escPosPair("Previous", money(snapshot.previousOutstandingBalance)),
+        escPosPair("To outstanding", money(snapshot.amountAppliedToOutstanding ?? 0)),
+        escPosPair("To current", money(snapshot.amountAppliedToCurrentRent ?? Math.max(0, snapshot.amountApplied - (snapshot.amountAppliedToOutstanding ?? 0)))),
+        escPosPair("Advance rent", money(snapshot.advanceAmount ?? snapshot.advanceBalance)),
+        escPosBold(true),
+        escPosPair("Amount paid", money(snapshot.amountPaid)),
+        escPosPair("Remaining", money(snapshot.remainingOutstandingBalance)),
+        escPosBold(false),
+        escPosPair("Advance bal", money(snapshot.advanceBalance)),
+        escPosLine("-".repeat(32)),
+    ];
+    if (coverage.length) {
+        lines.push(escPosLine("COVERAGE"));
+        coverage.forEach((period, index) => {
+            lines.push(escPosLine(`${index + 1}. ${safeEscPos(period.label) ?? "Period"}`));
+            lines.push(escPosPair("Amount", money(period.amount)));
+        });
+        lines.push(escPosLine("-".repeat(32)));
     }
+    lines.push(
+        escPosPair("Method", snapshot.paymentMethod?.replaceAll("_", " ") ?? "Payment"),
+        escPosPair("Reference", snapshot.referenceNumber ?? "No reference"),
+        escPosPair("Recorded by", snapshot.recordedByName ?? "DDUMBA OS"),
+        escPosPair("Verification", receipt.verificationCode),
+    );
+    if (settings.printQrCode) {
+        lines.push(escPosAlign("center"), escPosQr(receiptVerificationUrl(receipt)), escPosAlign("left"));
+    }
+    lines.push(
+        escPosAlign("center"),
+        escPosLine("Thank you for your payment"),
+        escPosLine("DDUMBA OS"),
+        escPosFeed(3),
+        settings.cutPaper ? escPosCut() : "",
+    );
+    return lines.join("");
+}
+
+function buildEscPosTestReceipt(receipt: TenantReceiptViewModel, settings: ReceiptPrinterSettings) {
+    return [
+        escPosInit(),
+        escPosAlign("center"),
+        escPosBold(true),
+        escPosLine("DDUMBA OS"),
+        escPosBold(false),
+        escPosLine("XPRINTER XP-N260H"),
+        escPosLine("POS-80 TEST"),
+        escPosLine("-".repeat(32)),
+        escPosLine("PRINT TEST SUCCESSFUL"),
+        escPosLine(safeEscPos(receipt.snapshot.officeName) ?? "Current office"),
+        escPosLine(`${settings.widthMm}mm paper / ${settings.printableWidthMm}mm content`),
+        escPosFeed(3),
+        settings.cutPaper ? escPosCut() : "",
+    ].join("");
+}
+
+function safeEscPos(value: string | null | undefined) {
+    if (!value) return null;
+    return value.replace(/[^\x20-\x7E]/g, " ").replace(/\s+/g, " ").trim() || null;
+}
+
+function escPosInit() { return "\x1b@"; }
+function escPosBold(enabled: boolean) { return `\x1bE${enabled ? "\x01" : "\x00"}`; }
+function escPosAlign(mode: "left" | "center" | "right") { return `\x1ba${mode === "center" ? "\x01" : mode === "right" ? "\x02" : "\x00"}`; }
+function escPosFeed(lines: number) { return `\x1bd${String.fromCharCode(Math.max(0, Math.min(9, lines)))}`; }
+function escPosCut() { return "\x1dVA0"; }
+function escPosLine(value: string) { return `${wrapEscPos(safeEscPos(value) ?? "").join("\n")}\n`; }
+function escPosPair(label: string, value: string) {
+    const left = safeEscPos(label) ?? "";
+    const right = safeEscPos(value) ?? "";
+    const width = 32;
+    if (left.length + right.length + 1 <= width) return `${left}${" ".repeat(width - left.length - right.length)}${right}\n`;
+    return `${left}\n${wrapEscPos(right).map((line) => `  ${line}`).join("\n")}\n`;
+}
+function wrapEscPos(value: string, width = 32) {
+    const text = safeEscPos(value) ?? "";
+    const words = text.split(" ");
+    const lines: string[] = [];
+    let current = "";
+    for (const word of words) {
+        if (!word) continue;
+        if (!current) {
+            current = word.slice(0, width);
+        } else if (current.length + word.length + 1 <= width) {
+            current = `${current} ${word}`;
+        } else {
+            lines.push(current);
+            current = word.slice(0, width);
+        }
+    }
+    if (current) lines.push(current);
+    return lines.length ? lines : [""];
+}
+function escPosQr(data: string) {
+    const clean = safeEscPos(data) ?? "";
+    const storeLength = clean.length + 3;
+    const pL = String.fromCharCode(storeLength % 256);
+    const pH = String.fromCharCode(Math.floor(storeLength / 256));
+    return [
+        "\x1d(k\x04\x001A2\x00",
+        "\x1d(k\x03\x001C\x04",
+        "\x1d(k\x03\x001E0",
+        `\x1d(k${pL}${pH}1P0${clean}`,
+        "\x1d(k\x03\x001Q0",
+    ].join("");
 }
 
 export function TenantPaymentReceiptModal({
@@ -729,6 +860,9 @@ export function TenantPaymentReceiptModal({
     const previousFocusRef = useRef<HTMLElement | null>(null);
     const [availablePrinters, setAvailablePrinters] = useState<string[]>([]);
     const [isPreparingPrint, setIsPreparingPrint] = useState(false);
+    const [latestPrintRequestAt, setLatestPrintRequestAt] = useState<string | null>(null);
+    const [localConfirmationStatus, setLocalConfirmationStatus] = useState("Awaiting office confirmation");
+    const [printAttemptNumber, setPrintAttemptNumber] = useState(0);
     const [printerMessage, setPrinterMessage] = useState<string | null>(null);
     const [printerSettings, setPrinterSettings] = useState<ReceiptPrinterSettings>(() => defaultPrinterSettings());
     const [showPrinterSettings, setShowPrinterSettings] = useState(false);
@@ -756,6 +890,9 @@ export function TenantPaymentReceiptModal({
         setPrinterSettings(readPrinterSettings(receipt));
         setPrinterMessage(null);
         setAvailablePrinters([]);
+        setLatestPrintRequestAt(null);
+        setLocalConfirmationStatus("Awaiting office confirmation");
+        setPrintAttemptNumber(0);
     }, [receipt.id]);
 
     function updatePrinterSettings(patch: Partial<ReceiptPrinterSettings>) {
@@ -769,10 +906,17 @@ export function TenantPaymentReceiptModal({
     const handleBrowserPrint = async () => {
         setPrinterMessage("Preparing receipt...");
         setIsPreparingPrint(true);
+        setPrintAttemptNumber((attempt) => attempt + 1);
+        setLatestPrintRequestAt(new Date().toLocaleString("en-UG", { timeZone: "Africa/Kampala" }));
+        setLocalConfirmationStatus("Browser print dialog opening");
         try {
             savePrinterSettings(receipt, printerSettings);
             await Promise.resolve(onPrint());
-            setPrinterMessage("Print dialog opened. Select POS 80 under Destination, confirm the preview shows one page, then press Print. Was the receipt printed correctly?");
+            setLocalConfirmationStatus("Print request opened; confirm Windows queue and paper output");
+            setPrinterMessage("Print request opened. Select POS-80 under Destination, do not select RONGTA S58mm, confirm one sheet, then press Print. Did POS-80 print the receipt?");
+        } catch (error) {
+            setLocalConfirmationStatus("Browser print request failed before Windows queue");
+            setPrinterMessage(error instanceof Error ? error.message : "Receipt could not be prepared. No physical print result was confirmed.");
         } finally {
             setIsPreparingPrint(false);
         }
@@ -783,7 +927,8 @@ export function TenantPaymentReceiptModal({
         try {
             const printers = await qzTrayPrinters();
             setAvailablePrinters(printers);
-            setPrinterMessage(printers.length ? "Printers detected. Select your thermal printer and save settings." : "No printers were reported by QZ Tray.");
+            const hasPos80 = printers.some((printer) => /pos[-_\s]?80|xprinter|xp[-_\s]?n260h/i.test(printer));
+            setPrinterMessage(printers.length ? (hasPos80 ? "QZ Tray connected. POS-80/Xprinter-compatible queue detected; select it and save settings." : "QZ Tray connected, but POS-80 was not detected. Check Windows printer installation and USB port.") : "QZ Tray connected, but no printers were reported.");
         } catch (error) {
             setAvailablePrinters([]);
             setPrinterMessage(error instanceof Error ? error.message : "Direct thermal printing is not connected. Use Browser Print or open Printer Settings.");
@@ -792,11 +937,16 @@ export function TenantPaymentReceiptModal({
 
     const handleDirectPrint = async () => {
         setIsPreparingPrint(true);
-        setPrinterMessage("Preparing direct thermal print...");
+        setPrintAttemptNumber((attempt) => attempt + 1);
+        setLatestPrintRequestAt(new Date().toLocaleString("en-UG", { timeZone: "Africa/Kampala" }));
+        setLocalConfirmationStatus("Sending ESC/POS command through QZ Tray");
+        setPrinterMessage("Sending receipt to POS-80 through QZ Tray...");
         try {
             await printDirectlyWithQz(receipt, printerSettings);
-            setPrinterMessage("Receipt sent directly to the selected thermal printer.");
+            setLocalConfirmationStatus("QZ accepted print command; confirm physical paper output");
+            setPrinterMessage("Print command accepted by QZ Tray. Confirm the POS-80 queue and physical receipt; the browser cannot prove paper output.");
         } catch (error) {
+            setLocalConfirmationStatus("Direct print failed before printer acceptance");
             setPrinterMessage(error instanceof Error ? error.message : "Direct thermal printing failed. Use Browser Print or check Printer Settings.");
         } finally {
             setIsPreparingPrint(false);
@@ -806,19 +956,49 @@ export function TenantPaymentReceiptModal({
     const testBrowserPrint = async () => {
         setPrinterMessage("Preparing POS 80 browser print test...");
         setIsPreparingPrint(true);
+        setPrintAttemptNumber((attempt) => attempt + 1);
+        setLatestPrintRequestAt(new Date().toLocaleString("en-UG", { timeZone: "Africa/Kampala" }));
+        setLocalConfirmationStatus("Browser test print dialog opening");
         try {
             savePrinterSettings(receipt, printerSettings);
             await printTenantReceiptTest(receipt, printerSettings);
-            setPrinterMessage("POS 80 test print dialog opened. Select POS 80 under Destination, confirm one page, then press Print.");
+            setLocalConfirmationStatus("Browser test print request opened");
+            setPrinterMessage("POS-80 test print dialog opened. Select POS-80, not RONGTA S58mm, confirm one sheet, then press Print.");
         } catch (error) {
+            setLocalConfirmationStatus("Browser test print failed before Windows queue");
             setPrinterMessage(error instanceof Error ? error.message : "Test receipt could not be prepared. Reopen the receipt and try again.");
         } finally {
             setIsPreparingPrint(false);
         }
     };
 
+    const testDirectPrint = async () => {
+        setPrinterMessage("Sending ESC/POS test receipt to POS-80 through QZ Tray...");
+        setIsPreparingPrint(true);
+        setPrintAttemptNumber((attempt) => attempt + 1);
+        setLatestPrintRequestAt(new Date().toLocaleString("en-UG", { timeZone: "Africa/Kampala" }));
+        setLocalConfirmationStatus("Sending ESC/POS test command");
+        try {
+            await printEscPosTestWithQz(receipt, printerSettings);
+            setLocalConfirmationStatus("QZ accepted ESC/POS test command; confirm physical output");
+            setPrinterMessage("ESC/POS test command accepted by QZ Tray. Confirm POS-80 printed the Xprinter test receipt.");
+        } catch (error) {
+            setLocalConfirmationStatus("Direct ESC/POS test failed before printer acceptance");
+            setPrinterMessage(error instanceof Error ? error.message : "Direct ESC/POS test failed. Use Printer Help to check QZ Tray, POS-80, and the USB driver.");
+        } finally {
+            setIsPreparingPrint(false);
+        }
+    };
+
     const openPrinterHelp = () => {
-        setPrinterMessage("On the office computer connected to POS 80: open Chrome print Destination, choose POS 80, set Portrait, 80mm receipt paper, Margins None or Minimum, Scale 100%, then press Print. If Destination remains Save as PDF, change it to POS 80.");
+        setPrinterMessage("Windows help for the Xprinter XP-N260H: open Settings > Bluetooth & devices > Printers & scanners; confirm POS-80 is Ready; cancel stuck queue jobs; do not use the RONGTA S58mm queue; confirm an Xprinter/80mm driver, USB port, 80mm paper, Windows test page, then return to Ddumba OS and use Test Print.");
+    };
+
+    const clearApplicationPrintState = () => {
+        setAvailablePrinters([]);
+        setLatestPrintRequestAt(null);
+        setLocalConfirmationStatus("Application print state cleared; Windows queue was not changed");
+        setPrinterMessage("Application print state cleared. This does not clear Windows spooler jobs; use Windows Printer Help for stuck POS-80 or RONGTA jobs.");
     };
 
     const testReceiptPreview = () => {
@@ -865,7 +1045,7 @@ export function TenantPaymentReceiptModal({
                             </div>
                         </div>
                         <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs font-bold leading-relaxed text-blue-950">
-                            Select <strong>POS 80</strong> under Destination, confirm the preview shows <strong>one page</strong>, then press <strong>Print</strong>. If <strong>Save as PDF</strong> is selected, change Destination to <strong>POS 80</strong>.
+                            Select <strong>POS-80</strong> under Destination. Do <strong>not</strong> select <strong>RONGTA S58mm</strong>. Confirm the preview shows <strong>one sheet</strong>, then press <strong>Print</strong>.
                         </div>
                         <div className="mt-3 flex flex-wrap items-center gap-2">
                             <button type="button" onClick={() => setShowPrinterSettings((value) => !value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800">
@@ -877,6 +1057,19 @@ export function TenantPaymentReceiptModal({
                         </div>
                         {showPrinterSettings ? (
                             <div className="mt-3 grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs font-bold text-slate-700 md:grid-cols-2 lg:grid-cols-3">
+                                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-amber-950 md:col-span-2 lg:col-span-3">
+                                    <p className="text-[11px] font-black uppercase tracking-[0.12em]">Printer Diagnostics</p>
+                                    <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                                        <span>Configured label: <strong>{printerSettings.preferredPrinterName || "POS-80"}</strong></span>
+                                        <span>Expected model: <strong>Xprinter XP-N260H</strong></span>
+                                        <span>Paper: <strong>{printerSettings.widthMm}mm</strong></span>
+                                        <span>Method: <strong>{printerSettings.method === "qz" ? "QZ Tray Direct Print" : "Browser Print"}</strong></span>
+                                        <span>Latest request: <strong>{latestPrintRequestAt ?? "None this session"}</strong></span>
+                                        <span>Receipt ID: <strong>{receipt.id}</strong></span>
+                                        <span>Attempts: <strong>{printAttemptNumber}</strong></span>
+                                        <span>Status: <strong>{localConfirmationStatus}</strong></span>
+                                    </div>
+                                </div>
                                 <label className="grid gap-1">
                                     <span>Printer method</span>
                                     <select value={printerSettings.method} onChange={(event) => updatePrinterSettings({ method: event.target.value === "qz" ? "qz" : "browser" })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold">
@@ -886,7 +1079,7 @@ export function TenantPaymentReceiptModal({
                                 </label>
                                 <label className="grid gap-1">
                                     <span>Preferred printer label</span>
-                                    <input value={printerSettings.preferredPrinterName} onChange={(event) => updatePrinterSettings({ preferredPrinterName: event.target.value })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold" placeholder="Thermal printer name" />
+                                    <input value={printerSettings.preferredPrinterName} onChange={(event) => updatePrinterSettings({ preferredPrinterName: event.target.value })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold" placeholder="POS-80" />
                                 </label>
                                 <label className="grid gap-1">
                                     <span>Receipt width</span>
@@ -919,15 +1112,19 @@ export function TenantPaymentReceiptModal({
                                     <button type="button" onClick={testReceiptPreview} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Test Receipt Preview</button>
                                     <button type="button" onClick={() => { savePrinterSettings(receipt, printerSettings); setPrinterMessage("Printer settings saved for this office and browser."); }} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white">Save Printer Settings</button>
                                     <button type="button" onClick={testBrowserPrint} className="rounded-xl bg-violet-700 px-3 py-2 text-xs font-black text-white">Open Browser Print Test</button>
+                                    <button type="button" onClick={testDirectPrint} className="rounded-xl bg-violet-900 px-3 py-2 text-xs font-black text-white">Direct ESC/POS Test</button>
+                                    <button type="button" onClick={() => { updatePrinterSettings({ method: "qz" }); setPrinterMessage("Switched to QZ Tray Direct Print. Use Detect Printers, select POS-80, then run Direct ESC/POS Test."); }} className="rounded-xl bg-indigo-700 px-3 py-2 text-xs font-black text-white">Switch to Direct Printing</button>
                                     <button type="button" onClick={openPrinterHelp} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Printing Help</button>
+                                    <button type="button" onClick={clearApplicationPrintState} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Clear Application Print State</button>
                                     <button type="button" onClick={() => { const defaults = defaultPrinterSettings(); updatePrinterSettings(defaults); setAvailablePrinters([]); setPrinterMessage("Printer settings reset for this office and browser."); }} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Reset Settings</button>
                                 </div>
                             </div>
                         ) : null}
-                        {printerMessage?.includes("Was the receipt printed correctly?") ? (
+                        {printerMessage?.includes("Did POS-80 print the receipt?") ? (
                             <div className="mt-3 flex flex-wrap gap-2">
-                                <button type="button" onClick={() => setPrinterMessage("Great. Keep the printed receipt with the tenant, office, collector, and audit records.")} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white">Yes</button>
+                                <button type="button" onClick={() => { setLocalConfirmationStatus("Office confirmed physical receipt output"); setPrinterMessage("Office confirmed POS-80 printed the receipt. Keep the printed receipt with tenant, office, collector, and audit records."); }} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white">Yes</button>
                                 <button type="button" onClick={handleBrowserPrint} className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white">Print Again</button>
+                                <button type="button" onClick={handleDirectPrint} className="rounded-xl bg-violet-700 px-3 py-2 text-xs font-black text-white">Use Direct Print</button>
                                 <button type="button" onClick={openPrinterHelp} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Open Printer Help</button>
                             </div>
                         ) : null}

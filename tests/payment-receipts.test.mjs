@@ -142,10 +142,10 @@ test("receipt print and PDF exports omit page chrome and modal controls", () => 
 });
 
 test("receipt modal explains browser Save as PDF behavior and saves printer settings per office", () => {
-  assert.match(sharedReceipt, /If <strong>Save as PDF<\/strong> is selected/);
-  assert.match(sharedReceipt, /Select <strong>POS 80<\/strong> under Destination/);
-  assert.match(sharedReceipt, /Print dialog opened\. Select POS 80 under Destination/);
-  assert.match(sharedReceipt, /Was the receipt printed correctly\?/);
+  assert.match(sharedReceipt, /Select <strong>POS-80<\/strong> under Destination/);
+  assert.match(sharedReceipt, /Do <strong>not<\/strong> select <strong>RONGTA S58mm<\/strong>/);
+  assert.match(sharedReceipt, /Print request opened\. Select POS-80 under Destination/);
+  assert.match(sharedReceipt, /Did POS-80 print the receipt\?/);
   assert.match(sharedReceipt, /ddumba\.receiptPrinterSettings/);
   assert.match(sharedReceipt, /Printer Settings/);
   assert.match(sharedReceipt, /Save Printer Settings/);
@@ -156,6 +156,12 @@ test("receipt modal explains browser Save as PDF behavior and saves printer sett
   assert.match(sharedReceipt, /Test Receipt Preview/);
   assert.match(sharedReceipt, /Open Browser Print Test/);
   assert.match(sharedReceipt, /Printing Help/);
+  assert.match(sharedReceipt, /Printer Diagnostics/);
+  assert.match(sharedReceipt, /Xprinter XP-N260H/);
+  assert.match(sharedReceipt, /Clear Application Print State/);
+  assert.match(sharedReceipt, /Switch to Direct Printing/);
+  assert.match(sharedReceipt, /Print Again/);
+  assert.match(sharedReceipt, /Use Direct Print/);
   assert.match(sharedReceipt, /Auto-open print after payment/);
   assert.match(sharedReceipt, /Auto-print after payment/);
   assert.doesNotMatch(sharedReceipt, /Receipt printed successfully/);
@@ -169,6 +175,15 @@ test("receipt direct thermal print uses QZ Tray when available and falls back cl
   assert.match(sharedReceipt, /ensureQzConnected/);
   assert.match(sharedReceipt, /qzTrayPrinters/);
   assert.match(sharedReceipt, /printDirectlyWithQz/);
+  assert.match(sharedReceipt, /buildEscPosReceipt/);
+  assert.match(sharedReceipt, /buildEscPosTestReceipt/);
+  assert.match(sharedReceipt, /Direct ESC\/POS Test/);
+  assert.match(sharedReceipt, /DDUMBA OS/);
+  assert.match(sharedReceipt, /XPRINTER XP-N260H/);
+  assert.match(sharedReceipt, /POS-80 TEST/);
+  assert.match(sharedReceipt, /PRINT TEST SUCCESSFUL/);
+  assert.match(sharedReceipt, /format: "command"/);
+  assert.match(sharedReceipt, /type: "raw"/);
   assert.match(sharedReceipt, /Direct thermal printing is not connected/);
   assert.match(sharedReceipt, /Detect Printers/);
   assert.match(sharedReceipt, /Open Browser Print Test/);
