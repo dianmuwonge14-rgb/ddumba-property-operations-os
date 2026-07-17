@@ -969,6 +969,11 @@ export default function FastPaymentsEntry({
                                 leaseId={selectedTenant.lease?.id ?? null}
                                 monthlyRent={selectedTenant.monthlyRent}
                                 nextChargeDate={selectedTenant.nextRentChargeDate}
+                                onSaved={async () => {
+                                    if (selectedTenant.room?.room_number) {
+                                        await reloadRoomDetails(selectedTenant.room.room_number, selectedTenant.tenant.id);
+                                    }
+                                }}
                                 outstandingBalance={liveOutstandingBalance(selectedTenant)}
                                 roomId={selectedTenant.room?.id ?? null}
                                 tenantId={selectedTenant.tenant.id}

@@ -10,6 +10,7 @@ const tenantSnapshot = readFileSync(new URL("../components/office/collections/Te
 const dueRoute = readFileSync(new URL("../app/api/billing/due-intelligence/route.ts", import.meta.url), "utf8");
 const scheduledRoute = readFileSync(new URL("../app/api/billing/run/route.ts", import.meta.url), "utf8");
 const pgCronMigration = readFileSync(new URL("../supabase/upgrade_migrations/0210_tenant_billing_hourly_pg_cron.sql", import.meta.url), "utf8");
+const fastLookupBillingMigration = readFileSync(new URL("../supabase/upgrade_migrations/0211_fast_payment_lookup_billing_fields.sql", import.meta.url), "utf8");
 
 function clampDay(year, monthIndex, day) {
   return Math.min(day, new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate());
@@ -65,8 +66,10 @@ test("vacant, inactive and vacated tenants are skipped by live billing repair", 
 test("payments and tenant detail screens expose the Set Billing Date control", () => {
   assert.match(paymentsEntry, /TenantBillingDateControl/);
   assert.match(paymentsEntry, /Set Billing Date|billingAnniversaryDay/);
+  assert.match(paymentsEntry, /reloadRoomDetails\(selectedTenant\.room\.room_number, selectedTenant\.tenant\.id\)/);
   assert.match(tenantSnapshot, /TenantBillingDateControl/);
   assert.match(tenantSnapshot, /lastRentChargeDate/);
+  assert.match(tenantSnapshot, /onSaved/);
 });
 
 test("scheduled billing automation runs hourly and does not depend on page loads", () => {
@@ -94,4 +97,12 @@ test("migration adds performance indexes for billing and outstanding lookups", (
   assert.match(migration, /idx_leases_company_status_billing/);
   assert.match(migration, /idx_tenant_rent_months_due_lookup/);
   assert.match(migration, /idx_tenant_rent_months_coverage_lookup/);
+});
+
+test("fast payment lookup returns saved billing day and lease start for immediate refresh", () => {
+  assert.match(fastLookupBillingMigration, /tenant_billing_day int/);
+  assert.match(fastLookupBillingMigration, /lease_billing_day int/);
+  assert.match(fastLookupBillingMigration, /lease_start_date date/);
+  assert.match(fastLookupBillingMigration, /coalesce\(l\.billing_day, t\.billing_day, 1\) as lease_billing_day/);
+  assert.match(fastLookupBillingMigration, /coalesce\(t\.billing_day, l\.billing_day, 1\) as tenant_billing_day/);
 });

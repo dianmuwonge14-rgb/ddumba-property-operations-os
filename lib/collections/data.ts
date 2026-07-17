@@ -887,7 +887,7 @@ export async function lookupPaymentRoom(roomNumber: string, paymentDate?: string
             .in("room_id", roomIds) : { data: [] as TenantRow[], error: null },
         roomIds.length ? supabase
             .from("leases")
-            .select("id, company_id, office_id, property_id, room_id, tenant_id, monthly_rent, status")
+            .select("id, company_id, office_id, property_id, room_id, tenant_id, start_date, billing_day, monthly_rent, status")
             .eq("company_id", companyId)
             .eq("status", "active")
             .in("room_id", roomIds) : { data: [] as LeaseRow[], error: null },
@@ -955,6 +955,8 @@ function fastPaymentRpcRowToTenantResult(row: Record<string, unknown>, paymentMo
         room_id: row.room_id as string | null,
         full_name: row.tenant_name as string | null,
         phone: row.tenant_phone as string | null,
+        billing_day: Number(row.tenant_billing_day ?? row.lease_billing_day ?? 1),
+        created_at: row.tenant_created_at as string | null,
         monthly_rent: Number(row.tenant_monthly_rent ?? row.room_monthly_rent ?? 0),
         balance: outstandingBalance,
         status: "active",
@@ -996,6 +998,15 @@ function fastPaymentRpcRowToTenantResult(row: Record<string, unknown>, paymentMo
         previouslyPaidAmount: Math.max(0, currentMonthPaid - lastAmountPaid),
         status: currentMonthPaid >= monthlyRent ? "paid" as const : "partial" as const,
     }] : [];
+    const businessDate = new Date().toISOString().slice(0, 10);
+    const billingDay = Number(row.lease_billing_day ?? row.tenant_billing_day ?? 1) || 1;
+    const leaseStartDate = typeof row.lease_start_date === "string"
+        ? row.lease_start_date
+        : typeof row.tenant_created_at === "string"
+            ? row.tenant_created_at.slice(0, 10)
+            : null;
+    const billingPeriod = billingPeriodForDate({ billingDay, businessDate, leaseStartDate });
+    const nextCharge = nextBillingDate({ billingDay, businessDate, leaseStartDate });
 
     return {
         tenant,
@@ -1015,10 +1026,10 @@ function fastPaymentRpcRowToTenantResult(row: Record<string, unknown>, paymentMo
         advanceRentBalance,
         advanceRentMonths,
         rentMonthAllocations,
-        billingAnniversaryDay: lease ? Number(lease.billing_day ?? 1) : Number(row.tenant_billing_day ?? 1),
-        currentRentPeriod: null,
+        billingAnniversaryDay: billingPeriod.billingDay,
+        currentRentPeriod: { start: billingPeriod.coverageStart, end: billingPeriod.coverageEnd },
         lastRentChargeDate: null,
-        nextRentChargeDate: null,
+        nextRentChargeDate: nextCharge,
         nextMonthCoveredAmount: advanceRentMonths[0]?.amount ?? 0,
         nextAdvanceRentMonth: advanceRentMonths[0]?.label ?? null,
         sponsor: null,

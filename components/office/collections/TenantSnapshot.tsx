@@ -299,6 +299,10 @@ export default function TenantSnapshot({ tenantContext, canEdit = true, isAdmin 
                     leaseId={lease?.id ?? null}
                     monthlyRent={monthlyRent}
                     nextChargeDate={tenantContext.nextRentChargeDate}
+                    onSaved={async () => {
+                        await onTenantUpdated?.();
+                        router.refresh();
+                    }}
                     outstandingBalance={outstandingBalance}
                     roomId={room?.id ?? null}
                     tenantId={tenant.id}

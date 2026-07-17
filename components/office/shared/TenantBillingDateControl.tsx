@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { CalendarClock, CheckCircle2, Loader2 } from "lucide-react";
 import { setTenantBillingDate } from "@/app/actions/tenant-billing";
 
@@ -12,6 +12,7 @@ type Props = {
     leaseId?: string | null;
     monthlyRent?: number | null;
     nextChargeDate?: string | null;
+    onSaved?: (billingDay: number) => Promise<void> | void;
     outstandingBalance?: number | null;
     roomId?: string | null;
     tenantId: string;
@@ -43,15 +44,22 @@ export default function TenantBillingDateControl({
     leaseId,
     monthlyRent,
     nextChargeDate,
+    onSaved,
     outstandingBalance,
     roomId,
     tenantId,
 }: Props) {
     const [editing, setEditing] = useState(false);
     const [selectedDay, setSelectedDay] = useState(String(Math.max(1, Math.min(31, Number(billingDay ?? 1) || 1))));
+    const [savedDay, setSavedDay] = useState<number | null>(null);
     const [message, setMessage] = useState<string | null>(null);
     const [isPending, startTransition] = useTransition();
-    const day = Math.max(1, Math.min(31, Number(billingDay ?? selectedDay ?? 1) || 1));
+    const day = Math.max(1, Math.min(31, Number(savedDay ?? billingDay ?? selectedDay ?? 1) || 1));
+
+    useEffect(() => {
+        setSavedDay(null);
+        setSelectedDay(String(Math.max(1, Math.min(31, Number(billingDay ?? 1) || 1))));
+    }, [billingDay, tenantId]);
 
     function save() {
         startTransition(async () => {
@@ -63,8 +71,11 @@ export default function TenantBillingDateControl({
                     roomId,
                     tenantId,
                 });
+                setSavedDay(result.billingDay);
+                setSelectedDay(String(result.billingDay));
                 setMessage(result.message);
                 setEditing(false);
+                await onSaved?.(result.billingDay);
             } catch (error) {
                 setMessage(error instanceof Error ? error.message : "Billing date could not be updated.");
             }
