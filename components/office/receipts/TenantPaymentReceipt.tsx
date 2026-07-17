@@ -210,7 +210,7 @@ function printerProfileName(settings: Pick<ReceiptPrinterSettings, "profile" | "
 
 function printerDestinationInstruction(settings: Pick<ReceiptPrinterSettings, "profile" | "widthMm">) {
     if (settings.profile === "rpp02n58") {
-        return "Select RPP02N under printer selection, confirm one receipt is shown, then press Print. If RPP02N is paired by Bluetooth but missing here, install or enable the printer's Android print service, or use Direct Bluetooth Print.";
+        return "Select RPP02N under printer selection, confirm one receipt is shown, then press Print. If RPP02N is paired but not available through Android Print Service, install/enable the printer service or use Direct Bluetooth Print.";
     }
     if (settings.profile === "rongta58" || settings.widthMm === 58) {
         return "Select RONGTA 58mm Series Printer under Destination, confirm one sheet is shown, then press Print.";
@@ -236,22 +236,11 @@ export async function printTenantPaymentReceipt(afterPrint?: () => void) {
 }
 
 async function printReceiptMarkup(receiptHtml: string, paperWidthMm: 58 | 80, printableWidthMm: 48 | 72, afterPrint?: () => void) {
-    const printFrame = document.createElement("iframe");
-    printFrame.title = "Tenant receipt print frame";
-    printFrame.setAttribute("aria-hidden", "true");
-    printFrame.style.position = "fixed";
-    printFrame.style.right = "0";
-    printFrame.style.bottom = "0";
-    printFrame.style.width = "0";
-    printFrame.style.height = "0";
-    printFrame.style.border = "0";
-    printFrame.style.opacity = "0";
-    printFrame.style.pointerEvents = "none";
-    document.body.appendChild(printFrame);
-    const printWindow = printFrame.contentWindow;
+    const receiptDocumentHtml = extractReceiptRootHtml(receiptHtml);
+    const printWindowName = `ddumba-tenant-receipt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const printWindow = window.open("", printWindowName, paperWidthMm === 58 ? "width=320,height=640" : "width=420,height=800");
     if (!printWindow) {
-        printFrame.remove();
-        window.alert("Receipt could not be prepared. Reopen the receipt and try again.");
+        window.alert("Printing was blocked. Allow pop-ups for Ddumba OS and try again.");
         return;
     }
 
@@ -266,7 +255,7 @@ async function printReceiptMarkup(receiptHtml: string, paperWidthMm: 58 | 80, pr
     <style id="receipt-print-style">${receiptPrintWindowStyle(paperWidthMm, undefined, printableWidthMm)}</style>
   </head>
   <body>
-    ${receiptHtml}
+    ${receiptDocumentHtml}
   </body>
 </html>`);
         printWindow.document.close();
@@ -283,16 +272,34 @@ async function printReceiptMarkup(receiptHtml: string, paperWidthMm: 58 | 80, pr
             if (cleanedUp) return;
             cleanedUp = true;
             afterPrint?.();
-            window.setTimeout(() => printFrame.remove(), 50);
+            window.setTimeout(() => {
+                try {
+                    printWindow.close();
+                } catch {
+                    // Some mobile print flows keep the preview tab alive until the user closes it.
+                }
+            }, 250);
         };
         printWindow.onafterprint = cleanup;
         printWindow.focus();
         printWindow.print();
         window.setTimeout(() => cleanup(), 60000);
     } catch (error) {
-        printFrame.remove();
+        try {
+            printWindow.close();
+        } catch {
+            // Ignore close failures from mobile print surfaces.
+        }
         window.alert(error instanceof Error ? error.message : "Receipt could not be printed. Please try again.");
     }
+}
+
+function extractReceiptRootHtml(receiptHtml: string) {
+    const parsed = new DOMParser().parseFromString(receiptHtml, "text/html");
+    const receiptRoot = parsed.getElementById(RECEIPT_EXPORT_ROOT_ID);
+    if (!receiptRoot) throw new Error("Receipt print container not found. Reopen the receipt and try again.");
+    receiptRoot.querySelectorAll(".receipt-preview-controls,.receipt-close-button,.receipt-modal-backdrop,.receipt-modal-header,.receipt-action-bar,.no-print,button").forEach((node) => node.remove());
+    return receiptRoot.outerHTML;
 }
 
 export async function printTenantReceiptTest(receipt: TenantReceiptViewModel, settings?: ReceiptPrinterSettings) {
@@ -1215,7 +1222,7 @@ export function TenantPaymentReceiptModal({
     };
 
     const testReceiptPreview = () => {
-        setPrinterMessage(`Test receipt preview is ready. This preview will print on ${printerSettings.widthMm}mm paper with ${printerSettings.printableWidthMm}mm printable content. Use Open Browser Print Test to verify the browser dialog.`);
+        void testBrowserPrint(printerSettings);
     };
 
     const closeFromBackdrop = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -1359,7 +1366,7 @@ export function TenantPaymentReceiptModal({
                                     {availablePrinters.map((printer) => (
                                         <button key={printer} type="button" onClick={() => updatePrinterSettings({ preferredPrinterName: printer })} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">{printer}</button>
                                     ))}
-                                    <button type="button" onClick={testReceiptPreview} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Test Receipt Preview</button>
+                                    <button type="button" onClick={testReceiptPreview} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Print Test Preview</button>
                                     <button type="button" onClick={() => { savePrinterSettings(receipt, printerSettings); setPrinterMessage("Printer settings saved for this office and browser."); }} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white">Save Printer Settings</button>
                                     <button type="button" onClick={() => testBrowserPrint(settingsForProfile("pos80", printerSettings))} className="rounded-xl bg-violet-700 px-3 py-2 text-xs font-black text-white">Test POS-80 Receipt</button>
                                     <button type="button" onClick={() => testBrowserPrint(settingsForProfile("rongta58", printerSettings))} className="rounded-xl bg-violet-700 px-3 py-2 text-xs font-black text-white">Test 58mm Mobile Receipt</button>

@@ -118,10 +118,11 @@ test("receipt PDF export targets only the dedicated receipt root", () => {
 });
 
 test("receipt print renders a clean receipt-only thermal iframe", () => {
-  assert.match(sharedReceipt, /document\.createElement\("iframe"\)/);
-  assert.match(sharedReceipt, /Tenant receipt print frame/);
-  assert.match(sharedReceipt, /printFrame\.contentWindow/);
+  assert.match(sharedReceipt, /window\.open\("", printWindowName/);
+  assert.match(sharedReceipt, /extractReceiptRootHtml/);
+  assert.match(sharedReceipt, /Receipt print container not found/);
   assert.match(sharedReceipt, /printWindow\.document\.write/);
+  assert.match(sharedReceipt, /<body>\s*\$\{receiptDocumentHtml\}\s*<\/body>/);
   assert.match(sharedReceipt, /receiptPrintWindowStyle\(paperWidthMm, undefined, printableWidthMm\)/);
   assert.match(sharedReceipt, /waitForPrintWindowAssets\(printWindow\)/);
   assert.match(sharedReceipt, /waitForPrintWindowLayout\(printWindow\)/);
@@ -131,8 +132,8 @@ test("receipt print renders a clean receipt-only thermal iframe", () => {
   assert.match(sharedReceipt, /printTenantReceiptTest/);
   assert.match(sharedReceipt, /printWindow\.print\(\)/);
   assert.match(sharedReceipt, /printWindow\.onafterprint = cleanup/);
-  assert.match(sharedReceipt, /printFrame\.remove\(\)/);
-  assert.doesNotMatch(sharedReceipt, /window\.open\(/);
+  assert.match(sharedReceipt, /printWindow\.close\(\)/);
+  assert.doesNotMatch(sharedReceipt, /document\.createElement\("iframe"\)/);
   assert.doesNotMatch(sharedReceipt, /window\.print\(\)/);
 });
 
@@ -169,7 +170,7 @@ test("receipt modal explains browser Save as PDF behavior and saves printer sett
   assert.match(sharedReceipt, /72mm for POS 80/);
   assert.match(sharedReceipt, /48mm for RONGTA 58mm/);
   assert.match(sharedReceipt, /Receipt width/);
-  assert.match(sharedReceipt, /Test Receipt Preview/);
+  assert.match(sharedReceipt, /Print Test Preview/);
   assert.match(sharedReceipt, /Test POS-80 Receipt/);
   assert.match(sharedReceipt, /Test 58mm Mobile Receipt/);
   assert.match(sharedReceipt, /Feed after printing/);
@@ -244,11 +245,14 @@ test("tablet receipt reprint supports RPP02N without printing receipt history", 
   assert.match(sharedReceipt, /defaultPrinterProfileForDevice/);
   assert.match(sharedReceipt, /RPP02N Bluetooth 58mm/);
   assert.match(sharedReceipt, /Select RPP02N under printer selection/);
+  assert.match(sharedReceipt, /RPP02N is paired but not available through Android Print Service/);
   assert.match(sharedReceipt, /printDirectlyWithBluetooth/);
   assert.match(sharedReceipt, /Android System Print/);
   assert.match(sharedReceipt, /printer's Android print service/);
   assert.match(sharedReceipt, /Use RPP02N Direct Bluetooth/);
   assert.match(sharedReceipt, /physicalPrinterShortName/);
+  assert.match(sharedReceipt, /printWindowName/);
+  assert.match(sharedReceipt, /receiptDocumentHtml/);
   assert.match(receiptHistory, /queueReceiptAction\(receipt, "print"\)/);
   assert.match(receiptHistory, /queueReceiptAction\(receipt, "download_pdf"\)/);
   assert.doesNotMatch(receiptHistory, /document\.body\.outerHTML/);
