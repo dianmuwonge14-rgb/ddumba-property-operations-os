@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { TenantPaymentReceiptSlip } from "@/components/office/receipts/TenantPaymentReceipt";
-import { autoPrintScript, firstParam, loadPrintableReceipt, paperWidth, receiptOnlyPrintCss } from "@/app/receipt-print/page";
+import { autoPrintScript, firstParam, loadPrintableReceipt, paperWidth, receiptOnlyPrintCss, ReceiptPrintActions, receiptPageControlsScript } from "@/app/receipt-print/page";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +22,8 @@ export default async function ReceiptPrintByIdPage({ params, searchParams }: Pag
         <>
             <style dangerouslySetInnerHTML={{ __html: receiptOnlyPrintCss(widthMm) }} />
             <TenantPaymentReceiptSlip receipt={receipt} />
+            <ReceiptPrintActions receiptId={receipt.id} widthMm={widthMm} />
+            <script dangerouslySetInnerHTML={{ __html: receiptPageControlsScript(widthMm, receipt.id) }} />
             {autoPrint ? <script dangerouslySetInnerHTML={{ __html: autoPrintScript(true) }} /> : null}
         </>
     );

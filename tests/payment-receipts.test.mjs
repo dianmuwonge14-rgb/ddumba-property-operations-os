@@ -123,14 +123,25 @@ test("receipt PDF export targets only the dedicated receipt root", () => {
 test("receipt print opens a saved receipt-only thermal document", () => {
   assert.match(sharedReceipt, /printSavedReceiptDocument/);
   assert.match(sharedReceipt, /\/receipt-print\/\$\{encodeURIComponent\(receipt\.id\)\}/);
-  assert.match(sharedReceipt, /\/receipt-print\/\$\{encodeURIComponent\(receipt\.id\)\}\/pdf/);
-  assert.match(sharedReceipt, /useStandalonePdf/);
-  assert.match(sharedReceipt, /settings\.widthMm === 58/);
+  assert.match(sharedReceipt, /shouldAutoPrint/);
+  assert.match(sharedReceipt, /settings\.widthMm === 80/);
   assert.match(receiptHistory, /printTenantPaymentReceipt\(closeAfterPrint \? \(\) => setSelected\(null\) : undefined, receipt\)/);
   assert.match(paymentEntry, /printTenantPaymentReceipt\(onClose, receipt\)/);
   assert.match(receiptPrintPage, /export const dynamic = "force-dynamic"/);
   assert.match(receiptPrintByIdPage, /loadPrintableReceipt\(receiptId\)/);
   assert.match(receiptPrintByIdPage, /TenantPaymentReceiptSlip receipt=\{receipt\}/);
+  assert.match(receiptPrintByIdPage, /ReceiptPrintActions receiptId=\{receipt\.id\} widthMm=\{widthMm\}/);
+  assert.match(receiptPrintByIdPage, /receiptPageControlsScript\(widthMm, receipt\.id\)/);
+  assert.match(receiptPrintPage, /Print Receipt/);
+  assert.match(receiptPrintPage, /Choose Printer/);
+  assert.match(receiptPrintPage, /Download PDF/);
+  assert.match(receiptPrintPage, /Close/);
+  assert.match(receiptPrintPage, /printCurrentReceipt/);
+  assert.match(receiptPrintPage, /Receipt is not ready yet/);
+  assert.match(receiptPrintPage, /#tenant-receipt-print-root,\s*\n\s*#tenant-receipt-print-root \*/);
+  assert.match(receiptPrintPage, /visibility: hidden !important/);
+  assert.match(receiptPrintPage, /receipt-actions/);
+  assert.match(receiptPrintPage, /Select the connected Bluetooth printer/);
   assert.match(receiptPrintPdfRoute, /Content-Type": "application\/pdf"/);
   assert.match(receiptPrintPdfRoute, /MediaBox \[0 0 \$\{widthPt\.toFixed\(2\)\} \$\{heightPt\.toFixed\(2\)\}\]/);
   assert.match(receiptPrintPdfRoute, /loadPrintableReceipt\(receiptId\)/);
@@ -138,7 +149,7 @@ test("receipt print opens a saved receipt-only thermal document", () => {
   assert.match(receiptPrintPage, /from\("payment_receipts"\)/);
   assert.match(receiptPrintPage, /receiptOnlyPrintCss\(widthMm\)/);
   assert.match(receiptPrintPage, /@page \{\s*\n\s*size: \$\{widthMm\}mm auto;/);
-  assert.match(receiptPrintPage, /body > :not\(#tenant-receipt-print-root\)/);
+  assert.match(receiptPrintPage, /body \* \{\s*\n\s*visibility: hidden !important;/);
   assert.match(receiptPrintPage, /font-weight: 600/);
   assert.match(receiptPrintPage, /color: #000 !important/);
   assert.match(receiptPrintPage, /widthMm === 58 \? 50 : 72/);

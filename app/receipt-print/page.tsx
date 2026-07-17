@@ -78,11 +78,11 @@ export function receiptOnlyPrintCss(widthMm: 58 | 80) {
 }
 html,
 body {
-  width: ${widthMm}mm !important;
+  width: 100% !important;
   height: auto !important;
   min-height: 0 !important;
   margin: 0 !important;
-  padding: 0 !important;
+  padding: 0 0 26mm !important;
   overflow: visible !important;
   background: #fff !important;
   color: #000 !important;
@@ -91,9 +91,6 @@ body {
   font-family: Arial, Helvetica, sans-serif !important;
   -webkit-print-color-adjust: exact !important;
   print-color-adjust: exact !important;
-}
-body > :not(#tenant-receipt-print-root) {
-  display: none !important;
 }
 #tenant-receipt-print-root {
   display: block !important;
@@ -240,22 +237,124 @@ canvas {
 .receipt-modal-backdrop,
 .receipt-modal-header,
 .receipt-action-bar,
-.no-print,
-button {
+.no-print {
   display: none !important;
 }
+.receipt-actions {
+  position: sticky !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  z-index: 10 !important;
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 8px !important;
+  width: min(100%, 560px) !important;
+  margin: 10px auto 0 !important;
+  padding: 10px !important;
+  border-top: 1px solid #000 !important;
+  background: #fff !important;
+  color: #000 !important;
+}
+.receipt-actions button,
+.receipt-actions a {
+  min-height: 44px !important;
+  border: 1px solid #000 !important;
+  border-radius: 0 !important;
+  background: #fff !important;
+  color: #000 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 8px !important;
+  font-family: Arial, Helvetica, sans-serif !important;
+  font-size: 13px !important;
+  font-weight: 800 !important;
+  text-align: center !important;
+  text-decoration: none !important;
+}
+.receipt-actions button:first-child {
+  background: #000 !important;
+  color: #fff !important;
+}
+.receipt-print-instruction {
+  grid-column: 1 / -1 !important;
+  margin: 0 !important;
+  color: #000 !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  line-height: 1.35 !important;
+  text-align: center !important;
+}
+@media print {
+  @page {
+    size: ${widthMm}mm auto;
+    margin: 0;
+  }
+  html,
+  body {
+    width: ${widthMm}mm !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+  body * {
+    visibility: hidden !important;
+  }
+  #tenant-receipt-print-root,
+  #tenant-receipt-print-root * {
+    visibility: visible !important;
+  }
+  #tenant-receipt-print-root {
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    width: ${contentWidthMm}mm !important;
+    max-width: ${contentWidthMm}mm !important;
+    margin: 0 auto !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+  .receipt-actions {
+    display: none !important;
+  }
+}
 `;
+}
+
+export function ReceiptPrintActions({ receiptId, widthMm }: { receiptId: string; widthMm: 58 | 80 }) {
+    const pdfHref = `/receipt-print/${encodeURIComponent(receiptId)}/pdf?width=${widthMm}`;
+    return (
+        <nav aria-label="Receipt print actions" className="receipt-actions">
+            <button id="receipt-print-button" type="button">Print Receipt</button>
+            <button id="receipt-choose-printer-button" type="button">Choose Printer</button>
+            <a href={pdfHref} id="receipt-pdf-link" target="_blank" rel="noreferrer">Download PDF</a>
+            <button id="receipt-close-page-button" type="button">Close</button>
+            <p id="receipt-print-status" className="receipt-print-instruction">
+                Select the connected Bluetooth printer, confirm one receipt is shown, then press Print.
+            </p>
+            <p className="receipt-print-instruction">
+                Printer choice: Android System Print · Print PDF · Direct Bluetooth Print.
+            </p>
+        </nav>
+    );
 }
 
 export function autoPrintScript(enabled: boolean) {
     if (!enabled) return "";
     return `
 (async function () {
-  async function waitForAssets() {
+  async function waitForReceipt() {
+    var receipt = document.getElementById("tenant-receipt-print-root");
+    if (!receipt || !receipt.innerText.trim()) {
+      throw new Error("Receipt is not ready yet.");
+    }
     if (document.fonts && document.fonts.ready) {
       try { await document.fonts.ready; } catch (_) {}
     }
-    const images = Array.from(document.images || []);
+    const images = Array.from(receipt.querySelectorAll("img"));
     await Promise.all(images.map(function (image) {
       return new Promise(function (resolve) {
         if (image.complete) { resolve(); return; }
@@ -269,9 +368,68 @@ export function autoPrintScript(enabled: boolean) {
       });
     });
   }
-  await waitForAssets();
+  await waitForReceipt();
   window.focus();
   window.print();
+})();`;
+}
+
+export function receiptPageControlsScript(widthMm: 58 | 80, receiptId: string) {
+    const pdfHref = `/receipt-print/${encodeURIComponent(receiptId)}/pdf?width=${widthMm}`;
+    return `
+(function () {
+  var status = document.getElementById("receipt-print-status");
+  function setStatus(message) {
+    if (status) status.textContent = message;
+  }
+  async function waitForReceipt() {
+    var receipt = document.getElementById("tenant-receipt-print-root");
+    if (!receipt || !receipt.innerText.trim()) {
+      throw new Error("Receipt is not ready yet.");
+    }
+    if (document.fonts && document.fonts.ready) {
+      try { await document.fonts.ready; } catch (_) {}
+    }
+    var images = Array.from(receipt.querySelectorAll("img"));
+    await Promise.all(images.map(function (img) {
+      return new Promise(function (resolve) {
+        if (img.complete) { resolve(); return; }
+        img.onload = function () { resolve(); };
+        img.onerror = function () { resolve(); };
+      });
+    }));
+    await new Promise(function (resolve) {
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { resolve(); });
+      });
+    });
+  }
+  async function printCurrentReceipt() {
+    try {
+      setStatus("Preparing receipt. Select the connected Bluetooth printer, confirm one receipt is shown, then press Print.");
+      await waitForReceipt();
+      window.focus();
+      window.print();
+      setStatus("Print dialog opened. If Android shows a blank page, use Download PDF and print the PDF.");
+    } catch (error) {
+      setStatus(error && error.message ? error.message : "Receipt is not ready yet.");
+      alert(error && error.message ? error.message : "Receipt is not ready yet.");
+    }
+  }
+  function openPdf() {
+    window.open(${JSON.stringify(pdfHref)}, "_blank", "noopener,noreferrer");
+  }
+  document.getElementById("receipt-print-button")?.addEventListener("click", printCurrentReceipt);
+  document.getElementById("receipt-choose-printer-button")?.addEventListener("click", printCurrentReceipt);
+  document.getElementById("receipt-pdf-link")?.addEventListener("click", function () {
+    setStatus("Opening a receipt-only PDF. Print that PDF if Android System Print shows a blank page.");
+  });
+  document.getElementById("receipt-close-page-button")?.addEventListener("click", function () {
+    if (history.length > 1) history.back();
+    else window.close();
+  });
+  window.__ddumbaPrintCurrentReceipt = printCurrentReceipt;
+  window.__ddumbaOpenReceiptPdf = openPdf;
 })();`;
 }
 
@@ -288,6 +446,8 @@ export default async function ReceiptPrintPage({ searchParams }: PageProps) {
         <>
             <style dangerouslySetInnerHTML={{ __html: receiptOnlyPrintCss(widthMm) }} />
             <TenantPaymentReceiptSlip receipt={receipt} />
+            <ReceiptPrintActions receiptId={receipt.id} widthMm={widthMm} />
+            <script dangerouslySetInnerHTML={{ __html: receiptPageControlsScript(widthMm, receipt.id) }} />
             {autoPrint ? <script dangerouslySetInnerHTML={{ __html: autoPrintScript(true) }} /> : null}
         </>
     );
