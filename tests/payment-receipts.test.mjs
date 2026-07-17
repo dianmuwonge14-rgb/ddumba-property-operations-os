@@ -11,6 +11,8 @@ const paymentEntry = readFileSync(new URL("../components/office/payments/FastPay
 const receiptHistory = readFileSync(new URL("../components/office/receipts/ReceiptHistoryConsole.tsx", import.meta.url), "utf8");
 const sharedReceipt = readFileSync(new URL("../components/office/receipts/TenantPaymentReceipt.tsx", import.meta.url), "utf8");
 const receiptPrintPage = readFileSync(new URL("../app/receipt-print/page.tsx", import.meta.url), "utf8");
+const receiptPrintByIdPage = readFileSync(new URL("../app/receipt-print/[receiptId]/page.tsx", import.meta.url), "utf8");
+const receiptPrintPdfRoute = readFileSync(new URL("../app/receipt-print/[receiptId]/pdf/route.ts", import.meta.url), "utf8");
 const receiptStyles = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 
 test("payment receipt schema prevents duplicate receipts per transaction", () => {
@@ -120,13 +122,18 @@ test("receipt PDF export targets only the dedicated receipt root", () => {
 
 test("receipt print opens a saved receipt-only thermal document", () => {
   assert.match(sharedReceipt, /printSavedReceiptDocument/);
-  assert.match(sharedReceipt, /\/receipt-print\?\$\{params\.toString\(\)\}/);
-  assert.match(sharedReceipt, /receipt: receipt\.id/);
-  assert.match(sharedReceipt, /profile: settings\.profile/);
-  assert.match(sharedReceipt, /paper: String\(settings\.widthMm\)/);
+  assert.match(sharedReceipt, /\/receipt-print\/\$\{encodeURIComponent\(receipt\.id\)\}/);
+  assert.match(sharedReceipt, /\/receipt-print\/\$\{encodeURIComponent\(receipt\.id\)\}\/pdf/);
+  assert.match(sharedReceipt, /useStandalonePdf/);
+  assert.match(sharedReceipt, /settings\.widthMm === 58/);
   assert.match(receiptHistory, /printTenantPaymentReceipt\(closeAfterPrint \? \(\) => setSelected\(null\) : undefined, receipt\)/);
   assert.match(paymentEntry, /printTenantPaymentReceipt\(onClose, receipt\)/);
   assert.match(receiptPrintPage, /export const dynamic = "force-dynamic"/);
+  assert.match(receiptPrintByIdPage, /loadPrintableReceipt\(receiptId\)/);
+  assert.match(receiptPrintByIdPage, /TenantPaymentReceiptSlip receipt=\{receipt\}/);
+  assert.match(receiptPrintPdfRoute, /Content-Type": "application\/pdf"/);
+  assert.match(receiptPrintPdfRoute, /MediaBox \[0 0 \$\{widthPt\.toFixed\(2\)\} \$\{heightPt\.toFixed\(2\)\}\]/);
+  assert.match(receiptPrintPdfRoute, /loadPrintableReceipt\(receiptId\)/);
   assert.match(receiptPrintPage, /TenantPaymentReceiptSlip receipt=\{receipt\}/);
   assert.match(receiptPrintPage, /from\("payment_receipts"\)/);
   assert.match(receiptPrintPage, /receiptOnlyPrintCss\(widthMm\)/);

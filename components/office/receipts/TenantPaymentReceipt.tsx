@@ -240,15 +240,12 @@ export async function printTenantPaymentReceipt(afterPrint?: () => void, receipt
 }
 
 function printSavedReceiptDocument(receipt: TenantReceiptViewModel, settings: ReceiptPrinterSettings, afterPrint?: () => void) {
-    const params = new URLSearchParams({
-        autoprint: "1",
-        job: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        paper: String(settings.widthMm),
-        profile: settings.profile,
-        receipt: receipt.id,
-    });
+    const useStandalonePdf = settings.widthMm === 58 || settings.profile === "rpp02n58" || settings.profile === "rongta58";
+    const path = useStandalonePdf
+        ? `/receipt-print/${encodeURIComponent(receipt.id)}/pdf?width=${settings.widthMm}&profile=${encodeURIComponent(settings.profile)}&job=${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        : `/receipt-print/${encodeURIComponent(receipt.id)}?width=${settings.widthMm}&profile=${encodeURIComponent(settings.profile)}&autoprint=1&job=${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const printWindowName = `ddumba-receipt-${receipt.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const printWindow = window.open(`/receipt-print?${params.toString()}`, printWindowName, settings.widthMm === 58 ? "width=320,height=640" : "width=420,height=800");
+    const printWindow = window.open(path, printWindowName, settings.widthMm === 58 ? "width=320,height=640" : "width=420,height=800");
     if (!printWindow) {
         window.alert("Printing was blocked. Allow pop-ups for Ddumba OS and try again.");
         return;

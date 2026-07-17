@@ -19,15 +19,15 @@ type ReceiptRow = {
     verification_code: string;
 };
 
-function firstParam(value: string | string[] | undefined) {
+export function firstParam(value: string | string[] | undefined) {
     return Array.isArray(value) ? value[0] : value;
 }
 
-function paperWidth(value: string | string[] | undefined): 58 | 80 {
+export function paperWidth(value: string | string[] | undefined): 58 | 80 {
     return firstParam(value) === "80" ? 80 : 58;
 }
 
-async function loadReceipt(receiptId: string) {
+export async function loadPrintableReceipt(receiptId: string) {
     const context = await requireAuth();
     if (!context.activeCompany?.id) redirect("/office/receipts");
 
@@ -62,7 +62,7 @@ async function loadReceipt(receiptId: string) {
     } satisfies TenantReceiptViewModel;
 }
 
-function receiptOnlyPrintCss(widthMm: 58 | 80) {
+export function receiptOnlyPrintCss(widthMm: 58 | 80) {
     const contentWidthMm = widthMm === 58 ? 50 : 72;
     const rootPadding = widthMm === 58 ? 2 : 3;
     const baseFont = widthMm === 58 ? 10 : 10.5;
@@ -247,7 +247,7 @@ button {
 `;
 }
 
-function autoPrintScript(enabled: boolean) {
+export function autoPrintScript(enabled: boolean) {
     if (!enabled) return "";
     return `
 (async function () {
@@ -280,7 +280,7 @@ export default async function ReceiptPrintPage({ searchParams }: PageProps) {
     const receiptId = firstParam(params.receipt);
     if (!receiptId) notFound();
 
-    const receipt = await loadReceipt(receiptId);
+    const receipt = await loadPrintableReceipt(receiptId);
     const widthMm = paperWidth(params.paper ?? params.width);
     const autoPrint = firstParam(params.autoprint) === "1";
 
