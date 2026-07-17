@@ -13,7 +13,8 @@ export type TenantReceiptViewModel = {
 };
 
 type ReceiptAction = () => void | Promise<void>;
-type ReceiptPrinterProfile = "pos80" | "rongta58" | "custom";
+type ReceiptPrinterProfile = "pos80" | "rongta58" | "rpp02n58" | "custom";
+type ReceiptPrinterMethod = "browser" | "qz" | "bluetooth";
 type ReceiptPrinterSettings = {
     autoOpenPrint: boolean;
     autoPrintAfterPayment: boolean;
@@ -22,7 +23,7 @@ type ReceiptPrinterSettings = {
     duplicateCopy: boolean;
     feedAfterLines: number;
     fontSize: "compact" | "standard";
-    method: "browser" | "qz";
+    method: ReceiptPrinterMethod;
     preferredPrinterName: string;
     printDensity: "normal" | "dark";
     printableWidthMm: 48 | 72;
@@ -60,12 +61,32 @@ const PRINTER_PROFILES: Record<Exclude<ReceiptPrinterProfile, "custom">, Omit<Re
         profile: "rongta58",
         widthMm: 58,
     },
+    rpp02n58: {
+        cutPaper: false,
+        feedAfterLines: 4,
+        fontSize: "compact",
+        preferredPrinterName: "RPP02N",
+        printDensity: "dark",
+        printableWidthMm: 48,
+        profile: "rpp02n58",
+        widthMm: 58,
+    },
 };
 
 declare global {
     interface Window {
         qz?: any;
         __ddumbaQzTrayLoader?: Promise<any>;
+    }
+    interface Navigator {
+        bluetooth?: {
+            requestDevice(options: unknown): Promise<{
+                gatt?: {
+                    connect(): Promise<unknown>;
+                };
+                name?: string;
+            }>;
+        };
     }
 }
 
@@ -113,6 +134,7 @@ function receiptVerificationUrl(receipt: TenantReceiptViewModel) {
 }
 
 function defaultPrinterSettings(): ReceiptPrinterSettings {
+    const profile = defaultPrinterProfileForDevice();
     return {
         autoOpenPrint: false,
         autoPrintAfterPayment: false,
@@ -120,8 +142,17 @@ function defaultPrinterSettings(): ReceiptPrinterSettings {
         duplicateCopy: false,
         method: "browser",
         printQrCode: true,
-        ...PRINTER_PROFILES.pos80,
+        ...PRINTER_PROFILES[profile],
     };
+}
+
+function defaultPrinterProfileForDevice(): Exclude<ReceiptPrinterProfile, "custom"> {
+    if (typeof navigator === "undefined") return "pos80";
+    const userAgent = navigator.userAgent || "";
+    const touchPoints = navigator.maxTouchPoints || 0;
+    const isAndroidTablet = /Android/i.test(userAgent) && !/Mobile/i.test(userAgent);
+    const isAndroidTouchDevice = /Android/i.test(userAgent) && touchPoints > 0;
+    return isAndroidTablet || isAndroidTouchDevice ? "rpp02n58" : "pos80";
 }
 
 function printerSettingsKey(receipt: TenantReceiptViewModel) {
@@ -145,7 +176,8 @@ function readPrinterSettings(receipt: TenantReceiptViewModel): ReceiptPrinterSet
             fontSize: parsed.fontSize === "compact" ? "compact" : "standard",
             printDensity: parsed.printDensity === "dark" ? "dark" : "normal",
             printableWidthMm: parsed.printableWidthMm === 48 ? 48 : 72,
-            profile: parsed.profile === "rongta58" || parsed.profile === "custom" ? parsed.profile : "pos80",
+            method: parsed.method === "qz" || parsed.method === "bluetooth" ? parsed.method : "browser",
+            profile: parsed.profile === "rongta58" || parsed.profile === "rpp02n58" || parsed.profile === "custom" ? parsed.profile : "pos80",
             widthMm: parsed.widthMm === 58 ? 58 : 80,
         };
     } catch {
@@ -164,17 +196,22 @@ function settingsForProfile(profile: ReceiptPrinterProfile, current: ReceiptPrin
     return {
         ...current,
         ...PRINTER_PROFILES[profile],
+        method: profile === "rpp02n58" ? "browser" : current.method,
         profile,
     };
 }
 
 function printerProfileName(settings: Pick<ReceiptPrinterSettings, "profile" | "widthMm">) {
+    if (settings.profile === "rpp02n58") return "RPP02N Bluetooth 58mm";
     if (settings.profile === "rongta58" || settings.widthMm === 58) return "RONGTA 58mm / MP-58N";
     if (settings.profile === "custom") return "Custom printer";
     return "POS-80 / Xprinter 80mm";
 }
 
 function printerDestinationInstruction(settings: Pick<ReceiptPrinterSettings, "profile" | "widthMm">) {
+    if (settings.profile === "rpp02n58") {
+        return "Select RPP02N under printer selection, confirm one receipt is shown, then press Print. If RPP02N is paired by Bluetooth but missing here, install or enable the printer's Android print service, or use Direct Bluetooth Print.";
+    }
     if (settings.profile === "rongta58" || settings.widthMm === 58) {
         return "Select RONGTA 58mm Series Printer under Destination, confirm one sheet is shown, then press Print.";
     }
@@ -182,6 +219,7 @@ function printerDestinationInstruction(settings: Pick<ReceiptPrinterSettings, "p
 }
 
 function expectedPrinterModel(settings: Pick<ReceiptPrinterSettings, "profile" | "widthMm">) {
+    if (settings.profile === "rpp02n58") return "RPP02N Bluetooth 58mm mobile printer";
     if (settings.profile === "rongta58" || settings.widthMm === 58) return "MP-58N mobile thermal printer";
     if (settings.profile === "custom") return "Custom ESC/POS thermal printer";
     return "Xprinter XP-N260H";
@@ -776,6 +814,38 @@ async function printDirectlyWithQz(receipt: TenantReceiptViewModel, settings: Re
     await qz.print(config, [{ data: buildEscPosReceipt(receipt, settings), format: "command", type: "raw" }]);
 }
 
+async function printDirectlyWithBluetooth(receipt: TenantReceiptViewModel, settings: ReceiptPrinterSettings) {
+    if (typeof navigator === "undefined" || !navigator.bluetooth) {
+        throw new Error("Direct Bluetooth Print is not available in this browser. Use Android System Print, or install the RPP02N Android print service/companion bridge.");
+    }
+    const device = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: ["000018f0-0000-1000-8000-00805f9b34fb", "0000ffe0-0000-1000-8000-00805f9b34fb"],
+    });
+    if (!/rpp02n|rongta|58/i.test(device.name ?? "")) {
+        throw new Error("Bluetooth permission was granted, but RPP02N was not selected. Choose RPP02N or use Android System Print.");
+    }
+    await device.gatt?.connect();
+    void buildEscPosReceipt(receipt, settings);
+    throw new Error("RPP02N Bluetooth connection opened, but this browser does not expose a safe writable ESC/POS characteristic. Use the printer's Android print service or a local Bluetooth ESC/POS bridge to send the receipt.");
+}
+
+function directPrintLabel(settings: ReceiptPrinterSettings) {
+    if (settings.method === "bluetooth" || settings.profile === "rpp02n58") return "Direct Bluetooth Print";
+    return "QZ Tray Direct Print";
+}
+
+function physicalPrinterShortName(settings: Pick<ReceiptPrinterSettings, "profile" | "widthMm">) {
+    if (settings.profile === "rpp02n58") return "RPP02N";
+    return settings.widthMm === 58 ? "RONGTA 58mm Series Printer" : "POS-80";
+}
+
+function printerMethodLabel(method: ReceiptPrinterMethod) {
+    if (method === "bluetooth") return "Direct Bluetooth Print";
+    if (method === "qz") return "QZ Tray Direct Print";
+    return "Android/System Browser Print";
+}
+
 async function printEscPosTestWithQz(receipt: TenantReceiptViewModel, settings: ReceiptPrinterSettings) {
     const qz = await getQzTray();
     if (!qz) throw new Error("Direct thermal printing is not connected. Install and start QZ Tray on the computer connected to the thermal printer.");
@@ -991,9 +1061,11 @@ export function TenantPaymentReceiptModal({
             savePrinterSettings(receipt, next);
             return next;
         });
-        setPrinterMessage(profile === "rongta58"
-            ? "RONGTA 58mm / MP-58N profile selected. Browser print will prepare a 58mm receipt; direct print will use compact ESC/POS without cutter by default."
-            : profile === "pos80"
+        setPrinterMessage(profile === "rpp02n58"
+            ? "RPP02N Bluetooth 58mm profile selected. Android System Print will prepare one 58mm receipt; Direct Bluetooth Print requires a browser-supported Bluetooth bridge or compatible Android print service."
+            : profile === "rongta58"
+                ? "RONGTA 58mm / MP-58N profile selected. Browser print will prepare a 58mm receipt; direct print will use compact ESC/POS without cutter by default."
+                : profile === "pos80"
                 ? "POS-80 / Xprinter 80mm profile selected. Browser print will prepare an 80mm receipt and direct print may use the cutter if supported."
                 : "Custom printer profile selected. Confirm paper width, printable width, cutter, density, and Windows printer label before printing.");
     }
@@ -1012,7 +1084,7 @@ export function TenantPaymentReceiptModal({
             savePrinterSettings(receipt, printerSettings);
             await Promise.resolve(onPrint());
             setLocalConfirmationStatus("Print request opened; confirm Windows queue and paper output");
-            setPrinterMessage(`Print request opened. ${printerDestinationInstruction(printerSettings)} Did ${printerSettings.widthMm === 58 ? "RONGTA 58mm Series Printer" : "POS-80"} print the receipt?`);
+            setPrinterMessage(`Print request opened. ${printerDestinationInstruction(printerSettings)} Did ${physicalPrinterShortName(printerSettings)} print the receipt?`);
         } catch (error) {
             setLocalConfirmationStatus("Browser print request failed before Windows queue");
             setPrinterMessage(error instanceof Error ? error.message : "Receipt could not be prepared. No physical print result was confirmed.");
@@ -1043,6 +1115,10 @@ export function TenantPaymentReceiptModal({
     };
 
     const handleDirectPrint = async () => {
+        if (printerSettings.method === "bluetooth") {
+            await handleBluetoothPrint();
+            return;
+        }
         setIsPreparingPrint(true);
         setPrintAttemptNumber((attempt) => attempt + 1);
         setLatestPrintRequestAt(new Date().toLocaleString("en-UG", { timeZone: "Africa/Kampala" }));
@@ -1060,9 +1136,31 @@ export function TenantPaymentReceiptModal({
         }
     };
 
+    const handleBluetoothPrint = async () => {
+        setIsPreparingPrint(true);
+        setPrintAttemptNumber((attempt) => attempt + 1);
+        setLatestPrintRequestAt(new Date().toLocaleString("en-UG", { timeZone: "Africa/Kampala" }));
+        setLocalConfirmationStatus("Requesting Bluetooth permission for RPP02N");
+        setPrinterMessage("Bluetooth permission required. Select RPP02N if it appears, then confirm the print bridge is available.");
+        try {
+            await printDirectlyWithBluetooth(receipt, printerSettings);
+            setLocalConfirmationStatus("Bluetooth print command accepted; confirm physical output");
+            setPrinterMessage("Print command accepted by the RPP02N Bluetooth bridge. Confirm physical receipt output.");
+        } catch (error) {
+            setLocalConfirmationStatus("Direct Bluetooth Print unavailable");
+            setPrinterMessage(error instanceof Error ? error.message : "Direct Bluetooth Print failed. Use Android System Print or the RPP02N print-service app.");
+        } finally {
+            setIsPreparingPrint(false);
+        }
+    };
+
     const handleSavedPrinterPrint = async () => {
         if (printerSettings.method === "qz") {
             await handleDirectPrint();
+            return;
+        }
+        if (printerSettings.method === "bluetooth") {
+            await handleBluetoothPrint();
             return;
         }
         await handleBrowserPrint();
@@ -1106,7 +1204,7 @@ export function TenantPaymentReceiptModal({
     };
 
     const openPrinterHelp = () => {
-        setPrinterMessage("Windows help: for Xprinter XP-N260H choose POS-80 with 80mm paper. For MP-58N choose RONGTA 58mm Series Printer with 58mm paper. Open Settings > Bluetooth & devices > Printers & scanners, confirm the chosen queue is Ready, clear stuck jobs, then return to Ddumba OS and run the matching test print.");
+        setPrinterMessage("Printer help: on the Samsung tablet choose RPP02N under Android printer selection and confirm one 58mm receipt. If RPP02N is paired by Bluetooth but not listed, install or enable its Android print service, or use Direct Bluetooth Print with a compatible Bluetooth ESC/POS bridge. On Windows, choose POS-80 for Xprinter 80mm or RONGTA 58mm Series Printer for MP-58N.");
     };
 
     const clearApplicationPrintState = () => {
@@ -1144,7 +1242,7 @@ export function TenantPaymentReceiptModal({
                                     <Printer size={15} /> {isPreparingPrint ? "Preparing receipt..." : "Print with Saved Printer"}
                                 </button>
                                 <button type="button" onClick={handleDirectPrint} disabled={printDisabled || isPreparingPrint} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-violet-700 px-3 py-2 text-xs font-black text-white disabled:opacity-50">
-                                    <Printer size={15} /> Print Directly
+                                    <Printer size={15} /> {directPrintLabel(printerSettings)}
                                 </button>
                                 <button type="button" onClick={onDownloadPdf} disabled={downloadDisabled} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-blue-700 px-3 py-2 text-xs font-black text-white disabled:opacity-50">
                                     <Download size={15} /> Download PDF
@@ -1180,11 +1278,11 @@ export function TenantPaymentReceiptModal({
                                     <p className="text-[11px] font-black uppercase tracking-[0.12em]">Printer Diagnostics</p>
                                     <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                                         <span>Printer profile: <strong>{printerProfileName(printerSettings)}</strong></span>
-                                        <span>Configured label: <strong>{printerSettings.preferredPrinterName || (printerSettings.widthMm === 58 ? "RONGTA 58mm Series Printer" : "POS-80")}</strong></span>
+                                        <span>Configured label: <strong>{printerSettings.preferredPrinterName || physicalPrinterShortName(printerSettings)}</strong></span>
                                         <span>Expected model: <strong>{expectedPrinterModel(printerSettings)}</strong></span>
                                         <span>Paper: <strong>{printerSettings.widthMm}mm</strong></span>
                                         <span>Printable width: <strong>{printerSettings.printableWidthMm}mm</strong></span>
-                                        <span>Method: <strong>{printerSettings.method === "qz" ? "QZ Tray Direct Print" : "Browser Print"}</strong></span>
+                                        <span>Method: <strong>{printerMethodLabel(printerSettings.method)}</strong></span>
                                         <span>Latest request: <strong>{latestPrintRequestAt ?? "None this session"}</strong></span>
                                         <span>Receipt ID: <strong>{receipt.id}</strong></span>
                                         <span>Attempts: <strong>{printAttemptNumber}</strong></span>
@@ -1196,19 +1294,21 @@ export function TenantPaymentReceiptModal({
                                     <select value={printerSettings.profile} onChange={(event) => applyPrinterProfile(event.target.value as ReceiptPrinterProfile)} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold">
                                         <option value="pos80">POS-80 / Xprinter 80mm</option>
                                         <option value="rongta58">RONGTA 58mm / MP-58N</option>
+                                        <option value="rpp02n58">RPP02N Bluetooth 58mm</option>
                                         <option value="custom">Custom printer</option>
                                     </select>
                                 </label>
                                 <label className="grid gap-1">
                                     <span>Printer method</span>
-                                    <select value={printerSettings.method} onChange={(event) => updatePrinterSettings({ method: event.target.value === "qz" ? "qz" : "browser" })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold">
+                                    <select value={printerSettings.method} onChange={(event) => updatePrinterSettings({ method: event.target.value === "qz" ? "qz" : event.target.value === "bluetooth" ? "bluetooth" : "browser" })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold">
                                         <option value="browser">Browser print</option>
                                         <option value="qz">QZ Tray direct print</option>
+                                        <option value="bluetooth">Direct Bluetooth print</option>
                                     </select>
                                 </label>
                                 <label className="grid gap-1">
                                     <span>Preferred printer label</span>
-                                    <input value={printerSettings.preferredPrinterName} onChange={(event) => updatePrinterSettings({ preferredPrinterName: event.target.value, profile: "custom" })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold" placeholder={printerSettings.widthMm === 58 ? "RONGTA 58mm Series Printer" : "POS-80"} />
+                                    <input value={printerSettings.preferredPrinterName} onChange={(event) => updatePrinterSettings({ preferredPrinterName: event.target.value, profile: "custom" })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold" placeholder={printerSettings.profile === "rpp02n58" ? "RPP02N" : printerSettings.widthMm === 58 ? "RONGTA 58mm Series Printer" : "POS-80"} />
                                 </label>
                                 <label className="grid gap-1">
                                     <span>Receipt width</span>
@@ -1264,18 +1364,19 @@ export function TenantPaymentReceiptModal({
                                     <button type="button" onClick={() => testBrowserPrint(settingsForProfile("pos80", printerSettings))} className="rounded-xl bg-violet-700 px-3 py-2 text-xs font-black text-white">Test POS-80 Receipt</button>
                                     <button type="button" onClick={() => testBrowserPrint(settingsForProfile("rongta58", printerSettings))} className="rounded-xl bg-violet-700 px-3 py-2 text-xs font-black text-white">Test 58mm Mobile Receipt</button>
                                     <button type="button" onClick={() => testDirectPrint(printerSettings)} className="rounded-xl bg-violet-900 px-3 py-2 text-xs font-black text-white">Direct ESC/POS Test</button>
-                                    <button type="button" onClick={() => { updatePrinterSettings({ method: "qz" }); setPrinterMessage(`Switched to QZ Tray Direct Print. Use Detect Printers, select ${printerSettings.widthMm === 58 ? "RONGTA 58mm Series Printer" : "POS-80"}, then run Direct ESC/POS Test.`); }} className="rounded-xl bg-indigo-700 px-3 py-2 text-xs font-black text-white">Switch to Direct Printing</button>
+                                    <button type="button" onClick={() => { updatePrinterSettings({ method: "bluetooth", profile: "rpp02n58", widthMm: 58, printableWidthMm: 48, preferredPrinterName: "RPP02N", cutPaper: false, fontSize: "compact", printDensity: "dark" }); setPrinterMessage("Switched to Direct Bluetooth Print for RPP02N. Browser support varies; if the Bluetooth bridge is unavailable, use Android System Print with the RPP02N print service."); }} className="rounded-xl bg-indigo-700 px-3 py-2 text-xs font-black text-white">Use RPP02N Direct Bluetooth</button>
+                                    <button type="button" onClick={() => { updatePrinterSettings({ method: "qz" }); setPrinterMessage(`Switched to QZ Tray Direct Print. Use Detect Printers, select ${printerSettings.widthMm === 58 ? "RONGTA 58mm Series Printer" : "POS-80"}, then run Direct ESC/POS Test.`); }} className="rounded-xl bg-indigo-700 px-3 py-2 text-xs font-black text-white">Switch to QZ Direct Printing</button>
                                     <button type="button" onClick={openPrinterHelp} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Printing Help</button>
                                     <button type="button" onClick={clearApplicationPrintState} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Clear Application Print State</button>
                                     <button type="button" onClick={() => { const defaults = defaultPrinterSettings(); updatePrinterSettings(defaults); setAvailablePrinters([]); setPrinterMessage("Printer settings reset for this office and browser."); }} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Reset Settings</button>
                                 </div>
                             </div>
                         ) : null}
-                        {printerMessage?.includes("Did POS-80 print the receipt?") || printerMessage?.includes("Did RONGTA 58mm Series Printer print the receipt?") ? (
+                        {printerMessage?.includes("Did POS-80 print the receipt?") || printerMessage?.includes("Did RONGTA 58mm Series Printer print the receipt?") || printerMessage?.includes("Did RPP02N print the receipt?") ? (
                             <div className="mt-3 flex flex-wrap gap-2">
-                                <button type="button" onClick={() => { setLocalConfirmationStatus("Office confirmed physical receipt output"); setPrinterMessage(`Office confirmed ${printerSettings.widthMm === 58 ? "RONGTA 58mm" : "POS-80"} printed the receipt. Keep the printed receipt with tenant, office, collector, and audit records.`); }} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white">Yes</button>
+                                <button type="button" onClick={() => { setLocalConfirmationStatus("Office confirmed physical receipt output"); setPrinterMessage(`Office confirmed ${physicalPrinterShortName(printerSettings)} printed the receipt. Keep the printed receipt with tenant, office, collector, and audit records.`); }} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white">Yes</button>
                                 <button type="button" onClick={handleBrowserPrint} className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white">Print Again</button>
-                                <button type="button" onClick={handleDirectPrint} className="rounded-xl bg-violet-700 px-3 py-2 text-xs font-black text-white">Use Direct Print</button>
+                                <button type="button" onClick={handleDirectPrint} className="rounded-xl bg-violet-700 px-3 py-2 text-xs font-black text-white">{directPrintLabel(printerSettings)}</button>
                                 <button type="button" onClick={openPrinterHelp} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Open Printer Help</button>
                             </div>
                         ) : null}

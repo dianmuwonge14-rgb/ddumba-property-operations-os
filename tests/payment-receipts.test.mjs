@@ -49,7 +49,7 @@ test("payment entry shows receipt confirmation actions after successful payment"
   assert.match(sharedReceipt, /tenant-receipt-slip/);
   assert.match(sharedReceipt, /Print with Saved Printer/);
   assert.match(sharedReceipt, /Choose Printer/);
-  assert.match(sharedReceipt, /Print Directly/);
+  assert.match(sharedReceipt, /directPrintLabel/);
   assert.match(sharedReceipt, /Download PDF/);
   assert.match(sharedReceipt, /Send E-Receipt/);
   assert.match(paymentEntry, /Send by WhatsApp\/SMS/);
@@ -72,9 +72,14 @@ test("tenant receipts include supermarket-style coverage and print scope", () =>
 test("receipt history can preview and reprint only the saved receipt slip", () => {
   assert.match(receiptHistory, /TenantPaymentReceiptModal/);
   assert.match(receiptHistory, /downloadTenantPaymentReceiptPdf/);
+  assert.match(receiptHistory, /pendingReceiptAction/);
+  assert.match(receiptHistory, /queueReceiptAction/);
+  assert.match(receiptHistory, /waitForReceiptPreviewMount/);
   assert.match(receiptHistory, /receipt=\$\{receipt\.id\}&payment=\$\{receipt\.paymentId\}/);
   assert.match(receiptHistory, /Corrections/);
   assert.match(receiptHistory, /snapshot\.landlordName/);
+  assert.doesNotMatch(receiptHistory, /window\.print\(\)/);
+  assert.doesNotMatch(receiptHistory, /setTimeout\(\(\) =>/);
 });
 
 test("receipt modal supports safe close interactions and focus restoration", () => {
@@ -175,9 +180,9 @@ test("receipt modal explains browser Save as PDF behavior and saves printer sett
   assert.match(sharedReceipt, /Xprinter XP-N260H/);
   assert.match(sharedReceipt, /MP-58N mobile thermal printer/);
   assert.match(sharedReceipt, /Clear Application Print State/);
-  assert.match(sharedReceipt, /Switch to Direct Printing/);
+  assert.match(sharedReceipt, /Switch to QZ Direct Printing/);
   assert.match(sharedReceipt, /Print Again/);
-  assert.match(sharedReceipt, /Use Direct Print/);
+  assert.match(sharedReceipt, /Direct Bluetooth Print/);
   assert.match(sharedReceipt, /Auto-open print after payment/);
   assert.match(sharedReceipt, /Auto-print after payment/);
   assert.doesNotMatch(sharedReceipt, /Receipt printed successfully/);
@@ -213,11 +218,12 @@ test("receipt direct thermal print uses QZ Tray when available and falls back cl
   assert.match(sharedReceipt, /qz\.websocket\.connect/);
 });
 
-test("receipt printer profiles support POS-80 and RONGTA 58mm without sharing dimensions", () => {
-  assert.match(sharedReceipt, /type ReceiptPrinterProfile = "pos80" \| "rongta58" \| "custom"/);
+test("receipt printer profiles support POS-80, RONGTA 58mm, and RPP02N without sharing dimensions", () => {
+  assert.match(sharedReceipt, /type ReceiptPrinterProfile = "pos80" \| "rongta58" \| "rpp02n58" \| "custom"/);
   assert.match(sharedReceipt, /PRINTER_PROFILES/);
   assert.match(sharedReceipt, /preferredPrinterName: "POS-80"/);
   assert.match(sharedReceipt, /preferredPrinterName: "RONGTA 58mm Series Printer"/);
+  assert.match(sharedReceipt, /preferredPrinterName: "RPP02N"/);
   assert.match(sharedReceipt, /printableWidthMm: 72/);
   assert.match(sharedReceipt, /printableWidthMm: 48/);
   assert.match(sharedReceipt, /widthMm: 80/);
@@ -228,7 +234,22 @@ test("receipt printer profiles support POS-80 and RONGTA 58mm without sharing di
   assert.match(sharedReceipt, /printDensity: "dark"/);
   assert.match(sharedReceipt, /settingsForProfile/);
   assert.match(sharedReceipt, /profile === "rongta58"/);
+  assert.match(sharedReceipt, /profile === "rpp02n58"/);
   assert.match(receiptStyles, /receipt-paper-58mm/);
   assert.match(receiptStyles, /width: 48mm !important/);
   assert.match(receiptStyles, /\.receipt-pdf-export-sandbox\[style\*="58mm"\]/);
+});
+
+test("tablet receipt reprint supports RPP02N without printing receipt history", () => {
+  assert.match(sharedReceipt, /defaultPrinterProfileForDevice/);
+  assert.match(sharedReceipt, /RPP02N Bluetooth 58mm/);
+  assert.match(sharedReceipt, /Select RPP02N under printer selection/);
+  assert.match(sharedReceipt, /printDirectlyWithBluetooth/);
+  assert.match(sharedReceipt, /Android System Print/);
+  assert.match(sharedReceipt, /printer's Android print service/);
+  assert.match(sharedReceipt, /Use RPP02N Direct Bluetooth/);
+  assert.match(sharedReceipt, /physicalPrinterShortName/);
+  assert.match(receiptHistory, /queueReceiptAction\(receipt, "print"\)/);
+  assert.match(receiptHistory, /queueReceiptAction\(receipt, "download_pdf"\)/);
+  assert.doesNotMatch(receiptHistory, /document\.body\.outerHTML/);
 });

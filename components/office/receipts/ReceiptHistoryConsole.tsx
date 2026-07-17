@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Download, Eye, History, Mail, Printer, ReceiptText, Search } from "lucide-react";
 import { logReceiptPrintOrDownload } from "@/app/actions/receipts";
 import { downloadTenantPaymentReceiptPdf, printTenantPaymentReceipt, TenantPaymentReceiptModal } from "@/components/office/receipts/TenantPaymentReceipt";
@@ -36,22 +36,41 @@ function searchable(receipt: ReceiptHistoryItem) {
 
 export default function ReceiptHistoryConsole({ error, receipts }: Props) {
     const [query, setQuery] = useState("");
+    const [pendingReceiptAction, setPendingReceiptAction] = useState<null | { channel: "download_pdf" | "print"; receiptId: string }>(null);
     const [selected, setSelected] = useState<ReceiptHistoryItem | null>(null);
     const visible = useMemo(() => {
         const normalized = query.trim().toLowerCase();
         if (!normalized) return receipts;
         return receipts.filter((receipt) => searchable(receipt).includes(normalized));
     }, [query, receipts]);
-    const printReceipt = (receipt: ReceiptHistoryItem, channel: "download_pdf" | "print") => {
-        void logReceiptPrintOrDownload({ channel, receiptId: receipt.id });
+    useEffect(() => {
+        if (!selected || !pendingReceiptAction || pendingReceiptAction.receiptId !== selected.id) return;
+        let cancelled = false;
+        const run = async () => {
+            await waitForReceiptPreviewMount();
+            if (cancelled) return;
+            await printReceipt(selected, pendingReceiptAction.channel, true);
+            if (!cancelled) setPendingReceiptAction(null);
+        };
+        void run();
+        return () => {
+            cancelled = true;
+        };
+    }, [pendingReceiptAction, selected]);
+
+    const queueReceiptAction = (receipt: ReceiptHistoryItem, channel: "download_pdf" | "print") => {
         setSelected(receipt);
-        window.setTimeout(() => {
-            if (channel === "print") {
-                printTenantPaymentReceipt(() => setSelected(null));
-                return;
-            }
-            void downloadTenantPaymentReceiptPdf(`${receipt.receiptNumber}.pdf`);
-        }, 80);
+        setPendingReceiptAction({ channel, receiptId: receipt.id });
+    };
+
+    const printReceipt = async (receipt: ReceiptHistoryItem, channel: "download_pdf" | "print", closeAfterPrint = false) => {
+        void logReceiptPrintOrDownload({ channel, receiptId: receipt.id });
+        if (channel === "print") {
+            await printTenantPaymentReceipt(closeAfterPrint ? () => setSelected(null) : undefined);
+            return;
+        }
+        await downloadTenantPaymentReceiptPdf(`${receipt.receiptNumber}.pdf`);
+        if (closeAfterPrint) setSelected(null);
     };
 
     return (
@@ -96,8 +115,8 @@ export default function ReceiptHistoryConsole({ error, receipts }: Props) {
                             <p className="mt-3 rounded-2xl bg-slate-50 px-3 py-2 text-xs font-black text-slate-600">Verification: {receipt.verificationCode}</p>
                             <div className="mt-3 flex flex-wrap gap-2">
                                 <button type="button" onClick={() => setSelected(receipt)} className="inline-flex items-center gap-1 rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200"><Eye size={13} /> View</button>
-                                <button type="button" onClick={() => printReceipt(receipt, "print")} className="inline-flex items-center gap-1 rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white"><Printer size={13} /> Reprint</button>
-                                <button type="button" onClick={() => printReceipt(receipt, "download_pdf")} className="inline-flex items-center gap-1 rounded-xl bg-blue-700 px-3 py-2 text-xs font-black text-white"><Download size={13} /> PDF</button>
+                                <button type="button" onClick={() => queueReceiptAction(receipt, "print")} className="inline-flex items-center gap-1 rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white"><Printer size={13} /> Reprint</button>
+                                <button type="button" onClick={() => queueReceiptAction(receipt, "download_pdf")} className="inline-flex items-center gap-1 rounded-xl bg-blue-700 px-3 py-2 text-xs font-black text-white"><Download size={13} /> PDF</button>
                                 <a href={`mailto:?subject=${encodeURIComponent(`DDUMBA OS Receipt ${receipt.receiptNumber}`)}&body=${encodeURIComponent(`Receipt ${receipt.receiptNumber} for ${receipt.tenantName ?? "tenant"}: ${money(receipt.amountPaid)}. Verification ${receipt.verificationCode}.`)}`} className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white"><Mail size={13} /> Resend</a>
                                 <a href={`/office/payments?receipt=${receipt.id}&payment=${receipt.paymentId}`} className="inline-flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-700"><ReceiptText size={13} /> Payment</a>
                                 <a href={`/office/payments?history=${receipt.paymentId}`} className="inline-flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-700"><History size={13} /> Corrections</a>
@@ -130,6 +149,14 @@ export default function ReceiptHistoryConsole({ error, receipts }: Props) {
             ) : null}
         </main>
     );
+}
+
+function waitForReceiptPreviewMount() {
+    return new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => resolve());
+        });
+    });
 }
 
 function Info({ label, value }: { label: string; value: string }) {
