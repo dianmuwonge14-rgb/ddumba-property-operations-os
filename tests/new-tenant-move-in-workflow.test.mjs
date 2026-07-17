@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
+
+const roomOccupancyAction = readFileSync(new URL("../app/actions/room-occupancy.ts", import.meta.url), "utf8");
+const roomActionPanel = readFileSync(new URL("../components/office/rooms/RoomActionPanel.tsx", import.meta.url), "utf8");
+const paymentsEntry = readFileSync(new URL("../components/office/payments/FastPaymentsEntry.tsx", import.meta.url), "utf8");
 
 function clampDay(year, monthIndex, day) {
   return Math.min(day, new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate());
@@ -214,4 +219,24 @@ test("rollback expectation: workflow must not allow half-created tenant state", 
   const failedStep = "record_payment";
   const persistedAsComplete = completedSteps.every((step) => step !== failedStep);
   assert.equal(persistedAsComplete, false);
+});
+
+test("new tenant server actions return safe structured errors instead of production Server Component failures", () => {
+  assert.match(roomOccupancyAction, /type MoveInFailure = \{ ok: false; error: string; requestId: string \}/);
+  assert.match(roomOccupancyAction, /safeMoveInError/);
+  assert.match(roomOccupancyAction, /logMoveInFailure/);
+  assert.match(roomOccupancyAction, /return \{ ok: false, error: safeMoveInError\(error\), requestId \}/);
+  assert.match(roomActionPanel, /if \(!result\.ok\)/);
+  assert.match(roomActionPanel, /Tenant saved successfully and room marked occupied/);
+  assert.match(paymentsEntry, /if \(!result\.ok\)/);
+  assert.doesNotMatch(roomActionPanel, /Failed to record in the Supabase occupancy ledger/);
+});
+
+test("new tenant move-in closes stale active room occupancy before creating a new active tenant", () => {
+  assert.match(roomOccupancyAction, /closeStaleActiveRoomOccupancy/);
+  assert.match(roomOccupancyAction, /\.from\("leases"\)[\s\S]*\.eq\("status", "active"\)/);
+  assert.match(roomOccupancyAction, /status: "terminated"/);
+  assert.match(roomOccupancyAction, /\.from\("tenants"\)[\s\S]*\.eq\("status", "active"\)/);
+  assert.match(roomOccupancyAction, /status: "vacated"/);
+  assert.match(roomOccupancyAction, /stale_room_occupancy_closed/);
 });

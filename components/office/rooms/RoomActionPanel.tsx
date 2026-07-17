@@ -110,7 +110,7 @@ export default function RoomActionPanel({ isAdmin = false, onSaved, room }: Prop
             try {
                 setError(null);
                 setMessage(null);
-                await markRoomOccupied({
+                const result = await markRoomOccupied({
                     roomId: selectedRoom.id,
                     tenantName: form.tenantName,
                     tenantPhone: form.tenantPhone,
@@ -123,7 +123,11 @@ export default function RoomActionPanel({ isAdmin = false, onSaved, room }: Prop
                     referenceNumber: form.referenceNumber || null,
                     notes: form.notes || null,
                 });
-                setMessage("Room marked occupied. Tenant, lease, payment, balance, rent roll, and audit trail updated.");
+                if (!result.ok) {
+                    setError(`${result.error} Reference: ${result.requestId}.`);
+                    return;
+                }
+                setMessage("Tenant saved successfully and room marked occupied.");
                 await onSaved();
             } catch (caught) {
                 setError(caught instanceof Error ? caught.message : "Unable to mark room occupied.");

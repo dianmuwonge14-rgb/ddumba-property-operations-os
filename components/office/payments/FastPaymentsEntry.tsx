@@ -529,6 +529,10 @@ export default function FastPaymentsEntry({
                     referenceNumber: newTenantForm.referenceNumber || null,
                     roomId: selectedRoomId,
                 });
+                if (!result.ok) {
+                    setNewTenantError(`${result.error} Reference: ${result.requestId}.`);
+                    return;
+                }
                 setNewTenantOpen(false);
                 setMessage(`New tenant ${result.newTenant.full_name ?? newTenantForm.newTenantName} added to room ${currentTenant.room?.room_number ?? "selected room"}.`);
                 setAmount("");

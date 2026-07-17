@@ -17,6 +17,9 @@ type DynamicDb = {
     from: (table: string) => any;
 };
 
+type MoveInFailure = { ok: false; error: string; requestId: string };
+type MoveInSuccess<T extends Record<string, unknown>> = T & { ok: true };
+
 export type MarkRoomOccupiedInput = {
     roomId: string;
     tenantName: string;
@@ -65,6 +68,37 @@ function assertDate(value: string) {
 
 function collectionNumber() {
     return `MOVEIN-${Date.now()}`;
+}
+
+function moveInRequestId() {
+    return `movein_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function safeMoveInError(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    if (/duplicate key|uniq_active_lease_per_room|active.*lease|active.*occup/i.test(message)) {
+        return "This room already has an active tenant or occupancy record. Refresh the room and try again.";
+    }
+    if (/billing_day|leases_billing_day_check|check constraint/i.test(message)) {
+        return "The move-in date could not be saved to the tenant billing cycle. Database setup needs the anniversary billing migration.";
+    }
+    if (/permission|rls|policy|not authorized|not allowed/i.test(message)) {
+        return "You do not have permission to update this office.";
+    }
+    if (/room.*not found|Room not found/i.test(message)) return "The room could not be found.";
+    if (/office/i.test(message) && /missing|required|null/i.test(message)) return "The office assignment is missing.";
+    if (/property|location/i.test(message) && /missing|required|null/i.test(message)) return "The room property/location assignment is missing.";
+    if (/tenant.*not found|Current tenant not found/i.test(message)) return "The tenant could not be found.";
+    if (/date/i.test(message)) return "The move-in date is invalid.";
+    if (/lease|occupancy|ledger|tenant_rent_months|tenant_balance_ledger|tenant_ledger_entries/i.test(message)) {
+        return "The tenant occupancy record could not be created. The tenant was not saved. No changes were applied.";
+    }
+    return "The tenant was not saved. No changes were applied.";
+}
+
+function logMoveInFailure(requestId: string, scope: string, error: unknown) {
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    console.error(`[${requestId}] ${scope} failed`, { message });
 }
 
 function isMissingCoverageColumnError(error: { message?: string } | null | undefined) {
@@ -393,7 +427,86 @@ function settlementMonthFromDate(value: string) {
     return `${value.slice(0, 7)}-01`;
 }
 
-export async function replaceTenantFromPaymentsEntry(input: ReplaceTenantFromPaymentsInput) {
+async function closeStaleActiveRoomOccupancy(supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>, input: {
+    actorId: string | null;
+    companyId: string;
+    moveInDate: string;
+    officeId: string;
+    roomId: string;
+}) {
+    const db = supabase as unknown as DynamicDb;
+    const now = new Date().toISOString();
+    const staleLeaseUpdate = await db
+        .from("leases")
+        .update({
+            end_date: input.moveInDate,
+            status: "terminated",
+            updated_at: now,
+        })
+        .eq("company_id", input.companyId)
+        .eq("room_id", input.roomId)
+        .eq("status", "active");
+    if (staleLeaseUpdate.error && !/schema cache|Could not find|does not exist/i.test(staleLeaseUpdate.error.message ?? "")) {
+        throw new Error(staleLeaseUpdate.error.message);
+    }
+
+    const staleTenantUpdate = await db
+        .from("tenants")
+        .update({
+            previous_room_id: input.roomId,
+            room_id: null,
+            status: "vacated",
+            updated_at: now,
+            vacated_at: input.moveInDate,
+        })
+        .eq("company_id", input.companyId)
+        .eq("room_id", input.roomId)
+        .eq("status", "active");
+    if (staleTenantUpdate.error && !/previous_room_id|vacated_at|schema cache|Could not find|does not exist/i.test(staleTenantUpdate.error.message ?? "")) {
+        throw new Error(staleTenantUpdate.error.message);
+    }
+    if (staleTenantUpdate.error && /previous_room_id|vacated_at/i.test(staleTenantUpdate.error.message ?? "")) {
+        const fallbackTenantUpdate = await db
+            .from("tenants")
+            .update({
+                room_id: null,
+                status: "vacated",
+                updated_at: now,
+            })
+            .eq("company_id", input.companyId)
+            .eq("room_id", input.roomId)
+            .eq("status", "active");
+        if (fallbackTenantUpdate.error && !/schema cache|Could not find|does not exist/i.test(fallbackTenantUpdate.error.message ?? "")) {
+            throw new Error(fallbackTenantUpdate.error.message);
+        }
+    }
+
+    await db.from("collection_actions").insert({
+        action_type: "stale_room_occupancy_closed",
+        company_id: input.companyId,
+        notes: `Closed stale active tenant/lease rows before new tenant move-in on ${input.moveInDate}.`,
+        office_id: input.officeId,
+        outcome: "stale_occupancy_closed",
+        performed_by: input.actorId,
+    }).then((result: { error?: { message?: string } | null }) => {
+        if (result.error && !/schema cache|Could not find|does not exist/i.test(result.error.message ?? "")) {
+            console.warn("Stale occupancy audit failed:", result.error.message);
+        }
+    });
+}
+
+export async function replaceTenantFromPaymentsEntry(input: ReplaceTenantFromPaymentsInput): Promise<MoveInSuccess<Awaited<ReturnType<typeof replaceTenantFromPaymentsEntryUnsafe>>> | MoveInFailure> {
+    const requestId = moveInRequestId();
+    try {
+        const result = await replaceTenantFromPaymentsEntryUnsafe(input);
+        return { ...result, ok: true };
+    } catch (error) {
+        logMoveInFailure(requestId, "payments-entry-new-tenant", error);
+        return { ok: false, error: safeMoveInError(error), requestId };
+    }
+}
+
+async function replaceTenantFromPaymentsEntryUnsafe(input: ReplaceTenantFromPaymentsInput) {
     const context = await requireAuth();
     const canManage =
         hasPermission(context, "properties.manage") ||
@@ -463,6 +576,7 @@ export async function replaceTenantFromPaymentsEntry(input: ReplaceTenantFromPay
 
     const billingDay = billingAnchorDay(moveInDate);
     const openingBalance = Math.max(0, monthlyRent - paymentMade);
+    await closeStaleActiveRoomOccupancy(supabase, { actorId, companyId, moveInDate, officeId, roomId });
     const tenantPayload = {
         balance: openingBalance,
         company_id: companyId,
@@ -638,7 +752,18 @@ export async function replaceTenantFromPaymentsEntry(input: ReplaceTenantFromPay
     };
 }
 
-export async function markRoomOccupied(input: MarkRoomOccupiedInput) {
+export async function markRoomOccupied(input: MarkRoomOccupiedInput): Promise<MoveInSuccess<Awaited<ReturnType<typeof markRoomOccupiedUnsafe>>> | MoveInFailure> {
+    const requestId = moveInRequestId();
+    try {
+        const result = await markRoomOccupiedUnsafe(input);
+        return { ...result, ok: true };
+    } catch (error) {
+        logMoveInFailure(requestId, "vacant-room-new-tenant", error);
+        return { ok: false, error: safeMoveInError(error), requestId };
+    }
+}
+
+async function markRoomOccupiedUnsafe(input: MarkRoomOccupiedInput) {
     const context = await requireAuth();
     const canManage =
         hasPermission(context, "properties.manage") ||
@@ -689,6 +814,7 @@ export async function markRoomOccupied(input: MarkRoomOccupiedInput) {
     }
     const openingBalance = Math.max(0, monthlyRent - moneyCollected);
     const billingDay = billingAnchorDay(moveInDate);
+    await closeStaleActiveRoomOccupancy(supabase, { actorId, companyId, moveInDate, officeId: room.office_id, roomId: room.id });
     const tenantPayload = {
         balance: openingBalance,
         company_id: companyId,
