@@ -9,7 +9,7 @@ const paymentsEntry = readFileSync(new URL("../components/office/payments/FastPa
 const tenantSnapshot = readFileSync(new URL("../components/office/collections/TenantSnapshot.tsx", import.meta.url), "utf8");
 const dueRoute = readFileSync(new URL("../app/api/billing/due-intelligence/route.ts", import.meta.url), "utf8");
 const scheduledRoute = readFileSync(new URL("../app/api/billing/run/route.ts", import.meta.url), "utf8");
-const vercelConfig = readFileSync(new URL("../vercel.json", import.meta.url), "utf8");
+const pgCronMigration = readFileSync(new URL("../supabase/upgrade_migrations/0210_tenant_billing_hourly_pg_cron.sql", import.meta.url), "utf8");
 
 function clampDay(year, monthIndex, day) {
   return Math.min(day, new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate());
@@ -73,7 +73,9 @@ test("scheduled billing automation runs hourly and does not depend on page loads
   assert.match(scheduledRoute, /run_monthly_rent_rollover/);
   assert.match(scheduledRoute, /scheduled_hourly/);
   assert.match(scheduledRoute, /x-vercel-cron|CRON_SECRET/);
-  assert.match(vercelConfig, /"schedule": "0 \* \* \* \*"/);
+  assert.match(pgCronMigration, /pg_cron/);
+  assert.match(pgCronMigration, /ddumba_tenant_billing_hourly/);
+  assert.match(pgCronMigration, /'0 \* \* \* \*'/);
 });
 
 test("overdue rent intelligence uses a small indexed live sample", () => {
