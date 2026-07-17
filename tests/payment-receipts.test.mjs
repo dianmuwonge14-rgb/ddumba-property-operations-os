@@ -188,7 +188,8 @@ test("receipt print and PDF exports omit page chrome and modal controls", () => 
   assert.match(sharedReceipt, /\.receipt-action-bar/);
   assert.match(sharedReceipt, /const pageSize = pageHeightMm \? `\$\{paperWidthMm\}mm \$\{pageHeightMm\}mm` : `\$\{paperWidthMm\}mm auto`/);
   assert.match(sharedReceipt, /width: \$\{printableWidthMm\}mm/);
-  assert.match(sharedReceipt, /localStorage\.getItem\("ddumba\.receiptPaperWidthMm"\)/);
+  assert.match(sharedReceipt, /ddumba\.receiptPrinterActiveSettings/);
+  assert.doesNotMatch(sharedReceipt, /localStorage\.getItem\("ddumba\.receiptPaperWidthMm"\)/);
 });
 
 test("receipt modal explains browser Save as PDF behavior and saves printer settings per office", () => {
@@ -199,7 +200,12 @@ test("receipt modal explains browser Save as PDF behavior and saves printer sett
   assert.match(sharedReceipt, /Did POS-80 print the receipt\?/);
   assert.match(sharedReceipt, /Did RONGTA 58mm Series Printer print the receipt\?/);
   assert.match(sharedReceipt, /ddumba\.receiptPrinterSettings/);
-  assert.match(sharedReceipt, /ddumba\.receiptPrinterProfile/);
+  assert.match(sharedReceipt, /ddumba\.receiptPrinterDeviceId/);
+  assert.match(sharedReceipt, /profileMode/);
+  assert.match(sharedReceipt, /Auto detect/);
+  assert.match(sharedReceipt, /80mm POS printer/);
+  assert.match(sharedReceipt, /58mm mobile printer/);
+  assert.match(sharedReceipt, /Printing profile: \{printerSettings\.widthMm === 58 \? "58mm Mobile" : "80mm POS"\}/);
   assert.match(sharedReceipt, /Printer Settings/);
   assert.match(sharedReceipt, /Printer profile/);
   assert.match(sharedReceipt, /POS-80 \/ Xprinter 80mm/);
@@ -263,6 +269,7 @@ test("receipt direct thermal print uses QZ Tray when available and falls back cl
 
 test("receipt printer profiles support POS-80, RONGTA 58mm, and RPP02N without sharing dimensions", () => {
   assert.match(sharedReceipt, /type ReceiptPrinterProfile = "pos80" \| "rongta58" \| "rpp02n58" \| "custom"/);
+  assert.match(sharedReceipt, /type ReceiptPrinterProfileMode = "auto" \| "pos80" \| "mobile58" \| "custom"/);
   assert.match(sharedReceipt, /PRINTER_PROFILES/);
   assert.match(sharedReceipt, /preferredPrinterName: "POS-80"/);
   assert.match(sharedReceipt, /preferredPrinterName: "RONGTA 58mm Series Printer"/);
@@ -276,8 +283,11 @@ test("receipt printer profiles support POS-80, RONGTA 58mm, and RPP02N without s
   assert.match(sharedReceipt, /fontSize: "compact"/);
   assert.match(sharedReceipt, /printDensity: "dark"/);
   assert.match(sharedReceipt, /settingsForProfile/);
+  assert.match(sharedReceipt, /settingsForProfileMode/);
   assert.match(sharedReceipt, /profile === "rongta58"/);
   assert.match(sharedReceipt, /profile === "rpp02n58"/);
+  assert.match(sharedReceipt, /defaultPrinterProfileForDevice\(\) === "pos80" \? 80 : 58/);
+  assert.match(sharedReceipt, /printerSettingsKey\(receipt\)/);
   assert.match(receiptStyles, /receipt-paper-58mm/);
   assert.match(receiptStyles, /width: 48mm !important/);
   assert.match(receiptStyles, /\.receipt-pdf-export-sandbox\[style\*="58mm"\]/);
