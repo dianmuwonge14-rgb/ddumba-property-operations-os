@@ -10,6 +10,7 @@ const landlordsAction = readFileSync(new URL("../app/actions/landlords.ts", impo
 const paymentEntry = readFileSync(new URL("../components/office/payments/FastPaymentsEntry.tsx", import.meta.url), "utf8");
 const receiptHistory = readFileSync(new URL("../components/office/receipts/ReceiptHistoryConsole.tsx", import.meta.url), "utf8");
 const sharedReceipt = readFileSync(new URL("../components/office/receipts/TenantPaymentReceipt.tsx", import.meta.url), "utf8");
+const receiptPrintPage = readFileSync(new URL("../app/receipt-print/page.tsx", import.meta.url), "utf8");
 const receiptStyles = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 
 test("payment receipt schema prevents duplicate receipts per transaction", () => {
@@ -117,7 +118,30 @@ test("receipt PDF export targets only the dedicated receipt root", () => {
   assert.doesNotMatch(sharedReceipt, /html2canvas\(document\.body/);
 });
 
-test("receipt print renders a clean receipt-only thermal iframe", () => {
+test("receipt print opens a saved receipt-only thermal document", () => {
+  assert.match(sharedReceipt, /printSavedReceiptDocument/);
+  assert.match(sharedReceipt, /\/receipt-print\?\$\{params\.toString\(\)\}/);
+  assert.match(sharedReceipt, /receipt: receipt\.id/);
+  assert.match(sharedReceipt, /profile: settings\.profile/);
+  assert.match(sharedReceipt, /paper: String\(settings\.widthMm\)/);
+  assert.match(receiptHistory, /printTenantPaymentReceipt\(closeAfterPrint \? \(\) => setSelected\(null\) : undefined, receipt\)/);
+  assert.match(paymentEntry, /printTenantPaymentReceipt\(onClose, receipt\)/);
+  assert.match(receiptPrintPage, /export const dynamic = "force-dynamic"/);
+  assert.match(receiptPrintPage, /TenantPaymentReceiptSlip receipt=\{receipt\}/);
+  assert.match(receiptPrintPage, /from\("payment_receipts"\)/);
+  assert.match(receiptPrintPage, /receiptOnlyPrintCss\(widthMm\)/);
+  assert.match(receiptPrintPage, /@page \{\s*\n\s*size: \$\{widthMm\}mm auto;/);
+  assert.match(receiptPrintPage, /body > :not\(#tenant-receipt-print-root\)/);
+  assert.match(receiptPrintPage, /font-weight: 600/);
+  assert.match(receiptPrintPage, /color: #000 !important/);
+  assert.match(receiptPrintPage, /widthMm === 58 \? 50 : 72/);
+  assert.match(receiptPrintPage, /widthMm === 58 \? 26 : 28/);
+  assert.match(receiptPrintPage, /document\.fonts\.ready/);
+  assert.match(receiptPrintPage, /requestAnimationFrame/);
+  assert.doesNotMatch(receiptPrintPage, /OfficeLayout/);
+});
+
+test("receipt print retains a fallback clean receipt-only popup for mounted receipts", () => {
   assert.match(sharedReceipt, /window\.open\("", printWindowName/);
   assert.match(sharedReceipt, /extractReceiptRootHtml/);
   assert.match(sharedReceipt, /Receipt print container not found/);

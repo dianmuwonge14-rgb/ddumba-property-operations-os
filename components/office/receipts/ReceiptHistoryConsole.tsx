@@ -66,7 +66,7 @@ export default function ReceiptHistoryConsole({ error, receipts }: Props) {
     const printReceipt = async (receipt: ReceiptHistoryItem, channel: "download_pdf" | "print", closeAfterPrint = false) => {
         void logReceiptPrintOrDownload({ channel, receiptId: receipt.id });
         if (channel === "print") {
-            await printTenantPaymentReceipt(closeAfterPrint ? () => setSelected(null) : undefined);
+            await printTenantPaymentReceipt(closeAfterPrint ? () => setSelected(null) : undefined, receipt);
             return;
         }
         await downloadTenantPaymentReceiptPdf(`${receipt.receiptNumber}.pdf`);

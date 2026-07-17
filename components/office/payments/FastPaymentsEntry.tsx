@@ -1156,7 +1156,7 @@ function ReceiptConfirmationModal({
     const printReceipt = () => {
         startReceiptTransition(async () => {
             await logReceiptPrintOrDownload({ channel: "print", receiptId: receipt.id }).catch(() => null);
-            printTenantPaymentReceipt(onClose);
+            printTenantPaymentReceipt(onClose, receipt);
         });
     };
     const downloadPdf = () => {

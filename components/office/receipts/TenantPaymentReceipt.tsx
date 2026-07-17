@@ -225,7 +225,11 @@ function expectedPrinterModel(settings: Pick<ReceiptPrinterSettings, "profile" |
     return "Xprinter XP-N260H";
 }
 
-export async function printTenantPaymentReceipt(afterPrint?: () => void) {
+export async function printTenantPaymentReceipt(afterPrint?: () => void, receipt?: TenantReceiptViewModel, settings?: ReceiptPrinterSettings) {
+    if (receipt) {
+        printSavedReceiptDocument(receipt, settings ?? readPrinterSettings(receipt), afterPrint);
+        return;
+    }
     const exportRoot = document.getElementById(RECEIPT_EXPORT_ROOT_ID);
     if (!exportRoot) {
         window.alert("Receipt could not be printed because the receipt export area is not ready.");
@@ -233,6 +237,23 @@ export async function printTenantPaymentReceipt(afterPrint?: () => void) {
     }
     const paperWidthMm = receiptPaperWidthMm();
     await printReceiptMarkup(exportRoot.outerHTML, paperWidthMm, printableReceiptWidthMm(paperWidthMm), afterPrint);
+}
+
+function printSavedReceiptDocument(receipt: TenantReceiptViewModel, settings: ReceiptPrinterSettings, afterPrint?: () => void) {
+    const params = new URLSearchParams({
+        autoprint: "1",
+        job: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        paper: String(settings.widthMm),
+        profile: settings.profile,
+        receipt: receipt.id,
+    });
+    const printWindowName = `ddumba-receipt-${receipt.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const printWindow = window.open(`/receipt-print?${params.toString()}`, printWindowName, settings.widthMm === 58 ? "width=320,height=640" : "width=420,height=800");
+    if (!printWindow) {
+        window.alert("Printing was blocked. Allow pop-ups for Ddumba OS and try again.");
+        return;
+    }
+    window.setTimeout(() => afterPrint?.(), 1200);
 }
 
 async function printReceiptMarkup(receiptHtml: string, paperWidthMm: 58 | 80, printableWidthMm: 48 | 72, afterPrint?: () => void) {
@@ -388,7 +409,7 @@ function receiptPaperWidthMm(): 58 | 80 {
         ?? window.localStorage.getItem("tenantReceiptPaperWidthMm")
         ?? "";
     const profile = window.localStorage.getItem("ddumba.receiptPrinterProfile");
-    if (profile === "rongta58") return 58;
+    if (profile === "rongta58" || profile === "rpp02n58") return 58;
     return configured.trim() === "58" ? 58 : 80;
 }
 
@@ -1174,16 +1195,16 @@ export function TenantPaymentReceiptModal({
     };
 
     const testBrowserPrint = async (forcedSettings = printerSettings) => {
-        setPrinterMessage(`Preparing ${forcedSettings.widthMm === 58 ? "58mm MP-58N" : "POS 80"} browser print test...`);
+        setPrinterMessage(`Preparing selected receipt as a ${forcedSettings.widthMm === 58 ? "58mm RPP02N/MP-58N" : "POS 80"} receipt-only print document...`);
         setIsPreparingPrint(true);
         setPrintAttemptNumber((attempt) => attempt + 1);
         setLatestPrintRequestAt(new Date().toLocaleString("en-UG", { timeZone: "Africa/Kampala" }));
         setLocalConfirmationStatus("Browser test print dialog opening");
         try {
             savePrinterSettings(receipt, forcedSettings);
-            await printTenantReceiptTest(receipt, forcedSettings);
+            await printTenantPaymentReceipt(undefined, receipt, forcedSettings);
             setLocalConfirmationStatus("Browser test print request opened");
-            setPrinterMessage(`${forcedSettings.widthMm === 58 ? "58mm mobile" : "POS-80"} test print dialog opened. ${printerDestinationInstruction(forcedSettings)}`);
+            setPrinterMessage(`${forcedSettings.widthMm === 58 ? "58mm mobile" : "POS-80"} receipt-only print document opened. ${printerDestinationInstruction(forcedSettings)}`);
         } catch (error) {
             setLocalConfirmationStatus("Browser test print failed before Windows queue");
             setPrinterMessage(error instanceof Error ? error.message : "Test receipt could not be prepared. Reopen the receipt and try again.");
