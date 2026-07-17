@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { upsertTenantRentSponsor } from "@/app/actions/collections";
 import { requestRoomRentChange } from "@/app/actions/room-rent";
 import { updateTenantContact, vacateTenant } from "@/app/actions/tenants";
+import TenantBillingDateControl from "@/components/office/shared/TenantBillingDateControl";
 import type { CollectionTenantResult } from "@/lib/collections/types";
 
 type Props = {
@@ -289,6 +290,19 @@ export default function TenantSnapshot({ tenantContext, canEdit = true, isAdmin 
                 ) : message ? (
                     <p className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">{message}</p>
                 ) : null}
+
+                <TenantBillingDateControl
+                    billingDay={tenantContext.billingAnniversaryDay}
+                    canEdit={canEdit}
+                    currentPeriod={tenantContext.currentRentPeriod}
+                    lastChargeDate={tenantContext.lastRentChargeDate}
+                    leaseId={lease?.id ?? null}
+                    monthlyRent={monthlyRent}
+                    nextChargeDate={tenantContext.nextRentChargeDate}
+                    outstandingBalance={outstandingBalance}
+                    roomId={room?.id ?? null}
+                    tenantId={tenant.id}
+                />
 
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                     <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">

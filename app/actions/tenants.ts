@@ -59,6 +59,10 @@ type LandlordRow = Database["public"]["Tables"]["landlords"]["Row"];
 type OfficeRow = Database["public"]["Tables"]["offices"]["Row"];
 type AuditJson = Database["public"]["Tables"]["audit_logs"]["Insert"]["after_data"];
 
+function billingDayFromDate(value: string) {
+    return Math.max(1, Math.min(31, Number(value.slice(8, 10)) || 1));
+}
+
 export async function updateTenantContact(input: UpdateTenantContactInput) {
     const context = await requirePermission("collections.manage");
     if (!context.activeCompany?.id) throw new Error("Active company is required.");
@@ -664,6 +668,7 @@ export async function assignReplacementTenantToRoom(input: AssignReplacementTena
         .from("tenants")
         .insert({
             balance: 0,
+            billing_day: billingDayFromDate(startDate),
             company_id: companyId,
             full_name: fullName,
             monthly_rent: monthlyRent,
@@ -692,7 +697,7 @@ export async function assignReplacementTenantToRoom(input: AssignReplacementTena
             start_date: startDate,
             monthly_rent: monthlyRent,
             deposit_amount: 0,
-            billing_day: 1,
+            billing_day: billingDayFromDate(startDate),
             status: "active",
         })
         .select("*")

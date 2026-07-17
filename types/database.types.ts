@@ -9387,6 +9387,7 @@ export type Database = {
         Row: {
           alternative_phone: string | null
           balance: number | null
+          billing_day: number | null
           company_id: string | null
           created_at: string | null
           full_name: string | null
@@ -9411,6 +9412,7 @@ export type Database = {
         Insert: {
           alternative_phone?: string | null
           balance?: number | null
+          billing_day?: number | null
           company_id?: string | null
           created_at?: string | null
           full_name?: string | null
@@ -9435,6 +9437,7 @@ export type Database = {
         Update: {
           alternative_phone?: string | null
           balance?: number | null
+          billing_day?: number | null
           company_id?: string | null
           created_at?: string | null
           full_name?: string | null

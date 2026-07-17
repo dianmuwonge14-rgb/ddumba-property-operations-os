@@ -61,6 +61,7 @@ export type CollectionTenantResult = {
     monthlyRent: number;
     billingAnniversaryDay?: number | null;
     currentRentPeriod?: { start: string; end: string } | null;
+    lastRentChargeDate?: string | null;
     nextRentChargeDate?: string | null;
     currentMonthPaid: number;
     advanceRentBalance: number;

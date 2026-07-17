@@ -633,6 +633,7 @@ async function replaceTenantFromPaymentsEntryUnsafe(input: ReplaceTenantFromPaym
     await closeStaleActiveRoomOccupancy(supabase, { actorId, companyId, moveInDate, officeId, roomId });
     const tenantPayload = {
         balance: openingBalance,
+        billing_day: billingDay,
         company_id: companyId,
         full_name: newTenantName,
         monthly_rent: monthlyRent,
@@ -888,6 +889,7 @@ async function markRoomOccupiedUnsafe(input: MarkRoomOccupiedInput) {
     await closeStaleActiveRoomOccupancy(supabase, { actorId, companyId, moveInDate, officeId: room.office_id, roomId: room.id });
     const tenantPayload = {
         balance: openingBalance,
+        billing_day: billingDay,
         company_id: companyId,
         full_name: tenantName,
         monthly_rent: monthlyRent,

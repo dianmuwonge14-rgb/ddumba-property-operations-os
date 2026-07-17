@@ -10,6 +10,8 @@ import { replaceTenantFromPaymentsEntry } from "@/app/actions/room-occupancy";
 import { vacateTenant } from "@/app/actions/tenants";
 import { downloadTenantPaymentReceiptPdf, printTenantPaymentReceipt, TenantPaymentReceiptModal } from "@/components/office/receipts/TenantPaymentReceipt";
 import TenantContactCard from "@/components/office/shared/TenantContactCard";
+import TenantBillingDateControl from "@/components/office/shared/TenantBillingDateControl";
+import RentDueIntelligencePanel from "@/components/office/payments/RentDueIntelligencePanel";
 import type { AdvanceRentAssistantItem, CollectionTenantResult, FastPaymentRecentItem, FastPaymentRecentTotals } from "@/lib/collections/types";
 import type { Company, Office, UserProfile } from "@/lib/auth/types";
 import type { PaymentReceiptSummary } from "@/lib/receipts/payment-receipts";
@@ -959,6 +961,23 @@ export default function FastPaymentsEntry({
 
                     {selectedTenant ? (
                         <div className="mt-4">
+                            <TenantBillingDateControl
+                                billingDay={selectedTenant.billingAnniversaryDay}
+                                canEdit={canPostPayments && !selectedOfficeMismatch}
+                                currentPeriod={selectedTenant.currentRentPeriod}
+                                lastChargeDate={selectedTenant.lastRentChargeDate}
+                                leaseId={selectedTenant.lease?.id ?? null}
+                                monthlyRent={selectedTenant.monthlyRent}
+                                nextChargeDate={selectedTenant.nextRentChargeDate}
+                                outstandingBalance={liveOutstandingBalance(selectedTenant)}
+                                roomId={selectedTenant.room?.id ?? null}
+                                tenantId={selectedTenant.tenant.id}
+                            />
+                        </div>
+                    ) : null}
+
+                    {selectedTenant ? (
+                        <div className="mt-4">
                             <TenantContactCard
                                 landlordName={selectedTenant.landlord?.full_name}
                                 officeName={selectedTenant.office?.office_name ?? selectedTenant.office?.name}
@@ -1037,6 +1056,8 @@ export default function FastPaymentsEntry({
                         <span className="text-xs font-bold text-slate-500">Press Enter in Amount Paid to record.</span>
                     </div>
                 </section>
+
+                <RentDueIntelligencePanel />
 
                 <section className="mx-auto mt-5 max-w-6xl space-y-4">
 	                    <RecordedPaymentsTable
