@@ -6,6 +6,7 @@ const centreSource = readFileSync(new URL("../components/office/admin/OfficeMerg
 const actionSource = readFileSync(new URL("../app/actions/office-merge.ts", import.meta.url), "utf8");
 const routeSource = readFileSync(new URL("../app/api/admin/office-merge/route.ts", import.meta.url), "utf8");
 const migrationSource = readFileSync(new URL("../supabase/upgrade_migrations/0208_office_merge_transaction_rpc.sql", import.meta.url), "utf8");
+const atomicMigrationSource = readFileSync(new URL("../supabase/upgrade_migrations/0212_atomic_multi_office_merge.sql", import.meta.url), "utf8");
 
 test("office merge UI creates a new merged office with source office multi-select", () => {
   assert.match(centreSource, /sourceOfficeIds/);
@@ -141,4 +142,19 @@ test("office merge RPC checks conflicts and moves office scoped rows dynamically
   assert.match(migrationSource, /update public\.%I set %s where %s/);
   assert.match(migrationSource, /transferred_counts/);
   assert.match(migrationSource, /accounts_reassigned/);
+});
+
+test("atomic multi-office merge RPC verifies totals and leaves no source assignments", () => {
+  assert.match(atomicMigrationSource, /create or replace function public\.ddumba_merge_offices_atomic/);
+  assert.match(atomicMigrationSource, /create or replace function public\.ddumba_office_merge_snapshot/);
+  assert.match(atomicMigrationSource, /for update/);
+  assert.match(atomicMigrationSource, /p_source_office_ids uuid\[\]/);
+  assert.match(atomicMigrationSource, /crypt\(p_pin, gen_salt\('bf'\)\)/);
+  assert.match(atomicMigrationSource, /admin_visible_pin = null/);
+  assert.match(atomicMigrationSource, /default_office_id = v_destination_office_id/);
+  assert.match(atomicMigrationSource, /Post-merge verification found/);
+  assert.match(atomicMigrationSource, /Financial reconciliation failed/);
+  assert.match(atomicMigrationSource, /source_office_archived_after_merge/);
+  assert.match(atomicMigrationSource, /status = 'completed'/);
+  assert.doesNotMatch(atomicMigrationSource, /admin_visible_pin.*office_merge_batches/i);
 });
