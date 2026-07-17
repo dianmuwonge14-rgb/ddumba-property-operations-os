@@ -74,6 +74,60 @@ function moveInRequestId() {
     return `movein_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function normalizeMoveInText(value: unknown) {
+    return String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+async function getExistingMatchingOccupancy(
+    supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+    params: {
+        companyId: string;
+        moveInDate: string;
+        monthlyRent: number;
+        roomId: string;
+        tenantName: string;
+        tenantPhone?: string | null;
+    },
+) {
+    const { data: tenants, error: tenantsError } = await supabase
+        .from("tenants")
+        .select("*")
+        .eq("company_id", params.companyId)
+        .eq("room_id", params.roomId)
+        .eq("status", "active")
+        .order("created_at", { ascending: false })
+        .limit(5);
+    if (tenantsError) throw new Error(tenantsError.message);
+
+    const expectedName = normalizeMoveInText(params.tenantName);
+    const expectedPhone = normalizeMoveInText(params.tenantPhone);
+    const tenant = (tenants ?? []).find((row) => {
+        const nameMatches = normalizeMoveInText(row.full_name) === expectedName;
+        const phone = normalizeMoveInText(row.phone);
+        const phoneMatches = !expectedPhone || !phone || phone === expectedPhone;
+        const rentMatches = Math.round(Number(row.monthly_rent ?? 0)) === Math.round(params.monthlyRent);
+        return nameMatches && phoneMatches && rentMatches;
+    });
+    if (!tenant) return null;
+
+    const { data: lease, error: leaseError } = await supabase
+        .from("leases")
+        .select("*")
+        .eq("company_id", params.companyId)
+        .eq("room_id", params.roomId)
+        .eq("tenant_id", tenant.id)
+        .eq("status", "active")
+        .maybeSingle();
+    if (leaseError) throw new Error(leaseError.message);
+    if (!lease) return null;
+
+    const leaseStartMatches = !lease.start_date || lease.start_date === params.moveInDate;
+    const leaseRentMatches = Math.round(Number(lease.monthly_rent ?? 0)) === Math.round(params.monthlyRent);
+    if (!leaseStartMatches || !leaseRentMatches) return null;
+
+    return { tenant, lease };
+}
+
 function safeMoveInError(error: unknown) {
     const message = error instanceof Error ? error.message : String(error ?? "");
     if (/duplicate key|uniq_active_lease_per_room|active.*lease|active.*occup/i.test(message)) {
@@ -802,6 +856,23 @@ async function markRoomOccupiedUnsafe(input: MarkRoomOccupiedInput) {
 
     const currentStatus = String(room.status ?? "").toLowerCase();
     if (currentStatus !== "vacant") {
+        const existingOccupancy = await getExistingMatchingOccupancy(supabase, {
+            companyId,
+            moveInDate,
+            monthlyRent,
+            roomId: room.id,
+            tenantName,
+            tenantPhone: input.tenantPhone,
+        });
+        if (existingOccupancy) {
+            return {
+                collection: null,
+                lease: existingOccupancy.lease,
+                openingBalance: Math.max(0, Number(existingOccupancy.tenant.balance ?? room.outstanding_balance ?? 0)),
+                room,
+                tenant: existingOccupancy.tenant,
+            };
+        }
         throw new Error("Only vacant rooms can be marked occupied from this workflow.");
     }
 

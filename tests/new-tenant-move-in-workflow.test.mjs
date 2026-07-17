@@ -240,3 +240,13 @@ test("new tenant move-in closes stale active room occupancy before creating a ne
   assert.match(roomOccupancyAction, /status: "vacated"/);
   assert.match(roomOccupancyAction, /stale_room_occupancy_closed/);
 });
+
+test("new tenant move-in retry returns success when the same tenant already occupies the room", () => {
+  assert.match(roomOccupancyAction, /getExistingMatchingOccupancy/);
+  assert.match(roomOccupancyAction, /\.eq\("room_id", params\.roomId\)/);
+  assert.match(roomOccupancyAction, /\.eq\("status", "active"\)/);
+  assert.match(roomOccupancyAction, /normalizeMoveInText\(row\.full_name\) === expectedName/);
+  assert.match(roomOccupancyAction, /leaseStartMatches/);
+  assert.match(roomOccupancyAction, /if \(existingOccupancy\) \{/);
+  assert.match(roomOccupancyAction, /tenant: existingOccupancy\.tenant/);
+});
