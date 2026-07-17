@@ -524,157 +524,85 @@ export async function addRoomToLandlord(input: AddLandlordRoomInput) {
     const context = await activeAdminWriteContext();
     const landlord = await getLandlordInCompany(input.landlordId);
     const supabase = await createSupabaseServerClient();
+    const db = supabase as unknown as LooseDb;
     const companyId = context.activeCompany!.id;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
-    const now = new Date().toISOString();
     const roomNumber = input.roomNumber.trim();
     const monthlyRent = Number(input.monthlyRent);
+    const openingOutstanding = Number(input.openingOutstanding ?? 0);
     const startDate = normalizeDateInput(input.startDate, "Room start date is required.");
 
     if (!roomNumber) throw new Error("Room number is required.");
     if (!input.officeId) throw new Error("Office is required.");
     if (!Number.isFinite(monthlyRent) || monthlyRent < 0) throw new Error("Monthly rent must be a valid amount.");
+    if (!Number.isFinite(openingOutstanding) || openingOutstanding < 0) throw new Error("Opening outstanding must be zero or a valid positive amount.");
+    if (!db.rpc) throw new Error("Canonical room creation service is not available. Apply migration 0213_canonical_landlord_room_creation.sql.");
 
-    const { data: office, error: officeError } = await supabase
-        .from("offices")
-        .select("*")
-        .eq("id", input.officeId)
-        .eq("company_id", companyId)
-        .maybeSingle();
-    if (officeError) throw new Error(officeError.message);
-    if (!office) throw new Error("Office not found.");
-
-    const property = await resolveRoomProperty({
-        companyId,
-        input,
-        landlordId: landlord.id,
-        now,
-        supabase,
-    });
-
-    const { data: existingRooms, error: existingError } = await supabase
-        .from("rooms")
-        .select("*")
-        .eq("company_id", companyId)
-        .eq("office_id", input.officeId)
-        .eq("property_id", property.id)
-        .ilike("room_number", roomNumber);
-    if (existingError) throw new Error(existingError.message);
-
-    const exactRoom = (existingRooms ?? []).find((room) => String(room.room_number ?? "").trim().toLowerCase() === roomNumber.toLowerCase());
-    const payable = getAddRoomPayableState({ startDate, status: input.status });
     const roomPayload = {
-        company_id: companyId,
-        effective_start_date: startDate,
-        explicitly_payable: false,
-        floor: input.roomLocation?.trim() || null,
-        landlord_id: landlord.id,
-        monthly_rent: monthlyRent,
-        office_id: input.officeId,
-        outstanding_balance: input.status === "occupied" ? monthlyRent : 0,
-        payable_notes: payable.reason,
-        property_id: property.id,
-        room_number: roomNumber,
+        roomNumber,
+        monthlyRent,
+        startDate,
+        propertyId: input.propertyId || null,
+        propertyLocation: input.propertyLocation || null,
+        roomLocation: input.roomLocation || null,
         status: input.status,
-        updated_at: now,
+        openingOutstanding,
+        tenantName: input.tenantName || null,
+        tenantPhone: input.tenantPhone || null,
+        notes: input.notes || null,
     };
-    const roomDb = supabase as unknown as LooseDb;
 
-    const { data: room, error: roomError } = exactRoom
-        ? await roomDb
-            .from("rooms")
-            .update(roomPayload)
-            .eq("id", exactRoom.id)
-            .select("*")
-            .single()
-        : await roomDb
-            .from("rooms")
-            .insert({ ...roomPayload, created_at: now })
-            .select("*")
-            .single();
-    if (roomError) throw new Error(roomError.message);
-
-    let tenant: Record<string, unknown> | null = null;
-    let lease: Record<string, unknown> | null = null;
-    if (input.status === "occupied") {
-        const tenantName = input.tenantName?.trim() || "Unnamed Tenant";
-        const { data: existingTenant, error: tenantLookupError } = await supabase
-            .from("tenants")
-            .select("*")
-            .eq("company_id", companyId)
-            .eq("room_id", room.id)
-            .eq("status", "active")
-            .maybeSingle();
-        if (tenantLookupError) throw new Error(tenantLookupError.message);
-
-        const tenantPayload = {
-            balance: monthlyRent,
-            company_id: companyId,
-            full_name: tenantName,
-            monthly_rent: monthlyRent,
-            office_id: input.officeId,
-            phone: input.tenantPhone?.trim() || null,
-            property_id: property.id,
-            room_id: room.id,
-            status: "active",
-            tenant_reliability_score: 75,
-            tenant_risk_level: "Low Risk",
-            tenant_score_reason: "Tenant created during landlord room management.",
-            tenant_score_updated_at: now,
-            tenant_type: "residential",
-            updated_at: now,
-        };
-
-        const tenantWrite = existingTenant
-            ? await supabase.from("tenants").update(tenantPayload).eq("id", existingTenant.id).select("*").single()
-            : await supabase.from("tenants").insert({ ...tenantPayload, created_at: now }).select("*").single();
-        if (tenantWrite.error) throw new Error(tenantWrite.error.message);
-        tenant = tenantWrite.data;
-
-        const { data: existingLease, error: leaseLookupError } = await supabase
-            .from("leases")
-            .select("*")
-            .eq("company_id", companyId)
-            .eq("room_id", room.id)
-            .eq("status", "active")
-            .maybeSingle();
-        if (leaseLookupError) throw new Error(leaseLookupError.message);
-
-        const leasePayload = {
-            company_id: companyId,
-            monthly_rent: monthlyRent,
-            office_id: input.officeId,
-            property_id: property.id,
-            room_id: room.id,
-            start_date: startDate,
-            status: "active",
-            tenant_id: String(tenant.id),
-            updated_at: now,
-        };
-
-        const leaseWrite = existingLease
-            ? await supabase.from("leases").update(leasePayload).eq("id", existingLease.id).select("*").single()
-            : await supabase.from("leases").insert(leasePayload).select("*").single();
-        if (leaseWrite.error) throw new Error(leaseWrite.error.message);
-        lease = leaseWrite.data;
+    const { data, error } = await db.rpc("ddumba_v1_create_landlord_room", {
+        p_company_id: companyId,
+        p_created_by: actorId,
+        p_landlord_id: landlord.id,
+        p_office_id: input.officeId,
+        p_room_payload: roomPayload,
+        p_source: "landlord_portfolio_add_room",
+    });
+    if (error) {
+        const message = error.message.includes("Could not find the function")
+            ? `Canonical room creation service is missing. Apply migration 0213_canonical_landlord_room_creation.sql. ${error.message}`
+            : error.message;
+        throw new Error(message);
     }
 
+    const result = (data ?? {}) as {
+        roomId?: string;
+        tenantId?: string | null;
+        leaseId?: string | null;
+        officeId?: string;
+        propertyId?: string;
+        roomNumber?: string;
+    };
+    if (!result.roomId) throw new Error("Room creation completed without returning a room ID. No UI state was updated.");
+
+    const { data: room, error: roomError } = await supabase.from("rooms").select("*").eq("id", result.roomId).single();
+    if (roomError) throw new Error(roomError.message);
+    const { data: tenant } = result.tenantId
+        ? await supabase.from("tenants").select("*").eq("id", result.tenantId).maybeSingle()
+        : { data: null };
+    const { data: lease } = result.leaseId
+        ? await supabase.from("leases").select("*").eq("id", result.leaseId).maybeSingle()
+        : { data: null };
+
     await logUserAction({
-        action: exactRoom ? "landlord_room_attached" : "landlord_room_added",
+        action: "landlord_room_added",
         entityType: "room",
         entityId: room.id,
         companyId,
-        officeId: input.officeId,
-        beforeData: jsonSafe(exactRoom),
+        officeId: result.officeId ?? input.officeId,
+        beforeData: jsonSafe(null),
         afterData: jsonSafe({
             room,
             tenant,
             lease,
             landlord,
             notes: input.notes ?? null,
-            payable_this_month: payable.payableThisMonth,
-            payable_reason: payable.reason,
+            requested_office_id: input.officeId,
+            resolved_office_id: result.officeId ?? input.officeId,
             start_date: startDate,
+            opening_outstanding: openingOutstanding,
             admin_user: actorId,
         }),
     });
@@ -683,7 +611,9 @@ export async function addRoomToLandlord(input: AddLandlordRoomInput) {
     revalidatePath("/office/admin");
     revalidatePath("/office/properties");
     revalidatePath("/office/dashboard");
-    return { room, tenant, lease, mode: exactRoom ? "attached" : "created" };
+    revalidatePath("/office/vacant-rooms");
+    revalidatePath("/office/payments");
+    return { room, tenant, lease, mode: "created" };
 }
 
 function normalizeDateInput(value: string | null | undefined, message: string) {
@@ -2072,6 +2002,7 @@ async function notifyPaymentDetailDecision(db: LooseDb, input: { companyId: stri
 
 type LooseDb = {
     from: (table: string) => any;
+    rpc?: (name: string, args?: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }>;
 };
 
 type LooseRecord = Record<string, unknown>;

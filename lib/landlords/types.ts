@@ -380,6 +380,7 @@ export type AddLandlordRoomInput = {
     propertyLocation?: string | null;
     roomLocation?: string | null;
     status: "occupied" | "vacant";
+    openingOutstanding?: number | null;
     tenantName?: string | null;
     tenantPhone?: string | null;
     notes?: string | null;

@@ -91,6 +91,7 @@ function LandlordProfile({
     const [roomForm, setRoomForm] = useState({
         roomNumber: "",
         monthlyRent: "",
+        openingOutstanding: "",
         startDate: new Date().toISOString().slice(0, 10),
         officeId: "",
         propertyId: "",
@@ -122,7 +123,7 @@ function LandlordProfile({
         setRoomRemovalReason("");
         setMonthlyPayableMessage(null);
         setPayablePaymentInputs({});
-        setRoomForm((current) => ({ ...current, roomNumber: "", monthlyRent: "", startDate: new Date().toISOString().slice(0, 10), tenantName: "", tenantPhone: "", notes: "" }));
+        setRoomForm((current) => ({ ...current, roomNumber: "", monthlyRent: "", openingOutstanding: "", startDate: new Date().toISOString().slice(0, 10), tenantName: "", tenantPhone: "", notes: "" }));
     }, [landlord?.id]);
 
     useEffect(() => {
@@ -261,6 +262,7 @@ function LandlordProfile({
                     landlordId: landlord.id,
                     roomNumber: roomForm.roomNumber,
                     monthlyRent: Number(roomForm.monthlyRent),
+                    openingOutstanding: Number(roomForm.openingOutstanding || 0),
                     startDate: roomForm.startDate,
                     officeId: roomForm.officeId,
                     propertyId: roomForm.propertyId || null,
@@ -272,7 +274,7 @@ function LandlordProfile({
                     notes: roomForm.notes || null,
                 });
                 setRoomMessage("Room added to landlord portfolio. Rent roll and settlement estimates refreshed.");
-                setRoomForm((current) => ({ ...current, roomNumber: "", monthlyRent: "", startDate: new Date().toISOString().slice(0, 10), tenantName: "", tenantPhone: "", notes: "" }));
+                setRoomForm((current) => ({ ...current, roomNumber: "", monthlyRent: "", openingOutstanding: "", startDate: new Date().toISOString().slice(0, 10), tenantName: "", tenantPhone: "", notes: "" }));
                 await onSaved();
             } catch (error) {
                 setRoomError(error instanceof Error ? error.message : "Unable to add room.");
@@ -702,6 +704,9 @@ function LandlordProfile({
                                     </Field>
                                     <Field label="Monthly Rent">
                                         <input value={roomForm.monthlyRent} onChange={(event) => updateRoomForm("monthlyRent", event.target.value)} inputMode="numeric" placeholder="70000" />
+                                    </Field>
+                                    <Field label="Opening Outstanding">
+                                        <input value={roomForm.openingOutstanding} onChange={(event) => updateRoomForm("openingOutstanding", event.target.value)} inputMode="numeric" placeholder="0" />
                                     </Field>
                                     <Field label="Start Date / Effective Date">
                                         <input value={roomForm.startDate} onChange={(event) => updateRoomForm("startDate", event.target.value)} type="date" required />
