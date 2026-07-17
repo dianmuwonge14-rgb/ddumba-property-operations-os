@@ -13,16 +13,21 @@ export type TenantReceiptViewModel = {
 };
 
 type ReceiptAction = () => void | Promise<void>;
+type ReceiptPrinterProfile = "pos80" | "rongta58" | "custom";
 type ReceiptPrinterSettings = {
     autoOpenPrint: boolean;
     autoPrintAfterPayment: boolean;
     copies: number;
     cutPaper: boolean;
     duplicateCopy: boolean;
+    feedAfterLines: number;
+    fontSize: "compact" | "standard";
     method: "browser" | "qz";
     preferredPrinterName: string;
+    printDensity: "normal" | "dark";
     printableWidthMm: 48 | 72;
     printQrCode: boolean;
+    profile: ReceiptPrinterProfile;
     widthMm: 58 | 80;
 };
 
@@ -34,6 +39,28 @@ const QZ_TRAY_SCRIPT_URLS = [
     "https://unpkg.com/qz-tray@2.2.4/qz-tray.js",
 ];
 const MM_TO_PT = 72 / 25.4;
+const PRINTER_PROFILES: Record<Exclude<ReceiptPrinterProfile, "custom">, Omit<ReceiptPrinterSettings, "autoOpenPrint" | "autoPrintAfterPayment" | "copies" | "duplicateCopy" | "method" | "printQrCode">> = {
+    pos80: {
+        cutPaper: true,
+        feedAfterLines: 3,
+        fontSize: "standard",
+        preferredPrinterName: "POS-80",
+        printDensity: "normal",
+        printableWidthMm: 72,
+        profile: "pos80",
+        widthMm: 80,
+    },
+    rongta58: {
+        cutPaper: false,
+        feedAfterLines: 3,
+        fontSize: "compact",
+        preferredPrinterName: "RONGTA 58mm Series Printer",
+        printDensity: "dark",
+        printableWidthMm: 48,
+        profile: "rongta58",
+        widthMm: 58,
+    },
+};
 
 declare global {
     interface Window {
@@ -90,13 +117,10 @@ function defaultPrinterSettings(): ReceiptPrinterSettings {
         autoOpenPrint: false,
         autoPrintAfterPayment: false,
         copies: 1,
-        cutPaper: true,
         duplicateCopy: false,
         method: "browser",
-        preferredPrinterName: "POS-80",
-        printableWidthMm: 72,
         printQrCode: true,
-        widthMm: 80,
+        ...PRINTER_PROFILES.pos80,
     };
 }
 
@@ -117,7 +141,11 @@ function readPrinterSettings(receipt: TenantReceiptViewModel): ReceiptPrinterSet
             ...defaultPrinterSettings(),
             ...parsed,
             copies: Math.max(1, Math.min(3, Number(parsed.copies ?? 1) || 1)),
+            feedAfterLines: Math.max(1, Math.min(8, Number(parsed.feedAfterLines ?? 3) || 3)),
+            fontSize: parsed.fontSize === "compact" ? "compact" : "standard",
+            printDensity: parsed.printDensity === "dark" ? "dark" : "normal",
             printableWidthMm: parsed.printableWidthMm === 48 ? 48 : 72,
+            profile: parsed.profile === "rongta58" || parsed.profile === "custom" ? parsed.profile : "pos80",
             widthMm: parsed.widthMm === 58 ? 58 : 80,
         };
     } catch {
@@ -128,6 +156,35 @@ function readPrinterSettings(receipt: TenantReceiptViewModel): ReceiptPrinterSet
 function savePrinterSettings(receipt: TenantReceiptViewModel, settings: ReceiptPrinterSettings) {
     window.localStorage.setItem(printerSettingsKey(receipt), JSON.stringify(settings));
     window.localStorage.setItem("ddumba.receiptPaperWidthMm", String(settings.widthMm));
+    window.localStorage.setItem("ddumba.receiptPrinterProfile", settings.profile);
+}
+
+function settingsForProfile(profile: ReceiptPrinterProfile, current: ReceiptPrinterSettings): ReceiptPrinterSettings {
+    if (profile === "custom") return { ...current, profile: "custom" };
+    return {
+        ...current,
+        ...PRINTER_PROFILES[profile],
+        profile,
+    };
+}
+
+function printerProfileName(settings: Pick<ReceiptPrinterSettings, "profile" | "widthMm">) {
+    if (settings.profile === "rongta58" || settings.widthMm === 58) return "RONGTA 58mm / MP-58N";
+    if (settings.profile === "custom") return "Custom printer";
+    return "POS-80 / Xprinter 80mm";
+}
+
+function printerDestinationInstruction(settings: Pick<ReceiptPrinterSettings, "profile" | "widthMm">) {
+    if (settings.profile === "rongta58" || settings.widthMm === 58) {
+        return "Select RONGTA 58mm Series Printer under Destination, confirm one sheet is shown, then press Print.";
+    }
+    return "Select POS-80 under Destination, confirm one sheet is shown, then press Print.";
+}
+
+function expectedPrinterModel(settings: Pick<ReceiptPrinterSettings, "profile" | "widthMm">) {
+    if (settings.profile === "rongta58" || settings.widthMm === 58) return "MP-58N mobile thermal printer";
+    if (settings.profile === "custom") return "Custom ESC/POS thermal printer";
+    return "Xprinter XP-N260H";
 }
 
 export async function printTenantPaymentReceipt(afterPrint?: () => void) {
@@ -203,6 +260,7 @@ async function printReceiptMarkup(receiptHtml: string, paperWidthMm: 58 | 80, pr
 export async function printTenantReceiptTest(receipt: TenantReceiptViewModel, settings?: ReceiptPrinterSettings) {
     const paperWidthMm = settings?.widthMm ?? receiptPaperWidthMm();
     const printableWidthMm = settings?.printableWidthMm ?? printableReceiptWidthMm(paperWidthMm);
+    const is58mm = paperWidthMm === 58;
     const now = new Date().toLocaleString("en-UG", {
         day: "2-digit",
         hour: "2-digit",
@@ -216,16 +274,20 @@ export async function printTenantReceiptTest(receipt: TenantReceiptViewModel, se
     <header class="receipt-section text-center">
       <div class="mx-auto flex h-9 w-9 items-center justify-center rounded-full border border-slate-900 bg-slate-950 text-[13px] font-black text-white">DD</div>
       <h3 class="mt-1.5 text-[15px] font-black leading-tight">DDUMBA OS</h3>
-      <p class="mt-2 border-y border-dashed border-slate-900 py-1 text-[10px] font-black uppercase tracking-[0.08em]">POS 80 TEST</p>
+      <p class="mt-2 border-y border-dashed border-slate-900 py-1 text-[10px] font-black uppercase tracking-[0.08em]">${is58mm ? "58MM PRINTER TEST" : "POS 80 TEST"}</p>
     </header>
     <section class="receipt-section">
+      <div class="receipt-row"><span class="receipt-label">Printer</span><span class="receipt-value">${is58mm ? "MP-58N" : "Xprinter XP-N260H"}</span></div>
       <div class="receipt-row"><span class="receipt-label">Office</span><span class="receipt-value">${escapeReceiptHtml(receipt.snapshot.officeName ?? "Current office")}</span></div>
       <div class="receipt-row"><span class="receipt-label">Date/Time</span><span class="receipt-value">${escapeReceiptHtml(now)}</span></div>
       <div class="receipt-row"><span class="receipt-label">Width</span><span class="receipt-value">${paperWidthMm}mm paper / ${printableWidthMm}mm content</span></div>
     </section>
     <section class="receipt-section receipt-amount-section text-center">
       <p class="text-[12px] font-black">PRINT TEST SUCCESSFUL</p>
-      <p class="receipt-muted mt-1 text-[9px] font-bold">If this prints as one receipt, browser printing is ready for POS 80.</p>
+      <p class="receipt-muted mt-1 text-[9px] font-bold">If this prints as one receipt, browser printing is ready for ${is58mm ? "RONGTA 58mm / MP-58N." : "POS 80."}</p>
+    </section>
+    <section class="receipt-section text-center">
+      <img class="receipt-qr mx-auto" alt="Printer test QR" src="https://api.qrserver.com/v1/create-qr-code/?size=96x96&margin=8&data=${encodeURIComponent(`DDUMBA ${is58mm ? "58MM" : "80MM"} PRINTER TEST ${now}`)}" />
     </section>
   </div>
 </article>`;
@@ -236,12 +298,22 @@ export async function downloadTenantPaymentReceiptPdf(fileName = "tenant-payment
     const source = document.getElementById(RECEIPT_EXPORT_ROOT_ID);
     if (!source) throw new Error("Receipt PDF could not be created because the receipt export area is not ready.");
     const paperWidthMm = receiptPaperWidthMm();
+    const printableWidthMm = printableReceiptWidthMm(paperWidthMm);
 
     const sandbox = document.createElement("div");
     sandbox.className = RECEIPT_PDF_EXPORT_CLASS;
     sandbox.setAttribute("aria-hidden", "true");
+    sandbox.style.width = `${paperWidthMm}mm`;
+    sandbox.style.maxWidth = `${paperWidthMm}mm`;
     const clone = source.cloneNode(true) as HTMLElement;
     clone.id = `${RECEIPT_EXPORT_ROOT_ID}-pdf-source`;
+    clone.style.width = `${printableWidthMm}mm`;
+    clone.style.maxWidth = `${printableWidthMm}mm`;
+    const slip = clone.querySelector<HTMLElement>(`#${RECEIPT_SCREEN_ID}`);
+    if (slip) {
+        slip.style.width = `${printableWidthMm}mm`;
+        slip.style.maxWidth = `${printableWidthMm}mm`;
+    }
     sandbox.appendChild(clone);
     document.body.appendChild(sandbox);
 
@@ -270,6 +342,8 @@ function receiptPaperWidthMm(): 58 | 80 {
     const configured = window.localStorage.getItem("ddumba.receiptPaperWidthMm")
         ?? window.localStorage.getItem("tenantReceiptPaperWidthMm")
         ?? "";
+    const profile = window.localStorage.getItem("ddumba.receiptPrinterProfile");
+    if (profile === "rongta58") return 58;
     return configured.trim() === "58" ? 58 : 80;
 }
 
@@ -402,6 +476,7 @@ function receiptExportStyleText() {
 
 function receiptPrintWindowStyle(paperWidthMm: 58 | 80, pageHeightMm?: number, printableWidthMm = printableReceiptWidthMm(paperWidthMm)) {
     const pageSize = pageHeightMm ? `${paperWidthMm}mm ${pageHeightMm}mm` : `${paperWidthMm}mm auto`;
+    const compact = paperWidthMm === 58;
     return `
 @page {
   size: ${pageSize};
@@ -447,7 +522,7 @@ body {
   width: ${printableWidthMm}mm;
   max-width: ${printableWidthMm}mm;
   margin: 0;
-  padding: ${paperWidthMm === 58 ? "2mm" : "2mm"};
+  padding: ${compact ? "2mm" : "2mm"};
   border: 0;
   border-radius: 0;
   box-shadow: none;
@@ -475,18 +550,18 @@ body {
 .receipt-section-title,
 .receipt-label {
   color: #475569;
-  font-size: 8.5px;
+  font-size: ${compact ? "7.6px" : "8.5px"};
   font-weight: 900;
   letter-spacing: 0.035em;
   text-transform: uppercase;
 }
 .receipt-row {
   display: grid;
-  grid-template-columns: minmax(0, 42%) minmax(0, 58%);
+  grid-template-columns: ${compact ? "minmax(0, 40%) minmax(0, 60%)" : "minmax(0, 42%) minmax(0, 58%)"};
   align-items: start;
-  gap: 1.4mm;
-  padding: 0.45mm 0;
-  font-size: 10px;
+  gap: ${compact ? "1mm" : "1.4mm"};
+  padding: ${compact ? "0.35mm 0" : "0.45mm 0"};
+  font-size: ${compact ? "8.8px" : "10px"};
 }
 .receipt-row-stacked {
   display: block;
@@ -509,10 +584,10 @@ body {
   font-weight: 950;
 }
 .receipt-money-row {
-  font-size: 10px;
+  font-size: ${compact ? "8.8px" : "10px"};
 }
 .receipt-money-value {
-  font-size: 10px;
+  font-size: ${compact ? "8.8px" : "10px"};
   letter-spacing: 0;
 }
 .receipt-money-row-highlight {
@@ -534,8 +609,8 @@ body {
 }
 .receipt-qr {
   display: block;
-  width: 22mm;
-  height: 22mm;
+  width: ${compact ? "24mm" : "22mm"};
+  height: ${compact ? "24mm" : "22mm"};
   object-fit: contain;
   padding: 1.5mm;
   border: 1px solid #0f172a;
@@ -703,13 +778,13 @@ async function printDirectlyWithQz(receipt: TenantReceiptViewModel, settings: Re
 
 async function printEscPosTestWithQz(receipt: TenantReceiptViewModel, settings: ReceiptPrinterSettings) {
     const qz = await getQzTray();
-    if (!qz) throw new Error("Direct thermal printing is not connected. Install and start QZ Tray on the computer connected to POS-80.");
-    if (!settings.preferredPrinterName.trim()) throw new Error("Select POS-80 or the installed Xprinter queue before direct test printing.");
+    if (!qz) throw new Error("Direct thermal printing is not connected. Install and start QZ Tray on the computer connected to the thermal printer.");
+    if (!settings.preferredPrinterName.trim()) throw new Error("Select POS-80 or RONGTA 58mm Series Printer before direct test printing.");
     await ensureQzConnected(qz);
     const config = qz.configs.create(settings.preferredPrinterName, {
         copies: Math.max(1, settings.copies),
         encoding: "CP437",
-        jobName: "DDUMBA POS-80 ESC/POS test",
+        jobName: settings.widthMm === 58 ? "DDUMBA MP-58N ESC/POS test" : "DDUMBA POS-80 ESC/POS test",
     });
     await qz.print(config, [{ data: buildEscPosTestReceipt(receipt, settings), format: "command", type: "raw" }]);
 }
@@ -717,76 +792,82 @@ async function printEscPosTestWithQz(receipt: TenantReceiptViewModel, settings: 
 function buildEscPosReceipt(receipt: TenantReceiptViewModel, settings: ReceiptPrinterSettings) {
     const snapshot = receipt.snapshot;
     const coverage = snapshot.coveragePeriods?.length ? snapshot.coveragePeriods : snapshot.coveragePeriod ? [{ amount: snapshot.amountApplied, label: snapshot.coveragePeriod, type: "coverage" }] : [];
+    const width = escPosLineWidth(settings);
     const lines = [
         escPosInit(),
+        escPosDensity(settings),
         escPosAlign("center"),
         escPosBold(true),
-        escPosLine(safeEscPos(snapshot.companyName) ?? "DDUMBA OS"),
-        escPosLine("TENANT PAYMENT RECEIPT"),
+        escPosLine(safeEscPos(snapshot.companyName) ?? "DDUMBA OS", width),
+        escPosLine("TENANT PAYMENT RECEIPT", width),
         escPosBold(false),
-        escPosLine("-".repeat(32)),
+        escPosLine("-".repeat(width), width),
         escPosAlign("left"),
-        escPosPair("Receipt", receipt.receiptNumber),
-        escPosPair("Date", formatDateTime(snapshot.paymentDateTime)),
-        escPosPair("Office", snapshot.officeName ?? "Office"),
-        escPosPair("Room", snapshot.roomNumber ?? "No room"),
-        escPosPair("Tenant", snapshot.tenantName ?? "Unnamed tenant"),
-        escPosPair("Phone", snapshot.tenantPhone ?? "No phone"),
-        escPosPair("Landlord", snapshot.landlordName ?? "No landlord"),
-        escPosLine("-".repeat(32)),
-        escPosPair("Monthly rent", money(snapshot.monthlyRent)),
-        escPosPair("Previous", money(snapshot.previousOutstandingBalance)),
-        escPosPair("To outstanding", money(snapshot.amountAppliedToOutstanding ?? 0)),
-        escPosPair("To current", money(snapshot.amountAppliedToCurrentRent ?? Math.max(0, snapshot.amountApplied - (snapshot.amountAppliedToOutstanding ?? 0)))),
-        escPosPair("Advance rent", money(snapshot.advanceAmount ?? snapshot.advanceBalance)),
+        escPosPair("Receipt", receipt.receiptNumber, width),
+        escPosPair("Date", formatDateTime(snapshot.paymentDateTime), width),
+        escPosPair("Office", snapshot.officeName ?? "Office", width),
+        escPosPair("Room", snapshot.roomNumber ?? "No room", width),
+        escPosPair("Tenant", snapshot.tenantName ?? "Unnamed tenant", width),
+        escPosPair("Phone", snapshot.tenantPhone ?? "No phone", width),
+        escPosPair("Landlord", snapshot.landlordName ?? "No landlord", width),
+        escPosLine("-".repeat(width), width),
+        escPosPair("Monthly rent", money(snapshot.monthlyRent), width),
+        escPosPair("Previous", money(snapshot.previousOutstandingBalance), width),
+        escPosPair("To outstanding", money(snapshot.amountAppliedToOutstanding ?? 0), width),
+        escPosPair("To current", money(snapshot.amountAppliedToCurrentRent ?? Math.max(0, snapshot.amountApplied - (snapshot.amountAppliedToOutstanding ?? 0))), width),
+        escPosPair("Advance rent", money(snapshot.advanceAmount ?? snapshot.advanceBalance), width),
         escPosBold(true),
-        escPosPair("Amount paid", money(snapshot.amountPaid)),
-        escPosPair("Remaining", money(snapshot.remainingOutstandingBalance)),
+        escPosPair("Amount paid", money(snapshot.amountPaid), width),
+        escPosPair("Remaining", money(snapshot.remainingOutstandingBalance), width),
         escPosBold(false),
-        escPosPair("Advance bal", money(snapshot.advanceBalance)),
-        escPosLine("-".repeat(32)),
+        escPosPair("Advance bal", money(snapshot.advanceBalance), width),
+        escPosLine("-".repeat(width), width),
     ];
     if (coverage.length) {
-        lines.push(escPosLine("COVERAGE"));
+        lines.push(escPosLine("COVERAGE", width));
         coverage.forEach((period, index) => {
-            lines.push(escPosLine(`${index + 1}. ${safeEscPos(period.label) ?? "Period"}`));
-            lines.push(escPosPair("Amount", money(period.amount)));
+            lines.push(escPosLine(`${index + 1}. ${safeEscPos(period.label) ?? "Period"}`, width));
+            lines.push(escPosPair("Amount", money(period.amount), width));
         });
-        lines.push(escPosLine("-".repeat(32)));
+        lines.push(escPosLine("-".repeat(width), width));
     }
     lines.push(
-        escPosPair("Method", snapshot.paymentMethod?.replaceAll("_", " ") ?? "Payment"),
-        escPosPair("Reference", snapshot.referenceNumber ?? "No reference"),
-        escPosPair("Recorded by", snapshot.recordedByName ?? "DDUMBA OS"),
-        escPosPair("Verification", receipt.verificationCode),
+        escPosPair("Method", snapshot.paymentMethod?.replaceAll("_", " ") ?? "Payment", width),
+        escPosPair("Reference", snapshot.referenceNumber ?? "No reference", width),
+        escPosPair("Recorded by", snapshot.recordedByName ?? "DDUMBA OS", width),
+        escPosPair("Verification", receipt.verificationCode, width),
     );
     if (settings.printQrCode) {
         lines.push(escPosAlign("center"), escPosQr(receiptVerificationUrl(receipt)), escPosAlign("left"));
     }
     lines.push(
         escPosAlign("center"),
-        escPosLine("Thank you for your payment"),
-        escPosLine("DDUMBA OS"),
-        escPosFeed(3),
+        escPosLine("Thank you for your payment", width),
+        escPosLine("DDUMBA OS", width),
+        escPosFeed(settings.feedAfterLines),
         settings.cutPaper ? escPosCut() : "",
     );
     return lines.join("");
 }
 
 function buildEscPosTestReceipt(receipt: TenantReceiptViewModel, settings: ReceiptPrinterSettings) {
+    const width = escPosLineWidth(settings);
+    const is58mm = settings.widthMm === 58;
     return [
         escPosInit(),
+        escPosDensity(settings),
         escPosAlign("center"),
         escPosBold(true),
-        escPosLine("DDUMBA OS"),
+        escPosLine("DDUMBA OS", width),
         escPosBold(false),
-        escPosLine("XPRINTER XP-N260H"),
-        escPosLine("POS-80 TEST"),
-        escPosLine("-".repeat(32)),
-        escPosLine("PRINT TEST SUCCESSFUL"),
-        escPosLine(safeEscPos(receipt.snapshot.officeName) ?? "Current office"),
-        escPosLine(`${settings.widthMm}mm paper / ${settings.printableWidthMm}mm content`),
-        escPosFeed(3),
+        escPosLine(is58mm ? "58MM PRINTER TEST" : "POS-80 TEST", width),
+        escPosLine(`Printer: ${is58mm ? "MP-58N" : "Xprinter XP-N260H"}`, width),
+        escPosLine("-".repeat(width), width),
+        escPosLine("PRINT TEST SUCCESSFUL", width),
+        escPosLine(safeEscPos(receipt.snapshot.officeName) ?? "Current office", width),
+        escPosLine(`${settings.widthMm}mm paper / ${settings.printableWidthMm}mm content`, width),
+        settings.printQrCode ? escPosQr(`DDUMBA ${is58mm ? "58MM" : "80MM"} PRINTER TEST`) : "",
+        escPosFeed(settings.feedAfterLines),
         settings.cutPaper ? escPosCut() : "",
     ].join("");
 }
@@ -801,13 +882,14 @@ function escPosBold(enabled: boolean) { return `\x1bE${enabled ? "\x01" : "\x00"
 function escPosAlign(mode: "left" | "center" | "right") { return `\x1ba${mode === "center" ? "\x01" : mode === "right" ? "\x02" : "\x00"}`; }
 function escPosFeed(lines: number) { return `\x1bd${String.fromCharCode(Math.max(0, Math.min(9, lines)))}`; }
 function escPosCut() { return "\x1dVA0"; }
-function escPosLine(value: string) { return `${wrapEscPos(safeEscPos(value) ?? "").join("\n")}\n`; }
-function escPosPair(label: string, value: string) {
+function escPosDensity(settings: ReceiptPrinterSettings) { return settings.printDensity === "dark" ? "\x1dE\x03" : "\x1dE\x00"; }
+function escPosLineWidth(settings: ReceiptPrinterSettings) { return settings.widthMm === 58 ? 24 : 32; }
+function escPosLine(value: string, width = 32) { return `${wrapEscPos(safeEscPos(value) ?? "", width).join("\n")}\n`; }
+function escPosPair(label: string, value: string, width = 32) {
     const left = safeEscPos(label) ?? "";
     const right = safeEscPos(value) ?? "";
-    const width = 32;
     if (left.length + right.length + 1 <= width) return `${left}${" ".repeat(width - left.length - right.length)}${right}\n`;
-    return `${left}\n${wrapEscPos(right).map((line) => `  ${line}`).join("\n")}\n`;
+    return `${left}\n${wrapEscPos(right, Math.max(12, width - 2)).map((line) => `  ${line}`).join("\n")}\n`;
 }
 function wrapEscPos(value: string, width = 32) {
     const text = safeEscPos(value) ?? "";
@@ -903,6 +985,23 @@ export function TenantPaymentReceiptModal({
         });
     }
 
+    function applyPrinterProfile(profile: ReceiptPrinterProfile) {
+        setPrinterSettings((current) => {
+            const next = settingsForProfile(profile, current);
+            savePrinterSettings(receipt, next);
+            return next;
+        });
+        setPrinterMessage(profile === "rongta58"
+            ? "RONGTA 58mm / MP-58N profile selected. Browser print will prepare a 58mm receipt; direct print will use compact ESC/POS without cutter by default."
+            : profile === "pos80"
+                ? "POS-80 / Xprinter 80mm profile selected. Browser print will prepare an 80mm receipt and direct print may use the cutter if supported."
+                : "Custom printer profile selected. Confirm paper width, printable width, cutter, density, and Windows printer label before printing.");
+    }
+
+    function settingsForWidth(widthMm: 58 | 80) {
+        return widthMm === 58 ? settingsForProfile("rongta58", printerSettings) : settingsForProfile("pos80", printerSettings);
+    }
+
     const handleBrowserPrint = async () => {
         setPrinterMessage("Preparing receipt...");
         setIsPreparingPrint(true);
@@ -913,7 +1012,7 @@ export function TenantPaymentReceiptModal({
             savePrinterSettings(receipt, printerSettings);
             await Promise.resolve(onPrint());
             setLocalConfirmationStatus("Print request opened; confirm Windows queue and paper output");
-            setPrinterMessage("Print request opened. Select POS-80 under Destination, do not select RONGTA S58mm, confirm one sheet, then press Print. Did POS-80 print the receipt?");
+            setPrinterMessage(`Print request opened. ${printerDestinationInstruction(printerSettings)} Did ${printerSettings.widthMm === 58 ? "RONGTA 58mm Series Printer" : "POS-80"} print the receipt?`);
         } catch (error) {
             setLocalConfirmationStatus("Browser print request failed before Windows queue");
             setPrinterMessage(error instanceof Error ? error.message : "Receipt could not be prepared. No physical print result was confirmed.");
@@ -928,7 +1027,15 @@ export function TenantPaymentReceiptModal({
             const printers = await qzTrayPrinters();
             setAvailablePrinters(printers);
             const hasPos80 = printers.some((printer) => /pos[-_\s]?80|xprinter|xp[-_\s]?n260h/i.test(printer));
-            setPrinterMessage(printers.length ? (hasPos80 ? "QZ Tray connected. POS-80/Xprinter-compatible queue detected; select it and save settings." : "QZ Tray connected, but POS-80 was not detected. Check Windows printer installation and USB port.") : "QZ Tray connected, but no printers were reported.");
+            const hasRongta58 = printers.some((printer) => /rongta|58mm|mp[-_\s]?58n|s58/i.test(printer));
+            setPrinterMessage(printers.length
+                ? [
+                    "QZ Tray connected.",
+                    hasPos80 ? "POS-80/Xprinter-compatible queue detected." : "POS-80 was not detected.",
+                    hasRongta58 ? "RONGTA 58mm/MP-58N-compatible queue detected." : "RONGTA 58mm Series Printer was not detected.",
+                    "Select the correct printer and save settings.",
+                ].join(" ")
+                : "QZ Tray connected, but no printers were reported.");
         } catch (error) {
             setAvailablePrinters([]);
             setPrinterMessage(error instanceof Error ? error.message : "Direct thermal printing is not connected. Use Browser Print or open Printer Settings.");
@@ -940,11 +1047,11 @@ export function TenantPaymentReceiptModal({
         setPrintAttemptNumber((attempt) => attempt + 1);
         setLatestPrintRequestAt(new Date().toLocaleString("en-UG", { timeZone: "Africa/Kampala" }));
         setLocalConfirmationStatus("Sending ESC/POS command through QZ Tray");
-        setPrinterMessage("Sending receipt to POS-80 through QZ Tray...");
+        setPrinterMessage(`Sending receipt to ${printerSettings.preferredPrinterName || printerProfileName(printerSettings)} through QZ Tray...`);
         try {
             await printDirectlyWithQz(receipt, printerSettings);
             setLocalConfirmationStatus("QZ accepted print command; confirm physical paper output");
-            setPrinterMessage("Print command accepted by QZ Tray. Confirm the POS-80 queue and physical receipt; the browser cannot prove paper output.");
+            setPrinterMessage(`Print command accepted by QZ Tray. Confirm the ${printerSettings.widthMm === 58 ? "RONGTA 58mm" : "POS-80"} queue and physical receipt; the browser cannot prove paper output.`);
         } catch (error) {
             setLocalConfirmationStatus("Direct print failed before printer acceptance");
             setPrinterMessage(error instanceof Error ? error.message : "Direct thermal printing failed. Use Browser Print or check Printer Settings.");
@@ -953,17 +1060,25 @@ export function TenantPaymentReceiptModal({
         }
     };
 
-    const testBrowserPrint = async () => {
-        setPrinterMessage("Preparing POS 80 browser print test...");
+    const handleSavedPrinterPrint = async () => {
+        if (printerSettings.method === "qz") {
+            await handleDirectPrint();
+            return;
+        }
+        await handleBrowserPrint();
+    };
+
+    const testBrowserPrint = async (forcedSettings = printerSettings) => {
+        setPrinterMessage(`Preparing ${forcedSettings.widthMm === 58 ? "58mm MP-58N" : "POS 80"} browser print test...`);
         setIsPreparingPrint(true);
         setPrintAttemptNumber((attempt) => attempt + 1);
         setLatestPrintRequestAt(new Date().toLocaleString("en-UG", { timeZone: "Africa/Kampala" }));
         setLocalConfirmationStatus("Browser test print dialog opening");
         try {
-            savePrinterSettings(receipt, printerSettings);
-            await printTenantReceiptTest(receipt, printerSettings);
+            savePrinterSettings(receipt, forcedSettings);
+            await printTenantReceiptTest(receipt, forcedSettings);
             setLocalConfirmationStatus("Browser test print request opened");
-            setPrinterMessage("POS-80 test print dialog opened. Select POS-80, not RONGTA S58mm, confirm one sheet, then press Print.");
+            setPrinterMessage(`${forcedSettings.widthMm === 58 ? "58mm mobile" : "POS-80"} test print dialog opened. ${printerDestinationInstruction(forcedSettings)}`);
         } catch (error) {
             setLocalConfirmationStatus("Browser test print failed before Windows queue");
             setPrinterMessage(error instanceof Error ? error.message : "Test receipt could not be prepared. Reopen the receipt and try again.");
@@ -972,16 +1087,16 @@ export function TenantPaymentReceiptModal({
         }
     };
 
-    const testDirectPrint = async () => {
-        setPrinterMessage("Sending ESC/POS test receipt to POS-80 through QZ Tray...");
+    const testDirectPrint = async (forcedSettings = printerSettings) => {
+        setPrinterMessage(`Sending ESC/POS test receipt to ${forcedSettings.preferredPrinterName || printerProfileName(forcedSettings)} through QZ Tray...`);
         setIsPreparingPrint(true);
         setPrintAttemptNumber((attempt) => attempt + 1);
         setLatestPrintRequestAt(new Date().toLocaleString("en-UG", { timeZone: "Africa/Kampala" }));
         setLocalConfirmationStatus("Sending ESC/POS test command");
         try {
-            await printEscPosTestWithQz(receipt, printerSettings);
+            await printEscPosTestWithQz(receipt, forcedSettings);
             setLocalConfirmationStatus("QZ accepted ESC/POS test command; confirm physical output");
-            setPrinterMessage("ESC/POS test command accepted by QZ Tray. Confirm POS-80 printed the Xprinter test receipt.");
+            setPrinterMessage(`ESC/POS test command accepted by QZ Tray. Confirm ${forcedSettings.widthMm === 58 ? "RONGTA 58mm printed the MP-58N test receipt" : "POS-80 printed the Xprinter test receipt"}.`);
         } catch (error) {
             setLocalConfirmationStatus("Direct ESC/POS test failed before printer acceptance");
             setPrinterMessage(error instanceof Error ? error.message : "Direct ESC/POS test failed. Use Printer Help to check QZ Tray, POS-80, and the USB driver.");
@@ -991,7 +1106,7 @@ export function TenantPaymentReceiptModal({
     };
 
     const openPrinterHelp = () => {
-        setPrinterMessage("Windows help for the Xprinter XP-N260H: open Settings > Bluetooth & devices > Printers & scanners; confirm POS-80 is Ready; cancel stuck queue jobs; do not use the RONGTA S58mm queue; confirm an Xprinter/80mm driver, USB port, 80mm paper, Windows test page, then return to Ddumba OS and use Test Print.");
+        setPrinterMessage("Windows help: for Xprinter XP-N260H choose POS-80 with 80mm paper. For MP-58N choose RONGTA 58mm Series Printer with 58mm paper. Open Settings > Bluetooth & devices > Printers & scanners, confirm the chosen queue is Ready, clear stuck jobs, then return to Ddumba OS and run the matching test print.");
     };
 
     const clearApplicationPrintState = () => {
@@ -1025,8 +1140,8 @@ export function TenantPaymentReceiptModal({
                                 <p className="mt-1 text-sm font-bold text-slate-500">{subtitle}</p>
                             </div>
                             <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">
-                                <button type="button" onClick={handleBrowserPrint} disabled={printDisabled || isPreparingPrint} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-3 py-2 text-xs font-black text-white disabled:opacity-50">
-                                    <Printer size={15} /> {isPreparingPrint ? "Preparing receipt..." : "Print with Browser"}
+                                <button type="button" onClick={handleSavedPrinterPrint} disabled={printDisabled || isPreparingPrint} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-3 py-2 text-xs font-black text-white disabled:opacity-50">
+                                    <Printer size={15} /> {isPreparingPrint ? "Preparing receipt..." : "Print with Saved Printer"}
                                 </button>
                                 <button type="button" onClick={handleDirectPrint} disabled={printDisabled || isPreparingPrint} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-violet-700 px-3 py-2 text-xs font-black text-white disabled:opacity-50">
                                     <Printer size={15} /> Print Directly
@@ -1039,13 +1154,16 @@ export function TenantPaymentReceiptModal({
                                         <Mail size={15} /> Send E-Receipt
                                     </button>
                                 ) : null}
+                                <button type="button" onClick={() => setShowPrinterSettings(true)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800">
+                                    Choose Printer
+                                </button>
                                 <button ref={closeButtonRef} type="button" onClick={onClose} className="receipt-close-button inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800">
                                     <X size={15} /> Close Receipt
                                 </button>
                             </div>
                         </div>
                         <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs font-bold leading-relaxed text-blue-950">
-                            Select <strong>POS-80</strong> under Destination. Do <strong>not</strong> select <strong>RONGTA S58mm</strong>. Confirm the preview shows <strong>one sheet</strong>, then press <strong>Print</strong>.
+                            {printerDestinationInstruction(printerSettings)} The browser controls the Destination list; Ddumba OS prepares the selected <strong>{printerSettings.widthMm}mm</strong> receipt.
                         </div>
                         <div className="mt-3 flex flex-wrap items-center gap-2">
                             <button type="button" onClick={() => setShowPrinterSettings((value) => !value)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800">
@@ -1053,6 +1171,7 @@ export function TenantPaymentReceiptModal({
                             </button>
                             <span className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-600">Width: {printerSettings.widthMm}mm</span>
                             <span className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-600">Printable: {printerSettings.printableWidthMm}mm</span>
+                            <span className="rounded-xl bg-indigo-50 px-3 py-2 text-xs font-black text-indigo-700">Profile: {printerProfileName(printerSettings)}</span>
                             {printerSettings.preferredPrinterName ? <span className="rounded-xl bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700">Preferred: {printerSettings.preferredPrinterName}</span> : null}
                         </div>
                         {showPrinterSettings ? (
@@ -1060,9 +1179,11 @@ export function TenantPaymentReceiptModal({
                                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-amber-950 md:col-span-2 lg:col-span-3">
                                     <p className="text-[11px] font-black uppercase tracking-[0.12em]">Printer Diagnostics</p>
                                     <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                                        <span>Configured label: <strong>{printerSettings.preferredPrinterName || "POS-80"}</strong></span>
-                                        <span>Expected model: <strong>Xprinter XP-N260H</strong></span>
+                                        <span>Printer profile: <strong>{printerProfileName(printerSettings)}</strong></span>
+                                        <span>Configured label: <strong>{printerSettings.preferredPrinterName || (printerSettings.widthMm === 58 ? "RONGTA 58mm Series Printer" : "POS-80")}</strong></span>
+                                        <span>Expected model: <strong>{expectedPrinterModel(printerSettings)}</strong></span>
                                         <span>Paper: <strong>{printerSettings.widthMm}mm</strong></span>
+                                        <span>Printable width: <strong>{printerSettings.printableWidthMm}mm</strong></span>
                                         <span>Method: <strong>{printerSettings.method === "qz" ? "QZ Tray Direct Print" : "Browser Print"}</strong></span>
                                         <span>Latest request: <strong>{latestPrintRequestAt ?? "None this session"}</strong></span>
                                         <span>Receipt ID: <strong>{receipt.id}</strong></span>
@@ -1070,6 +1191,14 @@ export function TenantPaymentReceiptModal({
                                         <span>Status: <strong>{localConfirmationStatus}</strong></span>
                                     </div>
                                 </div>
+                                <label className="grid gap-1 md:col-span-2 lg:col-span-1">
+                                    <span>Printer profile</span>
+                                    <select value={printerSettings.profile} onChange={(event) => applyPrinterProfile(event.target.value as ReceiptPrinterProfile)} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold">
+                                        <option value="pos80">POS-80 / Xprinter 80mm</option>
+                                        <option value="rongta58">RONGTA 58mm / MP-58N</option>
+                                        <option value="custom">Custom printer</option>
+                                    </select>
+                                </label>
                                 <label className="grid gap-1">
                                     <span>Printer method</span>
                                     <select value={printerSettings.method} onChange={(event) => updatePrinterSettings({ method: event.target.value === "qz" ? "qz" : "browser" })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold">
@@ -1079,25 +1208,46 @@ export function TenantPaymentReceiptModal({
                                 </label>
                                 <label className="grid gap-1">
                                     <span>Preferred printer label</span>
-                                    <input value={printerSettings.preferredPrinterName} onChange={(event) => updatePrinterSettings({ preferredPrinterName: event.target.value })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold" placeholder="POS-80" />
+                                    <input value={printerSettings.preferredPrinterName} onChange={(event) => updatePrinterSettings({ preferredPrinterName: event.target.value, profile: "custom" })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold" placeholder={printerSettings.widthMm === 58 ? "RONGTA 58mm Series Printer" : "POS-80"} />
                                 </label>
                                 <label className="grid gap-1">
                                     <span>Receipt width</span>
-                                    <select value={printerSettings.widthMm} onChange={(event) => updatePrinterSettings({ widthMm: event.target.value === "58" ? 58 : 80 })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold">
+                                    <select value={printerSettings.widthMm} onChange={(event) => {
+                                        const width = event.target.value === "58" ? 58 : 80;
+                                        updatePrinterSettings({ ...settingsForWidth(width), profile: width === 58 ? "rongta58" : "pos80" });
+                                    }} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold">
                                         <option value={80}>80mm</option>
                                         <option value={58}>58mm</option>
                                     </select>
                                 </label>
                                 <label className="grid gap-1">
                                     <span>Printable width</span>
-                                    <select value={printerSettings.printableWidthMm} onChange={(event) => updatePrinterSettings({ printableWidthMm: event.target.value === "48" ? 48 : 72 })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold">
+                                    <select value={printerSettings.printableWidthMm} onChange={(event) => updatePrinterSettings({ printableWidthMm: event.target.value === "48" ? 48 : 72, profile: "custom" })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold">
                                         <option value={72}>72mm for POS 80</option>
-                                        <option value={48}>48mm for 58mm printer</option>
+                                        <option value={48}>48mm for RONGTA 58mm</option>
                                     </select>
                                 </label>
                                 <label className="grid gap-1">
                                     <span>Copies</span>
                                     <input value={printerSettings.copies} onChange={(event) => updatePrinterSettings({ copies: Math.max(1, Math.min(3, Number(event.target.value) || 1)) })} type="number" min={1} max={3} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold" />
+                                </label>
+                                <label className="grid gap-1">
+                                    <span>Feed after printing</span>
+                                    <input value={printerSettings.feedAfterLines} onChange={(event) => updatePrinterSettings({ feedAfterLines: Math.max(1, Math.min(8, Number(event.target.value) || 3)) })} type="number" min={1} max={8} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold" />
+                                </label>
+                                <label className="grid gap-1">
+                                    <span>Print density</span>
+                                    <select value={printerSettings.printDensity} onChange={(event) => updatePrinterSettings({ printDensity: event.target.value === "dark" ? "dark" : "normal" })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold">
+                                        <option value="normal">Normal</option>
+                                        <option value="dark">Dark</option>
+                                    </select>
+                                </label>
+                                <label className="grid gap-1">
+                                    <span>Font size</span>
+                                    <select value={printerSettings.fontSize} onChange={(event) => updatePrinterSettings({ fontSize: event.target.value === "compact" ? "compact" : "standard" })} className="h-10 rounded-xl border border-slate-200 bg-white px-3 font-bold">
+                                        <option value="standard">Standard</option>
+                                        <option value="compact">Compact</option>
+                                    </select>
                                 </label>
                                 <label className="flex items-center gap-2 rounded-xl bg-white px-3 py-2"><input checked={printerSettings.autoOpenPrint} onChange={(event) => updatePrinterSettings({ autoOpenPrint: event.target.checked })} type="checkbox" /> Auto-open print after payment</label>
                                 <label className="flex items-center gap-2 rounded-xl bg-white px-3 py-2"><input checked={printerSettings.autoPrintAfterPayment} onChange={(event) => updatePrinterSettings({ autoPrintAfterPayment: event.target.checked })} type="checkbox" /> Auto-print after payment</label>
@@ -1111,18 +1261,19 @@ export function TenantPaymentReceiptModal({
                                     ))}
                                     <button type="button" onClick={testReceiptPreview} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Test Receipt Preview</button>
                                     <button type="button" onClick={() => { savePrinterSettings(receipt, printerSettings); setPrinterMessage("Printer settings saved for this office and browser."); }} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white">Save Printer Settings</button>
-                                    <button type="button" onClick={testBrowserPrint} className="rounded-xl bg-violet-700 px-3 py-2 text-xs font-black text-white">Open Browser Print Test</button>
-                                    <button type="button" onClick={testDirectPrint} className="rounded-xl bg-violet-900 px-3 py-2 text-xs font-black text-white">Direct ESC/POS Test</button>
-                                    <button type="button" onClick={() => { updatePrinterSettings({ method: "qz" }); setPrinterMessage("Switched to QZ Tray Direct Print. Use Detect Printers, select POS-80, then run Direct ESC/POS Test."); }} className="rounded-xl bg-indigo-700 px-3 py-2 text-xs font-black text-white">Switch to Direct Printing</button>
+                                    <button type="button" onClick={() => testBrowserPrint(settingsForProfile("pos80", printerSettings))} className="rounded-xl bg-violet-700 px-3 py-2 text-xs font-black text-white">Test POS-80 Receipt</button>
+                                    <button type="button" onClick={() => testBrowserPrint(settingsForProfile("rongta58", printerSettings))} className="rounded-xl bg-violet-700 px-3 py-2 text-xs font-black text-white">Test 58mm Mobile Receipt</button>
+                                    <button type="button" onClick={() => testDirectPrint(printerSettings)} className="rounded-xl bg-violet-900 px-3 py-2 text-xs font-black text-white">Direct ESC/POS Test</button>
+                                    <button type="button" onClick={() => { updatePrinterSettings({ method: "qz" }); setPrinterMessage(`Switched to QZ Tray Direct Print. Use Detect Printers, select ${printerSettings.widthMm === 58 ? "RONGTA 58mm Series Printer" : "POS-80"}, then run Direct ESC/POS Test.`); }} className="rounded-xl bg-indigo-700 px-3 py-2 text-xs font-black text-white">Switch to Direct Printing</button>
                                     <button type="button" onClick={openPrinterHelp} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Printing Help</button>
                                     <button type="button" onClick={clearApplicationPrintState} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Clear Application Print State</button>
                                     <button type="button" onClick={() => { const defaults = defaultPrinterSettings(); updatePrinterSettings(defaults); setAvailablePrinters([]); setPrinterMessage("Printer settings reset for this office and browser."); }} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Reset Settings</button>
                                 </div>
                             </div>
                         ) : null}
-                        {printerMessage?.includes("Did POS-80 print the receipt?") ? (
+                        {printerMessage?.includes("Did POS-80 print the receipt?") || printerMessage?.includes("Did RONGTA 58mm Series Printer print the receipt?") ? (
                             <div className="mt-3 flex flex-wrap gap-2">
-                                <button type="button" onClick={() => { setLocalConfirmationStatus("Office confirmed physical receipt output"); setPrinterMessage("Office confirmed POS-80 printed the receipt. Keep the printed receipt with tenant, office, collector, and audit records."); }} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white">Yes</button>
+                                <button type="button" onClick={() => { setLocalConfirmationStatus("Office confirmed physical receipt output"); setPrinterMessage(`Office confirmed ${printerSettings.widthMm === 58 ? "RONGTA 58mm" : "POS-80"} printed the receipt. Keep the printed receipt with tenant, office, collector, and audit records.`); }} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white">Yes</button>
                                 <button type="button" onClick={handleBrowserPrint} className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white">Print Again</button>
                                 <button type="button" onClick={handleDirectPrint} className="rounded-xl bg-violet-700 px-3 py-2 text-xs font-black text-white">Use Direct Print</button>
                                 <button type="button" onClick={openPrinterHelp} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Open Printer Help</button>

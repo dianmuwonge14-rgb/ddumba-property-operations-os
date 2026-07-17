@@ -160,6 +160,12 @@ body {
   box-shadow: none !important;
 }
 
+.receipt-pdf-export-sandbox[style*="58mm"] .tenant-receipt-export-root,
+.receipt-pdf-export-sandbox[style*="58mm"] .tenant-receipt-slip {
+  width: 48mm !important;
+  max-width: 48mm !important;
+}
+
 @media print {
   @page tenant-payment-receipt-page {
     size: 80mm auto;
