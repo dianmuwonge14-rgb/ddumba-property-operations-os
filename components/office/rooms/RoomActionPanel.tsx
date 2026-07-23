@@ -89,7 +89,7 @@ export default function RoomActionPanel({ isAdmin = false, onSaved, room }: Prop
         : "Office users can request rent changes. Rent does not change until admin approval.";
     const balanceDemanded = Number(form.balanceDemanded || 0);
     const moneyCollected = Number(form.moneyCollected || 0);
-    const projectedBalance = Math.max(0, balanceDemanded - moneyCollected);
+    const projectedBalance = Math.max(0, Number(form.monthlyRent || room.monthlyRent || 0) - moneyCollected);
 
     function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
         setForm((current) => ({ ...current, [key]: value }));
@@ -297,7 +297,7 @@ export default function RoomActionPanel({ isAdmin = false, onSaved, room }: Prop
                         <Field label="Move-in Date"><input type="date" value={form.moveInDate} onChange={(event) => update("moveInDate", event.target.value)} /></Field>
                         <Field label="Monthly Rent"><input inputMode="numeric" value={form.monthlyRent} onChange={(event) => update("monthlyRent", event.target.value)} /></Field>
                         <Field label="Money Collected"><input inputMode="numeric" value={form.moneyCollected} onChange={(event) => update("moneyCollected", event.target.value)} /></Field>
-                        <Field label="Balance Demanded"><input inputMode="numeric" value={form.balanceDemanded} onChange={(event) => update("balanceDemanded", event.target.value)} /></Field>
+                        <Field label="Final Balance After Payment"><input inputMode="numeric" value={form.balanceDemanded} onChange={(event) => update("balanceDemanded", event.target.value)} /></Field>
                         <Field label="Payment Method">
                             <select value={form.paymentMethod} onChange={(event) => update("paymentMethod", event.target.value)}>
                                 <option value="cash">Cash</option>

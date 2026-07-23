@@ -10,6 +10,7 @@ import { recalculateTenantScore } from "@/lib/tenants/scoring";
 import { refreshAffectedLandlordPayable } from "@/app/actions/room-rent";
 import { vacateTenant } from "@/app/actions/tenants";
 import { getMoveInPayableDecision, type LandlordPaymentState } from "@/lib/landlords/payable-cutoff";
+import { createTenantPaymentReceipt } from "@/lib/receipts/payment-receipts";
 import type { Database } from "@/types/database.types";
 
 type Json = Database["public"]["Tables"]["audit_logs"]["Insert"]["after_data"];
@@ -138,6 +139,9 @@ function safeMoveInError(error: unknown) {
     }
     if (/permission|rls|policy|not authorized|not allowed/i.test(message)) {
         return "You do not have permission to update this office.";
+    }
+    if (/money collected cannot be greater than balance demanded|balance demanded must include/i.test(message)) {
+        return "The move-in payment and final balance do not match the monthly rent. Check money collected and balance after payment.";
     }
     if (/room.*not found|Room not found/i.test(message)) return "The room could not be found.";
     if (/office/i.test(message) && /missing|required|null/i.test(message)) return "The office assignment is missing.";
@@ -440,8 +444,11 @@ async function recordMoveInEntryPayment(input: {
         tenantId: input.tenantId,
     });
 
+    const receipt = await createTenantPaymentReceipt(collection.id, { issuedBy: input.actorId });
+
     return {
         ...collection,
+        receipt,
         allocationSummary: {
             advanceAmount: coverage.advanceAmount,
             allocations: coverage.allocations,
@@ -836,8 +843,9 @@ async function markRoomOccupiedUnsafe(input: MarkRoomOccupiedInput) {
     assertAmount(monthlyRent, "Monthly rent", false);
     assertAmount(moneyCollected, "Money collected");
     assertAmount(balanceDemanded, "Balance demanded");
-    if (moneyCollected > balanceDemanded) {
-        throw new Error("Money collected cannot be greater than balance demanded.");
+    const minimumBalanceAfterPayment = Math.max(0, monthlyRent - moneyCollected);
+    if (balanceDemanded + moneyCollected + 0.004 < monthlyRent) {
+        throw new Error("Balance demanded plus money collected must cover at least the first full monthly rent.");
     }
 
     const supabase = await createSupabaseServerClient();
@@ -854,6 +862,7 @@ async function markRoomOccupiedUnsafe(input: MarkRoomOccupiedInput) {
     if (roomError) throw new Error(roomError.message);
     if (!room) throw new Error("Room not found.");
     if (!canAccessOffice(context, room.office_id)) throw new Error("You cannot manage this office room.");
+    if (!room.office_id) throw new Error("Room must be linked to an office before occupancy.");
 
     const currentStatus = String(room.status ?? "").toLowerCase();
     if (currentStatus !== "vacant") {
@@ -866,8 +875,48 @@ async function markRoomOccupiedUnsafe(input: MarkRoomOccupiedInput) {
             tenantPhone: input.tenantPhone,
         });
         if (existingOccupancy) {
+            let retryCollection: Awaited<ReturnType<typeof recordMoveInEntryPayment>> | Record<string, unknown> | null = null;
+            if (moneyCollected > 0) {
+                const { data: existingCollection, error: existingCollectionError } = await supabase
+                    .from("collections")
+                    .select("*")
+                    .eq("company_id", companyId)
+                    .eq("room_id", room.id)
+                    .eq("tenant_id", existingOccupancy.tenant.id)
+                    .eq("payment_date", moveInDate)
+                    .eq("amount_paid", moneyCollected)
+                    .neq("status", "voided")
+                    .order("created_at", { ascending: false })
+                    .limit(1)
+                    .maybeSingle();
+                if (existingCollectionError) throw new Error(existingCollectionError.message);
+                if (existingCollection) {
+                    retryCollection = existingCollection;
+                    await createTenantPaymentReceipt(existingCollection.id, { issuedBy: actorId });
+                } else {
+                    retryCollection = await recordMoveInEntryPayment({
+                        actorId,
+                        companyId,
+                        leaseId: existingOccupancy.lease.id,
+                        landlordId: room.landlord_id ?? null,
+                        monthlyRent,
+                        moveInDate,
+                        notes: input.notes || "Move-in entry payment retry",
+                        officeId: room.office_id,
+                        paymentAmount: moneyCollected,
+                        paymentDate: moveInDate,
+                        paymentMethod: input.paymentMethod ?? "cash",
+                        propertyId: room.property_id ?? null,
+                        referenceNumber: input.referenceNumber || null,
+                        roomId: room.id,
+                        supabase,
+                        tenantId: existingOccupancy.tenant.id,
+                        tenantName: existingOccupancy.tenant.full_name ?? tenantName,
+                    });
+                }
+            }
             return {
-                collection: null,
+                collection: retryCollection,
                 lease: existingOccupancy.lease,
                 openingBalance: Math.max(0, Number(existingOccupancy.tenant.balance ?? room.outstanding_balance ?? 0)),
                 room,
@@ -879,12 +928,7 @@ async function markRoomOccupiedUnsafe(input: MarkRoomOccupiedInput) {
 
     const propertyId = room.property_id;
     if (!propertyId) throw new Error("Room must be linked to a property/location before occupancy.");
-    if (!room.office_id) throw new Error("Room must be linked to an office before occupancy.");
-
-    if (balanceDemanded < monthlyRent) {
-        throw new Error("Balance demanded must include at least the first full monthly rent from the move-in date.");
-    }
-    const openingBalance = Math.max(0, monthlyRent - moneyCollected);
+    const openingBalance = Math.max(balanceDemanded, minimumBalanceAfterPayment);
     const billingDay = billingAnchorDay(moveInDate);
     await closeStaleActiveRoomOccupancy(supabase, { actorId, companyId, moveInDate, officeId: room.office_id, roomId: room.id });
     const tenantPayload = {

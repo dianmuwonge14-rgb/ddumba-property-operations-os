@@ -232,6 +232,15 @@ test("new tenant server actions return safe structured errors instead of product
   assert.doesNotMatch(roomActionPanel, /Failed to record in the Supabase occupancy ledger/);
 });
 
+test("move-in payment may exceed first month rent when final balance is zero", () => {
+  assert.doesNotMatch(roomOccupancyAction, /Money collected cannot be greater than balance demanded/);
+  assert.doesNotMatch(roomOccupancyAction, /balanceDemanded < monthlyRent/);
+  assert.match(roomOccupancyAction, /minimumBalanceAfterPayment/);
+  assert.match(roomOccupancyAction, /balanceDemanded \+ moneyCollected/);
+  assert.match(roomOccupancyAction, /createTenantPaymentReceipt/);
+  assert.match(roomActionPanel, /Final Balance After Payment/);
+});
+
 test("new tenant move-in closes stale active room occupancy before creating a new active tenant", () => {
   assert.match(roomOccupancyAction, /closeStaleActiveRoomOccupancy/);
   assert.match(roomOccupancyAction, /\.from\("leases"\)[\s\S]*\.eq\("status", "active"\)/);
