@@ -11,6 +11,9 @@ const dueRoute = readFileSync(new URL("../app/api/billing/due-intelligence/route
 const scheduledRoute = readFileSync(new URL("../app/api/billing/run/route.ts", import.meta.url), "utf8");
 const pgCronMigration = readFileSync(new URL("../supabase/upgrade_migrations/0210_tenant_billing_hourly_pg_cron.sql", import.meta.url), "utf8");
 const fastLookupBillingMigration = readFileSync(new URL("../supabase/upgrade_migrations/0211_fast_payment_lookup_billing_fields.sql", import.meta.url), "utf8");
+const fastPaymentSearchMigration = readFileSync(new URL("../supabase/upgrade_migrations/0214_fast_payments_entry_tenant_search.sql", import.meta.url), "utf8");
+const paymentSearchRoute = readFileSync(new URL("../app/api/collections/payment-search/route.ts", import.meta.url), "utf8");
+const collectionsData = readFileSync(new URL("../lib/collections/data.ts", import.meta.url), "utf8");
 
 function clampDay(year, monthIndex, day) {
   return Math.min(day, new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate());
@@ -105,4 +108,21 @@ test("fast payment lookup returns saved billing day and lease start for immediat
   assert.match(fastLookupBillingMigration, /lease_start_date date/);
   assert.match(fastLookupBillingMigration, /coalesce\(l\.billing_day, t\.billing_day, 1\) as lease_billing_day/);
   assert.match(fastLookupBillingMigration, /coalesce\(t\.billing_day, l\.billing_day, 1\) as tenant_billing_day/);
+});
+
+test("payments entry tenant search is compact, debounced, abortable and office-scoped", () => {
+  assert.match(paymentsEntry, /setTimeout\(\(\) => \{/);
+  assert.match(paymentsEntry, /\}, 250\)/);
+  assert.match(paymentsEntry, /lookup\.length < 2/);
+  assert.match(paymentsEntry, /abortRef\.current\?\.abort\(\)/);
+  assert.match(paymentsEntry, /\/api\/collections\/payment-search\?/);
+  assert.match(paymentsEntry, /\/api\/collections\/tenant\?id=/);
+  assert.match(collectionsData, /searchFastPaymentTenants/);
+  assert.match(collectionsData, /search_payment_tenants_fast/);
+  assert.match(collectionsData, /Boolean\(options\.allOffices && \(context\.canAccessAllOffices \|\| context\.isCompanyAdmin\)\)/);
+  assert.match(paymentSearchRoute, /max-age=10/);
+  assert.match(fastPaymentSearchMigration, /idx_payments_entry_tenants_name_trgm/);
+  assert.match(fastPaymentSearchMigration, /idx_payments_entry_tenants_phone_digits_trgm/);
+  assert.match(fastPaymentSearchMigration, /search_payment_tenants_fast/);
+  assert.match(fastPaymentSearchMigration, /limit \(select result_limit from search_input\)/);
 });

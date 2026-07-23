@@ -12,7 +12,7 @@ import { downloadTenantPaymentReceiptPdf, printTenantPaymentReceipt, TenantPayme
 import TenantContactCard from "@/components/office/shared/TenantContactCard";
 import TenantBillingDateControl from "@/components/office/shared/TenantBillingDateControl";
 import RentDueIntelligencePanel from "@/components/office/payments/RentDueIntelligencePanel";
-import type { AdvanceRentAssistantItem, CollectionTenantResult, FastPaymentRecentItem, FastPaymentRecentTotals } from "@/lib/collections/types";
+import type { AdvanceRentAssistantItem, CollectionTenantResult, FastPaymentRecentItem, FastPaymentRecentTotals, FastPaymentTenantSearchResult } from "@/lib/collections/types";
 import type { Company, Office, UserProfile } from "@/lib/auth/types";
 import type { PaymentReceiptSummary } from "@/lib/receipts/payment-receipts";
 
@@ -136,7 +136,7 @@ export default function FastPaymentsEntry({
 }: Props) {
     const [paymentDate, setPaymentDate] = useState(today());
     const [roomQuery, setRoomQuery] = useState("");
-    const [results, setResults] = useState<CollectionTenantResult[]>([]);
+    const [results, setResults] = useState<FastPaymentTenantSearchResult[]>([]);
     const [selectedTenant, setSelectedTenant] = useState<CollectionTenantResult | null>(null);
     const [amount, setAmount] = useState("");
     const [recentPayments, setRecentPayments] = useState<FastPaymentRecentItem[]>([]);
@@ -251,16 +251,19 @@ export default function FastPaymentsEntry({
 
         const requestSeq = requestSeqRef.current + 1;
         requestSeqRef.current = requestSeq;
+        abortRef.current?.abort();
         const timer = setTimeout(() => {
-            abortRef.current?.abort();
             const controller = new AbortController();
             abortRef.current = controller;
             setSearching(true);
 
             void (async () => {
                 try {
-                    const response = await fetch(`/api/collections/room-lookup?room=${encodeURIComponent(lookup)}&paymentDate=${encodeURIComponent(paymentDate)}`, {
-                        cache: "no-store",
+                    const params = new URLSearchParams({
+                        paymentDate,
+                        q: lookup,
+                    });
+                    const response = await fetch(`/api/collections/payment-search?${params.toString()}`, {
                         signal: controller.signal,
                     });
                     const payload = await response.json();
@@ -269,14 +272,12 @@ export default function FastPaymentsEntry({
                     if (!response.ok) throw new Error(payload.error ?? "Room search failed.");
 
                     const nextResults = payload.results ?? [];
-                    const nextTenant = nextResults.length === 1 ? nextResults[0] : null;
                     setResults(nextResults);
-                    setSelectedTenant(nextTenant);
-                    setRoomMatchesOpen(nextResults.length > 1);
-                    setMessage(nextTenant ? null : nextResults.length ? "Select the correct room." : "No tenant/room found.");
+                    setRoomMatchesOpen(nextResults.length > 0);
+                    setMessage(nextResults.length ? "Select the correct room." : "No tenant/room found.");
 
-                    if (nextTenant) {
-                        requestAnimationFrame(() => amountInputRef.current?.focus());
+                    if (nextResults.length === 1 && normalize(nextResults[0]?.room?.room_number) === normalize(lookup)) {
+                        void selectRoomMatch(nextResults[0], requestSeq);
                     }
                 } catch (error) {
                     if (controller.signal.aborted) return;
@@ -288,7 +289,7 @@ export default function FastPaymentsEntry({
                     if (requestSeqRef.current === requestSeq && !controller.signal.aborted) setSearching(false);
                 }
             })();
-        }, 120);
+        }, 250);
 
         return () => clearTimeout(timer);
     }, [paymentDate, roomQuery]);
@@ -306,12 +307,31 @@ export default function FastPaymentsEntry({
         highlightTimerRef.current = setTimeout(() => setLatestPaymentId(null), 2000);
     }
 
-    function selectRoomMatch(result: CollectionTenantResult) {
-        setSelectedTenant(result);
-        setRoomQuery(result.room?.room_number ?? roomQuery);
+    async function selectRoomMatch(result: FastPaymentTenantSearchResult, requestSeq = requestSeqRef.current) {
+        requestSeqRef.current = Math.max(requestSeqRef.current, requestSeq);
+        abortRef.current?.abort();
+        setSearching(true);
         setRoomMatchesOpen(false);
-        setMessage(null);
-        requestAnimationFrame(() => amountInputRef.current?.focus());
+        setMessage("Loading live tenant balance...");
+        try {
+            const response = await fetch(`/api/collections/tenant?id=${encodeURIComponent(result.tenant.id)}`, { cache: "no-store" });
+            const payload = await response.json();
+            if (requestSeqRef.current !== requestSeq) return;
+            if (!response.ok) throw new Error(payload.error ?? "Tenant details could not load.");
+            const hydrated = payload.result as CollectionTenantResult;
+            setSelectedTenant(hydrated);
+            setResults([]);
+            setRoomQuery(hydrated.room?.room_number ?? result.room?.room_number ?? roomQuery);
+            setMessage(null);
+            requestAnimationFrame(() => amountInputRef.current?.focus());
+        } catch (error) {
+            if (requestSeqRef.current !== requestSeq) return;
+            setSelectedTenant(null);
+            setRoomMatchesOpen(true);
+            setMessage(error instanceof Error ? error.message : "Tenant details could not load.");
+        } finally {
+            if (requestSeqRef.current === requestSeq) setSearching(false);
+        }
     }
 
     function handleTenantContactSaved(tenant: { id: string; full_name: string | null; phone: string | null }) {
@@ -896,13 +916,15 @@ export default function FastPaymentsEntry({
                             <span className="text-xs font-black uppercase tracking-wide text-slate-500">Room / tenant / phone</span>
                             <div className="relative mt-1">
                                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={19} />
-	                                <input
-	                                    ref={roomInputRef}
-	                                    value={roomQuery}
-	                                    onChange={(event) => {
-	                                        setRoomQuery(event.target.value);
-	                                        setSelectedTenant(null);
-	                                        setRoomMatchesOpen(true);
+		                                <input
+		                                    ref={roomInputRef}
+		                                    value={roomQuery}
+		                                    onChange={(event) => {
+                                                    requestSeqRef.current += 1;
+                                                    abortRef.current?.abort();
+		                                        setRoomQuery(event.target.value);
+		                                        setSelectedTenant(null);
+		                                        setRoomMatchesOpen(true);
 	                                    }}
 	                                    placeholder="Type room, tenant name, or phone"
 	                                    className="h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-12 pr-4 text-2xl font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
@@ -928,7 +950,7 @@ export default function FastPaymentsEntry({
 	                        </label>
 	                    </div>
 	
-	                    {roomMatchesOpen && results.length > 1 ? (
+                    {roomMatchesOpen && results.length > 0 ? (
 	                        <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-3">
 	                            <p className="text-sm font-black text-blue-950">Choose the correct room match.</p>
 	                            <div className="mt-2 grid max-h-64 gap-2 overflow-auto sm:grid-cols-2">

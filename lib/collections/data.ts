@@ -9,6 +9,7 @@ import type {
     CollectionReportRow,
     FastPaymentRecentItem,
     FastPaymentRecentResult,
+    FastPaymentTenantSearchResult,
     CollectionKpis,
     CollectionRow,
     CollectionTenantResult,
@@ -29,6 +30,7 @@ import type {
 
 type DynamicDb = {
     from: (table: string) => any;
+    rpc?: (fn: string, args: Record<string, unknown>) => Promise<{ data: Array<Record<string, unknown>> | null; error: { message: string } | null }>;
 };
 
 const BUSINESS_TIME_ZONE = "Africa/Kampala";
@@ -811,7 +813,40 @@ export async function searchCollectionTenants(query: string): Promise<Collection
         .slice(0, 10);
 }
 
-export async function lookupPaymentRoom(roomNumber: string, paymentDate?: string | null): Promise<CollectionTenantResult[]> {
+export async function searchFastPaymentTenants(query: string, paymentDate?: string | null, options: { allOffices?: boolean } = {}): Promise<FastPaymentTenantSearchResult[]> {
+    const term = query.trim();
+    if (term.length < 2) return [];
+
+    const context = await requirePermission("collections.read");
+    const { supabase } = await getScopedSupabase();
+    const companyId = context.activeCompany?.id;
+    const officeId = context.activeOffice?.id;
+
+    if (!companyId || !officeId) return [];
+
+    const canSearchAllOffices = Boolean(options.allOffices && (context.canAccessAllOffices || context.isCompanyAdmin));
+    const paymentMonth = selectedMonthStart(paymentDate);
+    const rpcClient = supabase as unknown as DynamicDb;
+    const fastSearch = rpcClient.rpc
+        ? await rpcClient.rpc("search_payment_tenants_fast", {
+            p_company_id: companyId,
+            p_limit: canSearchAllOffices ? 20 : 10,
+            p_office_id: officeId,
+            p_payment_month: paymentMonth,
+            p_query: term,
+            p_search_all: canSearchAllOffices,
+        })
+        : { data: null, error: { message: "RPC client unavailable." } };
+
+    if (!fastSearch.error && fastSearch.data) {
+        return fastSearch.data.map((row) => compactPaymentSearchRowToTenantResult(row, paymentMonth));
+    }
+
+    const exactRoomResults = await lookupPaymentRoom(term, paymentDate, { allOffices: canSearchAllOffices });
+    return exactRoomResults.slice(0, canSearchAllOffices ? 20 : 10).map((result) => ({ ...result, searchPreviewOnly: true }));
+}
+
+export async function lookupPaymentRoom(roomNumber: string, paymentDate?: string | null, options: { allOffices?: boolean } = {}): Promise<CollectionTenantResult[]> {
     const term = roomNumber.trim();
     if (term.length < 2) return [];
 
@@ -824,7 +859,7 @@ export async function lookupPaymentRoom(roomNumber: string, paymentDate?: string
         return [];
     }
 
-    const searchAllOffices = context.canAccessAllOffices || context.isCompanyAdmin;
+    const searchAllOffices = Boolean(options.allOffices && (context.canAccessAllOffices || context.isCompanyAdmin));
     const paymentMonth = selectedMonthStart(paymentDate);
     const fastLookup = await (supabase as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: Array<Record<string, unknown>> | null; error: { message: string } | null }> })
         .rpc("lookup_payment_room_fast", {
@@ -935,6 +970,29 @@ export async function lookupPaymentRoom(roomNumber: string, paymentDate?: string
         .filter((result) => searchAllOffices || tenantResultBelongsToOffice(result, officeId))
         .sort((left, right) => scoreTenantSearchResult(left, term) - scoreTenantSearchResult(right, term))
         .slice(0, searchAllOffices ? 20 : 10);
+}
+
+function compactPaymentSearchRowToTenantResult(row: Record<string, unknown>, paymentMonth: string): FastPaymentTenantSearchResult {
+    const base = fastPaymentRpcRowToTenantResult(row, paymentMonth);
+    const office = {
+        id: String(row.office_id ?? row.room_office_id ?? row.tenant_office_id ?? ""),
+        company_id: null,
+        name: row.office_name as string | null,
+        office_name: row.office_name as string | null,
+        status: "active",
+    } as unknown as OfficeRow;
+    const landlord = row.landlord_id ? {
+        id: String(row.landlord_id),
+        company_id: null,
+        full_name: row.landlord_name as string | null,
+        status: "active",
+    } as unknown as LandlordRow : null;
+    return {
+        ...base,
+        landlord,
+        office: office.id ? office : null,
+        searchPreviewOnly: true,
+    };
 }
 
 function fastPaymentRpcRowToTenantResult(row: Record<string, unknown>, paymentMonth: string): CollectionTenantResult {

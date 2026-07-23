@@ -90,6 +90,10 @@ export type CollectionTenantResult = {
     actionHistory: CollectionActionRow[];
 };
 
+export type FastPaymentTenantSearchResult = CollectionTenantResult & {
+    searchPreviewOnly?: boolean;
+};
+
 export type CollectionActionItem = CollectionActionRow & {
     tenantName: string | null;
 };
