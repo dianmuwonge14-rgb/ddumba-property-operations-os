@@ -813,25 +813,33 @@ export async function searchCollectionTenants(query: string): Promise<Collection
         .slice(0, 10);
 }
 
-export async function searchFastPaymentTenants(query: string, paymentDate?: string | null, options: { allOffices?: boolean } = {}): Promise<FastPaymentTenantSearchResult[]> {
+export async function searchFastPaymentTenants(query: string, paymentDate?: string | null, options: { allOffices?: boolean; officeId?: string } = {}): Promise<FastPaymentTenantSearchResult[]> {
     const term = query.trim();
     if (term.length < 2) return [];
 
     const context = await requirePermission("collections.read");
     const { supabase } = await getScopedSupabase();
     const companyId = context.activeCompany?.id;
-    const officeId = context.activeOffice?.id;
+    const activeOfficeId = context.activeOffice?.id;
 
-    if (!companyId || !officeId) return [];
+    const canAccessCompanyWide = context.canAccessAllOffices || context.isCompanyAdmin;
+    const requestedOfficeId = options.officeId?.trim() || null;
+    const allowedOfficeIds = new Set(context.offices.map((office) => office.id));
+    const selectedOfficeId = canAccessCompanyWide && requestedOfficeId && allowedOfficeIds.has(requestedOfficeId)
+        ? requestedOfficeId
+        : null;
+    const canSearchAllOffices = canAccessCompanyWide && !selectedOfficeId && options.allOffices !== false;
+    const searchOfficeId = selectedOfficeId ?? activeOfficeId;
 
-    const canSearchAllOffices = Boolean(options.allOffices && (context.canAccessAllOffices || context.isCompanyAdmin));
+    if (!companyId || (!searchOfficeId && !canSearchAllOffices)) return [];
+
     const paymentMonth = selectedMonthStart(paymentDate);
     const rpcClient = supabase as unknown as DynamicDb;
     const fastSearch = rpcClient.rpc
         ? await rpcClient.rpc("search_payment_tenants_fast", {
             p_company_id: companyId,
             p_limit: canSearchAllOffices ? 20 : 10,
-            p_office_id: officeId,
+            p_office_id: searchOfficeId,
             p_payment_month: paymentMonth,
             p_query: term,
             p_search_all: canSearchAllOffices,
@@ -842,24 +850,32 @@ export async function searchFastPaymentTenants(query: string, paymentDate?: stri
         return fastSearch.data.map((row) => compactPaymentSearchRowToTenantResult(row, paymentMonth));
     }
 
-    const exactRoomResults = await lookupPaymentRoom(term, paymentDate, { allOffices: canSearchAllOffices });
+    const exactRoomResults = await lookupPaymentRoom(term, paymentDate, { allOffices: canSearchAllOffices, officeId: selectedOfficeId ?? undefined });
     return exactRoomResults.slice(0, canSearchAllOffices ? 20 : 10).map((result) => ({ ...result, searchPreviewOnly: true }));
 }
 
-export async function lookupPaymentRoom(roomNumber: string, paymentDate?: string | null, options: { allOffices?: boolean } = {}): Promise<CollectionTenantResult[]> {
+export async function lookupPaymentRoom(roomNumber: string, paymentDate?: string | null, options: { allOffices?: boolean; officeId?: string } = {}): Promise<CollectionTenantResult[]> {
     const term = roomNumber.trim();
     if (term.length < 2) return [];
 
     const context = await requirePermission("collections.read");
     const { supabase } = await getScopedSupabase();
     const companyId = context.activeCompany?.id;
-    const officeId = context.activeOffice?.id;
+    const activeOfficeId = context.activeOffice?.id;
 
-    if (!companyId || !officeId) {
+    const canAccessCompanyWide = context.canAccessAllOffices || context.isCompanyAdmin;
+    const requestedOfficeId = options.officeId?.trim() || null;
+    const allowedOfficeIds = new Set(context.offices.map((office) => office.id));
+    const selectedOfficeId = canAccessCompanyWide && requestedOfficeId && allowedOfficeIds.has(requestedOfficeId)
+        ? requestedOfficeId
+        : null;
+    const searchAllOffices = canAccessCompanyWide && !selectedOfficeId && options.allOffices !== false;
+    const officeId = selectedOfficeId ?? activeOfficeId;
+
+    if (!companyId || (!officeId && !searchAllOffices)) {
         return [];
     }
 
-    const searchAllOffices = Boolean(options.allOffices && (context.canAccessAllOffices || context.isCompanyAdmin));
     const paymentMonth = selectedMonthStart(paymentDate);
     const fastLookup = await (supabase as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: Array<Record<string, unknown>> | null; error: { message: string } | null }> })
         .rpc("lookup_payment_room_fast", {
@@ -885,7 +901,7 @@ export async function lookupPaymentRoom(roomNumber: string, paymentDate?: string
         .limit(searchAllOffices ? 20 : 5);
 
     if (!searchAllOffices) {
-        roomQuery = roomQuery.eq("office_id", officeId);
+        roomQuery = roomQuery.eq("office_id", officeId!);
     }
 
     let tenantQuery = supabase
@@ -897,7 +913,7 @@ export async function lookupPaymentRoom(roomNumber: string, paymentDate?: string
         .limit(searchAllOffices ? 20 : 10);
 
     if (!searchAllOffices) {
-        tenantQuery = tenantQuery.eq("office_id", officeId);
+        tenantQuery = tenantQuery.eq("office_id", officeId!);
     }
 
     const [{ data: rooms, error: roomError }, { data: directTenants, error: directTenantError }] = await Promise.all([
@@ -959,7 +975,7 @@ export async function lookupPaymentRoom(roomNumber: string, paymentDate?: string
         .filter((tenant) => tenant.room_id && roomIds.includes(tenant.room_id))
         .sort((left, right) => String(left.full_name ?? "").localeCompare(String(right.full_name ?? "")));
 
-    const hydrated = await hydrateFastPaymentTenantResults(tenantsForRooms, companyId, searchAllOffices ? null : officeId, paymentDate);
+    const hydrated = await hydrateFastPaymentTenantResults(tenantsForRooms, companyId, searchAllOffices ? null : officeId ?? null, paymentDate ?? null);
     return hydrated
         .filter((result) => {
             const room = normalizeSearchValue(result.room?.room_number);
@@ -967,7 +983,7 @@ export async function lookupPaymentRoom(roomNumber: string, paymentDate?: string
             const phone = normalizeSearchValue(result.tenant.phone);
             return room.startsWith(normalizedTerm) || room.includes(normalizedTerm) || name.includes(normalizedTerm) || phone.includes(normalizedTerm);
         })
-        .filter((result) => searchAllOffices || tenantResultBelongsToOffice(result, officeId))
+        .filter((result) => searchAllOffices || tenantResultBelongsToOffice(result, officeId ?? null))
         .sort((left, right) => scoreTenantSearchResult(left, term) - scoreTenantSearchResult(right, term))
         .slice(0, searchAllOffices ? 20 : 10);
 }

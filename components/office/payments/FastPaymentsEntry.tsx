@@ -23,6 +23,7 @@ type Props = {
     canPostPayments: boolean;
     entryMode?: "office" | "admin" | "collector";
     isAdmin: boolean;
+    searchOffices?: Office[];
 };
 type CorrectionType = "date_change" | "amount_change" | "room_change" | "remove_payment";
 type CorrectionHistoryRow = {
@@ -133,9 +134,11 @@ export default function FastPaymentsEntry({
     entryMode = "office",
     isAdmin,
     profile,
+    searchOffices = [],
 }: Props) {
     const [paymentDate, setPaymentDate] = useState(today());
     const [roomQuery, setRoomQuery] = useState("");
+    const [adminSearchOfficeId, setAdminSearchOfficeId] = useState("all");
     const [results, setResults] = useState<FastPaymentTenantSearchResult[]>([]);
     const [selectedTenant, setSelectedTenant] = useState<CollectionTenantResult | null>(null);
     const [amount, setAmount] = useState("");
@@ -263,6 +266,13 @@ export default function FastPaymentsEntry({
                         paymentDate,
                         q: lookup,
                     });
+                    if (isAdmin) {
+                        if (adminSearchOfficeId === "all") {
+                            params.set("allOffices", "1");
+                        } else {
+                            params.set("officeId", adminSearchOfficeId);
+                        }
+                    }
                     const response = await fetch(`/api/collections/payment-search?${params.toString()}`, {
                         signal: controller.signal,
                     });
@@ -292,7 +302,7 @@ export default function FastPaymentsEntry({
         }, 250);
 
         return () => clearTimeout(timer);
-    }, [paymentDate, roomQuery]);
+    }, [adminSearchOfficeId, isAdmin, paymentDate, roomQuery]);
 
     useEffect(() => {
         return () => {
@@ -911,7 +921,7 @@ export default function FastPaymentsEntry({
                 </section>
 
                 <section className="mx-auto mt-5 max-w-6xl rounded-[30px] border border-white/70 bg-white p-5 shadow-2xl shadow-slate-950/20">
-                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+                    <div className={`grid gap-4 ${isAdmin ? "lg:grid-cols-[minmax(0,1fr)_240px_220px]" : "lg:grid-cols-[minmax(0,1fr)_220px]"}`}>
                         <label className="block">
                             <span className="text-xs font-black uppercase tracking-wide text-slate-500">Room / tenant / phone</span>
                             <div className="relative mt-1">
@@ -932,6 +942,31 @@ export default function FastPaymentsEntry({
 	                                {searching ? <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 animate-spin text-blue-600" size={20} /> : null}
 	                            </div>
 	                        </label>
+
+                        {isAdmin ? (
+                            <label className="block">
+                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Search scope</span>
+                                <select
+                                    value={adminSearchOfficeId}
+                                    onChange={(event) => {
+                                        requestSeqRef.current += 1;
+                                        abortRef.current?.abort();
+                                        setAdminSearchOfficeId(event.target.value);
+                                        setResults([]);
+                                        setSelectedTenant(null);
+                                        setRoomMatchesOpen(Boolean(roomQuery.trim().length >= 2));
+                                    }}
+                                    className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                                >
+                                    <option value="all">All company offices</option>
+                                    {searchOffices.map((office) => (
+                                        <option key={office.id} value={office.id}>
+                                            {office.office_name ?? office.name ?? "Office"}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                        ) : null}
 
                         <label className="block">
                             <span className="text-xs font-black uppercase tracking-wide text-slate-500">Amount paid</span>

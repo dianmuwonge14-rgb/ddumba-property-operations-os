@@ -6,10 +6,12 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
     const query = request.nextUrl.searchParams.get("q") ?? "";
     const paymentDate = request.nextUrl.searchParams.get("paymentDate");
-    const allOffices = request.nextUrl.searchParams.get("allOffices") === "1";
+    const allOfficesParam = request.nextUrl.searchParams.get("allOffices");
+    const allOffices = allOfficesParam == null ? undefined : allOfficesParam === "1";
+    const officeId = request.nextUrl.searchParams.get("officeId")?.trim() || undefined;
 
     try {
-        const results = await searchFastPaymentTenants(query, paymentDate, { allOffices });
+        const results = await searchFastPaymentTenants(query, paymentDate, { allOffices, officeId });
         return NextResponse.json(
             { results },
             {

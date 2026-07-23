@@ -110,17 +110,23 @@ test("fast payment lookup returns saved billing day and lease start for immediat
   assert.match(fastLookupBillingMigration, /coalesce\(t\.billing_day, l\.billing_day, 1\) as tenant_billing_day/);
 });
 
-test("payments entry tenant search is compact, debounced, abortable and office-scoped", () => {
+test("payments entry tenant search is compact, debounced, abortable and role-scoped", () => {
   assert.match(paymentsEntry, /setTimeout\(\(\) => \{/);
   assert.match(paymentsEntry, /\}, 250\)/);
   assert.match(paymentsEntry, /lookup\.length < 2/);
   assert.match(paymentsEntry, /abortRef\.current\?\.abort\(\)/);
   assert.match(paymentsEntry, /\/api\/collections\/payment-search\?/);
   assert.match(paymentsEntry, /\/api\/collections\/tenant\?id=/);
+  assert.match(paymentsEntry, /All company offices/);
+  assert.match(paymentsEntry, /params\.set\("allOffices", "1"\)/);
+  assert.match(paymentsEntry, /params\.set\("officeId", adminSearchOfficeId\)/);
   assert.match(collectionsData, /searchFastPaymentTenants/);
   assert.match(collectionsData, /search_payment_tenants_fast/);
-  assert.match(collectionsData, /Boolean\(options\.allOffices && \(context\.canAccessAllOffices \|\| context\.isCompanyAdmin\)\)/);
+  assert.match(collectionsData, /const canAccessCompanyWide = context\.canAccessAllOffices \|\| context\.isCompanyAdmin/);
+  assert.match(collectionsData, /const canSearchAllOffices = canAccessCompanyWide && !selectedOfficeId && options\.allOffices !== false/);
+  assert.match(collectionsData, /p_company_id: companyId/);
   assert.match(paymentSearchRoute, /max-age=10/);
+  assert.match(paymentSearchRoute, /officeId/);
   assert.match(fastPaymentSearchMigration, /idx_payments_entry_tenants_name_trgm/);
   assert.match(fastPaymentSearchMigration, /idx_payments_entry_tenants_phone_digits_trgm/);
   assert.match(fastPaymentSearchMigration, /search_payment_tenants_fast/);

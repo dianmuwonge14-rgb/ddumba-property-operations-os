@@ -11,6 +11,7 @@ export default async function AdminPaymentsPage() {
             profile={context.profile}
             canPostPayments
             isAdmin
+            searchOffices={context.offices}
         />
     );
 }
