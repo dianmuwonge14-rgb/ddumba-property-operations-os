@@ -12,6 +12,7 @@ const scheduledRoute = readFileSync(new URL("../app/api/billing/run/route.ts", i
 const pgCronMigration = readFileSync(new URL("../supabase/upgrade_migrations/0210_tenant_billing_hourly_pg_cron.sql", import.meta.url), "utf8");
 const fastLookupBillingMigration = readFileSync(new URL("../supabase/upgrade_migrations/0211_fast_payment_lookup_billing_fields.sql", import.meta.url), "utf8");
 const fastPaymentSearchMigration = readFileSync(new URL("../supabase/upgrade_migrations/0214_fast_payments_entry_tenant_search.sql", import.meta.url), "utf8");
+const fastPaymentAdminSearchIndexMigration = readFileSync(new URL("../supabase/upgrade_migrations/0215_fast_payment_admin_search_indexes.sql", import.meta.url), "utf8");
 const paymentSearchRoute = readFileSync(new URL("../app/api/collections/payment-search/route.ts", import.meta.url), "utf8");
 const collectionsData = readFileSync(new URL("../lib/collections/data.ts", import.meta.url), "utf8");
 
@@ -131,4 +132,7 @@ test("payments entry tenant search is compact, debounced, abortable and role-sco
   assert.match(fastPaymentSearchMigration, /idx_payments_entry_tenants_phone_digits_trgm/);
   assert.match(fastPaymentSearchMigration, /search_payment_tenants_fast/);
   assert.match(fastPaymentSearchMigration, /limit \(select result_limit from search_input\)/);
+  assert.match(fastPaymentAdminSearchIndexMigration, /idx_payments_entry_rooms_trim_room_trgm/);
+  assert.match(fastPaymentAdminSearchIndexMigration, /idx_payments_entry_tenants_trim_name_trgm/);
+  assert.match(fastPaymentAdminSearchIndexMigration, /idx_payments_entry_tenants_company_status_room_office/);
 });
