@@ -17,6 +17,7 @@ function emptySummary(): SecurityDepositSummary {
     return {
         totalAvailable: 0,
         totalHeld: 0,
+        totalPendingRefunds: 0,
         totalPendingSettlement: 0,
         totalRecords: 0,
         totalRefunded: 0,
@@ -79,6 +80,7 @@ export async function getSecurityDepositsPageData(): Promise<SecurityDepositPage
         next.totalRefunded += amount(row.amount_refunded);
         next.totalRetained += amount(row.amount_retained) + amount(row.amount_applied_to_charges);
         next.totalShortfall += amount(row.company_shortfall);
+        if (String(row.status) === "refund_pending") next.totalPendingRefunds += amount(row.liability_balance);
         if (String(row.status).includes("pending")) next.totalPendingSettlement += amount(row.liability_balance);
         return next;
     }, emptySummary());

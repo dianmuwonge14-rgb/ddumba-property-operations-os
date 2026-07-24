@@ -44,6 +44,7 @@ export type SecurityDepositSummary = {
     totalHeld: number;
     totalAvailable: number;
     totalUsedByCompany: number;
+    totalPendingRefunds: number;
     totalRefunded: number;
     totalRetained: number;
     totalPendingSettlement: number;
