@@ -135,18 +135,18 @@ as $$
     allocation_summary as (
         select
             a.tenant_id,
-            coalesce(sum(a.amount_allocated) filter (
+            coalesce(sum(greatest(0, a.amount_allocated - coalesce(a.consumed_by_balance_reconciliation, 0))) filter (
                 where a.allocation_type = 'current_month'
                   and date_trunc('month', a.allocation_month)::date = date_trunc('month', p_payment_month)::date
             ), 0) as current_month_paid,
-            coalesce(sum(a.amount_allocated) filter (
+            coalesce(sum(greatest(0, a.amount_allocated - coalesce(a.consumed_by_balance_reconciliation, 0))) filter (
                 where a.allocation_type = 'advance_month'
                   and a.allocation_month >= (date_trunc('month', p_payment_month)::date + interval '1 month')::date
             ), 0) as advance_rent_balance,
             coalesce(jsonb_agg(
                 jsonb_build_object(
                     'month', a.allocation_month,
-                    'amount', a.amount_allocated,
+                    'amount', greatest(0, a.amount_allocated - coalesce(a.consumed_by_balance_reconciliation, 0)),
                     'coverage_start', a.coverage_start,
                     'coverage_end', a.coverage_end
                 )
@@ -154,6 +154,7 @@ as $$
             ) filter (
                 where a.allocation_type = 'advance_month'
                   and a.allocation_month >= (date_trunc('month', p_payment_month)::date + interval '1 month')::date
+                  and a.amount_allocated > coalesce(a.consumed_by_balance_reconciliation, 0)
             ), '[]'::jsonb) as advance_months
         from public.tenant_rent_allocations a
         join active_tenants t on t.id = a.tenant_id

@@ -1,5 +1,6 @@
 import { getScopedSupabase } from "@/lib/auth/query";
 import { requirePermission } from "@/lib/auth/permissions";
+import { availableAdvanceAllocation, displayTenantNetBalance } from "@/lib/tenants/balance-reconciliation";
 import { billingPeriodForDate, clampBillingDay, nextBillingDate } from "@/lib/tenants/billing-cycle";
 import type {
     CollectionActionItem,
@@ -1013,9 +1014,15 @@ function compactPaymentSearchRowToTenantResult(row: Record<string, unknown>, pay
 
 function fastPaymentRpcRowToTenantResult(row: Record<string, unknown>, paymentMonth: string): CollectionTenantResult {
     const monthlyRent = Number(row.lease_monthly_rent ?? row.tenant_monthly_rent ?? row.room_monthly_rent ?? 0);
-    const outstandingBalance = Number(row.tenant_balance ?? row.room_outstanding_balance ?? 0);
+    const rawOutstandingBalance = Number(row.tenant_balance ?? row.room_outstanding_balance ?? 0);
     const currentMonthPaid = Number(row.current_month_paid ?? 0);
-    const advanceRentBalance = Number(row.advance_rent_balance ?? 0);
+    const rawAdvanceRentBalance = Number(row.advance_rent_balance ?? 0);
+    const displayedBalance = displayTenantNetBalance({
+        advanceBalance: rawAdvanceRentBalance,
+        outstandingBalance: rawOutstandingBalance,
+    });
+    const outstandingBalance = displayedBalance.outstandingBalance;
+    const advanceRentBalance = displayedBalance.advanceBalance;
     const rawAdvanceMonths = Array.isArray(row.advance_months) ? row.advance_months as Array<Record<string, unknown>> : [];
     const advanceRentMonths = rawAdvanceMonths.map((item) => {
         const month = String(item.month ?? "").slice(0, 10);
@@ -1043,7 +1050,7 @@ function fastPaymentRpcRowToTenantResult(row: Record<string, unknown>, paymentMo
         landlord_id: row.room_landlord_id as string | null,
         room_number: row.room_number as string | null,
         monthly_rent: Number(row.room_monthly_rent ?? 0),
-        outstanding_balance: Number(row.room_outstanding_balance ?? 0),
+        outstanding_balance: outstandingBalance,
         status: "occupied",
     } as unknown as RoomRow;
     const lease = row.lease_id ? {
@@ -1198,7 +1205,7 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
         tenantIds.length
             ? optionalRows((supabase as unknown as DynamicDb)
                 .from("tenant_rent_allocations")
-                .select("tenant_id, payment_id, allocation_month, allocation_type, amount_allocated, allocation_source, is_historical_credit, coverage_start, coverage_end, coverage_index")
+                .select("tenant_id, payment_id, allocation_month, allocation_type, amount_allocated, consumed_by_balance_reconciliation, allocation_source, is_historical_credit, coverage_start, coverage_end, coverage_index")
                 .eq("company_id", companyId)
                 .in("tenant_id", tenantIds))
             : [],
@@ -1241,7 +1248,7 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
         const futureAllocations = tenantAllocations
             .filter((allocation) => String(allocation.allocation_type) === "advance_month" && String(allocation.allocation_month ?? "").slice(0, 10) >= nextMonth)
             .sort((left, right) => String(left.allocation_month ?? "").localeCompare(String(right.allocation_month ?? "")));
-        const advanceRentBalance = futureAllocations.reduce((total, allocation) => total + Number(allocation.amount_allocated ?? 0), 0);
+        const advanceRentBalance = futureAllocations.reduce((total, allocation) => total + availableAdvanceAllocation(allocation), 0);
         const monthsCovered = [...new Set(futureAllocations.map((allocation) => monthLabelFromDate(String(allocation.allocation_month ?? ""))).filter((value): value is string => Boolean(value)))];
         const rawCurrentMonthPaid = tenantCollections
             .filter((collection) => collectionPaymentDate(collection as CollectionRow).slice(0, 7) === monthStart.slice(0, 7))
@@ -1381,7 +1388,7 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
         tenantIds.length
             ? optionalRows((supabase as unknown as DynamicDb)
                 .from("tenant_rent_allocations")
-                .select("tenant_id, payment_id, allocation_month, allocation_type, amount_allocated, allocation_source, is_historical_credit, coverage_start, coverage_end, coverage_index")
+                .select("tenant_id, payment_id, allocation_month, allocation_type, amount_allocated, consumed_by_balance_reconciliation, allocation_source, is_historical_credit, coverage_start, coverage_end, coverage_index")
                 .eq("company_id", companyId)
                 .in("tenant_id", tenantIds))
             : [],
@@ -1450,8 +1457,8 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
             const month = String(allocation.allocation_month ?? "").slice(0, 10);
             if (!month) continue;
             const current = allocationByMonth.get(month) ?? { historical: 0, arrears: 0, rent: 0, advance: 0, coverageStart: null, coverageEnd: null };
-            const amount = Number(allocation.amount_allocated ?? 0);
             const type = String(allocation.allocation_type);
+            const amount = type === "advance_month" ? availableAdvanceAllocation(allocation) : Number(allocation.amount_allocated ?? 0);
             const isHistoricalCredit = allocation.is_historical_credit === true || String(allocation.allocation_source ?? "") === "historical_credit";
             current.coverageStart ||= String(allocation.coverage_start ?? "") || null;
             current.coverageEnd ||= String(allocation.coverage_end ?? "") || null;
@@ -1495,15 +1502,19 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
         const property = propertyId ? propertyById.get(propertyId) ?? null : null;
         const landlordId = room?.landlord_id ?? property?.landlord_id ?? null;
         const resolvedOfficeId = lease?.office_id ?? room?.office_id ?? tenant.office_id ?? officeId;
+        const displayedBalance = displayTenantNetBalance({
+            advanceBalance: advanceRentBalance,
+            outstandingBalance: Number(tenant.balance ?? room?.outstanding_balance ?? 0),
+        });
 
         return {
-            tenant,
-            room: room ? { ...room, landlord_id: landlordId } as RoomRow : room,
+            tenant: { ...tenant, balance: displayedBalance.outstandingBalance } as TenantRow,
+            room: room ? { ...room, landlord_id: landlordId, outstanding_balance: displayedBalance.outstandingBalance } as RoomRow : room,
             property,
             office: resolvedOfficeId ? officeById.get(resolvedOfficeId) ?? null : null,
             landlord: landlordId ? landlordById.get(landlordId) ?? null : null,
             lease,
-            outstandingBalance: Number(tenant.balance ?? room?.outstanding_balance ?? 0),
+            outstandingBalance: displayedBalance.outstandingBalance,
             previousOutstandingBeforeLastPayment,
             totalDueBeforeLastPayment: rawOutstandingBeforeLastPayment,
             lastAmountPaid,
@@ -1515,7 +1526,7 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
             lastRentChargeDate: lastRentChargeByTenant.get(tenant.id) ?? null,
             nextRentChargeDate: nextCharge,
             currentMonthPaid,
-            advanceRentBalance,
+            advanceRentBalance: displayedBalance.advanceBalance,
             advanceRentMonths,
             rentMonthAllocations,
             nextMonthCoveredAmount,
@@ -1704,7 +1715,7 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
         tenantIds.length
             ? optionalRows((supabase as unknown as DynamicDb)
                 .from("tenant_rent_allocations")
-                .select("tenant_id, allocation_month, allocation_type, amount_allocated, coverage_start, coverage_end, coverage_index")
+                .select("tenant_id, allocation_month, allocation_type, amount_allocated, consumed_by_balance_reconciliation, coverage_start, coverage_end, coverage_index")
                 .eq("company_id", companyId)
                 .in("tenant_id", tenantIds))
             : [],
@@ -1805,12 +1816,12 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
         const currentMonthPaid = allocatedCurrentMonthPaid > 0 ? allocatedCurrentMonthPaid : Math.min(rawCurrentMonthPaid, monthlyRent);
         const futureAdvanceAllocations = tenantAllocations
             .filter((allocation) => String(allocation.allocation_type) === "advance_month" && String(allocation.allocation_month ?? "").slice(0, 10) >= upcomingMonth);
-        const advanceRentBalance = futureAdvanceAllocations.reduce((total, allocation) => total + Number(allocation.amount_allocated ?? 0), 0);
+        const advanceRentBalance = futureAdvanceAllocations.reduce((total, allocation) => total + availableAdvanceAllocation(allocation), 0);
         const advanceByMonth = new Map<string, number>();
         for (const allocation of futureAdvanceAllocations) {
             const month = String(allocation.allocation_month ?? "").slice(0, 10);
             if (!month) continue;
-            advanceByMonth.set(month, (advanceByMonth.get(month) ?? 0) + Number(allocation.amount_allocated ?? 0));
+            advanceByMonth.set(month, (advanceByMonth.get(month) ?? 0) + availableAdvanceAllocation(allocation));
         }
         const advanceRentMonths = [...advanceByMonth.entries()]
             .sort(([left], [right]) => left.localeCompare(right))
@@ -1822,7 +1833,7 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
             const month = String(allocation.allocation_month ?? "").slice(0, 10);
             if (!month) continue;
             const current = allocationByMonth.get(month) ?? { arrears: 0, rent: 0, advance: 0, implicitPriorPaid: 0, coverageStart: null, coverageEnd: null };
-            const amount = Number(allocation.amount_allocated ?? 0);
+            const amount = type === "advance_month" ? availableAdvanceAllocation(allocation) : Number(allocation.amount_allocated ?? 0);
             const isHistoricalCredit = allocation.is_historical_credit === true || String(allocation.allocation_source ?? "") === "historical_credit";
             current.coverageStart ||= String(allocation.coverage_start ?? "") || null;
             current.coverageEnd ||= String(allocation.coverage_end ?? "") || null;
@@ -1888,7 +1899,7 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
             });
         const nextMonthCoveredAmount = tenantAllocations
             .filter((allocation) => String(allocation.allocation_type) === "advance_month" && String(allocation.allocation_month ?? "").slice(0, 7) === upcomingMonth.slice(0, 7))
-            .reduce((total, allocation) => total + Number(allocation.amount_allocated ?? 0), 0);
+            .reduce((total, allocation) => total + availableAdvanceAllocation(allocation), 0);
         const nextAdvanceRentMonth = monthLabelFromDate(
             tenantAllocations
                 .filter((allocation) => String(allocation.allocation_type) === "advance_month" && String(allocation.allocation_month ?? "").slice(0, 10) >= upcomingMonth)
@@ -1903,15 +1914,19 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
             businessDate,
             leaseStartDate: lease?.start_date ?? tenant.created_at?.slice(0, 10) ?? null,
         });
+        const displayedBalance = displayTenantNetBalance({
+            advanceBalance: advanceRentBalance,
+            outstandingBalance: Number(tenant.balance ?? room?.outstanding_balance ?? 0),
+        });
 
         return {
-            tenant,
-            room: room ? { ...room, landlord_id: landlordId } as RoomRow : room,
+            tenant: { ...tenant, balance: displayedBalance.outstandingBalance } as TenantRow,
+            room: room ? { ...room, landlord_id: landlordId, outstanding_balance: displayedBalance.outstandingBalance } as RoomRow : room,
             property,
             office: resolvedOfficeId ? officeById.get(resolvedOfficeId) ?? null : null,
             landlord: landlordId ? landlordById.get(landlordId) ?? null : null,
             lease,
-            outstandingBalance: Number(tenant.balance ?? room?.outstanding_balance ?? 0),
+            outstandingBalance: displayedBalance.outstandingBalance,
             previousOutstandingBeforeLastPayment,
             totalDueBeforeLastPayment,
             lastAmountPaid,
@@ -1923,7 +1938,7 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
             lastRentChargeDate: lastRentChargeByTenant.get(tenant.id) ?? null,
             nextRentChargeDate: nextCharge,
             currentMonthPaid,
-            advanceRentBalance,
+            advanceRentBalance: displayedBalance.advanceBalance,
             advanceRentMonths,
             rentMonthAllocations,
             nextMonthCoveredAmount,

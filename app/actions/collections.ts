@@ -10,6 +10,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getTenantCollectionContext } from "@/lib/collections/data";
 import { buildTenantPaymentCoverageAllocations } from "@/lib/collections/move-in-allocation";
 import { recordCollectionLedgerAndCash } from "@/lib/collections/payment-ledger";
+import { availableAdvanceAllocation, displayTenantNetBalance, moneyAmount } from "@/lib/tenants/balance-reconciliation";
 import { recalculateTenantScore } from "@/lib/tenants/scoring";
 import type {
     CreateCollectionActionInput,
@@ -21,6 +22,7 @@ import type {
 
 type DynamicDb = {
     from: (table: string) => any;
+    rpc?: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: { code?: string; message?: string } | null }>;
 };
 
 function isFieldCollectorContext(context: Awaited<ReturnType<typeof requireAuth>>) {
@@ -111,7 +113,7 @@ async function getFastTenantPaymentContext(input: {
     if (tenantError) throw new Error(tenantError.message);
     if (!tenant) throw new Error("Tenant not found.");
 
-    const [roomResult, leaseResult, sponsorResult] = await Promise.all([
+    const [roomResult, leaseResult, sponsorResult, allocationResult] = await Promise.all([
         tenant.room_id
             ? supabase
                 .from("rooms")
@@ -134,17 +136,31 @@ async function getFastTenantPaymentContext(input: {
             .eq("company_id", companyId)
             .eq("status", "active")
             .maybeSingle(),
+        (supabase as unknown as DynamicDb)
+            .from("tenant_rent_allocations")
+            .select("amount_allocated, consumed_by_balance_reconciliation, allocation_type")
+            .eq("company_id", companyId)
+            .eq("tenant_id", tenantId)
+            .eq("allocation_type", "advance_month"),
     ]);
     if (roomResult.error) throw new Error(roomResult.error.message);
     if (leaseResult.error) throw new Error(leaseResult.error.message);
     if (sponsorResult.error && !/does not exist|schema cache|Could not find/i.test(sponsorResult.error.message ?? "")) {
         throw new Error(sponsorResult.error.message);
     }
+    if (allocationResult.error && !/does not exist|schema cache|Could not find|consumed_by_balance_reconciliation/i.test(allocationResult.error.message ?? "")) {
+        throw new Error(allocationResult.error.message);
+    }
 
     const room = roomResult.data;
     const lease = leaseResult.data;
     const monthlyRent = Number(lease?.monthly_rent ?? tenant.monthly_rent ?? room?.monthly_rent ?? 0);
-    const outstandingBalance = Math.max(0, Number(tenant.balance ?? room?.outstanding_balance ?? 0));
+    const activeAdvanceBalance = (allocationResult.data ?? []).reduce((total: number, row: Record<string, unknown>) => total + availableAdvanceAllocation(row), 0);
+    const netBalance = displayTenantNetBalance({
+        advanceBalance: activeAdvanceBalance,
+        outstandingBalance: Math.max(0, Number(tenant.balance ?? room?.outstanding_balance ?? 0)),
+    });
+    const outstandingBalance = netBalance.outstandingBalance;
     const sponsor = sponsorResult.data ?? null;
     const employerExpected = Math.max(0, Number(sponsor?.covered_amount ?? 0));
     const tenantTopUpExpected = Math.max(0, Number(sponsor?.tenant_top_up_amount ?? (employerExpected ? monthlyRent - employerExpected : 0)));
@@ -227,17 +243,18 @@ async function applyApprovedPaymentRemoval(input: {
     if (tenantError) throw new Error(tenantError.message);
 
     const currentBalance = Number(tenant?.balance ?? payment.balance ?? 0);
-    const nextBalance = Math.max(0, currentBalance + reversalAmount);
-
-    if (tenant?.id) {
-        const tenantUpdate = await adminDb.from("tenants").update({ balance: nextBalance }).eq("company_id", companyId).eq("id", tenant.id);
-        if (tenantUpdate.error) throw new Error(tenantUpdate.error.message);
-    }
-
-    if (roomId) {
-        const roomUpdate = await adminDb.from("rooms").update({ outstanding_balance: nextBalance }).eq("company_id", companyId).eq("id", roomId);
-        if (roomUpdate.error) throw new Error(roomUpdate.error.message);
-    }
+    const requestedBalance = Math.max(0, currentBalance + reversalAmount);
+    const reconciled = await reconcileTenantBalanceAfterWrite({
+        companyId,
+        db: adminDb,
+        note: `Payment removal reversal reconciled against any active advance. Reason: ${reason}`,
+        requestedOutstanding: requestedBalance,
+        roomId,
+        sourceId: input.sourceId,
+        sourceType: input.sourceType,
+        tenantId,
+    });
+    const nextBalance = reconciled.outstandingAfter;
 
     const allocationDelete = await adminDb.from("tenant_rent_allocations").delete().eq("company_id", companyId).eq("payment_id", paymentId);
     if (allocationDelete.error && !/does not exist|schema cache|Could not find/i.test(allocationDelete.error.message ?? "")) {
@@ -332,6 +349,76 @@ function isMissingSchemaError(error: { code?: string; message?: string } | null 
     return error?.code === "42P01" || error?.code === "PGRST205" || /does not exist|schema cache|Could not find/i.test(message);
 }
 
+async function reconcileTenantBalanceAfterWrite(input: {
+    actorId?: string | null;
+    companyId: string;
+    db: DynamicDb;
+    note?: string | null;
+    requestedOutstanding: number;
+    roomId?: string | null;
+    sourceId?: string | null;
+    sourceType: string;
+    tenantId?: string | null;
+}) {
+    const requestedOutstanding = moneyAmount(input.requestedOutstanding);
+    if (!input.tenantId) {
+        return {
+            advanceAfter: 0,
+            advanceBefore: 0,
+            advanceConsumed: 0,
+            outstandingAfter: requestedOutstanding,
+        };
+    }
+
+    if (typeof input.db.rpc === "function") {
+        const { data, error } = await input.db.rpc("reconcile_tenant_balance", {
+            p_actor_id: input.actorId ?? null,
+            p_company_id: input.companyId,
+            p_note: input.note ?? null,
+            p_requested_outstanding: requestedOutstanding,
+            p_room_id: input.roomId ?? null,
+            p_source_id: input.sourceId ?? null,
+            p_source_type: input.sourceType,
+            p_tenant_id: input.tenantId,
+        });
+        if (!error) {
+            const payload = (data ?? {}) as Record<string, unknown>;
+            return {
+                advanceAfter: moneyAmount(payload.advanceAfter),
+                advanceBefore: moneyAmount(payload.advanceBefore),
+                advanceConsumed: moneyAmount(payload.advanceConsumed),
+                outstandingAfter: moneyAmount(payload.outstandingAfter),
+            };
+        }
+        if (!/reconcile_tenant_balance|function .* does not exist|schema cache|Could not find/i.test(error.message ?? "")) {
+            throw new Error(error.message ?? "Tenant balance reconciliation failed.");
+        }
+    }
+
+    const tenantUpdate = await input.db
+        .from("tenants")
+        .update({ balance: requestedOutstanding })
+        .eq("company_id", input.companyId)
+        .eq("id", input.tenantId);
+    if (tenantUpdate.error) throw new Error(tenantUpdate.error.message);
+
+    if (input.roomId) {
+        const roomUpdate = await input.db
+            .from("rooms")
+            .update({ outstanding_balance: requestedOutstanding })
+            .eq("company_id", input.companyId)
+            .eq("id", input.roomId);
+        if (roomUpdate.error) throw new Error(roomUpdate.error.message);
+    }
+
+    return {
+        advanceAfter: 0,
+        advanceBefore: 0,
+        advanceConsumed: 0,
+        outstandingAfter: requestedOutstanding,
+    };
+}
+
 async function applyTenantBalanceAdjustment(input: {
     adjustmentId: string;
     companyId: string;
@@ -344,27 +431,22 @@ async function applyTenantBalanceAdjustment(input: {
     tenantId: string | null;
 }) {
     const balance = Math.max(0, input.newBalance);
-    if (input.tenantId) {
-        const tenantUpdate = await input.db
-            .from("tenants")
-            .update({ balance })
-            .eq("company_id", input.companyId)
-            .eq("id", input.tenantId);
-        if (tenantUpdate.error) throw new Error(tenantUpdate.error.message);
-    }
-    if (input.roomId) {
-        const roomUpdate = await input.db
-            .from("rooms")
-            .update({ outstanding_balance: balance })
-            .eq("company_id", input.companyId)
-            .eq("id", input.roomId);
-        if (roomUpdate.error) throw new Error(roomUpdate.error.message);
-    }
+    const reconciled = await reconcileTenantBalanceAfterWrite({
+        companyId: input.companyId,
+        db: input.db,
+        note: `Outstanding balance adjusted from UGX ${Math.round(input.oldBalance).toLocaleString()} to UGX ${Math.round(balance).toLocaleString()}. Reason: ${input.reason}`,
+        requestedOutstanding: balance,
+        roomId: input.roomId,
+        sourceId: input.adjustmentId,
+        sourceType: "tenant_balance_adjustment",
+        tenantId: input.tenantId,
+    });
+    const finalBalance = reconciled.outstandingAfter;
     const ledgerInsert = await input.db.from("tenant_ledger_entries").insert({
         amount: Math.abs(balance - input.oldBalance),
-        balance_after: balance,
+        balance_after: finalBalance,
         company_id: input.companyId,
-        description: `Outstanding balance adjusted from UGX ${Math.round(input.oldBalance).toLocaleString()} to UGX ${Math.round(balance).toLocaleString()}. Reason: ${input.reason}`,
+        description: `Outstanding balance adjusted from UGX ${Math.round(input.oldBalance).toLocaleString()} to UGX ${Math.round(balance).toLocaleString()}. Final net outstanding UGX ${Math.round(finalBalance).toLocaleString()}. Reason: ${input.reason}`,
         entry_type: balance > input.oldBalance ? "debit" : "credit",
         office_id: input.officeId,
         source_id: input.adjustmentId,
@@ -674,6 +756,7 @@ export async function recordCollection(input: RecordCollectionInput) {
     const balanceBefore = Math.max(0, tenantContext.outstandingBalance);
     const totalDueBeforePayment = balanceBefore;
     const balance = Math.max(0, totalDueBeforePayment - amount);
+    let finalBalance = balance;
     const usedToClearOutstanding = Math.min(balanceBefore, amount);
     const paymentSource = input.paymentSource === "employer" || input.paymentKind === "employer_sponsor" ? "employer" : "tenant";
     const paymentKind = input.paymentKind ?? (paymentSource === "employer" ? "employer_sponsor" : "tenant_normal");
@@ -830,10 +913,34 @@ export async function recordCollection(input: RecordCollectionInput) {
         throw new Error(criticalError.message ?? "Payment balance update failed.");
     }
 
+    const reconciliation = await reconcileTenantBalanceAfterWrite({
+        actorId: context.profile?.id ?? null,
+        companyId: context.activeCompany.id,
+        db: supabase as unknown as DynamicDb,
+        note: `${paymentLabel} recorded; final tenant balance reconciled as one net outstanding/advance position.`,
+        requestedOutstanding: balance,
+        roomId: tenantContext.room?.id ?? tenantContext.tenant.room_id ?? null,
+        sourceId: data.id,
+        sourceType: "collection_payment",
+        tenantId: tenantContext.tenant.id,
+    });
+    finalBalance = reconciliation.outstandingAfter;
+    if (Math.round(finalBalance * 100) !== Math.round(balance * 100)) {
+        const paymentBalanceUpdate = await (supabase as unknown as DynamicDb)
+            .from("collections")
+            .update({
+                balance: finalBalance,
+                balance_after_payment: finalBalance,
+            })
+            .eq("id", data.id)
+            .eq("company_id", context.activeCompany.id);
+        if (paymentBalanceUpdate.error) throw new Error(paymentBalanceUpdate.error.message);
+    }
+
     const backgroundWrites: Array<PromiseLike<unknown>> = [
         recordCollectionLedgerAndCash({
             amount,
-            balanceAfter: balance,
+            balanceAfter: finalBalance,
             balanceBefore,
             collectionId: data.id,
             companyId: context.activeCompany.id,
@@ -905,12 +1012,14 @@ export async function recordCollection(input: RecordCollectionInput) {
     revalidateFastPaymentPages();
     return {
         ...data,
+        balance: finalBalance,
+        balance_after_payment: finalBalance,
         allocationSummary: {
             advanceAmount,
             allocations: rentAllocations,
             arrearsPaid: rentAllocations.filter((allocation) => allocation.allocationType === "arrears").reduce((total, allocation) => total + allocation.amount, 0),
             currentMonthPaid: rentAllocations.filter((allocation) => allocation.allocationType === "current_month").reduce((total, allocation) => total + allocation.amount, 0),
-            remainingBalance: balance,
+            remainingBalance: finalBalance,
         },
         receipt,
         receiptError,
@@ -1330,15 +1439,19 @@ export async function decidePaymentCorrection(input: {
             const { data: tenant } = payment.tenant_id
                 ? await db.from("tenants").select("*").eq("company_id", context.activeCompany.id).eq("id", payment.tenant_id).maybeSingle()
                 : { data: null };
-            const nextBalance = Math.max(0, Number(tenant?.balance ?? payment.balance ?? 0) - delta);
-            if (tenant?.id) {
-                const tenantUpdate = await db.from("tenants").update({ balance: nextBalance }).eq("company_id", context.activeCompany.id).eq("id", tenant.id);
-                if (tenantUpdate.error) throw new Error(tenantUpdate.error.message);
-            }
-            if (payment.room_id) {
-                const roomUpdate = await db.from("rooms").update({ outstanding_balance: nextBalance }).eq("company_id", context.activeCompany.id).eq("id", payment.room_id);
-                if (roomUpdate.error) throw new Error(roomUpdate.error.message);
-            }
+            const requestedBalance = Math.max(0, Number(tenant?.balance ?? payment.balance ?? 0) - delta);
+            const reconciled = await reconcileTenantBalanceAfterWrite({
+                actorId: context.profile?.id ?? null,
+                companyId: context.activeCompany.id,
+                db,
+                note: `Approved payment amount correction reconciled against active tenant advance.`,
+                requestedOutstanding: requestedBalance,
+                roomId: payment.room_id ?? null,
+                sourceId: request.id,
+                sourceType: "payment_correction_amount",
+                tenantId: tenant?.id ?? payment.tenant_id ?? null,
+            });
+            const nextBalance = reconciled.outstandingAfter;
             const update = await db
                 .from("collections")
                 .update({ amount: newAmount, amount_paid: newAmount, balance: nextBalance })
@@ -1380,16 +1493,32 @@ export async function decidePaymentCorrection(input: {
             const oldTenant = oldTenantResult.data;
             if (oldTenant?.id) {
                 const oldBalance = Math.max(0, Number(oldTenant.balance ?? 0) + paymentAmount);
-                const oldUpdate = await db.from("tenants").update({ balance: oldBalance }).eq("company_id", context.activeCompany.id).eq("id", oldTenant.id);
-                if (oldUpdate.error) throw new Error(oldUpdate.error.message);
-                if (payment.room_id) await db.from("rooms").update({ outstanding_balance: oldBalance }).eq("company_id", context.activeCompany.id).eq("id", payment.room_id);
+                await reconcileTenantBalanceAfterWrite({
+                    actorId: context.profile?.id ?? null,
+                    companyId: context.activeCompany.id,
+                    db,
+                    note: "Payment room correction restored balance to the original tenant.",
+                    requestedOutstanding: oldBalance,
+                    roomId: payment.room_id ?? null,
+                    sourceId: request.id,
+                    sourceType: "payment_correction_room_original_tenant",
+                    tenantId: oldTenant.id,
+                });
             }
             const newTenant = roomContext.tenant;
-            const newBalance = Math.max(0, Number(newTenant.balance ?? 0) - paymentAmount);
-            const newTenantUpdate = await db.from("tenants").update({ balance: newBalance }).eq("company_id", context.activeCompany.id).eq("id", newTenant.id);
-            if (newTenantUpdate.error) throw new Error(newTenantUpdate.error.message);
-            const newRoomUpdate = await db.from("rooms").update({ outstanding_balance: newBalance }).eq("company_id", context.activeCompany.id).eq("id", roomContext.room.id);
-            if (newRoomUpdate.error) throw new Error(newRoomUpdate.error.message);
+            const requestedNewBalance = Math.max(0, Number(newTenant.balance ?? 0) - paymentAmount);
+            const newReconciled = await reconcileTenantBalanceAfterWrite({
+                actorId: context.profile?.id ?? null,
+                companyId: context.activeCompany.id,
+                db,
+                note: "Payment room correction applied payment to the requested tenant.",
+                requestedOutstanding: requestedNewBalance,
+                roomId: roomContext.room.id,
+                sourceId: request.id,
+                sourceType: "payment_correction_room_new_tenant",
+                tenantId: newTenant.id,
+            });
+            const newBalance = newReconciled.outstandingAfter;
             const update = await db
                 .from("collections")
                 .update({
@@ -1526,15 +1655,19 @@ export async function adminCorrectPayment(input: {
             ? await db.from("tenants").select("*").eq("company_id", context.activeCompany.id).eq("id", payment.tenant_id).maybeSingle()
             : { data: null, error: null };
         if (tenantError) throw new Error(tenantError.message);
-        const nextBalance = Math.max(0, Number(tenant?.balance ?? payment.balance ?? 0) - delta);
-        if (tenant?.id) {
-            const tenantUpdate = await db.from("tenants").update({ balance: nextBalance }).eq("company_id", context.activeCompany.id).eq("id", tenant.id);
-            if (tenantUpdate.error) throw new Error(tenantUpdate.error.message);
-        }
-        if (payment.room_id) {
-            const roomUpdate = await db.from("rooms").update({ outstanding_balance: nextBalance }).eq("company_id", context.activeCompany.id).eq("id", payment.room_id);
-            if (roomUpdate.error) throw new Error(roomUpdate.error.message);
-        }
+        const requestedBalance = Math.max(0, Number(tenant?.balance ?? payment.balance ?? 0) - delta);
+        const reconciled = await reconcileTenantBalanceAfterWrite({
+            actorId: context.profile?.id ?? null,
+            companyId: context.activeCompany.id,
+            db,
+            note: `Admin corrected payment amount; final balance reconciled against active tenant advance. Reason: ${reason}`,
+            requestedOutstanding: requestedBalance,
+            roomId: payment.room_id ?? null,
+            sourceId: input.paymentId,
+            sourceType: "admin_payment_correction_amount",
+            tenantId: tenant?.id ?? payment.tenant_id ?? null,
+        });
+        const nextBalance = reconciled.outstandingAfter;
         const update = await db
             .from("collections")
             .update({ amount: requestedAmount, amount_paid: requestedAmount, balance: nextBalance })
@@ -1580,20 +1713,33 @@ export async function adminCorrectPayment(input: {
         const oldTenant = oldTenantResult.data;
         if (oldTenant?.id) {
             const oldBalance = Math.max(0, Number(oldTenant.balance ?? 0) + originalAmount);
-            const oldUpdate = await db.from("tenants").update({ balance: oldBalance }).eq("company_id", context.activeCompany.id).eq("id", oldTenant.id);
-            if (oldUpdate.error) throw new Error(oldUpdate.error.message);
-            if (payment.room_id) {
-                const oldRoomUpdate = await db.from("rooms").update({ outstanding_balance: oldBalance }).eq("company_id", context.activeCompany.id).eq("id", payment.room_id);
-                if (oldRoomUpdate.error) throw new Error(oldRoomUpdate.error.message);
-            }
+            await reconcileTenantBalanceAfterWrite({
+                actorId: context.profile?.id ?? null,
+                companyId: context.activeCompany.id,
+                db,
+                note: `Admin room correction restored balance to the original tenant. Reason: ${reason}`,
+                requestedOutstanding: oldBalance,
+                roomId: payment.room_id ?? null,
+                sourceId: input.paymentId,
+                sourceType: "admin_payment_correction_room_original_tenant",
+                tenantId: oldTenant.id,
+            });
         }
 
         const newTenant = roomContext.tenant;
-        const newBalance = Math.max(0, Number(newTenant.balance ?? 0) - originalAmount);
-        const newTenantUpdate = await db.from("tenants").update({ balance: newBalance }).eq("company_id", context.activeCompany.id).eq("id", newTenant.id);
-        if (newTenantUpdate.error) throw new Error(newTenantUpdate.error.message);
-        const newRoomUpdate = await db.from("rooms").update({ outstanding_balance: newBalance }).eq("company_id", context.activeCompany.id).eq("id", roomContext.room.id);
-        if (newRoomUpdate.error) throw new Error(newRoomUpdate.error.message);
+        const requestedNewBalance = Math.max(0, Number(newTenant.balance ?? 0) - originalAmount);
+        const newReconciled = await reconcileTenantBalanceAfterWrite({
+            actorId: context.profile?.id ?? null,
+            companyId: context.activeCompany.id,
+            db,
+            note: `Admin room correction applied payment to the requested tenant. Reason: ${reason}`,
+            requestedOutstanding: requestedNewBalance,
+            roomId: roomContext.room.id,
+            sourceId: input.paymentId,
+            sourceType: "admin_payment_correction_room_new_tenant",
+            tenantId: newTenant.id,
+        });
+        const newBalance = newReconciled.outstandingAfter;
 
         const update = await db
             .from("collections")

@@ -257,12 +257,13 @@ begin
                 end if;
 
                 v_prepaid := coalesce((
-                    select sum(a.amount_allocated)
-                    from public.tenant_rent_allocations a
-                    where a.company_id = p_company_id
-                      and a.tenant_id = candidate.tenant_id
-                      and a.room_id = candidate.room_id
-                      and a.allocation_type = 'advance_month'
+                select sum(greatest(0, a.amount_allocated - coalesce(a.consumed_by_balance_reconciliation, 0)))
+                from public.tenant_rent_allocations a
+                where a.company_id = p_company_id
+                  and a.tenant_id = candidate.tenant_id
+                  and a.room_id = candidate.room_id
+                  and a.allocation_type = 'advance_month'
+                  and a.amount_allocated > coalesce(a.consumed_by_balance_reconciliation, 0)
                       and (
                         a.coverage_start = v_due_date
                         or (a.coverage_start is null and date_trunc('month', a.allocation_month)::date = public.ddumba_month_start(v_due_date))

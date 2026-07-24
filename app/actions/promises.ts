@@ -9,6 +9,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getTenantCollectionContext } from "@/lib/collections/data";
 import { recordCollectionLedgerAndCash } from "@/lib/collections/payment-ledger";
 import { getPromiseInActiveOffice, getPromiseTenantWriteContext } from "@/lib/promises/data";
+import { moneyAmount } from "@/lib/tenants/balance-reconciliation";
 import { recalculateTenantScore } from "@/lib/tenants/scoring";
 import type {
     CreatePromiseInput,
@@ -21,6 +22,7 @@ import type {
 
 type Db = {
     from: (table: string) => any;
+    rpc?: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: { message?: string } | null }>;
 };
 
 function assertAmount(amount: number) {
@@ -56,6 +58,35 @@ function revalidatePromiseWorkflow() {
 
 function isCollectorContext(context: Awaited<ReturnType<typeof requireAuth>>) {
     return context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
+}
+
+async function reconcilePromiseTenantBalance(db: Db, input: {
+    actorId?: string | null;
+    companyId: string;
+    note: string;
+    requestedOutstanding: number;
+    roomId?: string | null;
+    sourceId: string;
+    tenantId: string;
+}) {
+    const requestedOutstanding = moneyAmount(input.requestedOutstanding);
+    if (typeof db.rpc === "function") {
+        const { data, error } = await db.rpc("reconcile_tenant_balance", {
+            p_actor_id: input.actorId ?? null,
+            p_company_id: input.companyId,
+            p_note: input.note,
+            p_requested_outstanding: requestedOutstanding,
+            p_room_id: input.roomId ?? null,
+            p_source_id: input.sourceId,
+            p_source_type: "promise_fulfilled",
+            p_tenant_id: input.tenantId,
+        });
+        if (!error) return moneyAmount((data as Record<string, unknown> | null)?.outstandingAfter);
+        if (!/reconcile_tenant_balance|function .* does not exist|schema cache|Could not find/i.test(error.message ?? "")) {
+            throw new Error(error.message ?? "Tenant balance reconciliation failed.");
+        }
+    }
+    return requestedOutstanding;
 }
 
 function promiseSnapshot(promise: Record<string, unknown>) {
@@ -504,7 +535,7 @@ export async function fulfilPromise(input: PromiseStateInput) {
         context.activeOffice?.id;
     if (!resolvedOfficeId) throw new Error("Promise is missing office assignment.");
     const balanceBefore = Math.max(0, tenantContext.outstandingBalance);
-    const balance = Math.max(0, balanceBefore - amount);
+    let balance = Math.max(0, balanceBefore - amount);
     const paidAt = new Date().toISOString();
 
     const { data: collection, error: collectionError } = await supabase
@@ -533,6 +564,25 @@ export async function fulfilPromise(input: PromiseStateInput) {
         .single();
 
     if (collectionError) throw new Error(collectionError.message);
+
+    balance = await reconcilePromiseTenantBalance(supabase as unknown as Db, {
+        actorId: context.profile?.id ?? null,
+        companyId: context.activeCompany!.id,
+        note: input.notes || "Promise payment fulfilled; tenant balance reconciled as one net outstanding/advance position.",
+        requestedOutstanding: balance,
+        roomId: tenantContext.room?.id ?? tenantContext.tenant.room_id ?? null,
+        sourceId: collection.id,
+        tenantId: tenantContext.tenant.id,
+    });
+
+    if (Math.round(Number(collection.balance ?? 0) * 100) !== Math.round(balance * 100)) {
+        const collectionBalanceUpdate = await (supabase as unknown as Db)
+            .from("collections")
+            .update({ balance, balance_after_payment: balance })
+            .eq("id", collection.id)
+            .eq("company_id", context.activeCompany!.id);
+        if (collectionBalanceUpdate.error) throw new Error(collectionBalanceUpdate.error.message);
+    }
 
     await recordCollectionLedgerAndCash({
         amount,
