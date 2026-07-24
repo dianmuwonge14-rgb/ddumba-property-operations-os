@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 import { canAccessOffice, hasPermission, requireAuth, requireCompanyAdminMode } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type DynamicDb = {
     from: (table: string) => any;
@@ -97,8 +96,8 @@ export async function recordSecurityDeposit(input: RecordSecurityDepositInput) {
     const paymentDate = assertDate(input.paymentDate, "Security deposit date");
     if (!tenantId) throw new Error("Tenant is required.");
 
-    const supabase = await createSupabaseServerClient();
-    const { data: tenant, error: tenantError } = await supabase
+    const db = createSupabaseAdminClient() as unknown as DynamicDb;
+    const { data: tenant, error: tenantError } = await db
         .from("tenants")
         .select("id, company_id, office_id, room_id")
         .eq("id", tenantId)
@@ -110,7 +109,6 @@ export async function recordSecurityDeposit(input: RecordSecurityDepositInput) {
     const officeId = tenant.office_id ?? context.activeOffice?.id ?? null;
     if (!canAccessOffice(context, officeId)) throw new Error("You can only record security deposits for your assigned office.");
 
-    const db = createSupabaseAdminClient() as unknown as DynamicDb;
     const { data, error } = await db.rpc("record_tenant_security_deposit", {
         p_amount: amount,
         p_company_id: companyId,

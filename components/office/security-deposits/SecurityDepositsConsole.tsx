@@ -66,6 +66,7 @@ export default function SecurityDepositsConsole({ data }: { data: SecurityDeposi
     const [restoreAmount, setRestoreAmount] = useState("");
     const [restoreReference, setRestoreReference] = useState("");
     const [confirmUsage, setConfirmUsage] = useState(false);
+    const [viewDeposit, setViewDeposit] = useState<SecurityDepositRegisterRow | null>(null);
     const [insightOffset, setInsightOffset] = useState(0);
     const [isPending, startTransition] = useTransition();
 
@@ -194,6 +195,34 @@ export default function SecurityDepositsConsole({ data }: { data: SecurityDeposi
         });
     }
 
+    function openReceiptWindow(deposit: SecurityDepositRegisterRow) {
+        const receiptHtml = buildSecurityReceiptHtml(deposit);
+        const printWindow = window.open("", "security-deposit-receipt", "width=420,height=780");
+        if (!printWindow) {
+            setMessage("Receipt popup was blocked. Allow popups for Ddumba OS and try again.");
+            return;
+        }
+        printWindow.document.open();
+        printWindow.document.write(receiptHtml);
+        printWindow.document.close();
+        printWindow.focus();
+        printWindow.print();
+    }
+
+    function downloadSecurityReceipt(deposit: SecurityDepositRegisterRow) {
+        const receiptHtml = buildSecurityReceiptHtml(deposit);
+        const blob = new Blob([receiptHtml], { type: "text/html;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${deposit.receipt_number || "security-receipt"}.html`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        setMessage("Security receipt downloaded from the saved deposit record.");
+    }
+
     return (
         <main className="min-h-screen bg-[#eef3f8] px-3 py-4 text-slate-950 sm:px-5 lg:px-8">
             <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-4">
@@ -274,6 +303,13 @@ export default function SecurityDepositsConsole({ data }: { data: SecurityDeposi
                             usageReference={usageReference}
                         />
                         <RefundsAndReports deposits={data.deposits} />
+                        <SelectedDepositActions
+                            deposit={selectedDeposit}
+                            onDownload={downloadSecurityReceipt}
+                            onPrint={openReceiptWindow}
+                            onView={setViewDeposit}
+                            setMessage={setMessage}
+                        />
                     </aside>
                 </section>
 
@@ -293,6 +329,7 @@ export default function SecurityDepositsConsole({ data }: { data: SecurityDeposi
                     expectedReplacementDate={expectedReplacementDate}
                 />
             ) : null}
+            {viewDeposit ? <DepositDetailsDialog deposit={viewDeposit} onClose={() => setViewDeposit(null)} onDownload={downloadSecurityReceipt} onPrint={openReceiptWindow} /> : null}
         </main>
     );
 }
@@ -923,6 +960,174 @@ function RefundsAndReports({ deposits }: { deposits: SecurityDepositRegisterRow[
             </div>
         </section>
     );
+}
+
+function SelectedDepositActions({
+    deposit,
+    onDownload,
+    onPrint,
+    onView,
+    setMessage,
+}: {
+    deposit: SecurityDepositRegisterRow | null;
+    onDownload: (deposit: SecurityDepositRegisterRow) => void;
+    onPrint: (deposit: SecurityDepositRegisterRow) => void;
+    onView: (deposit: SecurityDepositRegisterRow) => void;
+    setMessage: (message: string) => void;
+}) {
+    const disabled = !deposit;
+    const tenantHref = deposit?.tenant_id ? `/office/payments?tenant=${encodeURIComponent(deposit.tenant_id)}` : "/office/payments";
+    const roomHref = deposit?.room?.room_number ? `/office/properties?room=${encodeURIComponent(deposit.room.room_number)}` : "/office/properties";
+    return (
+        <section className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+                <div>
+                    <h2 className="text-lg font-black">Deposit Actions</h2>
+                    <p className="mt-1 text-sm font-semibold text-slate-500">Actions use the selected saved deposit only.</p>
+                </div>
+                <ShieldCheck size={18} className="text-emerald-700" />
+            </div>
+            <div className="mt-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                <p className="text-sm font-black">{deposit?.tenant?.full_name ?? "No deposit selected"}</p>
+                <p className="text-xs font-bold text-slate-500">
+                    Room {deposit?.room?.room_number ?? "-"} · {deposit?.receipt_number ?? "No receipt"} · {deposit ? money(deposit.liability_balance) : money(0)}
+                </p>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <ActionButton disabled={disabled} label="View Deposit" onClick={() => deposit && onView(deposit)} />
+                <ActionButton disabled={disabled} label="Print Receipt" onClick={() => deposit && onPrint(deposit)} />
+                <ActionButton disabled={disabled} label="Download Receipt" onClick={() => deposit && onDownload(deposit)} />
+                <ActionButton disabled={disabled} label="View Audit History" onClick={() => deposit && onView(deposit)} />
+                <a className={`rounded-2xl border border-slate-200 px-3 py-2 text-center text-xs font-black ${disabled ? "pointer-events-none opacity-50" : "hover:bg-slate-50"}`} href={tenantHref}>
+                    Open Tenant
+                </a>
+                <a className={`rounded-2xl border border-slate-200 px-3 py-2 text-center text-xs font-black ${disabled ? "pointer-events-none opacity-50" : "hover:bg-slate-50"}`} href={roomHref}>
+                    Open Room
+                </a>
+                <ActionButton
+                    disabled={disabled}
+                    label="Start Refund"
+                    onClick={() => setMessage("Start refund from the tenant vacate/security settlement workflow so approvals and refund vouchers remain audited.")}
+                />
+                <ActionButton
+                    disabled={disabled}
+                    label="Mark Settlement Pending"
+                    onClick={() => setMessage("Settlement pending is available in the vacate workflow. No change was applied to this held deposit.")}
+                />
+            </div>
+        </section>
+    );
+}
+
+function ActionButton({ disabled, label, onClick }: { disabled?: boolean; label: string; onClick: () => void }) {
+    return (
+        <button
+            type="button"
+            disabled={disabled}
+            onClick={onClick}
+            className="rounded-2xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+            {label}
+        </button>
+    );
+}
+
+function DepositDetailsDialog({
+    deposit,
+    onClose,
+    onDownload,
+    onPrint,
+}: {
+    deposit: SecurityDepositRegisterRow;
+    onClose: () => void;
+    onDownload: (deposit: SecurityDepositRegisterRow) => void;
+    onPrint: (deposit: SecurityDepositRegisterRow) => void;
+}) {
+    const rows = [
+        ["Tenant", deposit.tenant?.full_name ?? "Unknown tenant"],
+        ["Phone", deposit.tenant?.phone ?? "Not recorded"],
+        ["Room", deposit.room?.room_number ?? "Unknown room"],
+        ["Office", deposit.office?.office_name ?? deposit.office?.name ?? "No office"],
+        ["Landlord", deposit.landlord?.full_name ?? "No landlord"],
+        ["Receipt", deposit.receipt_number],
+        ["Amount", money(deposit.amount)],
+        ["Liability", money(deposit.liability_balance)],
+        ["Cash available", money(deposit.cash_available)],
+        ["Used by company", money(Math.max(0, amount(deposit.amount_used_by_company) - amount(deposit.amount_restored_by_company)))],
+        ["Shortfall", money(deposit.company_shortfall)],
+        ["Status", prettyStatus(deposit.status)],
+        ["Date received", dateLabel(deposit.date_received)],
+        ["Payment method", prettyStatus(deposit.payment_method)],
+        ["Reference", deposit.reference_number ?? "Optional"],
+        ["Notes", deposit.notes ?? "No notes"],
+        ["Audit", `Created ${dateLabel(deposit.created_at)} · Updated ${dateLabel(deposit.updated_at)}`],
+    ];
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-3 backdrop-blur-sm">
+            <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-[28px] border border-slate-200 bg-white p-5 shadow-2xl">
+                <div className="flex items-start justify-between gap-4">
+                    <div>
+                        <p className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-black uppercase text-emerald-700">
+                            <Vault size={14} />
+                            Security Deposit Record
+                        </p>
+                        <h2 className="mt-3 text-2xl font-black">{deposit.tenant?.full_name ?? "Security deposit"}</h2>
+                        <p className="text-sm font-semibold text-slate-500">Saved receipt {deposit.receipt_number}</p>
+                    </div>
+                    <button type="button" onClick={onClose} className="rounded-full border border-slate-200 p-2 text-slate-500 hover:bg-slate-50">
+                        <X size={18} />
+                    </button>
+                </div>
+                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                    {rows.map(([label, value]) => (
+                        <PreviewItem key={label} label={label} value={value} wide={label === "Notes" || label === "Audit"} danger={label === "Shortfall" && amount(deposit.company_shortfall) > 0} />
+                    ))}
+                </div>
+                <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                    <button type="button" onClick={onClose} className="rounded-2xl border border-slate-200 px-4 py-3 text-sm font-black text-slate-700">
+                        Close
+                    </button>
+                    <button type="button" onClick={() => onDownload(deposit)} className="rounded-2xl border border-emerald-200 px-4 py-3 text-sm font-black text-emerald-800">
+                        Download Receipt
+                    </button>
+                    <button type="button" onClick={() => onPrint(deposit)} className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white">
+                        Print Receipt
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function buildSecurityReceiptHtml(deposit: SecurityDepositRegisterRow) {
+    const rows = [
+        ["Receipt", deposit.receipt_number],
+        ["Date", dateLabel(deposit.date_received)],
+        ["Tenant", deposit.tenant?.full_name ?? "Unknown tenant"],
+        ["Phone", deposit.tenant?.phone ?? "Not recorded"],
+        ["Room", deposit.room?.room_number ?? "Unknown"],
+        ["Office", deposit.office?.office_name ?? deposit.office?.name ?? "No office"],
+        ["Landlord", deposit.landlord?.full_name ?? "No landlord"],
+        ["Amount", money(deposit.amount)],
+        ["Liability Held", money(deposit.liability_balance)],
+        ["Cash Available", money(deposit.cash_available)],
+        ["Status", prettyStatus(deposit.status)],
+        ["Method", prettyStatus(deposit.payment_method)],
+        ["Reference", deposit.reference_number ?? "Optional"],
+        ["Notes", deposit.notes ?? "No notes"],
+    ];
+    const body = rows
+        .map(([label, value]) => `<div class="row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`)
+        .join("");
+    return `<!doctype html>
+<html><head><meta charset="utf-8" /><title>Security Deposit Receipt</title>
+<style>
+@page{size:80mm auto;margin:0}*{box-sizing:border-box}body{margin:0;background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif}.receipt{width:80mm;padding:4mm}.title{text-align:center;font-weight:800;font-size:14px}.subtitle{text-align:center;font-weight:700;font-size:11px;margin-top:2mm}.divider{border-top:1px dashed #000;margin:3mm 0}.row{display:grid;grid-template-columns:minmax(0,42%) minmax(0,58%);gap:2mm;margin:1.5mm 0;font-size:10px;line-height:1.3}.row span{font-weight:700}.row strong{text-align:right;overflow-wrap:anywhere}.footer{text-align:center;font-size:9px;font-weight:700;margin-top:3mm}@media print{body{width:80mm}.receipt{box-shadow:none}}
+</style></head><body><main class="receipt"><div class="title">DDUMBA OS</div><div class="subtitle">SECURITY DEPOSIT RECEIPT</div><div class="divider"></div>${body}<div class="divider"></div><div class="footer">Security deposit is tenant liability, not rent or company income.</div></main></body></html>`;
+}
+
+function escapeHtml(value: string) {
+    return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[char] ?? char);
 }
 
 function StatusTile({ helper, icon: Icon, label, tone, value }: { helper: string; icon: LucideIcon; label: string; tone: "blue" | "emerald" | "violet"; value: string }) {

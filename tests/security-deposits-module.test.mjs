@@ -41,6 +41,13 @@ test("payments entry exposes a separate security recording path", () => {
   assert.match(paymentsEntry, /securityRequired/);
 });
 
+test("security deposit recording uses admin lookup before the atomic RPC", () => {
+  assert.match(actions, /createSupabaseAdminClient\(\) as unknown as DynamicDb/);
+  assert.match(actions, /\.from\("tenants"\)[\s\S]*\.eq\("company_id", companyId\)/);
+  assert.match(actions, /canAccessOffice\(context, officeId\)/);
+  assert.doesNotMatch(actions, /createSupabaseServerClient/);
+});
+
 test("move-in and vacate workflows carry security metadata", () => {
   assert.match(roomOccupancy, /securityAmount/);
   assert.match(roomOccupancy, /recordSecurityDeposit/);
