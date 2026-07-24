@@ -122,6 +122,7 @@ export default function SecurityDepositsConsole({ data }: { data: SecurityDeposi
                             <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-200">
                                 Track refundable tenant security money separately from rent collections, office revenue, landlord payments, profit and advance rent.
                             </p>
+                            <SecurityLiabilityBadge summary={data.summary} />
                         </div>
                         <div className="grid content-end gap-2 sm:grid-cols-2 lg:grid-cols-1">
                             <Badge label="Live Supabase data" />
@@ -295,6 +296,34 @@ export default function SecurityDepositsConsole({ data }: { data: SecurityDeposi
 
 function Badge({ label }: { label: string }) {
     return <span className="rounded-full border border-white/10 bg-white/10 px-3 py-2 text-xs font-black uppercase tracking-wide text-slate-100">{label}</span>;
+}
+
+function SecurityLiabilityBadge({ summary }: { summary: SecurityDepositPageData["summary"] }) {
+    const shortfallActive = summary.totalShortfall > 0;
+    const items = [
+        { label: "Held", value: summary.totalHeld, tone: "text-white" },
+        { label: "Available", value: summary.totalAvailable, tone: "text-emerald-100" },
+        { label: "Used by Company", value: summary.totalUsedByCompany, tone: "text-amber-100" },
+        { label: "Pending Refunds", value: summary.totalPendingSettlement, tone: "text-cyan-100" },
+        { label: "Shortfall", value: summary.totalShortfall, tone: shortfallActive ? "text-rose-200" : "text-emerald-100" },
+    ];
+    return (
+        <div className={`mt-5 rounded-3xl border p-3 shadow-2xl backdrop-blur ${shortfallActive ? "border-rose-300/40 bg-rose-950/35" : "border-white/10 bg-white/10"}`}>
+            <div className="flex flex-wrap items-center gap-2">
+                {items.map((item) => (
+                    <div key={item.label} className="min-w-[145px] flex-1 rounded-2xl border border-white/10 bg-slate-950/35 px-3 py-2">
+                        <p className="text-[10px] font-black uppercase tracking-wide text-slate-300">{item.label}</p>
+                        <p className={`mt-1 text-sm font-black tabular-nums ${item.tone}`}>{money(item.value)}</p>
+                    </div>
+                ))}
+            </div>
+            <p className={`mt-2 text-xs font-bold ${shortfallActive ? "text-rose-100" : "text-emerald-100"}`}>
+                {shortfallActive
+                    ? "Security shortfall is active. Company has temporarily used tenant-held money and must restore it."
+                    : "Security pool is balanced against recorded tenant liability."}
+            </p>
+        </div>
+    );
 }
 
 function KpiCard({ amount, icon: Icon, title, tone }: { amount: number; icon: typeof ShieldCheck; title: string; tone: "slate" | "emerald" | "amber" | "rose" | "blue" | "violet" }) {
