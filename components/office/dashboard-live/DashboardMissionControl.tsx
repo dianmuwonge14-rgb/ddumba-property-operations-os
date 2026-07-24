@@ -84,6 +84,10 @@ export default function DashboardMissionControl({ data }: Props) {
                     <EnterpriseKpiCard title="Amount at Office" value={money(data.finance.amountAtOffice)} tone={data.finance.amountAtOffice >= 0 ? "green" : "red"} trend={data.finance.amountAtOffice >= 0 ? "up" : "down"} trendLabel="cash in office" progress={data.finance.amountAtOffice >= 0 ? 85 : 25} />
                     <EnterpriseKpiCard title="Amount Banked" value={money(data.finance.amountBanked)} tone="blue" trend="up" trendLabel="bank deposits" progress={data.finance.amountBanked ? 78 : 0} />
                     <EnterpriseKpiCard title="Profit / Loss This Month" value={money(data.finance.profitLossThisMonth)} tone={data.finance.profitLossThisMonth >= 0 ? "green" : "red"} trend={data.finance.profitLossThisMonth >= 0 ? "up" : "down"} trendLabel="live P/L" progress={data.finance.profitLossThisMonth >= 0 ? 82 : 36} />
+                    <EnterpriseKpiCard title="Security Held" value={money(data.finance.securityHeld)} tone="purple" trend="flat" trendLabel="tenant liability" progress={data.finance.securityHeld ? 70 : 0} />
+                    <EnterpriseKpiCard title="Security Cash Available" value={money(data.finance.securityCashAvailable)} tone="green" trend="flat" trendLabel="separate pool" progress={data.finance.securityHeld ? Math.round((data.finance.securityCashAvailable / Math.max(data.finance.securityHeld, 1)) * 100) : 0} />
+                    <EnterpriseKpiCard title="Security Used By Company" value={money(data.finance.securityUsedByCompany)} tone={data.finance.securityUsedByCompany ? "red" : "green"} trend={data.finance.securityUsedByCompany ? "down" : "flat"} trendLabel={`${money(data.finance.securityShortfall)} shortfall`} progress={data.finance.securityShortfall ? 35 : 100} />
+                    <EnterpriseKpiCard title="Security Refunds Due" value={money(data.finance.securityPendingSettlements)} tone={data.finance.securityPendingSettlements ? "orange" : "green"} trend="flat" trendLabel="pending settlements" progress={data.finance.securityPendingSettlements ? 50 : 100} />
                 </section>
 
                 <section className="mt-6 grid grid-cols-1 gap-6 2xl:grid-cols-12">
@@ -234,6 +238,10 @@ function OfficeFinanceCards({ data }: { data: DashboardLiveData }) {
                 <FinanceMini label="Top-Ups Collected" value={money(finance.tenantTopUpsCollected)} tone="text-emerald-700" />
                 <FinanceMini label="Top-Ups To Collect" value={money(finance.tenantTopUpsStillToCollect)} tone={finance.tenantTopUpsStillToCollect > 0 ? "text-red-700" : "text-emerald-700"} />
                 <FinanceMini label="Profit/loss this month" value={money(finance.profitLossThisMonth)} tone={finance.profitLossThisMonth >= 0 ? "text-emerald-700" : "text-red-700"} />
+                <FinanceMini label="Security Held" value={money(finance.securityHeld)} tone="text-violet-700" />
+                <FinanceMini label="Security Cash Available" value={money(finance.securityCashAvailable)} tone="text-emerald-700" />
+                <FinanceMini label="Security Used By Company" value={money(finance.securityUsedByCompany)} tone={finance.securityUsedByCompany ? "text-red-700" : "text-emerald-700"} />
+                <FinanceMini label="Security Shortfall" value={money(finance.securityShortfall)} tone={finance.securityShortfall ? "text-red-700" : "text-emerald-700"} />
             </div>
         </section>
     );

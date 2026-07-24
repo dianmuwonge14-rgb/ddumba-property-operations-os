@@ -64,6 +64,7 @@ const LANDLORD_ADVANCE_COLUMNS = [
     "date_given",
     "created_at",
 ].join(",");
+const SECURITY_DEPOSIT_COLUMNS = "office_id,status,amount,amount_refunded,amount_retained,amount_applied_to_charges,amount_used_by_company,amount_restored_by_company,liability_balance,cash_available,company_shortfall";
 
 function todayDate() {
     return new Intl.DateTimeFormat("en-CA", {
@@ -152,6 +153,7 @@ export async function getDashboardLiveData(input: DashboardQueryInput = {}): Pro
         adminCashMovementsResult,
         tenantRentMonthsResult,
         rolloverRunsResult,
+        securityDepositsResult,
     ] = await Promise.all([
         applyOfficeScope(supabase.from("offices").select("*").eq("company_id", companyId).neq("status", "archived"), shouldScopeOfficeQueries, officeScopeIds, "id").order("office_name"),
         fetchPagedRows(() => applyOfficeScope(supabase.from("collections").select(COLLECTION_COLUMNS).eq("company_id", companyId).gte("payment_date", startOfMonth).lte("payment_date", endOfPeriod), shouldScopeOfficeQueries, officeScopeIds)),
@@ -179,6 +181,7 @@ export async function getDashboardLiveData(input: DashboardQueryInput = {}): Pro
         fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("admin_cash_movements").select("office_id,amount,movement_type,source").eq("company_id", companyId).gte("movement_date", startOfMonth).lte("movement_date", endOfPeriod), shouldScopeOfficeQueries, officeScopeIds)),
         fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("tenant_rent_months").select("office_id,rent_month").eq("company_id", companyId).eq("rent_month", monthStart()), shouldScopeOfficeQueries, officeScopeIds)),
         fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("monthly_rollover_runs").select("office_id,rent_month,completed_at,created_at,status,failed_records").eq("company_id", companyId), shouldScopeOfficeQueries, officeScopeIds).order("created_at", { ascending: false }).limit(25)),
+        fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("security_deposit_register").select(SECURITY_DEPOSIT_COLUMNS).eq("company_id", companyId), shouldScopeOfficeQueries, officeScopeIds)),
     ]);
 
     for (const [label, result] of [
@@ -205,6 +208,7 @@ export async function getDashboardLiveData(input: DashboardQueryInput = {}): Pro
         ["admin cash movements", adminCashMovementsResult],
         ["tenant rent months", tenantRentMonthsResult],
         ["monthly rollover runs", rolloverRunsResult],
+        ["security deposits", securityDepositsResult],
     ] as const) {
         if (result.error) warnings.push(`${label}: ${result.error.message}`);
     }
@@ -244,6 +248,7 @@ export async function getDashboardLiveData(input: DashboardQueryInput = {}): Pro
     const adminCashMovements = filterByOffice((adminCashMovementsResult.data ?? []) as LooseRow[], officeIds);
     const tenantRentMonths = filterByOffice((tenantRentMonthsResult.data ?? []) as LooseRow[], officeIds);
     const rolloverRuns = filterRolloverRuns((rolloverRunsResult.data ?? []) as LooseRow[], officeIds, context.canAccessAllOffices || context.isCompanyAdmin);
+    const securityDeposits = filterNullableOffice((securityDepositsResult.data ?? []) as LooseRow[], officeIds);
 
     const league = buildLeague({
         offices,
@@ -306,6 +311,7 @@ export async function getDashboardLiveData(input: DashboardQueryInput = {}): Pro
             adminCashMovements,
             rentSponsors,
             landlordPayables,
+            securityDeposits,
             defaultCommissionRate: parseCommissionSetting(companySettingsResult.data?.[0]?.value, 10),
         }),
         snapshots: {
@@ -570,6 +576,7 @@ function buildFinanceSummary(input: {
     landlords: LandlordRow[];
     landlordPayments: LandlordPaymentRow[];
     landlordAdvances: LooseRow[];
+    securityDeposits: LooseRow[];
     bankDeposits: LooseRow[];
     officeCashMovements: LooseRow[];
     adminCashMovements: LooseRow[];
@@ -642,6 +649,15 @@ function buildFinanceSummary(input: {
         .filter((row) => ["money_sent_to_office", "admin_float", "office_float"].includes(String(row.movement_type ?? row.source ?? row.source_type ?? "").toLowerCase()))
         .reduce((total, row) => total + amount(row.amount), 0);
     const amountAtOffice = collectedSoFarThisMonth + amountGivenToOfficeByAdmin - expenses - amountSentFromOfficeToBank - landlordPaymentsMade;
+    const securityHeld = input.securityDeposits.reduce((total, row) => total + amount(row.liability_balance), 0);
+    const securityCashAvailable = input.securityDeposits.reduce((total, row) => total + amount(row.cash_available), 0);
+    const securityUsedByCompany = input.securityDeposits.reduce((total, row) => total + Math.max(0, amount(row.amount_used_by_company) - amount(row.amount_restored_by_company)), 0);
+    const securityRefunded = input.securityDeposits.reduce((total, row) => total + amount(row.amount_refunded), 0);
+    const securityRetained = input.securityDeposits.reduce((total, row) => total + amount(row.amount_retained) + amount(row.amount_applied_to_charges), 0);
+    const securityShortfall = input.securityDeposits.reduce((total, row) => total + amount(row.company_shortfall), 0);
+    const securityPendingSettlements = input.securityDeposits
+        .filter((row) => normalizeStatus(row.status).includes("pending"))
+        .reduce((total, row) => total + amount(row.liability_balance), 0);
 
     return {
         expectedRentRoll,
@@ -693,6 +709,13 @@ function buildFinanceSummary(input: {
         profitLossToday: todayCollections - todayExpenses - todayLandlordPayments,
         profitLossThisMonth: expectedCompanyCommissionProfit - expenses - landlordAdvanceActiveBalance,
         collectionProgress: percent(collectedSoFarThisMonth, expectedRentRoll),
+        securityCashAvailable,
+        securityHeld,
+        securityPendingSettlements,
+        securityRefunded,
+        securityRetained,
+        securityShortfall,
+        securityUsedByCompany,
     };
 }
 
@@ -983,6 +1006,13 @@ function emptyData(): DashboardLiveData {
             profitLossToday: 0,
             profitLossThisMonth: 0,
             collectionProgress: 0,
+            securityCashAvailable: 0,
+            securityHeld: 0,
+            securityPendingSettlements: 0,
+            securityRefunded: 0,
+            securityRetained: 0,
+            securityShortfall: 0,
+            securityUsedByCompany: 0,
         },
         rentCalendar: {
             canRunRollover: false,

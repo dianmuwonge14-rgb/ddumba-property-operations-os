@@ -7,6 +7,7 @@ import { adminCorrectPayment, recordCollection, requestPaymentCorrection, reques
 import { recordCollectorPayment } from "@/app/actions/collectors";
 import { logReceiptPrintOrDownload, logReceiptShareLink, sendReceiptByEmail } from "@/app/actions/receipts";
 import { replaceTenantFromPaymentsEntry } from "@/app/actions/room-occupancy";
+import { recordSecurityDeposit } from "@/app/actions/security-deposits";
 import { vacateTenant } from "@/app/actions/tenants";
 import { downloadTenantPaymentReceiptPdf, printTenantPaymentReceipt, TenantPaymentReceiptModal } from "@/components/office/receipts/TenantPaymentReceipt";
 import TenantContactCard from "@/components/office/shared/TenantContactCard";
@@ -46,7 +47,19 @@ type NewTenantForm = {
     paymentMade: string;
     paymentMethod: string;
     referenceNumber: string;
+    securityAmount: string;
+    securityNotes: string;
+    securityPaid: string;
+    securityReference: string;
+    securityRequired: boolean;
     notes: string;
+};
+type SecurityDepositForm = {
+    amount: string;
+    notes: string;
+    paymentDate: string;
+    paymentMethod: string;
+    referenceNumber: string;
 };
 type BalanceAdjustmentForm = {
     effectiveDate: string;
@@ -63,6 +76,12 @@ type VacateRoomForm = {
     recoveryAmount: string;
     recoveryMode: "full" | "custom" | "none" | "admin_review";
     referenceNumber: string;
+    securityAppliedToDebt: string;
+    securityDamageDeduction: string;
+    securityDecision: "refund_full" | "refund_part" | "retain_full" | "apply_to_debt" | "apply_to_damage" | "pending" | "refund_later";
+    securityNotes: string;
+    securityRefundAmount: string;
+    securityRetainedAmount: string;
     vacateDate: string;
 };
 type ReceiptModalState = {
@@ -167,6 +186,14 @@ export default function FastPaymentsEntry({
     const [loadingHistory, setLoadingHistory] = useState(false);
     const [newTenantOpen, setNewTenantOpen] = useState(false);
     const [newTenantError, setNewTenantError] = useState<string | null>(null);
+    const [securityDepositMessage, setSecurityDepositMessage] = useState<string | null>(null);
+    const [securityDepositForm, setSecurityDepositForm] = useState<SecurityDepositForm>({
+        amount: "",
+        notes: "",
+        paymentDate: today(),
+        paymentMethod: "cash",
+        referenceNumber: "",
+    });
     const [balanceAdjustmentOpen, setBalanceAdjustmentOpen] = useState(false);
     const [balanceAdjustmentError, setBalanceAdjustmentError] = useState<string | null>(null);
     const [vacateRoomOpen, setVacateRoomOpen] = useState(false);
@@ -180,6 +207,12 @@ export default function FastPaymentsEntry({
         recoveryAmount: "",
         recoveryMode: "full",
         referenceNumber: "",
+        securityAppliedToDebt: "",
+        securityDamageDeduction: "",
+        securityDecision: "pending",
+        securityNotes: "",
+        securityRefundAmount: "",
+        securityRetainedAmount: "",
         vacateDate: today(),
     });
     const [balanceAdjustmentForm, setBalanceAdjustmentForm] = useState<BalanceAdjustmentForm>({
@@ -198,6 +231,11 @@ export default function FastPaymentsEntry({
         paymentMade: "",
         paymentMethod: "cash",
         referenceNumber: "",
+        securityAmount: "",
+        securityNotes: "",
+        securityPaid: "",
+        securityReference: "",
+        securityRequired: false,
     });
     const [receiptModal, setReceiptModal] = useState<ReceiptModalState | null>(null);
     const [isPending, startTransition] = useTransition();
@@ -436,8 +474,54 @@ export default function FastPaymentsEntry({
             paymentMade: "",
             paymentMethod: "cash",
             referenceNumber: "",
+            securityAmount: String(Number(selectedTenant.monthlyRent ?? selectedTenant.room?.monthly_rent ?? 0) || ""),
+            securityNotes: "",
+            securityPaid: "",
+            securityReference: "",
+            securityRequired: false,
         });
         setNewTenantOpen(true);
+    }
+
+    function submitSecurityDeposit() {
+        if (!selectedTenant?.tenant?.id) {
+            setSecurityDepositMessage("Search and select a tenant before recording security.");
+            return;
+        }
+        const depositAmount = Number(securityDepositForm.amount || 0);
+        if (!Number.isFinite(depositAmount) || depositAmount <= 0) {
+            setSecurityDepositMessage("Enter a security deposit amount greater than zero.");
+            return;
+        }
+        if (!isDateOnly(securityDepositForm.paymentDate)) {
+            setSecurityDepositMessage("Select a valid security payment date.");
+            return;
+        }
+        const selected = selectedTenant;
+        startTransition(async () => {
+            try {
+                setSecurityDepositMessage(null);
+                const deposit = await recordSecurityDeposit({
+                    amount: depositAmount,
+                    notes: securityDepositForm.notes || null,
+                    paymentDate: securityDepositForm.paymentDate,
+                    paymentMethod: securityDepositForm.paymentMethod || "cash",
+                    referenceNumber: securityDepositForm.referenceNumber || null,
+                    roomId: selected.room?.id ?? null,
+                    tenantId: selected.tenant.id,
+                }) as Record<string, unknown>;
+                setSecurityDepositMessage(`Security deposit recorded separately. Receipt ${String(deposit.receipt_number ?? "created")}. Rent balances were not changed.`);
+                setSecurityDepositForm({
+                    amount: "",
+                    notes: "",
+                    paymentDate,
+                    paymentMethod: "cash",
+                    referenceNumber: "",
+                });
+            } catch (error) {
+                setSecurityDepositMessage(error instanceof Error ? error.message : "Security deposit could not be recorded.");
+            }
+        });
     }
 
     function openBalanceAdjustmentModal() {
@@ -465,6 +549,12 @@ export default function FastPaymentsEntry({
             recoveryAmount: "",
             recoveryMode: "full",
             referenceNumber: "",
+            securityAppliedToDebt: "",
+            securityDamageDeduction: "",
+            securityDecision: "pending",
+            securityNotes: "",
+            securityRefundAmount: "",
+            securityRetainedAmount: "",
             vacateDate: paymentDate,
         });
         setVacateRoomOpen(true);
@@ -542,6 +632,11 @@ export default function FastPaymentsEntry({
             setNewTenantError("Payment made must be zero or greater.");
             return;
         }
+        const securityPaid = Number(newTenantForm.securityPaid || 0);
+        if (newTenantForm.securityRequired && (!Number.isFinite(securityPaid) || securityPaid <= 0)) {
+            setNewTenantError("Enter the security amount paid, or turn off Security required.");
+            return;
+        }
         const currentTenant = selectedTenant;
         startTransition(async () => {
             try {
@@ -564,6 +659,17 @@ export default function FastPaymentsEntry({
                 if (!result.ok) {
                     setNewTenantError(`${result.error} Reference: ${result.requestId}.`);
                     return;
+                }
+                if (newTenantForm.securityRequired && Number(newTenantForm.securityPaid || 0) > 0) {
+                    await recordSecurityDeposit({
+                        amount: Number(newTenantForm.securityPaid),
+                        notes: newTenantForm.securityNotes || "Security deposit recorded during new tenant entry.",
+                        paymentDate: newTenantForm.moveInDate,
+                        paymentMethod: newTenantForm.paymentMethod || "cash",
+                        referenceNumber: newTenantForm.securityReference || newTenantForm.referenceNumber || null,
+                        roomId: result.room?.id ?? selectedRoomId,
+                        tenantId: result.newTenant.id,
+                    });
                 }
                 setNewTenantOpen(false);
                 setMessage(`New tenant ${result.newTenant.full_name ?? newTenantForm.newTenantName} added to room ${currentTenant.room?.room_number ?? "selected room"}.`);
@@ -667,6 +773,14 @@ export default function FastPaymentsEntry({
                         vacateRoomForm.referenceNumber.trim() ? `Reference: ${vacateRoomForm.referenceNumber.trim()}` : "",
                         finalPaymentAmount > 0 ? `Final payment received before vacating: ${money(finalPaymentAmount)}.` : "",
                     ].filter(Boolean).join(" "),
+                    securitySettlement: {
+                        appliedToDebt: Number(vacateRoomForm.securityAppliedToDebt || 0),
+                        damageDeduction: Number(vacateRoomForm.securityDamageDeduction || 0),
+                        decision: vacateRoomForm.securityDecision,
+                        reason: vacateRoomForm.securityNotes.trim() || vacateRoomForm.reason.trim() || "Security settlement pending Admin review.",
+                        refundAmount: Number(vacateRoomForm.securityRefundAmount || 0),
+                        retainedAmount: Number(vacateRoomForm.securityRetainedAmount || 0),
+                    },
                     tenantId: selected.tenant.id,
                     vacateDate: vacateRoomForm.vacateDate,
                 });
@@ -1053,6 +1167,66 @@ export default function FastPaymentsEntry({
                     ) : null}
 
                     {selectedTenant ? (
+                        <section className="mt-4 rounded-3xl border border-emerald-200 bg-emerald-50 p-4">
+                            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                <div>
+                                    <p className="inline-flex items-center gap-2 text-sm font-black text-emerald-950">
+                                        <ShieldCheck size={17} />
+                                        Security Deposit
+                                    </p>
+                                    <p className="mt-1 max-w-2xl text-xs font-bold text-emerald-800">
+                                        Record refundable tenant security in its own liability ledger. This does not reduce rent outstanding, create advance rent, or affect landlord payable.
+                                    </p>
+                                </div>
+                                <a href="/office/security-deposits" className="text-xs font-black text-emerald-700 underline-offset-4 hover:underline">
+                                    Open Security Deposits
+                                </a>
+                            </div>
+                            <div className="mt-4 grid gap-3 md:grid-cols-5">
+                                <TextField label="Amount paid" type="number" value={securityDepositForm.amount} onChange={(value) => setSecurityDepositForm((current) => ({ ...current, amount: value }))} placeholder="UGX" />
+                                <TextField label="Date" type="date" value={securityDepositForm.paymentDate} onChange={(value) => setSecurityDepositForm((current) => ({ ...current, paymentDate: value }))} />
+                                <label className="block">
+                                    <span className="text-xs font-black uppercase text-emerald-700">Method</span>
+                                    <select
+                                        value={securityDepositForm.paymentMethod}
+                                        onChange={(event) => setSecurityDepositForm((current) => ({ ...current, paymentMethod: event.target.value }))}
+                                        className="mt-1 h-12 w-full rounded-2xl border border-emerald-200 bg-white px-4 text-sm font-black text-slate-950 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                                    >
+                                        <option value="cash">Cash</option>
+                                        <option value="mobile_money">Mobile money</option>
+                                        <option value="bank">Bank</option>
+                                        <option value="cheque">Cheque</option>
+                                    </select>
+                                </label>
+                                <TextField label="Reference" value={securityDepositForm.referenceNumber} onChange={(value) => setSecurityDepositForm((current) => ({ ...current, referenceNumber: value }))} placeholder="Optional" />
+                                <button
+                                    type="button"
+                                    disabled={!canPostPayments || selectedOfficeMismatch || isPending}
+                                    onClick={submitSecurityDeposit}
+                                    className="mt-5 inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-emerald-700 px-4 text-sm font-black text-white shadow-lg shadow-emerald-100 disabled:opacity-40 md:mt-5"
+                                >
+                                    {isPending ? <Loader2 className="animate-spin" size={16} /> : <ShieldCheck size={16} />}
+                                    Record Security
+                                </button>
+                                <label className="block md:col-span-5">
+                                    <span className="text-xs font-black uppercase text-emerald-700">Notes</span>
+                                    <textarea
+                                        value={securityDepositForm.notes}
+                                        onChange={(event) => setSecurityDepositForm((current) => ({ ...current, notes: event.target.value }))}
+                                        className="mt-1 min-h-16 w-full rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm font-semibold text-slate-950 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                                        placeholder="Optional security deposit notes"
+                                    />
+                                </label>
+                            </div>
+                            {securityDepositMessage ? (
+                                <p className="mt-3 rounded-2xl border border-emerald-200 bg-white px-3 py-2 text-sm font-black text-emerald-800">
+                                    {securityDepositMessage}
+                                </p>
+                            ) : null}
+                        </section>
+                    ) : null}
+
+                    {selectedTenant ? (
                         <div className="mt-4 flex flex-col gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                             <div>
                                 <p className="text-sm font-black text-slate-950">Tenant actions</p>
@@ -1400,6 +1574,34 @@ function NewTenantModal({
                                 />
                             </label>
                         </section>
+
+                        <section className="rounded-3xl border border-emerald-200 bg-emerald-50 p-4">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                    <p className="text-xs font-black uppercase text-emerald-700">Step 3 · Security deposit</p>
+                                    <p className="mt-1 text-sm font-bold text-emerald-900">
+                                        Optional refundable deposit. It is posted to the security liability ledger, not rent or advance.
+                                    </p>
+                                </div>
+                                <label className="inline-flex items-center gap-2 rounded-2xl bg-white px-3 py-2 text-sm font-black text-emerald-800 shadow-sm">
+                                    <input
+                                        type="checkbox"
+                                        checked={form.securityRequired}
+                                        onChange={(event) => onChange({ securityRequired: event.target.checked, securityPaid: event.target.checked ? (form.securityPaid || form.securityAmount) : form.securityPaid })}
+                                        className="h-4 w-4 accent-emerald-700"
+                                    />
+                                    Security required
+                                </label>
+                            </div>
+                            {form.securityRequired ? (
+                                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                    <TextField label="Expected security amount" type="number" value={form.securityAmount} onChange={(value) => onChange({ securityAmount: value })} placeholder="Usually one month rent" />
+                                    <TextField label="Security amount paid" type="number" value={form.securityPaid} onChange={(value) => onChange({ securityPaid: value })} placeholder="UGX" />
+                                    <TextField label="Security reference" value={form.securityReference} onChange={(value) => onChange({ securityReference: value })} placeholder="Optional" />
+                                    <TextField label="Security notes" value={form.securityNotes} onChange={(value) => onChange({ securityNotes: value })} placeholder="Optional" />
+                                </div>
+                            ) : null}
+                        </section>
                     </div>
 
                     <aside className="space-y-3">
@@ -1414,6 +1616,7 @@ function NewTenantModal({
                                 <ModalMetric label="Landlord recovery" value={willDeductLandlord ? money(outstanding) : money(0)} tone={willDeductLandlord ? "text-rose-200" : "text-emerald-200"} />
 	                                <ModalMetric label="New tenant opening balance" value={money(0)} />
                                 <ModalMetric label="Entry advance rent" value={money(entryAdvance)} tone={entryAdvance > 0 ? "text-violet-200" : "text-slate-200"} />
+                                <ModalMetric label="Security deposit" value={form.securityRequired ? money(Number(form.securityPaid || 0)) : money(0)} tone={form.securityRequired ? "text-emerald-200" : "text-slate-200"} />
                             </div>
                             <p className="mt-4 rounded-2xl bg-white/10 px-3 py-2 text-xs font-bold text-slate-200">
 	                                Old tenant debt will be frozen and recovered from landlord payable. It will not carry to the new tenant.
@@ -1605,6 +1808,44 @@ function VacateRoomModal({
                                     Reason is required because {money(unrecoveredAmount)} will remain unassigned for landlord recovery.
                                 </p>
                             ) : null}
+                        </section>
+
+                        <section className="rounded-3xl border border-emerald-200 bg-emerald-50 p-4">
+                            <p className="text-xs font-black uppercase tracking-wide text-emerald-700">Security Settlement</p>
+                            <p className="mt-1 text-sm font-bold text-emerald-900">
+                                If the tenant has a security deposit, choose how it should be handled. The system keeps security separate from rent until this settlement is approved or posted.
+                            </p>
+                            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                <label className="block sm:col-span-2">
+                                    <span className="text-xs font-black uppercase text-emerald-700">Settlement decision</span>
+                                    <select
+                                        value={form.securityDecision}
+                                        onChange={(event) => onChange({ securityDecision: event.target.value as VacateRoomForm["securityDecision"] })}
+                                        className="mt-1 h-12 w-full rounded-2xl border border-emerald-200 bg-white px-4 text-sm font-black text-slate-950 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                                    >
+                                        <option value="pending">Keep settlement pending</option>
+                                        <option value="refund_full">Refund full security</option>
+                                        <option value="refund_part">Refund part of security</option>
+                                        <option value="retain_full">Retain full security</option>
+                                        <option value="apply_to_debt">Apply to tenant debt</option>
+                                        <option value="apply_to_damage">Apply to damage charges</option>
+                                        <option value="refund_later">Company must refund later</option>
+                                    </select>
+                                </label>
+                                <TextField label="Refund amount" type="number" value={form.securityRefundAmount} onChange={(value) => onChange({ securityRefundAmount: value })} placeholder="UGX 0" />
+                                <TextField label="Retained amount" type="number" value={form.securityRetainedAmount} onChange={(value) => onChange({ securityRetainedAmount: value })} placeholder="UGX 0" />
+                                <TextField label="Applied to tenant debt" type="number" value={form.securityAppliedToDebt} onChange={(value) => onChange({ securityAppliedToDebt: value })} placeholder="UGX 0" />
+                                <TextField label="Damage deduction" type="number" value={form.securityDamageDeduction} onChange={(value) => onChange({ securityDamageDeduction: value })} placeholder="UGX 0" />
+                                <label className="block sm:col-span-2">
+                                    <span className="text-xs font-black uppercase text-emerald-700">Security settlement reason</span>
+                                    <textarea
+                                        value={form.securityNotes}
+                                        onChange={(event) => onChange({ securityNotes: event.target.value })}
+                                        placeholder="Required when a security deposit exists"
+                                        className="mt-1 min-h-20 w-full rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm font-semibold text-slate-950 outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                                    />
+                                </label>
+                            </div>
                         </section>
 
                         <div className="grid gap-3 sm:grid-cols-2">

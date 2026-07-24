@@ -164,6 +164,13 @@ export type DashboardLiveData = {
         profitLossToday: number;
         profitLossThisMonth: number;
         collectionProgress: number;
+        securityCashAvailable: number;
+        securityHeld: number;
+        securityPendingSettlements: number;
+        securityRefunded: number;
+        securityRetained: number;
+        securityShortfall: number;
+        securityUsedByCompany: number;
     };
     rentCalendar: {
         currentBusinessDate: string;

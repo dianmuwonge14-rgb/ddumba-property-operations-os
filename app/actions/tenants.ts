@@ -6,6 +6,7 @@ import { logUserAction } from "@/lib/auth/audit";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { refreshAffectedLandlordPayable } from "@/app/actions/room-rent";
+import { getActiveTenantSecurityDeposit, settleSecurityDeposit } from "@/app/actions/security-deposits";
 import type { Database } from "@/types/database.types";
 
 type UpdateTenantContactInput = {
@@ -22,6 +23,15 @@ type VacateTenantInput = {
     landlordRecoveryAmount?: number;
     landlordRecoveryMode?: "full" | "custom" | "none" | "admin_review";
     reason?: string;
+    securitySettlement?: {
+        appliedToDebt?: number;
+        damageDeduction?: number;
+        decision: "refund_full" | "refund_part" | "retain_full" | "apply_to_debt" | "apply_to_damage" | "pending" | "refund_later";
+        otherDeduction?: number;
+        reason: string;
+        refundAmount?: number;
+        retainedAmount?: number;
+    } | null;
 };
 
 type AssignReplacementTenantInput = {
@@ -204,6 +214,10 @@ export async function vacateTenant(input: VacateTenantInput) {
         landlord_name: landlord?.full_name ?? null,
         office_name: office?.office_name ?? office?.name ?? null,
     };
+    const activeSecurityDeposit = await getActiveTenantSecurityDeposit(tenant.id, companyId);
+    if (activeSecurityDeposit && !input.securitySettlement) {
+        throw new Error("This tenant has a security deposit. Select a security settlement decision before vacating.");
+    }
     if (recoveryDecision.amount > 0 && landlord?.id) {
         recoveryDecision = {
             ...recoveryDecision,
@@ -380,6 +394,21 @@ export async function vacateTenant(input: VacateTenantInput) {
     });
     if (collectionActionError) throw new Error(collectionActionError.message);
 
+    let securitySettlement: unknown = null;
+    if (activeSecurityDeposit && input.securitySettlement) {
+        securitySettlement = await settleSecurityDeposit({
+            appliedToDebt: input.securitySettlement.appliedToDebt,
+            damageDeduction: input.securitySettlement.damageDeduction,
+            decision: input.securitySettlement.decision,
+            depositId: String(activeSecurityDeposit.id),
+            otherDeduction: input.securitySettlement.otherDeduction,
+            reason: input.securitySettlement.reason,
+            refundAmount: input.securitySettlement.refundAmount,
+            retainedAmount: input.securitySettlement.retainedAmount,
+            vacateDate,
+        });
+    }
+
     if (frozenDebt > 0) {
         const { error: ledgerError } = await supabase.from("tenant_ledger_entries").insert({
             company_id: companyId,
@@ -401,7 +430,7 @@ export async function vacateTenant(input: VacateTenantInput) {
         entityType: "tenant",
         entityId: tenant.id,
         beforeData: auditJson({ tenant, lease: activeLease, room }),
-        afterData: auditJson({ tenant: updatedTenant?.data, exitRecord, debtRecord, refreshedPayable, roomStatus: "vacant", outstandingSources, recoveryDecision }),
+        afterData: auditJson({ tenant: updatedTenant?.data, exitRecord, debtRecord, refreshedPayable, roomStatus: "vacant", outstandingSources, recoveryDecision, securitySettlement }),
         companyId,
         officeId,
     });

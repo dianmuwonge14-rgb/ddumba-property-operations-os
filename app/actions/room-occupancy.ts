@@ -9,6 +9,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { recalculateTenantScore } from "@/lib/tenants/scoring";
 import { refreshAffectedLandlordPayable } from "@/app/actions/room-rent";
 import { vacateTenant } from "@/app/actions/tenants";
+import { recordSecurityDeposit } from "@/app/actions/security-deposits";
 import { getMoveInPayableDecision, type LandlordPaymentState } from "@/lib/landlords/payable-cutoff";
 import { createTenantPaymentReceipt } from "@/lib/receipts/payment-receipts";
 import type { Database } from "@/types/database.types";
@@ -32,6 +33,10 @@ export type MarkRoomOccupiedInput = {
     balanceDemanded: number;
     paymentMethod?: string;
     referenceNumber?: string | null;
+    securityAmount?: number | null;
+    securityNotes?: string | null;
+    securityPaymentMethod?: string | null;
+    securityReferenceNumber?: string | null;
     notes?: string | null;
 };
 
@@ -47,6 +52,9 @@ export type ReplaceTenantFromPaymentsInput = {
     paymentDate: string;
     paymentMethod?: string;
     referenceNumber?: string | null;
+    securityAmount?: number | null;
+    securityNotes?: string | null;
+    securityReferenceNumber?: string | null;
     notes?: string | null;
 };
 
@@ -780,6 +788,18 @@ async function replaceTenantFromPaymentsEntryUnsafe(input: ReplaceTenantFromPaym
             tenantId: newTenant.id,
         });
     }
+    let securityDeposit: unknown = null;
+    if (Number(input.securityAmount ?? 0) > 0) {
+        securityDeposit = await recordSecurityDeposit({
+            amount: Number(input.securityAmount),
+            notes: input.securityNotes ?? "Security deposit recorded during new tenant replacement.",
+            paymentDate: moveInDate,
+            paymentMethod: input.paymentMethod ?? "cash",
+            referenceNumber: input.securityReferenceNumber ?? input.referenceNumber ?? null,
+            roomId,
+            tenantId: newTenant.id,
+        });
+    }
 
     await logUserAction({
         action: "tenant_replaced_from_payments_entry",
@@ -791,6 +811,7 @@ async function replaceTenantFromPaymentsEntryUnsafe(input: ReplaceTenantFromPaym
         afterData: jsonSafe({
             debtAmount: vacateResult.finalOutstanding,
             entryPayment,
+            securityDeposit,
             newLease,
             newTenant,
             room: updatedRoom,
@@ -810,6 +831,7 @@ async function replaceTenantFromPaymentsEntryUnsafe(input: ReplaceTenantFromPaym
         lease: newLease,
         newTenant,
         room: updatedRoom,
+        securityDeposit,
         vacateResult,
     };
 }
@@ -1051,6 +1073,18 @@ async function markRoomOccupiedUnsafe(input: MarkRoomOccupiedInput) {
             tenantId: tenant.id,
         });
     }
+    let securityDeposit: unknown = null;
+    if (Number(input.securityAmount ?? 0) > 0) {
+        securityDeposit = await recordSecurityDeposit({
+            amount: Number(input.securityAmount),
+            notes: input.securityNotes ?? "Security deposit recorded during vacant-room move-in.",
+            paymentDate: moveInDate,
+            paymentMethod: input.securityPaymentMethod ?? input.paymentMethod ?? "cash",
+            referenceNumber: input.securityReferenceNumber ?? input.referenceNumber ?? null,
+            roomId: room.id,
+            tenantId: tenant.id,
+        });
+    }
 
     await supabase.from("collection_actions").insert({
         action_type: "visit",
@@ -1085,6 +1119,7 @@ async function markRoomOccupiedUnsafe(input: MarkRoomOccupiedInput) {
             tenant,
             lease,
             collection,
+            securityDeposit,
             landlordPayableCutoff: moveInPayableDecision,
             refreshedPayable,
             money_collected: moneyCollected,
@@ -1127,5 +1162,5 @@ async function markRoomOccupiedUnsafe(input: MarkRoomOccupiedInput) {
         revalidatePath(path);
     }
 
-    return { room: updatedRoom, tenant, lease, collection, openingBalance };
+    return { room: updatedRoom, tenant, lease, collection, openingBalance, securityDeposit };
 }
