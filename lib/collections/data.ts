@@ -2016,12 +2016,12 @@ function scoreTenantSearchResult(result: CollectionTenantResult, term: string) {
 
     if (roomNumber === lookup) return 0;
     if (roomNumber.startsWith(lookup)) return 1;
-    if (tenantName.startsWith(lookup)) return 2;
+    if (roomNumber.includes(lookup)) return 2;
     if (tenantPhone.startsWith(lookup)) return 3;
-    if (landlordName.startsWith(lookup)) return 4;
-    if (roomNumber.includes(lookup)) return 5;
+    if (tenantPhone.includes(lookup)) return 4;
+    if (tenantName.startsWith(lookup)) return 5;
     if (tenantName.includes(lookup)) return 6;
-    if (tenantPhone.includes(lookup)) return 7;
+    if (landlordName.startsWith(lookup)) return 7;
     if (landlordName.includes(lookup)) return 8;
     return 9;
 }

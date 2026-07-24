@@ -51,6 +51,8 @@ export async function getPropertiesPageData(): Promise<PropertiesPageData> {
             error: null,
         });
 
+    const landlordsPromise = fetchAllCompanyLandlords(db, companyId);
+
     const [propertiesResult, roomsResult, leasesResult, tenantsResult, landlordsResult, officesResult, bulkRequestsResult] = await Promise.all([
         supabase
             .from("properties")
@@ -77,12 +79,7 @@ export async function getPropertiesPageData(): Promise<PropertiesPageData> {
             .eq("company_id", companyId)
             .eq("office_id", officeId)
             .eq("status", "active"),
-        supabase
-            .from("landlords")
-            .select("id,company_id,full_name,phone,status")
-            .eq("company_id", companyId)
-            .neq("status", "archived")
-            .order("full_name"),
+        landlordsPromise,
         officesPromise,
         db
             .from("landlord_bulk_room_requests")
@@ -144,6 +141,29 @@ export async function getPropertiesPageData(): Promise<PropertiesPageData> {
         initialProperty: null,
         properties: propertyList,
     };
+}
+
+async function fetchAllCompanyLandlords(db: { from: (table: string) => any }, companyId: string) {
+    const pageSize = 1000;
+    const rows: LandlordRow[] = [];
+
+    for (let from = 0; ; from += pageSize) {
+        const { data, error } = await db
+            .from("landlords")
+            .select("id,company_id,full_name,phone,status")
+            .eq("company_id", companyId)
+            .neq("status", "archived")
+            .order("full_name", { ascending: true, nullsFirst: false })
+            .range(from, from + pageSize - 1);
+
+        if (error) return { data: null, error };
+
+        const page = (data ?? []) as LandlordRow[];
+        rows.push(...page);
+        if (page.length < pageSize) break;
+    }
+
+    return { data: rows, error: null };
 }
 
 export async function getPropertyDetailInActiveOffice(propertyId: string): Promise<PropertyItem> {

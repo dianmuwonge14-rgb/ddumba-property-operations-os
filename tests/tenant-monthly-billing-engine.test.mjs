@@ -13,8 +13,11 @@ const pgCronMigration = readFileSync(new URL("../supabase/upgrade_migrations/021
 const fastLookupBillingMigration = readFileSync(new URL("../supabase/upgrade_migrations/0211_fast_payment_lookup_billing_fields.sql", import.meta.url), "utf8");
 const fastPaymentSearchMigration = readFileSync(new URL("../supabase/upgrade_migrations/0214_fast_payments_entry_tenant_search.sql", import.meta.url), "utf8");
 const fastPaymentAdminSearchIndexMigration = readFileSync(new URL("../supabase/upgrade_migrations/0215_fast_payment_admin_search_indexes.sql", import.meta.url), "utf8");
+const roomRankPriorityMigration = readFileSync(new URL("../supabase/upgrade_migrations/0216_payment_search_room_rank_priority.sql", import.meta.url), "utf8");
 const paymentSearchRoute = readFileSync(new URL("../app/api/collections/payment-search/route.ts", import.meta.url), "utf8");
 const collectionsData = readFileSync(new URL("../lib/collections/data.ts", import.meta.url), "utf8");
+const propertiesData = readFileSync(new URL("../lib/properties/data.ts", import.meta.url), "utf8");
+const propertyCommandPanel = readFileSync(new URL("../components/office/properties/PropertyCommandPanel.tsx", import.meta.url), "utf8");
 
 function clampDay(year, monthIndex, day) {
   return Math.min(day, new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate());
@@ -135,4 +138,17 @@ test("payments entry tenant search is compact, debounced, abortable and role-sco
   assert.match(fastPaymentAdminSearchIndexMigration, /idx_payments_entry_rooms_trim_room_trgm/);
   assert.match(fastPaymentAdminSearchIndexMigration, /idx_payments_entry_tenants_trim_name_trgm/);
   assert.match(fastPaymentAdminSearchIndexMigration, /idx_payments_entry_tenants_company_status_room_office/);
+  assert.match(roomRankPriorityMigration, /Room ranking order: exact room, room prefix, room partial, tenant phone, tenant name/);
+  assert.match(roomRankPriorityMigration, /when lower\(trim\(r\.room_number\)\) = \(select q from search_input\) then 0/);
+  assert.match(roomRankPriorityMigration, /when lower\(trim\(r\.room_number\)\) like \(select q from search_input\) \|\| '%' then 1/);
+  assert.match(roomRankPriorityMigration, /when lower\(trim\(r\.room_number\)\) like '%' \|\| \(select q from search_input\) \|\| '%' then 2/);
+  assert.match(collectionsData, /if \(roomNumber\.includes\(lookup\)\) return 2/);
+});
+
+test("properties landlord dropdown loads and searches the full company landlord list", () => {
+  assert.match(propertiesData, /fetchAllCompanyLandlords/);
+  assert.match(propertiesData, /\.range\(from, from \+ pageSize - 1\)/);
+  assert.doesNotMatch(propertyCommandPanel, /landlords\.slice\(0,\s*60\)/);
+  assert.doesNotMatch(propertyCommandPanel, /\.slice\(0,\s*40\)/);
+  assert.match(propertyCommandPanel, /landlords\.filter/);
 });

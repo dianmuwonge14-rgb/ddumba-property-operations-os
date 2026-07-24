@@ -43,8 +43,8 @@ export default function PropertyCommandPanel({ canManage, isAdmin, landlords, of
     const [showNewLandlordWizard, setShowNewLandlordWizard] = useState(false);
     const [isPending, startTransition] = useTransition();
     const filteredLandlords = landlordSearch.trim()
-        ? landlords.filter((landlord) => `${landlord.full_name ?? ""} ${landlord.phone ?? ""}`.toLowerCase().includes(landlordSearch.toLowerCase())).slice(0, 40)
-        : landlords.slice(0, 60);
+        ? landlords.filter((landlord) => `${landlord.full_name ?? ""} ${landlord.phone ?? ""}`.toLowerCase().includes(landlordSearch.toLowerCase()))
+        : landlords;
     const selectedOccupancyRate = selectedProperty?.totalRoomsComputed
         ? Math.round((selectedProperty.occupiedRoomsComputed / selectedProperty.totalRoomsComputed) * 100)
         : 0;
