@@ -17,6 +17,14 @@ type ReceiptRow = {
     issued_by: string | null;
 };
 
+type DeliveryLogRow = {
+    channel: string;
+    delivery_status: string | null;
+    receipt_id: string;
+    sent_at: string | null;
+    created_at: string | null;
+};
+
 function missingSchema(error: { message?: string; code?: string } | null | undefined) {
     const message = String(error?.message ?? "");
     return error?.code === "42P01" || error?.code === "PGRST205" || /does not exist|schema cache|Could not find/i.test(message);
@@ -38,6 +46,16 @@ export type ReceiptHistoryItem = {
     tenantName: string | null;
     tenantPhone: string | null;
     verificationCode: string;
+    deliveryStatus: {
+        email: string | null;
+        emailAt: string | null;
+        pdf: string | null;
+        pdfAt: string | null;
+        print: string | null;
+        printAt: string | null;
+        whatsapp: string | null;
+        whatsappAt: string | null;
+    };
 };
 
 export const getReceiptHistoryData = cache(async function getReceiptHistoryData() {
@@ -76,10 +94,64 @@ export const getReceiptHistoryData = cache(async function getReceiptHistoryData(
         };
     }
 
+    const rows = (data ?? []) as ReceiptRow[];
+    const receiptIds = rows.map((row) => row.id);
+    const deliveryByReceipt = new Map<string, ReceiptHistoryItem["deliveryStatus"]>();
+    if (receiptIds.length) {
+        const { data: deliveryRows, error: deliveryError } = await db
+            .from("payment_receipt_delivery_logs")
+            .select("receipt_id,channel,delivery_status,sent_at,created_at")
+            .in("receipt_id", receiptIds)
+            .order("created_at", { ascending: false })
+            .limit(receiptIds.length * 8);
+        if (!deliveryError || missingSchema(deliveryError)) {
+            for (const row of ((deliveryRows ?? []) as DeliveryLogRow[])) {
+                const current = deliveryByReceipt.get(row.receipt_id) ?? {
+                    email: null,
+                    emailAt: null,
+                    pdf: null,
+                    pdfAt: null,
+                    print: null,
+                    printAt: null,
+                    whatsapp: null,
+                    whatsappAt: null,
+                };
+                const timestamp = row.sent_at ?? row.created_at ?? null;
+                if (row.channel === "print" && !current.print) {
+                    current.print = row.delivery_status ?? "sent";
+                    current.printAt = timestamp;
+                }
+                if (row.channel === "download_pdf" && !current.pdf) {
+                    current.pdf = row.delivery_status ?? "sent";
+                    current.pdfAt = timestamp;
+                }
+                if (row.channel === "whatsapp" && !current.whatsapp) {
+                    current.whatsapp = row.delivery_status ?? "sent";
+                    current.whatsappAt = timestamp;
+                }
+                if (row.channel === "email" && !current.email) {
+                    current.email = row.delivery_status ?? "sent";
+                    current.emailAt = timestamp;
+                }
+                deliveryByReceipt.set(row.receipt_id, current);
+            }
+        }
+    }
+
     return {
         error: null,
-        receipts: ((data ?? []) as ReceiptRow[]).map((row) => ({
+        receipts: rows.map((row) => ({
             amountPaid: Number(row.receipt_snapshot?.amountPaid ?? 0),
+            deliveryStatus: deliveryByReceipt.get(row.id) ?? {
+                email: null,
+                emailAt: null,
+                pdf: null,
+                pdfAt: null,
+                print: null,
+                printAt: null,
+                whatsapp: null,
+                whatsappAt: null,
+            },
             id: row.id,
             issuedAt: row.issued_at,
             officeName: row.receipt_snapshot?.officeName ?? null,

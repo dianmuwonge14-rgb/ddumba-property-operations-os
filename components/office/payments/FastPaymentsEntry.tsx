@@ -9,7 +9,7 @@ import { logReceiptPrintOrDownload, logReceiptShareLink, sendReceiptByEmail } fr
 import { replaceTenantFromPaymentsEntry } from "@/app/actions/room-occupancy";
 import { recordSecurityDeposit } from "@/app/actions/security-deposits";
 import { vacateTenant } from "@/app/actions/tenants";
-import { downloadTenantPaymentReceiptPdf, printTenantPaymentReceipt, TenantPaymentReceiptModal } from "@/components/office/receipts/TenantPaymentReceipt";
+import { downloadTenantPaymentReceiptPdf, prepareReceiptPdfForSharing, printTenantPaymentReceipt, tenantReceiptWhatsappHref, TenantPaymentReceiptModal } from "@/components/office/receipts/TenantPaymentReceipt";
 import TenantContactCard from "@/components/office/shared/TenantContactCard";
 import TenantBillingDateControl from "@/components/office/shared/TenantBillingDateControl";
 import RentDueIntelligencePanel from "@/components/office/payments/RentDueIntelligencePanel";
@@ -1445,11 +1445,21 @@ function ReceiptConfirmationModal({
         }
         const body = `DDUMBA OS receipt ${receipt.receiptNumber}: ${money(snapshot.amountPaid)} paid for room ${snapshot.roomNumber ?? ""}. Verification ${receipt.verificationCode}.`;
         const href = channel === "whatsapp"
-            ? `https://wa.me/${phone.replace(/\D+/g, "")}?text=${encodeURIComponent(body)}`
+            ? tenantReceiptWhatsappHref(receipt, phone)
             : `sms:${phone}?&body=${encodeURIComponent(body)}`;
+        if (!href) {
+            onChange({ ...modal, message: "Add a valid tenant phone number before sharing." });
+            return;
+        }
         startReceiptTransition(async () => {
+            if (channel === "whatsapp") {
+                await prepareReceiptPdfForSharing(`${receipt.receiptNumber}.pdf`);
+            }
             await logReceiptShareLink({ channel, phone, receiptId: receipt.id }).catch(() => null);
             window.open(href, "_blank", "noopener,noreferrer");
+            if (channel === "whatsapp") {
+                onChange({ ...modal, message: "Receipt PDF prepared. WhatsApp is open with the tenant message; attach the downloaded PDF if WhatsApp does not attach files automatically." });
+            }
         });
     };
 
@@ -1459,7 +1469,7 @@ function ReceiptConfirmationModal({
                 <>
                     <input value={modal.email} onChange={(event) => onChange({ ...modal, email: event.target.value })} className="h-11 min-w-0 rounded-2xl border border-slate-200 px-4 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-100" placeholder="Tenant email" />
                     <input value={modal.phone} onChange={(event) => onChange({ ...modal, phone: event.target.value })} className="h-11 min-w-0 rounded-2xl border border-slate-200 px-4 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-100" placeholder="Tenant phone" />
-                    <button type="button" onClick={() => share("whatsapp")} disabled={isSending} className="rounded-2xl bg-green-600 px-4 py-3 text-xs font-black text-white disabled:opacity-50">Send by WhatsApp/SMS</button>
+                    <button type="button" onClick={() => share("sms")} disabled={isSending} className="rounded-2xl bg-slate-100 px-4 py-3 text-xs font-black text-slate-700 disabled:opacity-50">Send SMS link</button>
                 </>
             )}
             downloadDisabled={isSending}
@@ -1468,9 +1478,11 @@ function ReceiptConfirmationModal({
             onDownloadPdf={downloadPdf}
             onPrint={printReceipt}
             onSendEmail={sendEmail}
+            onShareWhatsApp={() => share("whatsapp")}
             printDisabled={isSending}
             receipt={receipt}
             sendDisabled={isSending || modal.sending}
+            shareDisabled={isSending}
             subtitle="Receipt generated · payment allocated · ledger updated · Supabase synced."
         />
     );

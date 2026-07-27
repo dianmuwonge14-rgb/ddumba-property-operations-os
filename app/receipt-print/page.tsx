@@ -324,13 +324,43 @@ canvas {
 `;
 }
 
+function normalizeWhatsappPhone(value: string | null | undefined) {
+    const digits = String(value ?? "").replace(/\D+/g, "");
+    if (!digits) return "";
+    if (digits.startsWith("256")) return digits;
+    if (digits.startsWith("0")) return `256${digits.slice(1)}`;
+    return digits;
+}
+
+function receiptWhatsappHref(receipt: TenantReceiptViewModel) {
+    const phone = normalizeWhatsappPhone(receipt.snapshot.tenantPhone);
+    if (!phone) return null;
+    const message = [
+        `Hello ${receipt.snapshot.tenantName ?? "Tenant"},`,
+        "",
+        "Thank you for your payment.",
+        "",
+        `Attached is your official receipt ${receipt.receiptNumber} for Room ${receipt.snapshot.roomNumber ?? "N/A"}.`,
+        `Amount paid: UGX ${Math.round(Number(receipt.snapshot.amountPaid ?? 0)).toLocaleString()}.`,
+        `Verification: ${receipt.verificationCode}.`,
+        "",
+        "Thank you for choosing Ddumba Property Management.",
+    ].join("\n");
+    return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+}
+
 export function ReceiptPrintActions({ receiptId, widthMm }: { receiptId: string; widthMm: 58 | 80 }) {
     const pdfHref = `/receipt-print/${encodeURIComponent(receiptId)}/pdf?width=${widthMm}`;
+    return <ReceiptPrintActionsInner pdfHref={pdfHref} receiptId={receiptId} whatsappHref={null} />;
+}
+
+function ReceiptPrintActionsInner({ pdfHref, receiptId, whatsappHref }: { pdfHref: string; receiptId: string; whatsappHref: string | null }) {
     return (
         <nav aria-label="Receipt print actions" className="receipt-actions">
             <button id="receipt-print-button" type="button">Print Receipt</button>
             <button id="receipt-choose-printer-button" type="button">Choose Printer</button>
             <a href={pdfHref} id="receipt-pdf-link" target="_blank" rel="noreferrer">Download PDF</a>
+            <a href={whatsappHref ?? "#"} id="receipt-whatsapp-link" data-receipt-id={receiptId} aria-disabled={!whatsappHref} target="_blank" rel="noreferrer">Share via WhatsApp</a>
             <button id="receipt-close-page-button" type="button">Close</button>
             <p id="receipt-print-status" className="receipt-print-instruction">
                 Select the connected Bluetooth printer, confirm one receipt is shown, then press Print.
@@ -424,6 +454,15 @@ export function receiptPageControlsScript(widthMm: 58 | 80, receiptId: string) {
   document.getElementById("receipt-pdf-link")?.addEventListener("click", function () {
     setStatus("Opening a receipt-only PDF. Print that PDF if Android System Print shows a blank page.");
   });
+  document.getElementById("receipt-whatsapp-link")?.addEventListener("click", function (event) {
+    var link = event.currentTarget;
+    if (!link || !link.href || link.getAttribute("href") === "#") {
+      event.preventDefault();
+      setStatus("This receipt does not have a tenant phone number for WhatsApp sharing.");
+      return;
+    }
+    setStatus("WhatsApp is opening with the tenant message. Download the PDF and attach it if WhatsApp does not attach files automatically.");
+  });
   document.getElementById("receipt-close-page-button")?.addEventListener("click", function () {
     if (history.length > 1) history.back();
     else window.close();
@@ -446,7 +485,7 @@ export default async function ReceiptPrintPage({ searchParams }: PageProps) {
         <>
             <style dangerouslySetInnerHTML={{ __html: receiptOnlyPrintCss(widthMm) }} />
             <TenantPaymentReceiptSlip receipt={receipt} />
-            <ReceiptPrintActions receiptId={receipt.id} widthMm={widthMm} />
+            <ReceiptPrintActionsInner pdfHref={`/receipt-print/${encodeURIComponent(receipt.id)}/pdf?width=${widthMm}`} receiptId={receipt.id} whatsappHref={receiptWhatsappHref(receipt)} />
             <script dangerouslySetInnerHTML={{ __html: receiptPageControlsScript(widthMm, receipt.id) }} />
             {autoPrint ? <script dangerouslySetInnerHTML={{ __html: autoPrintScript(true) }} /> : null}
         </>

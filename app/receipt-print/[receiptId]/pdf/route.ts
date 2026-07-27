@@ -85,6 +85,7 @@ function receiptTextLines(receipt: Awaited<ReturnType<typeof loadPrintableReceip
         ...pairLines("Date", formatDateTime(snapshot.paymentDateTime)).map((text) => ({ text })),
         ...pairLines("Office", safe(snapshot.officeName, "Office")).map((text) => ({ text })),
         ...pairLines("Room", safe(snapshot.roomNumber, "No room")).map((text) => ({ text })),
+        ...(safe(snapshot.propertyName) ? pairLines("Property", safe(snapshot.propertyName)).map((text) => ({ text })) : []),
         ...pairLines("Tenant", safe(snapshot.tenantName, "Unnamed tenant")).map((text) => ({ text })),
         ...pairLines("Phone", safe(snapshot.tenantPhone, "No phone")).map((text) => ({ text })),
         ...pairLines("Landlord", safe(snapshot.landlordName, "No landlord")).map((text) => ({ text })),
@@ -93,6 +94,7 @@ function receiptTextLines(receipt: Awaited<ReturnType<typeof loadPrintableReceip
         ...pairLines("Previous", money(snapshot.previousOutstandingBalance)).map((text) => ({ text })),
         ...pairLines("To outstanding", money(snapshot.amountAppliedToOutstanding ?? 0)).map((text) => ({ text })),
         ...pairLines("To current", money(snapshot.amountAppliedToCurrentRent ?? Math.max(0, snapshot.amountApplied - (snapshot.amountAppliedToOutstanding ?? 0)))).map((text) => ({ text })),
+        ...(Number(snapshot.securityDepositAmount ?? 0) > 0 ? pairLines("Security dep", money(Number(snapshot.securityDepositAmount ?? 0))).map((text) => ({ text })) : []),
         ...pairLines("Advance rent", money(snapshot.advanceAmount ?? snapshot.advanceBalance)).map((text) => ({ text })),
         { divider: true, text: "" },
         ...pairLines("AMOUNT PAID", money(snapshot.amountPaid)).map((text) => ({ bold: true, size: 10, text })),
@@ -112,6 +114,7 @@ function receiptTextLines(receipt: Awaited<ReturnType<typeof loadPrintableReceip
     lines.push(
         ...pairLines("Method", safe(snapshot.paymentMethod?.replaceAll("_", " "), "Payment")).map((text) => ({ text })),
         ...pairLines("Reference", safe(snapshot.referenceNumber, "No reference")).map((text) => ({ text })),
+        ...(safe(snapshot.securityDepositReceiptNumber) ? pairLines("Security receipt", safe(snapshot.securityDepositReceiptNumber)).map((text) => ({ text })) : []),
         ...pairLines("Recorded by", safe(snapshot.recordedByName, "DDUMBA OS")).map((text) => ({ text })),
         ...pairLines("Approved by", safe(snapshot.approvedByName ?? snapshot.recordedByName, "DDUMBA OS")).map((text) => ({ text })),
         ...pairLines("Status", safe(snapshot.status, "issued")).map((text) => ({ text })),

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
-import { Download, Mail, Printer, X } from "lucide-react";
+import { Download, Mail, MessageCircle, Printer, X } from "lucide-react";
 import type { PaymentReceiptSnapshot } from "@/lib/receipts/payment-receipts";
 
 export type TenantReceiptViewModel = {
@@ -100,9 +100,11 @@ type ModalProps = {
     onDownloadPdf: ReceiptAction;
     onPrint: ReceiptAction;
     onSendEmail?: ReceiptAction;
+    onShareWhatsApp?: ReceiptAction;
     printDisabled?: boolean;
     receipt: TenantReceiptViewModel;
     sendDisabled?: boolean;
+    shareDisabled?: boolean;
     subtitle?: string;
     title?: string;
 };
@@ -133,6 +135,35 @@ function receiptVerificationUrl(receipt: TenantReceiptViewModel) {
     const path = `/office/receipts?verify=${encodeURIComponent(receipt.verificationCode)}&receipt=${encodeURIComponent(receipt.id)}`;
     if (typeof window === "undefined") return `https://ddumba-property-operations-os-evgw.vercel.app${path}`;
     return `${window.location.origin}${path}`;
+}
+
+function normalizeWhatsappPhone(value: string | null | undefined) {
+    const digits = String(value ?? "").replace(/\D+/g, "");
+    if (!digits) return "";
+    if (digits.startsWith("256")) return digits;
+    if (digits.startsWith("0")) return `256${digits.slice(1)}`;
+    return digits;
+}
+
+function whatsappReceiptMessage(receipt: TenantReceiptViewModel) {
+    const snapshot = receipt.snapshot;
+    return [
+        `Hello ${safeText(snapshot.tenantName) ?? "Tenant"},`,
+        "",
+        "Thank you for your payment.",
+        "",
+        `Attached is your official receipt ${receipt.receiptNumber} for Room ${safeText(snapshot.roomNumber) ?? "N/A"}.`,
+        `Amount paid: ${money(snapshot.amountPaid)}.`,
+        `Verification: ${receipt.verificationCode}.`,
+        "",
+        "Thank you for choosing Ddumba Property Management.",
+    ].join("\n");
+}
+
+export function tenantReceiptWhatsappHref(receipt: TenantReceiptViewModel, phoneOverride?: string | null) {
+    const phone = normalizeWhatsappPhone(phoneOverride ?? receipt.snapshot.tenantPhone);
+    if (!phone) return null;
+    return `https://wa.me/${phone}?text=${encodeURIComponent(whatsappReceiptMessage(receipt))}`;
 }
 
 function defaultPrinterSettings(): ReceiptPrinterSettings {
@@ -449,6 +480,10 @@ export async function downloadTenantPaymentReceiptPdf(fileName = "tenant-payment
     } finally {
         sandbox.remove();
     }
+}
+
+export async function prepareReceiptPdfForSharing(fileName = "tenant-payment-receipt.pdf") {
+    await downloadTenantPaymentReceiptPdf(fileName);
 }
 
 function receiptPaperWidthMm(): 58 | 80 {
@@ -1082,9 +1117,11 @@ export function TenantPaymentReceiptModal({
     onDownloadPdf,
     onPrint,
     onSendEmail,
+    onShareWhatsApp,
     printDisabled,
     receipt,
     sendDisabled,
+    shareDisabled,
     subtitle = "Generated from the final saved Supabase transaction.",
     title = "PAYMENT RECORDED SUCCESSFULLY",
 }: ModalProps) {
@@ -1332,6 +1369,11 @@ export function TenantPaymentReceiptModal({
                                         <Mail size={15} /> Send E-Receipt
                                     </button>
                                 ) : null}
+                                {onShareWhatsApp ? (
+                                    <button type="button" onClick={onShareWhatsApp} disabled={shareDisabled} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-green-600 px-3 py-2 text-xs font-black text-white disabled:opacity-50">
+                                        <MessageCircle size={15} /> Share via WhatsApp
+                                    </button>
+                                ) : null}
                                 <button type="button" onClick={() => setShowPrinterSettings(true)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-800">
                                     Choose Printer
                                 </button>
@@ -1500,6 +1542,7 @@ export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptVi
                 <ReceiptRow label="Date/Time" value={formatDateTime(snapshot.paymentDateTime)} />
                 <ReceiptRow label="Office" value={snapshot.officeName ?? "Office"} stackWhenLong />
                 <ReceiptRow label="Room" value={snapshot.roomNumber ?? "No room"} />
+                {safeText(snapshot.propertyName) ? <ReceiptRow label="Property" value={safeText(snapshot.propertyName) ?? ""} stackWhenLong /> : null}
                 <ReceiptRow label="Tenant" value={snapshot.tenantName ?? "Unnamed tenant"} stackWhenLong />
                 <ReceiptRow label="Phone" value={snapshot.tenantPhone ?? "No phone"} />
                 <ReceiptRow label="Landlord" value={snapshot.landlordName ?? "No landlord"} stackWhenLong />
@@ -1510,6 +1553,7 @@ export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptVi
                 <ReceiptMoneyRow label="Previous outstanding" value={snapshot.previousOutstandingBalance} />
                 <ReceiptMoneyRow label="Applied to outstanding" value={snapshot.amountAppliedToOutstanding ?? 0} />
                 <ReceiptMoneyRow label="Applied to current rent" value={snapshot.amountAppliedToCurrentRent ?? Math.max(0, snapshot.amountApplied - (snapshot.amountAppliedToOutstanding ?? 0))} />
+                {Number(snapshot.securityDepositAmount ?? 0) > 0 ? <ReceiptMoneyRow label="Security deposit" value={Number(snapshot.securityDepositAmount ?? 0)} /> : null}
                 <ReceiptMoneyRow label="Advance rent" value={snapshot.advanceAmount ?? snapshot.advanceBalance} />
                 <ReceiptMoneyRow label="Amount paid" value={snapshot.amountPaid} highlight />
                 <ReceiptMoneyRow label="Remaining balance" value={snapshot.remainingOutstandingBalance} highlight />
@@ -1535,6 +1579,7 @@ export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptVi
             <section className="receipt-section">
                 <ReceiptRow label="Method" value={snapshot.paymentMethod?.replaceAll("_", " ") ?? "Payment"} />
                 <ReceiptRow label="Reference" value={snapshot.referenceNumber ?? "No reference"} stacked />
+                {safeText(snapshot.securityDepositReceiptNumber) ? <ReceiptRow label="Security receipt" value={safeText(snapshot.securityDepositReceiptNumber) ?? ""} stacked /> : null}
                 <ReceiptRow label="Recorded by" value={snapshot.recordedByName ?? "DDUMBA OS"} stacked />
                 {snapshot.collectorName ? <ReceiptRow label="Collector" value={snapshot.collectorName} stacked /> : null}
                 <ReceiptRow label="Approved by" value={snapshot.approvedByName ?? snapshot.recordedByName ?? "DDUMBA OS"} stacked />

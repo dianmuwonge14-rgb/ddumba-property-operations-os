@@ -39,6 +39,7 @@ export type PaymentReceiptSnapshot = {
     monthlyRent: number;
     notes: string | null;
     officeName: string | null;
+    propertyName?: string | null;
     approvedAt: string | null;
     approvedByName: string | null;
     collectorName: string | null;
@@ -50,6 +51,8 @@ export type PaymentReceiptSnapshot = {
     referenceNumber: string | null;
     remainingOutstandingBalance: number;
     roomNumber: string | null;
+    securityDepositAmount?: number;
+    securityDepositReceiptNumber?: string | null;
     status: string;
     tenantEmail: string | null;
     tenantName: string | null;
@@ -159,7 +162,11 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
     if (recordedBy.error && !isMissingSchemaError(recordedBy.error)) throw new Error(recordedBy.error.message);
 
     const landlordId = room?.landlord_id ?? null;
-    const landlord = landlordId ? await getOne(db, "landlords", landlordId, companyId, "*") : null;
+    const propertyId = room?.property_id ?? tenant?.property_id ?? null;
+    const [landlord, property] = await Promise.all([
+        landlordId ? getOne(db, "landlords", landlordId, companyId, "*") : Promise.resolve(null),
+        propertyId ? getOne(db, "properties", propertyId, companyId, "*") : Promise.resolve(null),
+    ]);
     const allocationRows = await db
         .from("tenant_rent_allocations")
         .select("*")
@@ -203,6 +210,7 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
         monthlyRent: amount(room?.monthly_rent ?? tenant?.monthly_rent),
         notes: text(payment.notes),
         officeName: text(office?.office_name) ?? text(office?.name),
+        propertyName: text(property?.property_name) ?? text(property?.name) ?? text(property?.location),
         approvedAt: text(payment.approved_at) ?? text(payment.paid_at) ?? text(payment.payment_date),
         approvedByName: text(payment.approved_by_name) ?? null,
         collectorName,

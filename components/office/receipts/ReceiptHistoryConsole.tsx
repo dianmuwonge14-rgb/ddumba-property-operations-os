@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Download, Eye, History, Mail, Printer, ReceiptText, Search } from "lucide-react";
-import { logReceiptPrintOrDownload } from "@/app/actions/receipts";
-import { downloadTenantPaymentReceiptPdf, printTenantPaymentReceipt, TenantPaymentReceiptModal } from "@/components/office/receipts/TenantPaymentReceipt";
+import { Download, Eye, History, Mail, MessageCircle, Printer, ReceiptText, Search } from "lucide-react";
+import { logReceiptPrintOrDownload, logReceiptShareLink } from "@/app/actions/receipts";
+import { downloadTenantPaymentReceiptPdf, prepareReceiptPdfForSharing, printTenantPaymentReceipt, tenantReceiptWhatsappHref, TenantPaymentReceiptModal } from "@/components/office/receipts/TenantPaymentReceipt";
 import type { ReceiptHistoryItem } from "@/lib/receipts/data";
 
 type Props = {
@@ -73,6 +73,18 @@ export default function ReceiptHistoryConsole({ error, receipts }: Props) {
         if (closeAfterPrint) setSelected(null);
     };
 
+    const shareReceiptByWhatsapp = async (receipt: ReceiptHistoryItem) => {
+        const href = tenantReceiptWhatsappHref(receipt, receipt.tenantPhone);
+        if (!href) {
+            window.alert("This receipt does not have a tenant phone number for WhatsApp sharing.");
+            return;
+        }
+        await prepareReceiptPdfForSharing(`${receipt.receiptNumber}.pdf`);
+        await logReceiptShareLink({ channel: "whatsapp", phone: receipt.tenantPhone ?? "", receiptId: receipt.id }).catch(() => null);
+        window.open(href, "_blank", "noopener,noreferrer");
+        window.alert("Receipt PDF prepared. WhatsApp is open with the tenant message; attach the downloaded PDF if WhatsApp does not attach files automatically.");
+    };
+
     return (
         <main className="enterprise-page">
             <div className="enterprise-shell">
@@ -113,10 +125,16 @@ export default function ReceiptHistoryConsole({ error, receipts }: Props) {
                                 <Info label="Balance" value={money(receipt.remainingOutstandingBalance)} />
                             </div>
                             <p className="mt-3 rounded-2xl bg-slate-50 px-3 py-2 text-xs font-black text-slate-600">Verification: {receipt.verificationCode}</p>
+                            <div className="mt-3 grid grid-cols-3 gap-2 text-[10px] font-black uppercase text-slate-500">
+                                <DeliveryBadge label="Print" status={receipt.deliveryStatus.print} />
+                                <DeliveryBadge label="WhatsApp" status={receipt.deliveryStatus.whatsapp} />
+                                <DeliveryBadge label="Email" status={receipt.deliveryStatus.email} />
+                            </div>
                             <div className="mt-3 flex flex-wrap gap-2">
                                 <button type="button" onClick={() => setSelected(receipt)} className="inline-flex items-center gap-1 rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200"><Eye size={13} /> View</button>
                                 <button type="button" onClick={() => queueReceiptAction(receipt, "print")} className="inline-flex items-center gap-1 rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white"><Printer size={13} /> Reprint</button>
                                 <button type="button" onClick={() => queueReceiptAction(receipt, "download_pdf")} className="inline-flex items-center gap-1 rounded-xl bg-blue-700 px-3 py-2 text-xs font-black text-white"><Download size={13} /> PDF</button>
+                                <button type="button" onClick={() => void shareReceiptByWhatsapp(receipt)} className="inline-flex items-center gap-1 rounded-xl bg-green-600 px-3 py-2 text-xs font-black text-white"><MessageCircle size={13} /> WhatsApp</button>
                                 <a href={`mailto:?subject=${encodeURIComponent(`DDUMBA OS Receipt ${receipt.receiptNumber}`)}&body=${encodeURIComponent(`Receipt ${receipt.receiptNumber} for ${receipt.tenantName ?? "tenant"}: ${money(receipt.amountPaid)}. Verification ${receipt.verificationCode}.`)}`} className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white"><Mail size={13} /> Resend</a>
                                 <a href={`/office/payments?receipt=${receipt.id}&payment=${receipt.paymentId}`} className="inline-flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-700"><ReceiptText size={13} /> Payment</a>
                                 <a href={`/office/payments?history=${receipt.paymentId}`} className="inline-flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-700"><History size={13} /> Corrections</a>
@@ -142,12 +160,23 @@ export default function ReceiptHistoryConsole({ error, receipts }: Props) {
                     onClose={() => setSelected(null)}
                     onDownloadPdf={() => printReceipt(selected, "download_pdf")}
                     onPrint={() => printReceipt(selected, "print")}
+                    onShareWhatsApp={() => shareReceiptByWhatsapp(selected)}
                     receipt={selected}
+                    shareDisabled={!selected.tenantPhone}
                     subtitle="Reopened from live Supabase Receipt History."
                     title="Receipt Preview"
                 />
             ) : null}
         </main>
+    );
+}
+
+function DeliveryBadge({ label, status }: { label: string; status: string | null }) {
+    const active = Boolean(status);
+    return (
+        <span className={active ? "rounded-xl bg-emerald-50 px-2 py-1 text-emerald-700" : "rounded-xl bg-slate-100 px-2 py-1 text-slate-500"}>
+            {label}: {status ?? "not sent"}
+        </span>
     );
 }
 

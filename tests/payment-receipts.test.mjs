@@ -55,7 +55,10 @@ test("payment entry shows receipt confirmation actions after successful payment"
   assert.match(sharedReceipt, /directPrintLabel/);
   assert.match(sharedReceipt, /Download PDF/);
   assert.match(sharedReceipt, /Send E-Receipt/);
-  assert.match(paymentEntry, /Send by WhatsApp\/SMS/);
+  assert.match(sharedReceipt, /Share via WhatsApp/);
+  assert.match(paymentEntry, /prepareReceiptPdfForSharing/);
+  assert.match(paymentEntry, /tenantReceiptWhatsappHref/);
+  assert.match(paymentEntry, /Send SMS link/);
 });
 
 test("tenant receipts include supermarket-style coverage and print scope", () => {
@@ -75,6 +78,9 @@ test("tenant receipts include supermarket-style coverage and print scope", () =>
 test("receipt history can preview and reprint only the saved receipt slip", () => {
   assert.match(receiptHistory, /TenantPaymentReceiptModal/);
   assert.match(receiptHistory, /downloadTenantPaymentReceiptPdf/);
+  assert.match(receiptHistory, /prepareReceiptPdfForSharing/);
+  assert.match(receiptHistory, /tenantReceiptWhatsappHref/);
+  assert.match(receiptHistory, /DeliveryBadge/);
   assert.match(receiptHistory, /pendingReceiptAction/);
   assert.match(receiptHistory, /queueReceiptAction/);
   assert.match(receiptHistory, /waitForReceiptPreviewMount/);
@@ -135,6 +141,8 @@ test("receipt print opens a saved receipt-only thermal document", () => {
   assert.match(receiptPrintPage, /Print Receipt/);
   assert.match(receiptPrintPage, /Choose Printer/);
   assert.match(receiptPrintPage, /Download PDF/);
+  assert.match(receiptPrintPage, /Share via WhatsApp/);
+  assert.match(receiptPrintPage, /receiptWhatsappHref/);
   assert.match(receiptPrintPage, /Close/);
   assert.match(receiptPrintPage, /printCurrentReceipt/);
   assert.match(receiptPrintPage, /Receipt is not ready yet/);
@@ -157,6 +165,27 @@ test("receipt print opens a saved receipt-only thermal document", () => {
   assert.match(receiptPrintPage, /document\.fonts\.ready/);
   assert.match(receiptPrintPage, /requestAnimationFrame/);
   assert.doesNotMatch(receiptPrintPage, /OfficeLayout/);
+});
+
+test("receipt actions log print, PDF, WhatsApp and enforce receipt permissions", () => {
+  const receiptActions = readFileSync(new URL("../app/actions/receipts.ts", import.meta.url), "utf8");
+  assert.match(receiptActions, /assertReceiptPermission/);
+  assert.match(receiptActions, /You do not have permission to use this receipt/);
+  assert.match(receiptActions, /logReceiptPrintOrDownload/);
+  assert.match(receiptActions, /logReceiptShareLink/);
+  assert.match(receiptActions, /channel: input\.channel/);
+  assert.match(receiptHistory, /deliveryStatus\.print/);
+  assert.match(receiptHistory, /deliveryStatus\.whatsapp/);
+  assert.match(receiptHistory, /deliveryStatus\.email/);
+});
+
+test("tenant receipts include property and security deposit allocation when saved", () => {
+  assert.match(receiptService, /propertyName/);
+  assert.match(sharedReceipt, /Security deposit/);
+  assert.match(sharedReceipt, /Security receipt/);
+  assert.match(receiptPrintPdfRoute, /Security dep/);
+  assert.match(receiptPrintPdfRoute, /Security receipt/);
+  assert.match(receiptPrintPdfRoute, /Property/);
 });
 
 test("receipt print retains a fallback clean receipt-only popup for mounted receipts", () => {

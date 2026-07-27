@@ -1,7 +1,22 @@
 "use server";
 
-import { requireAuth } from "@/lib/auth/permissions";
+import { hasPermission, requireAuth } from "@/lib/auth/permissions";
 import { getPaymentReceipt, logReceiptDelivery, receiptEmailHtml } from "@/lib/receipts/payment-receipts";
+
+type ReceiptPermissionContext = Awaited<ReturnType<typeof requireAuth>>;
+
+function canUseReceipt(context: ReceiptPermissionContext, receipt: Awaited<ReturnType<typeof getPaymentReceipt>>) {
+    if (context.activeCompany?.id !== receipt.companyId) return false;
+    if (context.isCompanyAdmin) return true;
+    if (context.authMode === "collector") return true;
+    if (!hasPermission(context, "collections.read") && !hasPermission(context, "collections.view") && !hasPermission(context, "landlords.read")) return false;
+    if (context.activeOffice?.id && receipt.officeId && context.activeOffice.id !== receipt.officeId) return false;
+    return true;
+}
+
+function assertReceiptPermission(context: ReceiptPermissionContext, receipt: Awaited<ReturnType<typeof getPaymentReceipt>>) {
+    if (!canUseReceipt(context, receipt)) throw new Error("You do not have permission to use this receipt.");
+}
 
 function emailProvider() {
     return String(process.env.EMAIL_PROVIDER ?? "").trim().toLowerCase();
@@ -78,6 +93,7 @@ export async function getReceiptForModal(receiptId: string) {
 export async function logReceiptPrintOrDownload(input: { channel: "download_pdf" | "print"; receiptId: string }) {
     const context = await requireAuth();
     const receipt = await getPaymentReceipt(input.receiptId);
+    assertReceiptPermission(context, receipt);
     await logReceiptDelivery({
         channel: input.channel,
         receipt,
@@ -92,6 +108,7 @@ export async function sendReceiptByEmail(input: { email: string; receiptId: stri
     const email = input.email.trim().toLowerCase();
     if (!email.includes("@")) throw new Error("Enter a valid email address.");
     const receipt = await getPaymentReceipt(input.receiptId);
+    assertReceiptPermission(context, receipt);
     const result = await sendProviderEmail({
         html: receiptEmailHtml(receipt),
         subject: `DDUMBA OS Receipt ${receipt.receiptNumber}`,
@@ -112,6 +129,7 @@ export async function sendReceiptByEmail(input: { email: string; receiptId: stri
 export async function logReceiptShareLink(input: { channel: "sms" | "whatsapp"; phone: string; receiptId: string }) {
     const context = await requireAuth();
     const receipt = await getPaymentReceipt(input.receiptId);
+    assertReceiptPermission(context, receipt);
     await logReceiptDelivery({
         channel: input.channel,
         receipt,
