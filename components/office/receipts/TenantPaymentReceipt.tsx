@@ -84,13 +84,33 @@ declare global {
         bluetooth?: {
             requestDevice(options: unknown): Promise<{
                 gatt?: {
-                    connect(): Promise<unknown>;
+                    connect(): Promise<{
+                        getPrimaryService(service: string): Promise<{
+                            getCharacteristic(characteristic: string): Promise<{
+                                writeValue?(value: BufferSource): Promise<void>;
+                                writeValueWithoutResponse?(value: BufferSource): Promise<void>;
+                            }>;
+                        }>;
+                    }>;
                 };
                 name?: string;
             }>;
         };
     }
 }
+
+type ReceiptPrintDiagnosticStep = {
+    detail?: string;
+    label: string;
+    ok: boolean;
+};
+
+type ReceiptPrintDiagnosticResult = {
+    method: "bluetooth" | "browser" | "qz";
+    payloadLength: number;
+    receiptId: string;
+    steps: ReceiptPrintDiagnosticStep[];
+};
 
 type ModalProps = {
     actionExtras?: React.ReactNode;
@@ -173,7 +193,7 @@ function defaultPrinterSettings(): ReceiptPrinterSettings {
         autoPrintAfterPayment: false,
         copies: 1,
         duplicateCopy: false,
-        method: "browser",
+        method: profile === "rpp02n58" ? "bluetooth" : "browser",
         printQrCode: true,
         ...PRINTER_PROFILES[profile],
         profileMode: "auto",
@@ -269,7 +289,7 @@ function settingsForProfile(profile: ReceiptPrinterProfile, current: ReceiptPrin
     return {
         ...current,
         ...PRINTER_PROFILES[profile],
-        method: profile === "rpp02n58" ? "browser" : current.method,
+        method: profile === "rpp02n58" ? "bluetooth" : current.method,
         profile,
         profileMode: profile === "pos80" ? "pos80" : "mobile58",
     };
@@ -920,29 +940,52 @@ async function printDirectlyWithQz(receipt: TenantReceiptViewModel, settings: Re
     const qz = await getQzTray();
     if (!qz) throw new Error("Direct thermal printing is not connected. Use Browser Print or open Printer Settings.");
     if (!settings.preferredPrinterName.trim()) throw new Error("Select a preferred thermal printer before direct printing.");
+    const payload = buildEscPosReceipt(receipt, settings);
+    assertPrintPayload(payload, "Receipt ESC/POS payload");
     await ensureQzConnected(qz);
     const config = qz.configs.create(settings.preferredPrinterName, {
         copies: Math.max(1, settings.copies),
         encoding: "CP437",
         jobName: `DDUMBA receipt ${receipt.receiptNumber}`,
     });
-    await qz.print(config, [{ data: buildEscPosReceipt(receipt, settings), format: "command", type: "raw" }]);
+    await qz.print(config, [{ data: payload, format: "command", type: "raw" }]);
 }
 
-async function printDirectlyWithBluetooth(receipt: TenantReceiptViewModel, settings: ReceiptPrinterSettings) {
+async function printDirectlyWithBluetooth(receipt: TenantReceiptViewModel, settings: ReceiptPrinterSettings): Promise<ReceiptPrintDiagnosticResult> {
+    const steps: ReceiptPrintDiagnosticStep[] = [];
+    const payload = buildEscPosReceipt(receipt, settings);
+    const payloadBytes = escPosBytes(payload);
+    steps.push({ detail: receipt.id, label: "Receipt id", ok: Boolean(receipt.id) });
+    steps.push({ detail: `${payload.length} chars / ${payloadBytes.byteLength} bytes`, label: "ESC/POS payload generated", ok: payloadBytes.byteLength > 0 });
+    assertPrintPayload(payload, "Receipt ESC/POS payload");
     if (typeof navigator === "undefined" || !navigator.bluetooth) {
-        throw new Error("Direct Bluetooth Print is not available in this browser. Use Android System Print, or install the RPP02N Android print service/companion bridge.");
+        steps.push({ detail: "navigator.bluetooth is unavailable", label: "Bluetooth API detected", ok: false });
+        throw diagnosticPrintError("Direct Bluetooth Print is not available in this browser. Use Android System Print, or install the RPP02N Android print service/companion bridge.", steps);
     }
+    steps.push({ label: "Bluetooth API detected", ok: true });
     const device = await navigator.bluetooth.requestDevice({
         acceptAllDevices: true,
-        optionalServices: ["000018f0-0000-1000-8000-00805f9b34fb", "0000ffe0-0000-1000-8000-00805f9b34fb"],
+        optionalServices: bluetoothPrinterServices(),
     });
     if (!/rpp02n|rongta|58/i.test(device.name ?? "")) {
-        throw new Error("Bluetooth permission was granted, but RPP02N was not selected. Choose RPP02N or use Android System Print.");
+        steps.push({ detail: device.name ?? "Unnamed Bluetooth device", label: "RPP02N selected", ok: false });
+        throw diagnosticPrintError("Bluetooth permission was granted, but RPP02N was not selected. Choose RPP02N or use Android System Print.", steps);
     }
-    await device.gatt?.connect();
-    void buildEscPosReceipt(receipt, settings);
-    throw new Error("RPP02N Bluetooth connection opened, but this browser does not expose a safe writable ESC/POS characteristic. Use the printer's Android print service or a local Bluetooth ESC/POS bridge to send the receipt.");
+    steps.push({ detail: device.name ?? "RPP02N", label: "RPP02N selected", ok: true });
+    const server = await device.gatt?.connect();
+    if (!server) {
+        steps.push({ label: "Bluetooth GATT connected", ok: false });
+        throw diagnosticPrintError("Bluetooth connection failed before any receipt bytes were sent.", steps);
+    }
+    steps.push({ label: "Bluetooth GATT connected", ok: true });
+    const writable = await findWritableBluetoothPrinterCharacteristic(server, steps);
+    await writeBluetoothPrinterBytes(writable, payloadBytes, steps);
+    return {
+        method: "bluetooth",
+        payloadLength: payloadBytes.byteLength,
+        receiptId: receipt.id,
+        steps,
+    };
 }
 
 function directPrintLabel(settings: ReceiptPrinterSettings) {
@@ -971,7 +1014,144 @@ async function printEscPosTestWithQz(receipt: TenantReceiptViewModel, settings: 
         encoding: "CP437",
         jobName: settings.widthMm === 58 ? "DDUMBA MP-58N ESC/POS test" : "DDUMBA POS-80 ESC/POS test",
     });
-    await qz.print(config, [{ data: buildEscPosTestReceipt(receipt, settings), format: "command", type: "raw" }]);
+    const payload = buildEscPosTestReceipt(receipt, settings);
+    assertPrintPayload(payload, "Test ESC/POS payload");
+    await qz.print(config, [{ data: payload, format: "command", type: "raw" }]);
+}
+
+async function printHelloWorldWithBluetooth(settings: ReceiptPrinterSettings): Promise<ReceiptPrintDiagnosticResult> {
+    const steps: ReceiptPrintDiagnosticStep[] = [];
+    const payload = [escPosInit(), escPosAlign("center"), escPosBold(true), "HELLO WORLD\n", escPosBold(false), "DDUMBA OS BLUETOOTH TEST\n", escPosFeed(settings.feedAfterLines), settings.cutPaper ? escPosCut() : ""].join("");
+    const payloadBytes = escPosBytes(payload);
+    steps.push({ detail: `${payload.length} chars / ${payloadBytes.byteLength} bytes`, label: "HELLO WORLD payload generated", ok: payloadBytes.byteLength > 0 });
+    assertPrintPayload(payload, "HELLO WORLD ESC/POS payload");
+    if (typeof navigator === "undefined" || !navigator.bluetooth) {
+        steps.push({ detail: "navigator.bluetooth is unavailable", label: "Bluetooth API detected", ok: false });
+        throw diagnosticPrintError("Direct Bluetooth Print is not available in this browser.", steps);
+    }
+    steps.push({ label: "Bluetooth API detected", ok: true });
+    const device = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: bluetoothPrinterServices(),
+    });
+    steps.push({ detail: device.name ?? "Unnamed Bluetooth device", label: "Bluetooth printer selected", ok: Boolean(device.name) });
+    const server = await device.gatt?.connect();
+    if (!server) {
+        steps.push({ label: "Bluetooth GATT connected", ok: false });
+        throw diagnosticPrintError("Bluetooth connection failed before HELLO WORLD bytes were sent.", steps);
+    }
+    steps.push({ label: "Bluetooth GATT connected", ok: true });
+    const writable = await findWritableBluetoothPrinterCharacteristic(server, steps);
+    await writeBluetoothPrinterBytes(writable, payloadBytes, steps);
+    return {
+        method: "bluetooth",
+        payloadLength: payloadBytes.byteLength,
+        receiptId: "HELLO-WORLD-TEST",
+        steps,
+    };
+}
+
+function bluetoothPrinterServices() {
+    return [
+        "000018f0-0000-1000-8000-00805f9b34fb",
+        "0000ffe0-0000-1000-8000-00805f9b34fb",
+        "49535343-fe7d-4ae5-8fa9-9fafd205e455",
+        "e7810a71-73ae-499d-8c15-faa9aef0c3f2",
+    ];
+}
+
+function bluetoothPrinterCharacteristics() {
+    return [
+        "00002af1-0000-1000-8000-00805f9b34fb",
+        "0000ffe1-0000-1000-8000-00805f9b34fb",
+        "49535343-8841-43f4-a8d4-ecbe34729bb3",
+        "bef8d6c9-9c21-4c9e-b632-bd58c1009f9f",
+    ];
+}
+
+async function findWritableBluetoothPrinterCharacteristic(server: {
+    getPrimaryService(service: string): Promise<{
+        getCharacteristic(characteristic: string): Promise<{
+            writeValue?(value: BufferSource): Promise<void>;
+            writeValueWithoutResponse?(value: BufferSource): Promise<void>;
+        }>;
+    }>;
+}, steps: ReceiptPrintDiagnosticStep[]) {
+    const failures: string[] = [];
+    for (const serviceId of bluetoothPrinterServices()) {
+        try {
+            const service = await server.getPrimaryService(serviceId);
+            steps.push({ detail: serviceId, label: "Printer BLE service found", ok: true });
+            for (const characteristicId of bluetoothPrinterCharacteristics()) {
+                try {
+                    const characteristic = await service.getCharacteristic(characteristicId);
+                    if (characteristic.writeValueWithoutResponse || characteristic.writeValue) {
+                        steps.push({ detail: characteristicId, label: "Writable print characteristic found", ok: true });
+                        return characteristic;
+                    }
+                    failures.push(`${serviceId}/${characteristicId}: characteristic is not writable`);
+                } catch (error) {
+                    failures.push(`${serviceId}/${characteristicId}: ${error instanceof Error ? error.message : "not available"}`);
+                }
+            }
+        } catch (error) {
+            failures.push(`${serviceId}: ${error instanceof Error ? error.message : "service not available"}`);
+        }
+    }
+    steps.push({ detail: failures.slice(0, 4).join(" | "), label: "Writable print characteristic found", ok: false });
+    throw diagnosticPrintError("Bluetooth printer was selected, but the browser could not find a writable ESC/POS characteristic. If this printer uses classic Bluetooth SPP, Android System Print or a native Bluetooth ESC/POS bridge is required.", steps);
+}
+
+async function writeBluetoothPrinterBytes(characteristic: {
+    writeValue?(value: BufferSource): Promise<void>;
+    writeValueWithoutResponse?(value: BufferSource): Promise<void>;
+}, bytes: Uint8Array, steps: ReceiptPrintDiagnosticStep[]) {
+    if (!bytes.byteLength) {
+        steps.push({ label: "Bytes sent to printer", ok: false, detail: "0 bytes" });
+        throw diagnosticPrintError("No receipt bytes were generated, so nothing was sent to the printer.", steps);
+    }
+    const chunkSize = 160;
+    let sent = 0;
+    for (let index = 0; index < bytes.byteLength; index += chunkSize) {
+        const chunk = bytes.slice(index, Math.min(index + chunkSize, bytes.byteLength));
+        if (characteristic.writeValueWithoutResponse) {
+            await characteristic.writeValueWithoutResponse(chunk);
+        } else if (characteristic.writeValue) {
+            await characteristic.writeValue(chunk);
+        } else {
+            steps.push({ label: "Bytes sent to printer", ok: false, detail: "No write method" });
+            throw diagnosticPrintError("Writable characteristic disappeared before receipt bytes were sent.", steps);
+        }
+        sent += chunk.byteLength;
+    }
+    steps.push({ detail: `${sent} bytes in ${Math.ceil(sent / chunkSize)} chunks`, label: "Bytes sent to printer", ok: sent === bytes.byteLength });
+}
+
+function assertPrintPayload(payload: string, label: string) {
+    if (!payload || payload.length < 8 || !payload.trim()) {
+        throw new Error(`${label} is empty. No bytes were sent to the printer.`);
+    }
+}
+
+function escPosBytes(payload: string) {
+    const bytes = new Uint8Array(payload.length);
+    for (let index = 0; index < payload.length; index += 1) {
+        bytes[index] = payload.charCodeAt(index) & 0xff;
+    }
+    return bytes;
+}
+
+function diagnosticPrintError(message: string, steps: ReceiptPrintDiagnosticStep[]) {
+    const detail = steps.map((step) => `${step.ok ? "✓" : "✗"} ${step.label}${step.detail ? `: ${step.detail}` : ""}`).join(" · ");
+    return new Error(`${message} Diagnostics: ${detail}`);
+}
+
+function formatDiagnosticSteps(result: ReceiptPrintDiagnosticResult) {
+    return [
+        `Receipt ${result.receiptId}`,
+        `${result.payloadLength} bytes`,
+        ...result.steps.map((step) => `${step.ok ? "✅" : "❌"} ${step.label}${step.detail ? `: ${step.detail}` : ""}`),
+    ].join(" · ");
 }
 
 function buildEscPosReceipt(receipt: TenantReceiptViewModel, settings: ReceiptPrinterSettings) {
@@ -1199,9 +1379,12 @@ export function TenantPaymentReceiptModal({
         setLocalConfirmationStatus("Browser print dialog opening");
         try {
             savePrinterSettings(receipt, printerSettings);
+            const receiptRoot = document.getElementById(RECEIPT_EXPORT_ROOT_ID);
+            const htmlLength = receiptRoot?.outerHTML.length ?? 0;
+            if (receiptRoot && htmlLength < 80) throw new Error(`Receipt DOM is too small to print (${htmlLength} characters). Reopen the receipt and try again.`);
             await Promise.resolve(onPrint());
             setLocalConfirmationStatus("Print request opened; confirm Windows queue and paper output");
-            setPrinterMessage(`Print request opened. ${printerDestinationInstruction(printerSettings)} Did ${physicalPrinterShortName(printerSettings)} print the receipt?`);
+            setPrinterMessage(`Print request opened with receipt HTML ${htmlLength || "from saved receipt"} characters. ${printerDestinationInstruction(printerSettings)} Did ${physicalPrinterShortName(printerSettings)} print the receipt?`);
         } catch (error) {
             setLocalConfirmationStatus("Browser print request failed before Windows queue");
             setPrinterMessage(error instanceof Error ? error.message : "Receipt could not be prepared. No physical print result was confirmed.");
@@ -1260,12 +1443,30 @@ export function TenantPaymentReceiptModal({
         setLocalConfirmationStatus("Requesting Bluetooth permission for RPP02N");
         setPrinterMessage("Bluetooth permission required. Select RPP02N if it appears, then confirm the print bridge is available.");
         try {
-            await printDirectlyWithBluetooth(receipt, printerSettings);
-            setLocalConfirmationStatus("Bluetooth print command accepted; confirm physical output");
-            setPrinterMessage("Print command accepted by the RPP02N Bluetooth bridge. Confirm physical receipt output.");
+            const result = await printDirectlyWithBluetooth(receipt, printerSettings);
+            setLocalConfirmationStatus("Bluetooth receipt bytes sent; confirm physical output");
+            setPrinterMessage(`Bluetooth diagnostic complete. ${formatDiagnosticSteps(result)}. Confirm text printed visibly on the RPP02N.`);
         } catch (error) {
             setLocalConfirmationStatus("Direct Bluetooth Print unavailable");
             setPrinterMessage(error instanceof Error ? error.message : "Direct Bluetooth Print failed. Use Android System Print or the RPP02N print-service app.");
+        } finally {
+            setIsPreparingPrint(false);
+        }
+    };
+
+    const testBluetoothHelloWorld = async () => {
+        setIsPreparingPrint(true);
+        setPrintAttemptNumber((attempt) => attempt + 1);
+        setLatestPrintRequestAt(new Date().toLocaleString("en-UG", { timeZone: "Africa/Kampala" }));
+        setLocalConfirmationStatus("Sending HELLO WORLD Bluetooth test");
+        setPrinterMessage("Bluetooth permission required. Select RPP02N, then DDUMBA OS will send a small HELLO WORLD ESC/POS payload.");
+        try {
+            const result = await printHelloWorldWithBluetooth(printerSettings);
+            setLocalConfirmationStatus("HELLO WORLD bytes sent; confirm physical output");
+            setPrinterMessage(`HELLO WORLD diagnostic complete. ${formatDiagnosticSteps(result)}. If HELLO WORLD printed but the receipt did not, receipt rendering is the problem; if not, Bluetooth direct writing is unavailable for this printer/browser.`);
+        } catch (error) {
+            setLocalConfirmationStatus("HELLO WORLD Bluetooth test failed");
+            setPrinterMessage(error instanceof Error ? error.message : "HELLO WORLD Bluetooth test failed before bytes reached the printer.");
         } finally {
             setIsPreparingPrint(false);
         }
@@ -1487,6 +1688,7 @@ export function TenantPaymentReceiptModal({
                                     <button type="button" onClick={() => testBrowserPrint(settingsForProfile("pos80", printerSettings))} className="rounded-xl bg-violet-700 px-3 py-2 text-xs font-black text-white">Test POS-80 Receipt</button>
                                     <button type="button" onClick={() => testBrowserPrint(settingsForProfile("rongta58", printerSettings))} className="rounded-xl bg-violet-700 px-3 py-2 text-xs font-black text-white">Test 58mm Mobile Receipt</button>
                                     <button type="button" onClick={() => testDirectPrint(printerSettings)} className="rounded-xl bg-violet-900 px-3 py-2 text-xs font-black text-white">Direct ESC/POS Test</button>
+                                    <button type="button" onClick={testBluetoothHelloWorld} className="rounded-xl bg-green-700 px-3 py-2 text-xs font-black text-white">HELLO WORLD Bluetooth Test</button>
                                     <button type="button" onClick={() => { updatePrinterSettings({ method: "bluetooth", profile: "rpp02n58", profileMode: "mobile58", widthMm: 58, printableWidthMm: 48, preferredPrinterName: "RPP02N", cutPaper: false, fontSize: "compact", printDensity: "dark" }); setPrinterMessage("Switched to Direct Bluetooth Print for RPP02N. Browser support varies; if the Bluetooth bridge is unavailable, use Android System Print with the RPP02N print service."); }} className="rounded-xl bg-indigo-700 px-3 py-2 text-xs font-black text-white">Use RPP02N Direct Bluetooth</button>
                                     <button type="button" onClick={() => { updatePrinterSettings({ method: "qz" }); setPrinterMessage(`Switched to QZ Tray Direct Print. Use Detect Printers, select ${printerSettings.widthMm === 58 ? "RONGTA 58mm Series Printer" : "POS-80"}, then run Direct ESC/POS Test.`); }} className="rounded-xl bg-indigo-700 px-3 py-2 text-xs font-black text-white">Switch to QZ Direct Printing</button>
                                     <button type="button" onClick={openPrinterHelp} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-800 ring-1 ring-slate-200">Printing Help</button>

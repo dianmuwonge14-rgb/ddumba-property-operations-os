@@ -225,7 +225,7 @@ test("receipt modal explains browser Save as PDF behavior and saves printer sett
   assert.match(sharedReceipt, /printerDestinationInstruction/);
   assert.match(sharedReceipt, /Select POS-80 under Destination/);
   assert.match(sharedReceipt, /Select RONGTA 58mm Series Printer under Destination/);
-  assert.match(sharedReceipt, /Print request opened\./);
+  assert.match(sharedReceipt, /Print request opened with receipt HTML/);
   assert.match(sharedReceipt, /Did POS-80 print the receipt\?/);
   assert.match(sharedReceipt, /Did RONGTA 58mm Series Printer print the receipt\?/);
   assert.match(sharedReceipt, /ddumba\.receiptPrinterSettings/);
@@ -329,7 +329,7 @@ test("tablet receipt reprint supports RPP02N without printing receipt history", 
   assert.match(sharedReceipt, /RPP02N is paired but not available through Android Print Service/);
   assert.match(sharedReceipt, /printDirectlyWithBluetooth/);
   assert.match(sharedReceipt, /Android System Print/);
-  assert.match(sharedReceipt, /printer's Android print service/);
+  assert.match(sharedReceipt, /native Bluetooth ESC\/POS bridge/);
   assert.match(sharedReceipt, /Use RPP02N Direct Bluetooth/);
   assert.match(sharedReceipt, /physicalPrinterShortName/);
   assert.match(sharedReceipt, /printWindowName/);
@@ -337,4 +337,24 @@ test("tablet receipt reprint supports RPP02N without printing receipt history", 
   assert.match(receiptHistory, /queueReceiptAction\(receipt, "print"\)/);
   assert.match(receiptHistory, /queueReceiptAction\(receipt, "download_pdf"\)/);
   assert.doesNotMatch(receiptHistory, /document\.body\.outerHTML/);
+});
+
+test("receipt direct Bluetooth path sends real bytes or reports the failing diagnostic step", () => {
+  assert.match(sharedReceipt, /type ReceiptPrintDiagnosticStep/);
+  assert.match(sharedReceipt, /type ReceiptPrintDiagnosticResult/);
+  assert.match(sharedReceipt, /assertPrintPayload/);
+  assert.match(sharedReceipt, /escPosBytes/);
+  assert.match(sharedReceipt, /payloadBytes\.byteLength/);
+  assert.match(sharedReceipt, /findWritableBluetoothPrinterCharacteristic/);
+  assert.match(sharedReceipt, /writeBluetoothPrinterBytes/);
+  assert.match(sharedReceipt, /writeValueWithoutResponse/);
+  assert.match(sharedReceipt, /writeValue/);
+  assert.match(sharedReceipt, /Bytes sent to printer/);
+  assert.match(sharedReceipt, /diagnosticPrintError/);
+  assert.match(sharedReceipt, /formatDiagnosticSteps/);
+  assert.match(sharedReceipt, /HELLO WORLD Bluetooth Test/);
+  assert.match(sharedReceipt, /HELLO WORLD ESC\/POS payload/);
+  assert.match(sharedReceipt, /method: profile === "rpp02n58" \? "bluetooth" : "browser"/);
+  assert.match(sharedReceipt, /method: profile === "rpp02n58" \? "bluetooth" : current\.method/);
+  assert.doesNotMatch(sharedReceipt, /void buildEscPosReceipt\(receipt, settings\);\n\s*throw new Error\("RPP02N Bluetooth connection opened/);
 });
