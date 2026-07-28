@@ -732,8 +732,8 @@ body {
 .receipt-section-title,
 .receipt-label {
   color: #000000;
-  font-size: ${compact ? "7.6px" : "8.5px"};
-  font-weight: 900;
+  font-size: ${compact ? "9.6px" : "10.5px"};
+  font-weight: 800;
   letter-spacing: 0.035em;
   text-transform: uppercase;
 }
@@ -743,7 +743,7 @@ body {
   align-items: start;
   gap: ${compact ? "1mm" : "1.4mm"};
   padding: ${compact ? "0.35mm 0" : "0.45mm 0"};
-  font-size: ${compact ? "8.8px" : "10px"};
+  font-size: ${compact ? "10.2px" : "11.2px"};
 }
 .receipt-row-stacked {
   display: block;
@@ -751,6 +751,7 @@ body {
 }
 .receipt-value {
   color: #000000;
+  font-size: ${compact ? "10.6px" : "11.8px"};
   font-weight: 800;
   line-height: 1.18;
   text-align: right;
@@ -766,10 +767,11 @@ body {
   font-weight: 950;
 }
 .receipt-money-row {
-  font-size: ${compact ? "8.8px" : "10px"};
+  font-size: ${compact ? "10.4px" : "11.4px"};
 }
 .receipt-money-value {
-  font-size: ${compact ? "8.8px" : "10px"};
+  font-size: ${compact ? "11.2px" : "12.2px"};
+  font-weight: 900;
   letter-spacing: 0;
 }
 .receipt-money-row-highlight {
@@ -800,6 +802,25 @@ body {
 }
 .receipt-muted {
   color: #000000;
+}
+.receipt-heading {
+  font-size: ${compact ? "12px" : "14px"} !important;
+  font-weight: 900 !important;
+}
+.receipt-company {
+  font-size: ${compact ? "16px" : "20px"} !important;
+  font-weight: 900 !important;
+}
+.receipt-amount,
+.receipt-money-row-highlight .receipt-money-value {
+  font-size: ${compact ? "14px" : "17px"} !important;
+  font-weight: 900 !important;
+}
+.coverage-row,
+.receipt-coverage-card,
+.receipt-coverage-card * {
+  font-size: ${compact ? "10.6px" : "11.5px"} !important;
+  font-weight: 800 !important;
 }
 img,
 svg,
@@ -1742,9 +1763,9 @@ export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptVi
         <div id={RECEIPT_SCREEN_ID} className="tenant-receipt-slip mx-auto bg-white text-slate-950">
             <header className="receipt-section text-center">
                 <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-full border border-slate-900 bg-slate-950 text-[13px] font-black text-white print:bg-white print:text-black">DD</div>
-                <h3 className="mt-1.5 text-[15px] font-black leading-tight">{safeText(snapshot.companyName) ?? "DDUMBA OS"}</h3>
+                <h3 className="receipt-company mt-1.5 text-[15px] font-black leading-tight">{safeText(snapshot.companyName) ?? "DDUMBA OS"}</h3>
                 {companyContact ? <p className="receipt-muted mt-0.5 text-[9px] font-bold">{companyContact}</p> : null}
-                <p className="mt-2 border-y border-dashed border-slate-900 py-1 text-[10px] font-black uppercase tracking-[0.08em]">Tenant Payment Receipt</p>
+                <p className="receipt-heading mt-2 border-y border-dashed border-slate-900 py-1 text-[10px] font-black uppercase tracking-[0.08em]">Tenant Payment Receipt</p>
             </header>
 
             <section className="receipt-section">
@@ -1776,7 +1797,7 @@ export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptVi
                     <p className="receipt-section-title font-black">Coverage</p>
                     <div className="space-y-1.5">
                         {coveragePeriods.map((period, index) => (
-                            <div key={`${period.label}-${period.type}-${index}`} className="receipt-coverage-card">
+                            <div key={`${period.label}-${period.type}-${index}`} className="receipt-coverage-card coverage-row">
                                 <p className="text-[9px] font-black uppercase text-slate-500">Period {index + 1}</p>
                                 <p className="mt-0.5 text-[10px] font-black leading-tight">{period.label}</p>
                                 <p className="mt-0.5 text-[10px] font-black tabular-nums">Amount: {money(period.amount)}</p>
@@ -1822,7 +1843,7 @@ function ReceiptMoneyRow({ highlight = false, label, value }: { highlight?: bool
     return (
         <div className={highlight ? "receipt-row receipt-money-row receipt-money-row-highlight" : "receipt-row receipt-money-row"}>
             <span className="receipt-label">{label}</span>
-            <span className="receipt-value receipt-money-value">{money(value)}</span>
+            <span className={highlight ? "receipt-value receipt-money-value receipt-amount" : "receipt-value receipt-money-value"}>{money(value)}</span>
         </div>
     );
 }

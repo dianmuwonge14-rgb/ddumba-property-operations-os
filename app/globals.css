@@ -63,8 +63,8 @@ body {
 .receipt-section-title,
 .receipt-label {
   color: #000000;
-  font-size: 8.5px;
-  font-weight: 900;
+  font-size: 10.5px;
+  font-weight: 800;
   letter-spacing: 0.035em;
   text-transform: uppercase;
 }
@@ -75,7 +75,7 @@ body {
   align-items: start;
   gap: 1.4mm;
   padding: 0.45mm 0;
-  font-size: 10px;
+  font-size: 11.2px;
 }
 
 .receipt-row-stacked {
@@ -85,6 +85,7 @@ body {
 
 .receipt-value {
   color: #000000;
+  font-size: 11.8px;
   font-weight: 800;
   line-height: 1.18;
   text-align: right;
@@ -103,12 +104,40 @@ body {
 }
 
 .receipt-money-row {
-  font-size: 10px;
+  font-size: 11.4px;
 }
 
 .receipt-money-value {
-  font-size: clamp(9px, 2.45vw, 11px);
-  letter-spacing: -0.01em;
+  font-size: clamp(11px, 2.45vw, 12.2px);
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.receipt-company {
+  color: #000000;
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.receipt-heading {
+  color: #000000;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.receipt-amount,
+.receipt-money-row-highlight .receipt-money-value {
+  color: #000000;
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.coverage-row,
+.receipt-coverage-card,
+.receipt-coverage-card * {
+  color: #000000;
+  font-size: 11.5px;
+  font-weight: 800;
 }
 
 .receipt-money-row-highlight {
@@ -214,6 +243,66 @@ body {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
     visibility: visible !important;
+  }
+
+  body.print-tenant-payment-receipt #tenant-receipt-print-root .receipt-company {
+    font-size: 20px !important;
+    font-weight: 900 !important;
+  }
+
+  body.print-tenant-payment-receipt #tenant-receipt-print-root .receipt-heading,
+  body.print-tenant-payment-receipt #tenant-receipt-print-root .receipt-section-title {
+    font-size: 13px !important;
+    font-weight: 900 !important;
+  }
+
+  body.print-tenant-payment-receipt #tenant-receipt-print-root .receipt-label {
+    font-size: 10.5px !important;
+    font-weight: 700 !important;
+  }
+
+  body.print-tenant-payment-receipt #tenant-receipt-print-root .receipt-value {
+    font-size: 11.5px !important;
+    font-weight: 800 !important;
+  }
+
+  body.print-tenant-payment-receipt #tenant-receipt-print-root .receipt-amount {
+    font-size: 17px !important;
+    font-weight: 900 !important;
+  }
+
+  body.print-tenant-payment-receipt #tenant-receipt-print-root .coverage-row,
+  body.print-tenant-payment-receipt #tenant-receipt-print-root .receipt-coverage-card,
+  body.print-tenant-payment-receipt #tenant-receipt-print-root .receipt-coverage-card * {
+    font-size: 11.5px !important;
+    font-weight: 800 !important;
+  }
+
+  body.print-tenant-payment-receipt.receipt-paper-58mm #tenant-receipt-print-root .receipt-company {
+    font-size: 16px !important;
+  }
+
+  body.print-tenant-payment-receipt.receipt-paper-58mm #tenant-receipt-print-root .receipt-heading,
+  body.print-tenant-payment-receipt.receipt-paper-58mm #tenant-receipt-print-root .receipt-section-title {
+    font-size: 11.5px !important;
+  }
+
+  body.print-tenant-payment-receipt.receipt-paper-58mm #tenant-receipt-print-root .receipt-label {
+    font-size: 9.5px !important;
+  }
+
+  body.print-tenant-payment-receipt.receipt-paper-58mm #tenant-receipt-print-root .receipt-value {
+    font-size: 10.5px !important;
+  }
+
+  body.print-tenant-payment-receipt.receipt-paper-58mm #tenant-receipt-print-root .receipt-amount {
+    font-size: 14px !important;
+  }
+
+  body.print-tenant-payment-receipt.receipt-paper-58mm #tenant-receipt-print-root .coverage-row,
+  body.print-tenant-payment-receipt.receipt-paper-58mm #tenant-receipt-print-root .receipt-coverage-card,
+  body.print-tenant-payment-receipt.receipt-paper-58mm #tenant-receipt-print-root .receipt-coverage-card * {
+    font-size: 10.5px !important;
   }
 
   body.print-tenant-payment-receipt #tenant-receipt-print-root {

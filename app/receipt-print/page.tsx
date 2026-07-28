@@ -76,8 +76,8 @@ export async function loadPrintableReceipt(receiptId: string) {
 export function receiptOnlyPrintCss(widthMm: 58 | 80) {
     const contentWidthMm = widthMm === 58 ? 50 : 72;
     const rootPadding = widthMm === 58 ? 2 : 3;
-    const baseFont = widthMm === 58 ? 10 : 10.5;
-    const titleFont = widthMm === 58 ? 14 : 15;
+    const baseFont = widthMm === 58 ? 10.6 : 11.6;
+    const titleFont = widthMm === 58 ? 16 : 20;
     const qrSize = widthMm === 58 ? 26 : 28;
     return `
 @page {
@@ -159,7 +159,7 @@ body {
 .receipt-section-title,
 .receipt-label {
   color: #000 !important;
-  font-size: ${widthMm === 58 ? 8 : 8.8}px !important;
+  font-size: ${widthMm === 58 ? 9.5 : 10.5}px !important;
   font-weight: 800 !important;
   letter-spacing: 0 !important;
   text-transform: uppercase !important;
@@ -178,6 +178,7 @@ body {
 }
 .receipt-value {
   color: #000 !important;
+  font-size: ${widthMm === 58 ? 10.5 : 11.5}px !important;
   font-weight: 800 !important;
   line-height: 1.25 !important;
   text-align: right !important;
@@ -190,6 +191,24 @@ body {
 }
 .receipt-value-strong,
 .receipt-money-row-highlight .receipt-value {
+  font-weight: 900 !important;
+}
+.receipt-company {
+  font-size: ${widthMm === 58 ? 16 : 20}px !important;
+  font-weight: 900 !important;
+}
+.receipt-heading,
+.receipt-section-title {
+  font-size: ${widthMm === 58 ? 11.5 : 13}px !important;
+  font-weight: 900 !important;
+}
+.receipt-amount,
+.receipt-money-row-highlight .receipt-money-value {
+  font-size: ${widthMm === 58 ? 14 : 17}px !important;
+  font-weight: 900 !important;
+}
+.receipt-money-value {
+  font-size: ${widthMm === 58 ? 11.2 : 12.2}px !important;
   font-weight: 900 !important;
 }
 .receipt-money-row-highlight,
@@ -212,6 +231,12 @@ body {
   background: #fff !important;
   break-inside: avoid !important;
   page-break-inside: avoid !important;
+}
+.coverage-row,
+.receipt-coverage-card,
+.receipt-coverage-card * {
+  font-size: ${widthMm === 58 ? 10.5 : 11.5}px !important;
+  font-weight: 800 !important;
 }
 .receipt-title,
 h3 {
@@ -416,8 +441,8 @@ body {
 }
 .receipt-a4-header h1 {
   margin: 5px 0 0;
-  font-size: 24px;
-  font-weight: 800;
+  font-size: 28px;
+  font-weight: 900;
   line-height: 1.05;
 }
 .receipt-a4-title {
@@ -428,15 +453,16 @@ body {
 .receipt-a4-section h2 {
   margin: 0;
   color: #000000;
-  font-size: 11px;
-  font-weight: 800;
+  font-size: 13px;
+  font-weight: 900;
   letter-spacing: 0;
   text-transform: uppercase;
 }
 .receipt-a4-title strong {
   display: block;
   margin-top: 6px;
-  font-size: 20px;
+  font-size: 22px;
+  font-weight: 900;
   overflow-wrap: anywhere;
 }
 .receipt-a4-title span {
@@ -468,7 +494,7 @@ body {
 .receipt-a4-money span {
   display: block;
   color: #000000;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 900;
   text-transform: uppercase;
 }
@@ -476,7 +502,8 @@ body {
 .receipt-a4-money strong {
   display: block;
   margin-top: 5px;
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 800;
   line-height: 1.25;
   overflow-wrap: anywhere;
 }
@@ -494,6 +521,7 @@ body {
 }
 .receipt-a4-money strong {
   font-size: 18px;
+  font-weight: 900;
 }
 .receipt-a4-money-highlight {
   border-color: #0f766e;
@@ -513,6 +541,7 @@ body {
   border-radius: 10px;
   padding: 8px 10px;
   font-size: 12px;
+  font-weight: 800;
 }
 .receipt-a4-coverage-row span,
 .receipt-a4-coverage-row em {
@@ -583,6 +612,32 @@ body {
   #tenant-receipt-a4-print-root h2,
   #tenant-receipt-a4-print-root .receipt-a4-title strong,
   #tenant-receipt-a4-print-root .receipt-a4-money strong {
+    font-weight: 900 !important;
+  }
+  #tenant-receipt-a4-print-root h1 {
+    font-size: 28px !important;
+  }
+  #tenant-receipt-a4-print-root h2,
+  #tenant-receipt-a4-print-root .receipt-a4-title p {
+    font-size: 13px !important;
+    font-weight: 900 !important;
+  }
+  #tenant-receipt-a4-print-root .receipt-a4-info span,
+  #tenant-receipt-a4-print-root .receipt-a4-money span {
+    font-size: 11px !important;
+    font-weight: 800 !important;
+  }
+  #tenant-receipt-a4-print-root .receipt-a4-info strong {
+    font-size: 14px !important;
+    font-weight: 800 !important;
+  }
+  #tenant-receipt-a4-print-root .receipt-a4-money strong {
+    font-size: 18px !important;
+    font-weight: 900 !important;
+  }
+  #tenant-receipt-a4-print-root .receipt-a4-coverage-row,
+  #tenant-receipt-a4-print-root .receipt-a4-coverage-row * {
+    font-size: 12px !important;
     font-weight: 800 !important;
   }
   #tenant-receipt-a4-print-root {
