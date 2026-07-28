@@ -1,5 +1,7 @@
 import { notFound, redirect } from "next/navigation";
-import { TenantPaymentReceiptSlip, type TenantReceiptViewModel } from "@/components/office/receipts/TenantPaymentReceipt";
+import { ReceiptA4 } from "@/components/office/receipts/ReceiptA4";
+import { ReceiptThermal58 } from "@/components/office/receipts/ReceiptThermal58";
+import type { TenantReceiptViewModel } from "@/components/office/receipts/TenantPaymentReceipt";
 import { hasPermission, requireAuth } from "@/lib/auth/permissions";
 import type { PaymentReceiptSnapshot } from "@/lib/receipts/payment-receipts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -25,6 +27,13 @@ export function firstParam(value: string | string[] | undefined) {
 
 export function paperWidth(value: string | string[] | undefined): 58 | 80 {
     return firstParam(value) === "80" ? 80 : 58;
+}
+
+export function receiptPrintLayout(layout: string | string[] | undefined, width: string | string[] | undefined): "a4" | "thermal" {
+    const requested = firstParam(layout);
+    if (requested === "thermal") return "thermal";
+    if (requested === "a4") return "a4";
+    return firstParam(width) === "58" ? "thermal" : "a4";
 }
 
 export async function loadPrintableReceipt(receiptId: string) {
@@ -324,6 +333,248 @@ canvas {
 `;
 }
 
+export function receiptA4PrintCss() {
+    return `
+@page {
+  size: A4;
+  margin: 12mm;
+}
+* {
+  box-sizing: border-box !important;
+}
+html,
+body {
+  min-height: 100%;
+  margin: 0;
+  background: #eef2f7;
+  color: #0f172a;
+  font-family: Inter, Arial, Helvetica, sans-serif;
+}
+.receipt-a4-sheet {
+  width: 210mm;
+  min-height: 297mm;
+  max-width: 210mm;
+  margin: 24px auto;
+  padding: 16mm;
+  overflow: hidden;
+  background: #fff;
+  color: #0f172a;
+  border: 1px solid #dbe3ee;
+  border-radius: 18px;
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.14);
+  font-variant-numeric: tabular-nums;
+}
+.receipt-a4-header,
+.receipt-a4-footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 2px solid #0f172a;
+  padding-bottom: 14px;
+}
+.receipt-a4-footer {
+  align-items: center;
+  border-top: 1px solid #cbd5e1;
+  border-bottom: 0;
+  margin-top: 18px;
+  padding-top: 14px;
+  padding-bottom: 0;
+}
+.receipt-a4-logo {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: #0f172a;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 900;
+}
+.receipt-a4-kicker,
+.receipt-a4-muted {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+.receipt-a4-header h1 {
+  margin: 5px 0 0;
+  font-size: 24px;
+  line-height: 1.05;
+}
+.receipt-a4-title {
+  min-width: 56mm;
+  text-align: right;
+}
+.receipt-a4-title p,
+.receipt-a4-section h2 {
+  margin: 0;
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+.receipt-a4-title strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 20px;
+  overflow-wrap: anywhere;
+}
+.receipt-a4-title span {
+  display: block;
+  margin-top: 5px;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+.receipt-a4-section {
+  margin-top: 14px;
+}
+.receipt-a4-grid,
+.receipt-a4-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.receipt-a4-info,
+.receipt-a4-money {
+  min-width: 0;
+  border: 1px solid #dbe3ee;
+  border-radius: 12px;
+  padding: 10px;
+  background: #f8fafc;
+}
+.receipt-a4-info span,
+.receipt-a4-money span {
+  display: block;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.receipt-a4-info strong,
+.receipt-a4-money strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 13px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.receipt-a4-money-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 9px;
+}
+.receipt-a4-money strong {
+  font-size: 18px;
+}
+.receipt-a4-money-highlight {
+  border-color: #0f766e;
+  background: #ecfdf5;
+}
+.receipt-a4-coverage {
+  display: grid;
+  gap: 8px;
+  margin-top: 9px;
+}
+.receipt-a4-coverage-row {
+  display: grid;
+  grid-template-columns: 20mm minmax(0, 1fr) 34mm 24mm;
+  gap: 10px;
+  align-items: center;
+  border: 1px dashed #94a3b8;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.receipt-a4-coverage-row span,
+.receipt-a4-coverage-row em {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.receipt-a4-coverage-row b {
+  text-align: right;
+}
+.receipt-a4-footer img {
+  width: 28mm;
+  height: 28mm;
+  object-fit: contain;
+}
+.receipt-actions {
+  width: min(210mm, calc(100vw - 32px));
+  margin: 0 auto 24px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+.receipt-actions button,
+.receipt-actions a {
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: #fff;
+  color: #0f172a;
+  padding: 10px 14px;
+  font-weight: 900;
+  text-decoration: none;
+}
+.receipt-actions button:first-child {
+  background: #0f172a;
+  color: #fff;
+}
+.receipt-print-instruction {
+  flex-basis: 100%;
+  margin: 0;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+@media print {
+  html,
+  body {
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+  body * {
+    visibility: hidden !important;
+  }
+  #tenant-receipt-a4-print-root,
+  #tenant-receipt-a4-print-root * {
+    visibility: visible !important;
+  }
+  #tenant-receipt-a4-print-root {
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    width: 186mm !important;
+    min-height: 273mm !important;
+    max-width: 186mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  .receipt-actions {
+    display: none !important;
+  }
+}
+`;
+}
+
 function normalizeWhatsappPhone(value: string | null | undefined) {
     const digits = String(value ?? "").replace(/\D+/g, "");
     if (!digits) return "";
@@ -349,12 +600,14 @@ function receiptWhatsappHref(receipt: TenantReceiptViewModel) {
     return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
 }
 
-export function ReceiptPrintActions({ receiptId, widthMm }: { receiptId: string; widthMm: 58 | 80 }) {
-    const pdfHref = `/receipt-print/${encodeURIComponent(receiptId)}/pdf?width=${widthMm}`;
-    return <ReceiptPrintActionsInner pdfHref={pdfHref} receiptId={receiptId} whatsappHref={null} />;
+export function ReceiptPrintActions({ layout = "thermal", receiptId, widthMm }: { layout?: "a4" | "thermal"; receiptId: string; widthMm: 58 | 80 }) {
+    const pdfHref = layout === "a4"
+        ? `/receipt-print/${encodeURIComponent(receiptId)}/pdf?layout=a4`
+        : `/receipt-print/${encodeURIComponent(receiptId)}/pdf?width=${widthMm}`;
+    return <ReceiptPrintActionsInner layout={layout} pdfHref={pdfHref} receiptId={receiptId} whatsappHref={null} />;
 }
 
-function ReceiptPrintActionsInner({ pdfHref, receiptId, whatsappHref }: { pdfHref: string; receiptId: string; whatsappHref: string | null }) {
+function ReceiptPrintActionsInner({ layout = "thermal", pdfHref, receiptId, whatsappHref }: { layout?: "a4" | "thermal"; pdfHref: string; receiptId: string; whatsappHref: string | null }) {
     return (
         <nav aria-label="Receipt print actions" className="receipt-actions">
             <button id="receipt-print-button" type="button">Print Receipt</button>
@@ -363,10 +616,14 @@ function ReceiptPrintActionsInner({ pdfHref, receiptId, whatsappHref }: { pdfHre
             <a href={whatsappHref ?? "#"} id="receipt-whatsapp-link" data-receipt-id={receiptId} aria-disabled={!whatsappHref} target="_blank" rel="noreferrer">Share via WhatsApp</a>
             <button id="receipt-close-page-button" type="button">Close</button>
             <p id="receipt-print-status" className="receipt-print-instruction">
-                Select the connected Bluetooth printer, confirm one receipt is shown, then press Print.
+                {layout === "a4"
+                    ? "Select your installed Windows/macOS printer, confirm the A4 receipt preview, then press Print."
+                    : "Select the connected Bluetooth printer, confirm one receipt is shown, then press Print."}
             </p>
             <p className="receipt-print-instruction">
-                Printer choice: Android System Print · Print PDF · Direct Bluetooth Print.
+                {layout === "a4"
+                    ? "Desktop print path: A4 receipt document · normal system print dialog."
+                    : "Printer choice: Android System Print · Print PDF · Direct Bluetooth Print."}
             </p>
         </nav>
     );
@@ -377,7 +634,7 @@ export function autoPrintScript(enabled: boolean) {
     return `
 (async function () {
   async function waitForReceipt() {
-    var receipt = document.getElementById("tenant-receipt-print-root");
+    var receipt = document.getElementById("tenant-receipt-a4-print-root") || document.getElementById("tenant-receipt-print-root");
     if (!receipt || !receipt.innerText.trim()) {
       throw new Error("Receipt is not ready yet.");
     }
@@ -404,8 +661,14 @@ export function autoPrintScript(enabled: boolean) {
 })();`;
 }
 
-export function receiptPageControlsScript(widthMm: 58 | 80, receiptId: string) {
-    const pdfHref = `/receipt-print/${encodeURIComponent(receiptId)}/pdf?width=${widthMm}`;
+export function receiptPageControlsScript(widthMm: 58 | 80, receiptId: string, layout: "a4" | "thermal" = "thermal") {
+    const pdfHref = layout === "a4"
+        ? `/receipt-print/${encodeURIComponent(receiptId)}/pdf?layout=a4`
+        : `/receipt-print/${encodeURIComponent(receiptId)}/pdf?width=${widthMm}`;
+    const rootId = layout === "a4" ? "tenant-receipt-a4-print-root" : "tenant-receipt-print-root";
+    const preparingMessage = layout === "a4"
+        ? "Preparing A4 receipt. Select your installed Windows/macOS printer, then press Print."
+        : "Preparing receipt. Select the connected Bluetooth printer, confirm one receipt is shown, then press Print.";
     return `
 (function () {
   var status = document.getElementById("receipt-print-status");
@@ -413,7 +676,7 @@ export function receiptPageControlsScript(widthMm: 58 | 80, receiptId: string) {
     if (status) status.textContent = message;
   }
   async function waitForReceipt() {
-    var receipt = document.getElementById("tenant-receipt-print-root");
+    var receipt = document.getElementById(${JSON.stringify(rootId)});
     if (!receipt || !receipt.innerText.trim()) {
       throw new Error("Receipt is not ready yet.");
     }
@@ -436,7 +699,7 @@ export function receiptPageControlsScript(widthMm: 58 | 80, receiptId: string) {
   }
   async function printCurrentReceipt() {
     try {
-      setStatus("Preparing receipt. Select the connected Bluetooth printer, confirm one receipt is shown, then press Print.");
+      setStatus(${JSON.stringify(preparingMessage)});
       await waitForReceipt();
       window.focus();
       window.print();
@@ -478,15 +741,19 @@ export default async function ReceiptPrintPage({ searchParams }: PageProps) {
     if (!receiptId) notFound();
 
     const receipt = await loadPrintableReceipt(receiptId);
+    const layout = receiptPrintLayout(params.layout, params.paper ?? params.width);
     const widthMm = paperWidth(params.paper ?? params.width);
     const autoPrint = firstParam(params.autoprint) === "1";
+    const pdfHref = layout === "a4"
+        ? `/receipt-print/${encodeURIComponent(receipt.id)}/pdf?layout=a4`
+        : `/receipt-print/${encodeURIComponent(receipt.id)}/pdf?width=${widthMm}`;
 
     return (
         <>
-            <style dangerouslySetInnerHTML={{ __html: receiptOnlyPrintCss(widthMm) }} />
-            <TenantPaymentReceiptSlip receipt={receipt} />
-            <ReceiptPrintActionsInner pdfHref={`/receipt-print/${encodeURIComponent(receipt.id)}/pdf?width=${widthMm}`} receiptId={receipt.id} whatsappHref={receiptWhatsappHref(receipt)} />
-            <script dangerouslySetInnerHTML={{ __html: receiptPageControlsScript(widthMm, receipt.id) }} />
+            <style dangerouslySetInnerHTML={{ __html: layout === "a4" ? receiptA4PrintCss() : receiptOnlyPrintCss(widthMm) }} />
+            {layout === "a4" ? <ReceiptA4 receipt={receipt} /> : <ReceiptThermal58 receipt={receipt} />}
+            <ReceiptPrintActionsInner layout={layout} pdfHref={pdfHref} receiptId={receipt.id} whatsappHref={receiptWhatsappHref(receipt)} />
+            <script dangerouslySetInnerHTML={{ __html: receiptPageControlsScript(widthMm, receipt.id, layout) }} />
             {autoPrint ? <script dangerouslySetInnerHTML={{ __html: autoPrintScript(true) }} /> : null}
         </>
     );

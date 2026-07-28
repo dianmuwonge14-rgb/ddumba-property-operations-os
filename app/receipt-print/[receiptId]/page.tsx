@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
-import { TenantPaymentReceiptSlip } from "@/components/office/receipts/TenantPaymentReceipt";
-import { autoPrintScript, firstParam, loadPrintableReceipt, paperWidth, receiptOnlyPrintCss, ReceiptPrintActions, receiptPageControlsScript } from "@/app/receipt-print/page";
+import { ReceiptA4 } from "@/components/office/receipts/ReceiptA4";
+import { ReceiptThermal58 } from "@/components/office/receipts/ReceiptThermal58";
+import { autoPrintScript, firstParam, loadPrintableReceipt, paperWidth, receiptA4PrintCss, receiptOnlyPrintCss, ReceiptPrintActions, receiptPageControlsScript, receiptPrintLayout } from "@/app/receipt-print/page";
 
 export const dynamic = "force-dynamic";
 
@@ -15,15 +16,16 @@ export default async function ReceiptPrintByIdPage({ params, searchParams }: Pag
 
     const query = await searchParams;
     const receipt = await loadPrintableReceipt(receiptId);
+    const layout = receiptPrintLayout(query.layout, query.width ?? query.paper);
     const widthMm = paperWidth(query.width ?? query.paper);
     const autoPrint = firstParam(query.autoprint) === "1";
 
     return (
         <>
-            <style dangerouslySetInnerHTML={{ __html: receiptOnlyPrintCss(widthMm) }} />
-            <TenantPaymentReceiptSlip receipt={receipt} />
-            <ReceiptPrintActions receiptId={receipt.id} widthMm={widthMm} />
-            <script dangerouslySetInnerHTML={{ __html: receiptPageControlsScript(widthMm, receipt.id) }} />
+            <style dangerouslySetInnerHTML={{ __html: layout === "a4" ? receiptA4PrintCss() : receiptOnlyPrintCss(widthMm) }} />
+            {layout === "a4" ? <ReceiptA4 receipt={receipt} /> : <ReceiptThermal58 receipt={receipt} />}
+            <ReceiptPrintActions layout={layout} receiptId={receipt.id} widthMm={widthMm} />
+            <script dangerouslySetInnerHTML={{ __html: receiptPageControlsScript(widthMm, receipt.id, layout) }} />
             {autoPrint ? <script dangerouslySetInnerHTML={{ __html: autoPrintScript(true) }} /> : null}
         </>
     );

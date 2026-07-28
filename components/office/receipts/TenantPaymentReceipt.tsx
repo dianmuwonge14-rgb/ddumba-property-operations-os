@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { Download, Mail, MessageCircle, Printer, X } from "lucide-react";
+import { desktopReceiptPrintUrl, isDesktopOperatingSystem } from "@/components/office/receipts/DesktopPrint";
+import { isAndroidTabletOrMobile, tabletReceiptPrintUrl } from "@/components/office/receipts/TabletPrint";
 import type { PaymentReceiptSnapshot } from "@/lib/receipts/payment-receipts";
 
 export type TenantReceiptViewModel = {
@@ -344,10 +346,12 @@ export async function printTenantPaymentReceipt(afterPrint?: () => void, receipt
 }
 
 function printSavedReceiptDocument(receipt: TenantReceiptViewModel, settings: ReceiptPrinterSettings, afterPrint?: () => void) {
-    const shouldAutoPrint = settings.widthMm === 80 && settings.profile !== "rpp02n58" && settings.profile !== "rongta58";
-    const path = `/receipt-print/${encodeURIComponent(receipt.id)}?width=${settings.widthMm}&profile=${encodeURIComponent(settings.profile)}${shouldAutoPrint ? "&autoprint=1" : ""}&job=${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const useDesktopA4 = isDesktopOperatingSystem() && !isAndroidTabletOrMobile();
+    const path = useDesktopA4
+        ? desktopReceiptPrintUrl(receipt)
+        : tabletReceiptPrintUrl(receipt, settings.widthMm === 80 ? 58 : settings.widthMm, settings.profile);
     const printWindowName = `ddumba-receipt-${receipt.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const printWindow = window.open(path, printWindowName, settings.widthMm === 58 ? "width=320,height=640" : "width=420,height=800");
+    const printWindow = window.open(path, printWindowName, useDesktopA4 ? "width=900,height=1100" : "width=320,height=640");
     if (!printWindow) {
         window.alert("Printing was blocked. Allow pop-ups for Ddumba OS and try again.");
         return;

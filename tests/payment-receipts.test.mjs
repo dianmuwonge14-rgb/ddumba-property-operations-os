@@ -10,6 +10,10 @@ const landlordsAction = readFileSync(new URL("../app/actions/landlords.ts", impo
 const paymentEntry = readFileSync(new URL("../components/office/payments/FastPaymentsEntry.tsx", import.meta.url), "utf8");
 const receiptHistory = readFileSync(new URL("../components/office/receipts/ReceiptHistoryConsole.tsx", import.meta.url), "utf8");
 const sharedReceipt = readFileSync(new URL("../components/office/receipts/TenantPaymentReceipt.tsx", import.meta.url), "utf8");
+const receiptA4 = readFileSync(new URL("../components/office/receipts/ReceiptA4.tsx", import.meta.url), "utf8");
+const receiptThermal58 = readFileSync(new URL("../components/office/receipts/ReceiptThermal58.tsx", import.meta.url), "utf8");
+const desktopPrint = readFileSync(new URL("../components/office/receipts/DesktopPrint.ts", import.meta.url), "utf8");
+const tabletPrint = readFileSync(new URL("../components/office/receipts/TabletPrint.ts", import.meta.url), "utf8");
 const receiptPrintPage = readFileSync(new URL("../app/receipt-print/page.tsx", import.meta.url), "utf8");
 const receiptPrintByIdPage = readFileSync(new URL("../app/receipt-print/[receiptId]/page.tsx", import.meta.url), "utf8");
 const receiptPrintPdfRoute = readFileSync(new URL("../app/receipt-print/[receiptId]/pdf/route.ts", import.meta.url), "utf8");
@@ -126,18 +130,31 @@ test("receipt PDF export targets only the dedicated receipt root", () => {
   assert.doesNotMatch(sharedReceipt, /html2canvas\(document\.body/);
 });
 
-test("receipt print opens a saved receipt-only thermal document", () => {
+test("receipt print opens desktop A4 separately from tablet thermal documents", () => {
   assert.match(sharedReceipt, /printSavedReceiptDocument/);
-  assert.match(sharedReceipt, /\/receipt-print\/\$\{encodeURIComponent\(receipt\.id\)\}/);
-  assert.match(sharedReceipt, /shouldAutoPrint/);
-  assert.match(sharedReceipt, /settings\.widthMm === 80/);
+  assert.match(sharedReceipt, /desktopReceiptPrintUrl\(receipt\)/);
+  assert.match(sharedReceipt, /tabletReceiptPrintUrl\(receipt/);
+  assert.match(sharedReceipt, /useDesktopA4/);
+  assert.match(desktopPrint, /isDesktopOperatingSystem/);
+  assert.match(desktopPrint, /Windows NT\|Macintosh\|Linux/);
+  assert.match(desktopPrint, /layout=a4&autoprint=1/);
+  assert.match(tabletPrint, /isAndroidTabletOrMobile/);
+  assert.match(tabletPrint, /layout=thermal&width=\$\{widthMm\}/);
+  assert.match(receiptA4, /tenant-receipt-a4-print-root/);
+  assert.doesNotMatch(receiptA4, /TenantPaymentReceiptSlip/);
+  assert.match(receiptThermal58, /TenantPaymentReceiptSlip/);
   assert.match(receiptHistory, /printTenantPaymentReceipt\(closeAfterPrint \? \(\) => setSelected\(null\) : undefined, receipt\)/);
   assert.match(paymentEntry, /printTenantPaymentReceipt\(onClose, receipt\)/);
   assert.match(receiptPrintPage, /export const dynamic = "force-dynamic"/);
+  assert.match(receiptPrintPage, /receiptPrintLayout/);
+  assert.match(receiptPrintPage, /receiptA4PrintCss/);
+  assert.match(receiptPrintPage, /ReceiptA4 receipt=\{receipt\}/);
+  assert.match(receiptPrintPage, /ReceiptThermal58 receipt=\{receipt\}/);
   assert.match(receiptPrintByIdPage, /loadPrintableReceipt\(receiptId\)/);
-  assert.match(receiptPrintByIdPage, /TenantPaymentReceiptSlip receipt=\{receipt\}/);
-  assert.match(receiptPrintByIdPage, /ReceiptPrintActions receiptId=\{receipt\.id\} widthMm=\{widthMm\}/);
-  assert.match(receiptPrintByIdPage, /receiptPageControlsScript\(widthMm, receipt\.id\)/);
+  assert.match(receiptPrintByIdPage, /ReceiptA4 receipt=\{receipt\}/);
+  assert.match(receiptPrintByIdPage, /ReceiptThermal58 receipt=\{receipt\}/);
+  assert.match(receiptPrintByIdPage, /ReceiptPrintActions layout=\{layout\} receiptId=\{receipt\.id\} widthMm=\{widthMm\}/);
+  assert.match(receiptPrintByIdPage, /receiptPageControlsScript\(widthMm, receipt\.id, layout\)/);
   assert.match(receiptPrintPage, /Print Receipt/);
   assert.match(receiptPrintPage, /Choose Printer/);
   assert.match(receiptPrintPage, /Download PDF/);
@@ -150,13 +167,15 @@ test("receipt print opens a saved receipt-only thermal document", () => {
   assert.match(receiptPrintPage, /visibility: hidden !important/);
   assert.match(receiptPrintPage, /receipt-actions/);
   assert.match(receiptPrintPage, /Select the connected Bluetooth printer/);
+  assert.match(receiptPrintPage, /Select your installed Windows\/macOS printer/);
   assert.match(receiptPrintPdfRoute, /Content-Type": "application\/pdf"/);
   assert.match(receiptPrintPdfRoute, /MediaBox \[0 0 \$\{widthPt\.toFixed\(2\)\} \$\{heightPt\.toFixed\(2\)\}\]/);
   assert.match(receiptPrintPdfRoute, /loadPrintableReceipt\(receiptId\)/);
-  assert.match(receiptPrintPage, /TenantPaymentReceiptSlip receipt=\{receipt\}/);
   assert.match(receiptPrintPage, /from\("payment_receipts"\)/);
   assert.match(receiptPrintPage, /receiptOnlyPrintCss\(widthMm\)/);
+  assert.match(receiptPrintPage, /layout === "a4" \? receiptA4PrintCss\(\) : receiptOnlyPrintCss\(widthMm\)/);
   assert.match(receiptPrintPage, /@page \{\s*\n\s*size: \$\{widthMm\}mm auto;/);
+  assert.match(receiptPrintPage, /@page \{\s*\n\s*size: A4;/);
   assert.match(receiptPrintPage, /body \* \{\s*\n\s*visibility: hidden !important;/);
   assert.match(receiptPrintPage, /font-weight: 600/);
   assert.match(receiptPrintPage, /color: #000 !important/);
