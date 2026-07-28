@@ -86,8 +86,10 @@ async function sendProviderEmail(input: { html: string; subject: string; to: str
 }
 
 export async function getReceiptForModal(receiptId: string) {
-    await requireAuth();
-    return getPaymentReceipt(receiptId);
+    const context = await requireAuth();
+    const receipt = await getPaymentReceipt(receiptId);
+    assertReceiptPermission(context, receipt);
+    return receipt;
 }
 
 export async function logReceiptPrintOrDownload(input: { channel: "download_pdf" | "print"; receiptId: string }) {

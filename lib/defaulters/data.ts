@@ -68,6 +68,10 @@ function isClosedPromise(value: string | null | undefined) {
     return ["fulfilled", "paid", "closed", "cancelled", "canceled"].includes(status);
 }
 
+function isCollectorContext(context: Awaited<ReturnType<typeof requireAuth>>) {
+    return context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
+}
+
 function officeName(office: OfficeRow | null | undefined) {
     return office?.office_name ?? office?.name ?? "Needs review";
 }
@@ -101,10 +105,12 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
     const companyId = context.activeCompany?.id;
     const activeOfficeId = context.activeOffice?.id;
     const isAdmin = Boolean(options.admin && context.isCompanyAdmin && !context.isOfficeMode);
+    const isCollector = isCollectorContext(context);
+    const collectorOfficeIds = isCollector ? context.offices.map((office) => office.id).filter(Boolean) : [];
     const now = new Date();
 
-    if (!companyId || (!isAdmin && !activeOfficeId)) {
-        return emptyData(isAdmin, dateOnly(now));
+    if (!companyId || (!isAdmin && !isCollector && !activeOfficeId) || (isCollector && !collectorOfficeIds.length)) {
+        return emptyData(isAdmin, isCollector, dateOnly(now));
     }
 
     let tenantQuery = supabase
@@ -137,7 +143,13 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
         .eq("company_id", companyId)
         .limit(10000);
 
-    if (!isAdmin && activeOfficeId) {
+    if (!isAdmin && isCollector) {
+        tenantQuery = tenantQuery.in("office_id", collectorOfficeIds);
+        roomQuery = roomQuery.in("office_id", collectorOfficeIds);
+        leaseQuery = leaseQuery.in("office_id", collectorOfficeIds);
+        collectionQuery = collectionQuery.in("office_id", collectorOfficeIds);
+        promiseQuery = promiseQuery.in("office_id", collectorOfficeIds);
+    } else if (!isAdmin && activeOfficeId) {
         tenantQuery = tenantQuery.eq("office_id", activeOfficeId);
         roomQuery = roomQuery.eq("office_id", activeOfficeId);
         leaseQuery = leaseQuery.eq("office_id", activeOfficeId);
@@ -150,7 +162,11 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
         .select("tenant_id, allocation_month, allocation_type, amount_allocated")
         .eq("company_id", companyId)
         .eq("allocation_month", firstOfCurrentMonth(now));
-    if (!isAdmin && activeOfficeId) allocationQuery = allocationQuery.eq("office_id", activeOfficeId);
+    if (!isAdmin && isCollector) {
+        allocationQuery = allocationQuery.in("office_id", collectorOfficeIds);
+    } else if (!isAdmin && activeOfficeId) {
+        allocationQuery = allocationQuery.eq("office_id", activeOfficeId);
+    }
 
     const [tenantsResult, roomsResult, leasesResult, officesResult, propertiesResult, landlordsResult, collectionsResult, promisesResult, allocationRows] = await Promise.all([
         tenantQuery,
@@ -308,6 +324,7 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
         company: context.activeCompany,
         activeOffice: context.activeOffice,
         isAdmin,
+        isCollector,
         offices: offices.map((office) => ({ id: office.id, name: officeName(office) })).sort((a, b) => a.name.localeCompare(b.name)),
         landlords: landlords.map((landlord) => ({ id: landlord.id, name: landlord.full_name ?? "No landlord" })).sort((a, b) => a.name.localeCompare(b.name)),
         defaulters,
@@ -514,11 +531,12 @@ async function syncDefaulterNotifications(input: { companyId: string; currentDat
     if (insertError) throw new Error(insertError.message);
 }
 
-function emptyData(isAdmin: boolean, currentDate: string): DefaultersPageData {
+function emptyData(isAdmin: boolean, isCollector: boolean, currentDate: string): DefaultersPageData {
     return {
         company: null,
         activeOffice: null,
         isAdmin,
+        isCollector,
         offices: [],
         landlords: [],
         defaulters: [],

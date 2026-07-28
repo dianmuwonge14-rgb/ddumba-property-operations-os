@@ -9,6 +9,7 @@ const expensesAction = readFileSync(new URL("../app/actions/expenses.ts", import
 const landlordsAction = readFileSync(new URL("../app/actions/landlords.ts", import.meta.url), "utf8");
 const paymentEntry = readFileSync(new URL("../components/office/payments/FastPaymentsEntry.tsx", import.meta.url), "utf8");
 const receiptHistory = readFileSync(new URL("../components/office/receipts/ReceiptHistoryConsole.tsx", import.meta.url), "utf8");
+const receiptData = readFileSync(new URL("../lib/receipts/data.ts", import.meta.url), "utf8");
 const sharedReceipt = readFileSync(new URL("../components/office/receipts/TenantPaymentReceipt.tsx", import.meta.url), "utf8");
 const receiptA4 = readFileSync(new URL("../components/office/receipts/ReceiptA4.tsx", import.meta.url), "utf8");
 const receiptThermal58 = readFileSync(new URL("../components/office/receipts/ReceiptThermal58.tsx", import.meta.url), "utf8");
@@ -93,6 +94,13 @@ test("receipt history can preview and reprint only the saved receipt slip", () =
   assert.match(receiptHistory, /snapshot\.landlordName/);
   assert.doesNotMatch(receiptHistory, /window\.print\(\)/);
   assert.doesNotMatch(receiptHistory, /setTimeout\(\(\) =>/);
+});
+
+test("collector receipt history is company-wide and not limited to receipts issued by that collector", () => {
+  assert.match(receiptData, /context\.authMode === "collector"/);
+  assert.match(receiptData, /\.eq\("company_id", context\.activeCompany\.id\)/);
+  assert.match(receiptData, /!context\.isCompanyAdmin && context\.authMode !== "collector" && context\.activeOffice\?\.id/);
+  assert.doesNotMatch(receiptData, /\.eq\("issued_by", context\.profile\.id\)/);
 });
 
 test("receipt modal supports safe close interactions and focus restoration", () => {

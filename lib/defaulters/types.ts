@@ -63,6 +63,7 @@ export type DefaultersPageData = {
     company: CompanyRow | null;
     activeOffice: OfficeRow | null;
     isAdmin: boolean;
+    isCollector: boolean;
     offices: Array<{ id: string; name: string }>;
     landlords: Array<{ id: string; name: string }>;
     defaulters: DefaulterItem[];

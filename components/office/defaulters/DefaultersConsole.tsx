@@ -96,7 +96,8 @@ export default function DefaultersConsole({ data }: Props) {
 
     const visibleKpis = useMemo(() => buildKpis(filteredDefaulters), [filteredDefaulters]);
     const visibleDefaulters = useMemo(() => filteredDefaulters.slice(0, INITIAL_TABLE_LIMIT), [filteredDefaulters]);
-    const paymentHref = data.isAdmin ? "/office/admin/payments" : "/office/payments";
+    const paymentHref = data.isAdmin ? "/office/admin/payments" : data.isCollector ? "/office/collector/payments" : "/office/payments";
+    const promiseHref = data.isCollector ? "/office/collector/promises" : "/office/promises";
 
     function exportCsv() {
         const header = ["Room", "Tenant", "Phone", "Office", "Landlord", "Property", "Location", "Monthly Rent", "Outstanding", "Due Date", "Days Defaulted", "Months Defaulted", "Last Payment Date", "Last Payment Amount"];
@@ -133,11 +134,11 @@ export default function DefaultersConsole({ data }: Props) {
                         <div>
                             <div className="inline-flex items-center gap-2 rounded-full border border-rose-300/20 bg-rose-400/10 px-3 py-1 text-xs font-black uppercase text-rose-100">
                                 <AlertTriangle size={14} />
-                                {data.isAdmin ? "Admin defaulters" : "Office defaulters"}
+                                {data.isAdmin ? "Admin defaulters" : data.isCollector ? "Collector defaulters" : "Office defaulters"}
                             </div>
                             <h1 className="mt-3 text-3xl font-black sm:text-4xl">Defaulters</h1>
                             <p className="mt-1 text-sm font-semibold text-slate-300">
-                                {data.company?.name ?? "Company"} · {data.isAdmin ? "All offices" : data.activeOffice?.office_name ?? data.activeOffice?.name ?? "Active office"} · Live as of {data.currentDate}
+                                {data.company?.name ?? "Company"} · {data.isAdmin ? "All offices" : data.isCollector ? "Authorized offices" : data.activeOffice?.office_name ?? data.activeOffice?.name ?? "Active office"} · Live as of {data.currentDate}
                             </p>
                         </div>
                         <div className="flex flex-wrap gap-2">
@@ -221,7 +222,7 @@ export default function DefaultersConsole({ data }: Props) {
                             Showing first {visibleDefaulters.length.toLocaleString()} of {filteredDefaulters.length.toLocaleString()} matching defaulters. Use filters, print, or CSV export for the full report.
                         </div>
                     ) : null}
-                    <DefaultersTable defaulters={visibleDefaulters} paymentHref={paymentHref} />
+                    <DefaultersTable defaulters={visibleDefaulters} paymentHref={paymentHref} promiseHref={promiseHref} />
                     {!filteredDefaulters.length ? (
                         <div className="rounded-[26px] border border-dashed border-white/20 bg-white/8 p-8 text-center text-white">
                             <p className="text-lg font-black">No defaulters match these filters.</p>
@@ -238,7 +239,7 @@ export default function DefaultersConsole({ data }: Props) {
                     generatedAt={data.generatedAt}
                     kpis={visibleKpis}
                     onClose={() => setShowPrintPreview(false)}
-                    scope={data.isAdmin ? "All offices" : data.activeOffice?.office_name ?? data.activeOffice?.name ?? "Active office"}
+                    scope={data.isAdmin ? "All offices" : data.isCollector ? "Authorized offices" : data.activeOffice?.office_name ?? data.activeOffice?.name ?? "Active office"}
                 />
             ) : null}
         </main>
@@ -264,7 +265,7 @@ function buildKpis(items: DefaulterItem[]) {
     };
 }
 
-function DefaultersTable({ defaulters, paymentHref }: { defaulters: DefaulterItem[]; paymentHref: string }) {
+function DefaultersTable({ defaulters, paymentHref, promiseHref }: { defaulters: DefaulterItem[]; paymentHref: string; promiseHref: string }) {
     return (
         <div className="overflow-hidden rounded-[26px] border border-white/70 bg-white shadow-2xl shadow-slate-950/15">
             <div className="max-h-[680px] overflow-auto">
@@ -325,7 +326,7 @@ function DefaultersTable({ defaulters, paymentHref }: { defaulters: DefaulterIte
                                         <a href={whatsappHref(item.tenantPhone, item.tenantName, item.roomNumber)} target="_blank" rel="noreferrer" className="rounded-xl bg-emerald-50 px-2.5 py-2 text-xs font-black text-emerald-700"><MessageCircle size={13} className="inline" /> WhatsApp</a>
                                         <a href={smsHref(item.tenantPhone)} className="rounded-xl bg-blue-50 px-2.5 py-2 text-xs font-black text-blue-700"><Send size={13} className="inline" /> SMS</a>
                                         <Link href={paymentHref} className="rounded-xl bg-slate-950 px-2.5 py-2 text-xs font-black text-white">Record Payment</Link>
-                                        <Link href="/office/promises" className="rounded-xl bg-amber-50 px-2.5 py-2 text-xs font-black text-amber-700">Promise{item.openPromiseCount ? ` (${item.openPromiseCount})` : ""}</Link>
+                                        <Link href={promiseHref} className="rounded-xl bg-amber-50 px-2.5 py-2 text-xs font-black text-amber-700">Promise{item.openPromiseCount ? ` (${item.openPromiseCount})` : ""}</Link>
                                     </div>
                                 </td>
                             </tr>

@@ -82,9 +82,6 @@ export const getReceiptHistoryData = cache(async function getReceiptHistoryData(
     if (!context.isCompanyAdmin && context.authMode !== "collector" && context.activeOffice?.id) {
         query = query.eq("office_id", context.activeOffice.id);
     }
-    if (context.authMode === "collector" && context.profile?.id) {
-        query = query.eq("issued_by", context.profile.id);
-    }
 
     const { data, error } = await query;
     if (error) {
