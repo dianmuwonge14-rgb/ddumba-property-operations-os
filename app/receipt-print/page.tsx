@@ -467,6 +467,10 @@ body {
   line-height: 1.25;
   overflow-wrap: anywhere;
 }
+.receipt-a4-key-value,
+.receipt-a4-coverage-heading {
+  font-weight: 900;
+}
 .receipt-a4-money-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

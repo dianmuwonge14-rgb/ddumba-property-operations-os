@@ -1747,10 +1747,10 @@ export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptVi
                 <ReceiptRow label="Verification" value={receipt.verificationCode} />
                 <ReceiptRow label="Date/Time" value={formatDateTime(snapshot.paymentDateTime)} />
                 <ReceiptRow label="Office" value={snapshot.officeName ?? "Office"} stackWhenLong />
-                <ReceiptRow label="Room" value={snapshot.roomNumber ?? "No room"} />
+                <ReceiptRow label="Room" value={snapshot.roomNumber ?? "No room"} strong />
                 {safeText(snapshot.propertyName) ? <ReceiptRow label="Property" value={safeText(snapshot.propertyName) ?? ""} stackWhenLong /> : null}
-                <ReceiptRow label="Tenant" value={snapshot.tenantName ?? "Unnamed tenant"} stackWhenLong />
-                <ReceiptRow label="Phone" value={snapshot.tenantPhone ?? "No phone"} />
+                <ReceiptRow label="Tenant" value={snapshot.tenantName ?? "Unnamed tenant"} stackWhenLong strong />
+                <ReceiptRow label="Phone" value={snapshot.tenantPhone ?? "No phone"} strong />
                 <ReceiptRow label="Landlord" value={snapshot.landlordName ?? "No landlord"} stackWhenLong />
             </section>
 
@@ -1768,7 +1768,7 @@ export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptVi
 
             {coveragePeriods.length ? (
                 <section className="receipt-section">
-                    <p className="receipt-section-title">Coverage</p>
+                    <p className="receipt-section-title font-black">Coverage</p>
                     <div className="space-y-1.5">
                         {coveragePeriods.map((period, index) => (
                             <div key={`${period.label}-${period.type}-${index}`} className="receipt-coverage-card">

@@ -46,9 +46,9 @@ export function ReceiptA4({ receipt }: { receipt: TenantReceiptViewModel }) {
             </header>
 
             <section className="receipt-a4-grid receipt-a4-section">
-                <Info label="Tenant" value={snapshot.tenantName ?? "Unnamed tenant"} />
-                <Info label="Phone" value={snapshot.tenantPhone ?? "No phone"} />
-                <Info label="Room" value={snapshot.roomNumber ?? "No room"} />
+                <Info label="Tenant" value={snapshot.tenantName ?? "Unnamed tenant"} strongValue />
+                <Info label="Phone" value={snapshot.tenantPhone ?? "No phone"} strongValue />
+                <Info label="Room" value={snapshot.roomNumber ?? "No room"} strongValue />
                 <Info label="Property" value={snapshot.propertyName ?? "Property not set"} />
                 <Info label="Office" value={snapshot.officeName ?? "Office"} />
                 <Info label="Landlord" value={snapshot.landlordName ?? "No landlord"} />
@@ -69,7 +69,7 @@ export function ReceiptA4({ receipt }: { receipt: TenantReceiptViewModel }) {
             </section>
 
             <section className="receipt-a4-section">
-                <h2>Rent Coverage</h2>
+                <h2 className="receipt-a4-coverage-heading">Rent Coverage</h2>
                 {coverage.length ? (
                     <div className="receipt-a4-coverage">
                         {coverage.map((period, index) => (
@@ -106,11 +106,11 @@ export function ReceiptA4({ receipt }: { receipt: TenantReceiptViewModel }) {
     );
 }
 
-function Info({ label, value }: { label: string; value: string }) {
+function Info({ label, strongValue = false, value }: { label: string; strongValue?: boolean; value: string }) {
     return (
         <div className="receipt-a4-info">
             <span>{label}</span>
-            <strong>{value}</strong>
+            <strong className={strongValue ? "receipt-a4-key-value" : undefined}>{value}</strong>
         </div>
     );
 }
