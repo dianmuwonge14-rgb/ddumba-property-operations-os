@@ -126,6 +126,7 @@ body {
   min-width: 0 !important;
   background: transparent !important;
   color: #000 !important;
+  font-weight: 700 !important;
   box-shadow: none !important;
   text-shadow: none !important;
   border-color: #000 !important;
@@ -143,7 +144,7 @@ body {
   border-radius: 0 !important;
   font-family: Arial, Helvetica, sans-serif !important;
   font-size: ${baseFont}px !important;
-  font-weight: 600 !important;
+  font-weight: 700 !important;
   line-height: 1.35 !important;
   font-variant-numeric: tabular-nums !important;
 }
@@ -364,6 +365,14 @@ body {
   box-shadow: 0 24px 80px rgba(15, 23, 42, 0.14);
   font-variant-numeric: tabular-nums;
 }
+.receipt-a4-sheet,
+.receipt-a4-sheet * {
+  color: #000000 !important;
+  font-weight: 700;
+  opacity: 1;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
 .receipt-a4-header,
 .receipt-a4-footer {
   display: flex;
@@ -388,15 +397,16 @@ body {
   align-items: center;
   justify-content: center;
   border-radius: 12px;
-  background: #0f172a;
-  color: #fff;
+  background: #fff;
+  color: #000;
+  border: 1px solid #000;
   font-size: 15px;
   font-weight: 900;
 }
 .receipt-a4-kicker,
 .receipt-a4-muted {
   margin: 6px 0 0;
-  color: #64748b;
+  color: #000000;
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0;
@@ -405,6 +415,7 @@ body {
 .receipt-a4-header h1 {
   margin: 5px 0 0;
   font-size: 24px;
+  font-weight: 800;
   line-height: 1.05;
 }
 .receipt-a4-title {
@@ -414,9 +425,9 @@ body {
 .receipt-a4-title p,
 .receipt-a4-section h2 {
   margin: 0;
-  color: #0f766e;
+  color: #000000;
   font-size: 11px;
-  font-weight: 900;
+  font-weight: 800;
   letter-spacing: 0;
   text-transform: uppercase;
 }
@@ -429,7 +440,7 @@ body {
 .receipt-a4-title span {
   display: block;
   margin-top: 5px;
-  color: #475569;
+  color: #000000;
   font-size: 11px;
   font-weight: 800;
   overflow-wrap: anywhere;
@@ -454,7 +465,7 @@ body {
 .receipt-a4-info span,
 .receipt-a4-money span {
   display: block;
-  color: #64748b;
+  color: #000000;
   font-size: 10px;
   font-weight: 900;
   text-transform: uppercase;
@@ -468,8 +479,10 @@ body {
   overflow-wrap: anywhere;
 }
 .receipt-a4-key-value,
-.receipt-a4-coverage-heading {
-  font-weight: 900;
+.receipt-a4-coverage-heading,
+.receipt-a4-money strong,
+.receipt-a4-title strong {
+  font-weight: 800;
 }
 .receipt-a4-money-grid {
   display: grid;
@@ -557,7 +570,18 @@ body {
   }
   #tenant-receipt-a4-print-root,
   #tenant-receipt-a4-print-root * {
+    color: #000000 !important;
+    font-weight: 700 !important;
+    opacity: 1 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
     visibility: visible !important;
+  }
+  #tenant-receipt-a4-print-root h1,
+  #tenant-receipt-a4-print-root h2,
+  #tenant-receipt-a4-print-root .receipt-a4-title strong,
+  #tenant-receipt-a4-print-root .receipt-a4-money strong {
+    font-weight: 800 !important;
   }
   #tenant-receipt-a4-print-root {
     position: absolute !important;

@@ -713,9 +713,14 @@ body {
 .tenant-receipt-slip,
 .tenant-receipt-slip * {
   box-sizing: border-box;
+  color: #000000;
+  font-weight: 700;
   min-width: 0;
   max-width: 100%;
+  opacity: 1;
   overflow-wrap: anywhere;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
   word-break: break-word;
 }
 .receipt-section {
@@ -726,7 +731,7 @@ body {
 }
 .receipt-section-title,
 .receipt-label {
-  color: #475569;
+  color: #000000;
   font-size: ${compact ? "7.6px" : "8.5px"};
   font-weight: 900;
   letter-spacing: 0.035em;
@@ -745,7 +750,7 @@ body {
   padding: 0.8mm 0;
 }
 .receipt-value {
-  color: #020617;
+  color: #000000;
   font-weight: 800;
   line-height: 1.18;
   text-align: right;
@@ -794,7 +799,7 @@ body {
   background: #ffffff;
 }
 .receipt-muted {
-  color: #64748b;
+  color: #000000;
 }
 img,
 svg,

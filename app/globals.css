@@ -41,9 +41,14 @@ body {
 .tenant-receipt-export-root,
 .tenant-receipt-export-root * {
   box-sizing: border-box;
+  color: #000000;
+  font-weight: 700;
   min-width: 0;
   max-width: 100%;
+  opacity: 1;
   overflow-wrap: anywhere;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
   word-break: break-word;
 }
 
@@ -57,7 +62,7 @@ body {
 
 .receipt-section-title,
 .receipt-label {
-  color: #475569;
+  color: #000000;
   font-size: 8.5px;
   font-weight: 900;
   letter-spacing: 0.035em;
@@ -79,7 +84,7 @@ body {
 }
 
 .receipt-value {
-  color: #020617;
+  color: #000000;
   font-weight: 800;
   line-height: 1.18;
   text-align: right;
@@ -135,7 +140,7 @@ body {
 }
 
 .receipt-muted {
-  color: #64748b;
+  color: #000000;
 }
 
 .receipt-pdf-export-sandbox {
@@ -203,6 +208,11 @@ body {
 
   body.print-tenant-payment-receipt #tenant-receipt-print-root,
   body.print-tenant-payment-receipt #tenant-receipt-print-root * {
+    color: #000000 !important;
+    font-weight: 700 !important;
+    opacity: 1 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
     visibility: visible !important;
   }
 
@@ -224,7 +234,7 @@ body {
     overflow: visible !important;
     break-inside: avoid !important;
     page-break-inside: avoid !important;
-    print-color-adjust: economy !important;
+    print-color-adjust: exact !important;
   }
 
   body.print-tenant-payment-receipt #tenant-payment-receipt {
@@ -260,6 +270,14 @@ body {
 
   body.print-tenant-payment-receipt #tenant-payment-receipt .receipt-section {
     margin-top: 2mm !important;
+  }
+
+  body.print-tenant-payment-receipt #tenant-payment-receipt h3,
+  body.print-tenant-payment-receipt #tenant-payment-receipt .receipt-section-title,
+  body.print-tenant-payment-receipt #tenant-payment-receipt .receipt-money-value,
+  body.print-tenant-payment-receipt #tenant-payment-receipt .receipt-value {
+    color: #000000 !important;
+    font-weight: 800 !important;
   }
 
   body.print-tenant-payment-receipt #tenant-payment-receipt .receipt-coverage-card {

@@ -177,13 +177,28 @@ test("receipt print opens desktop A4 separately from tablet thermal documents", 
   assert.match(receiptPrintPage, /@page \{\s*\n\s*size: \$\{widthMm\}mm auto;/);
   assert.match(receiptPrintPage, /@page \{\s*\n\s*size: A4;/);
   assert.match(receiptPrintPage, /body \* \{\s*\n\s*visibility: hidden !important;/);
-  assert.match(receiptPrintPage, /font-weight: 600/);
+  assert.match(receiptPrintPage, /font-weight: 700/);
   assert.match(receiptPrintPage, /color: #000 !important/);
   assert.match(receiptPrintPage, /widthMm === 58 \? 50 : 72/);
   assert.match(receiptPrintPage, /widthMm === 58 \? 26 : 28/);
   assert.match(receiptPrintPage, /document\.fonts\.ready/);
   assert.match(receiptPrintPage, /requestAnimationFrame/);
   assert.doesNotMatch(receiptPrintPage, /OfficeLayout/);
+});
+
+test("receipt print typography is bold and high contrast on A4 and thermal receipts", () => {
+  assert.match(receiptStyles, /#tenant-receipt-print-root,\s*\n\s*body\.print-tenant-payment-receipt #tenant-receipt-print-root \*/);
+  assert.match(receiptStyles, /font-weight: 700 !important/);
+  assert.match(receiptStyles, /print-color-adjust: exact !important/);
+  assert.match(sharedReceipt, /\.tenant-receipt-slip,\s*\n\.tenant-receipt-slip \*/);
+  assert.match(sharedReceipt, /font-weight: 700/);
+  assert.match(sharedReceipt, /color: #000000/);
+  assert.match(receiptPrintPage, /#tenant-receipt-print-root,\s*\n#tenant-receipt-print-root \*/);
+  assert.match(receiptPrintPage, /font-weight: 700 !important/);
+  assert.match(receiptPrintPage, /\.receipt-a4-sheet,\s*\n\.receipt-a4-sheet \*/);
+  assert.match(receiptPrintPage, /#tenant-receipt-a4-print-root,\s*\n\s*#tenant-receipt-a4-print-root \*/);
+  assert.match(receiptPrintPage, /font-weight: 800 !important/);
+  assert.match(receiptPrintPage, /color: #000000 !important/);
 });
 
 test("receipt actions log print, PDF, WhatsApp and enforce receipt permissions", () => {
