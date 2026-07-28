@@ -120,10 +120,16 @@ function allocationType(row: LooseRow) {
     return String(row.allocation_type ?? "current_month").replaceAll("_", " ");
 }
 
+const KAPEEKA_OFFICE_ID = "2987830f-906b-4f31-921f-734e6171dd10";
+const ENTEBBE_OPERATIONS_OFFICE_ID = "365ca586-4501-45b3-8d21-f7244ef36603";
+const KAPEEKA_RECEIPT_BRAND = "HERITAGE ESTATES AND PROPERTY SOLUTIONS";
+const ENTEBBE_RECEIPT_BRAND = "DDUMBA PROPERTY MANAGEMENT";
+
 function receiptBrandForOffice(office: LooseRow | null | undefined, fallback: string | null) {
-    const officeName = `${text(office?.office_name) ?? text(office?.name) ?? ""}`.toLowerCase();
-    if (officeName.includes("kapeeka")) return "HERITAGE ESTATES AND PROPERTY SOLUTIONS";
-    if (officeName.includes("entebbe operations")) return "DDUMBA PROPERTY MANAGEMENT";
+    const officeId = text(office?.id);
+    const officeName = `${text(office?.office_name) ?? text(office?.name) ?? ""}`.toLowerCase().replace(/\s+/g, " ").trim();
+    if (officeId === KAPEEKA_OFFICE_ID || officeName === "kapeeka office") return KAPEEKA_RECEIPT_BRAND;
+    if (officeId === ENTEBBE_OPERATIONS_OFFICE_ID || officeName === "entebbe operations office") return ENTEBBE_RECEIPT_BRAND;
     return fallback ?? "DDUMBA OS";
 }
 

@@ -243,8 +243,12 @@ test("tenant receipts present room monthly rent instead of a misleading rent all
 
 test("tenant receipt branding is resolved from the room office and stored in the snapshot", () => {
   assert.match(receiptService, /receiptBrandForOffice/);
-  assert.match(receiptService, /includes\("kapeeka"\)\) return "HERITAGE ESTATES AND PROPERTY SOLUTIONS"/);
-  assert.match(receiptService, /includes\("entebbe operations"\)\) return "DDUMBA PROPERTY MANAGEMENT"/);
+  assert.match(receiptService, /const KAPEEKA_OFFICE_ID = "2987830f-906b-4f31-921f-734e6171dd10"/);
+  assert.match(receiptService, /const ENTEBBE_OPERATIONS_OFFICE_ID = "365ca586-4501-45b3-8d21-f7244ef36603"/);
+  assert.match(receiptService, /officeId === KAPEEKA_OFFICE_ID \|\| officeName === "kapeeka office"/);
+  assert.match(receiptService, /officeId === ENTEBBE_OPERATIONS_OFFICE_ID \|\| officeName === "entebbe operations office"/);
+  assert.match(receiptService, /return KAPEEKA_RECEIPT_BRAND/);
+  assert.match(receiptService, /return ENTEBBE_RECEIPT_BRAND/);
   assert.match(receiptService, /const receiptOfficeId = room\?\.office_id \?\? tenant\?\.office_id \?\? payment\.office_id/);
   assert.match(receiptService, /companyName: receiptBrandForOffice\(office, text\(company\?\.name\)\)/);
   assert.match(sharedReceipt, /Thank you for choosing \$\{safeText\(snapshot\.companyName\) \?\? "Ddumba Property Management"\}/);
