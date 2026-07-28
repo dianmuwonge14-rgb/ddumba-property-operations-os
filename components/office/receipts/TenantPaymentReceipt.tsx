@@ -1744,7 +1744,6 @@ export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptVi
                 <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-full border border-slate-900 bg-slate-950 text-[13px] font-black text-white print:bg-white print:text-black">DD</div>
                 <h3 className="mt-1.5 text-[15px] font-black leading-tight">{safeText(snapshot.companyName) ?? "DDUMBA OS"}</h3>
                 {companyContact ? <p className="receipt-muted mt-0.5 text-[9px] font-bold">{companyContact}</p> : null}
-                <p className="receipt-build-marker mt-0.5 text-[8px] font-black uppercase">Receipt print build: BOLD-V2</p>
                 <p className="mt-2 border-y border-dashed border-slate-900 py-1 text-[10px] font-black uppercase tracking-[0.08em]">Tenant Payment Receipt</p>
             </header>
 

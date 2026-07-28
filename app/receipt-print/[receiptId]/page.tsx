@@ -4,6 +4,8 @@ import { ReceiptThermal58 } from "@/components/office/receipts/ReceiptThermal58"
 import { autoPrintScript, firstParam, loadPrintableReceipt, paperWidth, receiptA4PrintCss, receiptOnlyPrintCss, ReceiptPrintActions, receiptPageControlsScript, receiptPrintLayout } from "@/app/receipt-print/page";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
+export const revalidate = 0;
 
 type PageProps = {
     params: Promise<{ receiptId: string }>;
