@@ -120,6 +120,13 @@ function allocationType(row: LooseRow) {
     return String(row.allocation_type ?? "current_month").replaceAll("_", " ");
 }
 
+function receiptBrandForOffice(office: LooseRow | null | undefined, fallback: string | null) {
+    const officeName = `${text(office?.office_name) ?? text(office?.name) ?? ""}`.toLowerCase();
+    if (officeName.includes("kapeeka")) return "HERITAGE ESTATES AND PROPERTY SOLUTIONS";
+    if (officeName.includes("entebbe operations")) return "DDUMBA PROPERTY MANAGEMENT";
+    return fallback ?? "DDUMBA OS";
+}
+
 function receiptSummary(row: LooseRow): PaymentReceiptSummary {
     const snapshot = row.receipt_snapshot as PaymentReceiptSnapshot;
     return {
@@ -152,15 +159,16 @@ async function getOne(db: Db, table: string, id: unknown, companyId: string, sel
 
 async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumber: string, verificationCode: string): Promise<PaymentReceiptSnapshot> {
     const companyId = String(payment.company_id);
-    const [company, office, tenant, room, recordedBy] = await Promise.all([
+    const [company, tenant, room, recordedBy] = await Promise.all([
         getOne(db, "companies", payment.company_id, companyId, "*"),
-        getOne(db, "offices", payment.office_id, companyId, "*"),
         getOne(db, "tenants", payment.tenant_id, companyId, "*"),
         getOne(db, "rooms", payment.room_id, companyId, "*"),
         payment.recorded_by ? db.from("users").select("id,full_name,email,phone,account_type").eq("id", payment.recorded_by).maybeSingle() : Promise.resolve({ data: null, error: null }),
     ]);
     if (recordedBy.error && !isMissingSchemaError(recordedBy.error)) throw new Error(recordedBy.error.message);
 
+    const receiptOfficeId = room?.office_id ?? tenant?.office_id ?? payment.office_id;
+    const office = await getOne(db, "offices", receiptOfficeId, companyId, "*");
     const landlordId = room?.landlord_id ?? null;
     const propertyId = room?.property_id ?? tenant?.property_id ?? null;
     const [landlord, property] = await Promise.all([
@@ -203,7 +211,7 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
         amountAppliedToOutstanding,
         amountPaid: amount(payment.amount_paid ?? payment.amount),
         companyContact: text(company?.phone) ?? text(company?.email) ?? null,
-        companyName: text(company?.name) ?? "DDUMBA OS",
+        companyName: receiptBrandForOffice(office, text(company?.name)),
         coveragePeriod,
         coveragePeriods,
         landlordName: text(landlord?.full_name),
@@ -399,7 +407,7 @@ export function receiptEmailHtml(receipt: PaymentReceiptSummary) {
         <div style="font-family:Inter,Arial,sans-serif;background:#0f172a;padding:24px;color:#e5e7eb">
             <div style="max-width:680px;margin:auto;background:#fff;color:#0f172a;border-radius:18px;overflow:hidden">
                 <div style="background:linear-gradient(135deg,#0f172a,#1d4ed8);color:#fff;padding:20px">
-                    <p style="margin:0;font-weight:800;letter-spacing:.12em;text-transform:uppercase">DDUMBA OS Receipt</p>
+                    <p style="margin:0;font-weight:800;letter-spacing:.12em;text-transform:uppercase">${row.companyName} Receipt</p>
                     <h1 style="margin:6px 0 0;font-size:24px">${row.receiptNumber}</h1>
                 </div>
                 <div style="padding:22px">
@@ -408,7 +416,7 @@ export function receiptEmailHtml(receipt: PaymentReceiptSummary) {
                     <p><strong>Remaining Balance:</strong> ${money(row.remainingOutstandingBalance)} · <strong>Advance:</strong> ${money(row.advanceBalance)}</p>
                     <p><strong>Office:</strong> ${row.officeName ?? "Office"} · <strong>Landlord:</strong> ${row.landlordName ?? "N/A"}</p>
                     <p><strong>Verification code:</strong> ${row.verificationCode}</p>
-                    <p style="font-size:12px;color:#64748b">This e-receipt was generated from the saved DDUMBA OS payment transaction.</p>
+                    <p style="font-size:12px;color:#64748b">This e-receipt was generated from the saved ${row.companyName} payment transaction.</p>
                 </div>
             </div>
         </div>

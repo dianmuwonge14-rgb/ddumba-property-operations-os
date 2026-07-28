@@ -241,6 +241,15 @@ test("tenant receipts present room monthly rent instead of a misleading rent all
   assert.doesNotMatch(receiptA4, /amountAppliedToOutstanding \+ snapshot\.amountAppliedToCurrentRent/);
 });
 
+test("tenant receipt branding is resolved from the room office and stored in the snapshot", () => {
+  assert.match(receiptService, /receiptBrandForOffice/);
+  assert.match(receiptService, /includes\("kapeeka"\)\) return "HERITAGE ESTATES AND PROPERTY SOLUTIONS"/);
+  assert.match(receiptService, /includes\("entebbe operations"\)\) return "DDUMBA PROPERTY MANAGEMENT"/);
+  assert.match(receiptService, /const receiptOfficeId = room\?\.office_id \?\? tenant\?\.office_id \?\? payment\.office_id/);
+  assert.match(receiptService, /companyName: receiptBrandForOffice\(office, text\(company\?\.name\)\)/);
+  assert.match(sharedReceipt, /Thank you for choosing \$\{safeText\(snapshot\.companyName\) \?\? "Ddumba Property Management"\}/);
+});
+
 test("receipt print retains a fallback clean receipt-only popup for mounted receipts", () => {
   assert.match(sharedReceipt, /window\.open\("", printWindowName/);
   assert.match(sharedReceipt, /extractReceiptRootHtml/);

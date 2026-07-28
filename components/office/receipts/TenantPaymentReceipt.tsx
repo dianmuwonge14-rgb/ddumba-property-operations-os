@@ -178,7 +178,7 @@ function whatsappReceiptMessage(receipt: TenantReceiptViewModel) {
         `Amount paid: ${money(snapshot.amountPaid)}.`,
         `Verification: ${receipt.verificationCode}.`,
         "",
-        "Thank you for choosing Ddumba Property Management.",
+        `Thank you for choosing ${safeText(snapshot.companyName) ?? "Ddumba Property Management"}.`,
     ].join("\n");
 }
 
