@@ -233,6 +233,14 @@ test("tenant receipts include property and security deposit allocation when save
   assert.match(receiptPrintPdfRoute, /Property/);
 });
 
+test("tenant receipts present room monthly rent instead of a misleading rent allocation total", () => {
+  assert.match(sharedReceipt, /ReceiptMoneyRow label="Monthly rent" value=\{snapshot\.monthlyRent\}/);
+  assert.match(receiptA4, /<Money label="Monthly Rent" value=\{snapshot\.monthlyRent\} \/>/);
+  assert.match(receiptPrintPdfRoute, /pairLines\("Monthly rent", money\(snapshot\.monthlyRent\)\)/);
+  assert.doesNotMatch(receiptA4, /Rent Allocation/);
+  assert.doesNotMatch(receiptA4, /amountAppliedToOutstanding \+ snapshot\.amountAppliedToCurrentRent/);
+});
+
 test("receipt print retains a fallback clean receipt-only popup for mounted receipts", () => {
   assert.match(sharedReceipt, /window\.open\("", printWindowName/);
   assert.match(sharedReceipt, /extractReceiptRootHtml/);

@@ -60,7 +60,7 @@ export function ReceiptA4({ receipt }: { receipt: TenantReceiptViewModel }) {
                 <h2>Payment Breakdown</h2>
                 <div className="receipt-a4-money-grid">
                     <Money label="Amount Paid" value={snapshot.amountPaid} highlight />
-                    <Money label="Rent Allocation" value={snapshot.amountAppliedToOutstanding + snapshot.amountAppliedToCurrentRent} />
+                    <Money label="Monthly Rent" value={snapshot.monthlyRent} />
                     <Money label="Security Deposit" value={Number(snapshot.securityDepositAmount ?? 0)} />
                     <Money label="Advance Allocation" value={snapshot.advanceAmount ?? snapshot.advanceBalance} />
                     <Money label="Outstanding After Payment" value={snapshot.remainingOutstandingBalance} highlight />
