@@ -92,6 +92,13 @@ function signedLedgerAmount(row: Row) {
     return isOutflow ? -numberValue(row.amount) : numberValue(row.amount);
 }
 
+function officeCashReconciliationCause(input: { rawMoneyAtOffice: number; moneyBanked: number; expensesPeriod: number }) {
+    if (input.rawMoneyAtOffice >= 0) return "Balanced";
+    if (input.moneyBanked > 0) return "Banking or duplicate banking exceeds available office cash; review banking entries and transaction dates.";
+    if (input.expensesPeriod > 0) return "Approved expense deductions exceed available office cash; review expense status, source and date.";
+    return "Office cash ledger is below zero; review handovers, banking, expenses and correction movements.";
+}
+
 function buildInsights(summaries: CashOfficeSummary[], totals: CashBankingData["totals"]): CashInsight[] {
     const insights: CashInsight[] = [];
     const highCash = summaries.filter((summary) => summary.moneyAtOffice >= 1_000_000).sort((a, b) => b.moneyAtOffice - a.moneyAtOffice);
@@ -104,13 +111,13 @@ function buildInsights(summaries: CashOfficeSummary[], totals: CashBankingData["
             action: "Ask the office to bank excess cash or explain the delay.",
         });
     }
-    const negative = summaries.find((summary) => summary.moneyAtOffice < 0);
+    const negative = summaries.find((summary) => summary.cashReconciliationDifference > 0);
     if (negative) {
         insights.push({
-            id: `negative-cash-${negative.officeId}`,
+            id: `cash-reconciliation-${negative.officeId}`,
             severity: "critical",
-            title: "Office cash is negative",
-            message: `${negative.officeName} has spent/banked more than the recorded cash available.`,
+            title: "Cash reconciliation difference",
+            message: `${negative.officeName} displays UGX 0 at office, but the raw ledger is short by UGX ${Math.round(negative.cashReconciliationDifference).toLocaleString()}. ${negative.cashReconciliationCause}`,
             action: "Review expenses, removals, and banking entries for this office.",
         });
     }
@@ -127,9 +134,9 @@ function buildInsights(summaries: CashOfficeSummary[], totals: CashBankingData["
     if (totals.companyCashPosition > 0) {
         insights.push({
             id: "cash-position",
-            severity: "success",
+            severity: totals.cashReconciliationDifference > 0 ? "warning" : "success",
             title: "Company cash position is live",
-            message: `Company cash position is UGX ${Math.round(totals.companyCashPosition).toLocaleString()} across offices and bank.`,
+            message: `Company cash position is UGX ${Math.round(totals.companyCashPosition).toLocaleString()} across offices and bank; reconciliation difference is UGX ${Math.round(totals.cashReconciliationDifference).toLocaleString()}.`,
             action: "Use the ledger to reconcile against physical cash and bank slips.",
         });
     }
@@ -226,13 +233,22 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
         const bankedAll = sum(officeBanked, (row) => numberValue(row.amount));
         const floatAll = sum(officeFloat, (row) => numberValue(row.amount));
         const floatOutAll = sum(officeFloatOut, (row) => numberValue(row.amount));
+        const rawMoneyAtOffice = sum(officeLedger, signedLedgerAmount);
+        const cashReconciliationDifference = rawMoneyAtOffice < 0 ? Math.abs(rawMoneyAtOffice) : 0;
         return {
             officeId: office.id,
             officeName: office.name,
             collectedToday: sum(todayCollections.filter((row) => row.office_id === office.id), cashAmount),
             collectedPeriod: sum(periodCollections.filter((row) => row.office_id === office.id), cashAmount),
             expensesPeriod: sum(periodExpenses.filter((row) => row.office_id === office.id), expenseAmount),
-            moneyAtOffice: sum(officeLedger, signedLedgerAmount),
+            cashReconciliationCause: officeCashReconciliationCause({
+                expensesPeriod: sum(periodExpenses.filter((row) => row.office_id === office.id), expenseAmount),
+                moneyBanked: bankedAll,
+                rawMoneyAtOffice,
+            }),
+            cashReconciliationDifference,
+            moneyAtOffice: Math.max(0, rawMoneyAtOffice),
+            rawMoneyAtOffice,
             moneyBanked: bankedAll,
             adminFloatReceived: floatAll - floatOutAll,
             bankingCount: officeBanked.filter((row) => inRange(movementDate(row), filters.startDate, filters.endDate)).length,
@@ -399,16 +415,21 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
 
     const moneyAtBank = sum(cashTransactions.filter((row) => accountById.get(String(row.cash_account_id))?.account_type === "bank"), signedLedgerAmount);
     const adminCashBalance = sum(cashTransactions.filter((row) => accountById.get(String(row.cash_account_id))?.account_type === "hq_cash"), signedLedgerAmount);
+    const moneyAtOffices = sum(summaries as unknown as Row[], (row) => numberValue(row.moneyAtOffice));
+    const rawMoneyAtOffices = sum(summaries as unknown as Row[], (row) => numberValue(row.rawMoneyAtOffice));
+    const cashReconciliationDifference = sum(summaries as unknown as Row[], (row) => numberValue(row.cashReconciliationDifference));
     const totals = {
         collectedToday: sum(todayCollections, cashAmount),
         collectedPeriod: sum(periodCollections, cashAmount),
         expensesPeriod: sum(periodExpenses, expenseAmount),
-        moneyAtOffices: sum(summaries as unknown as Row[], (row) => numberValue(row.moneyAtOffice)),
+        moneyAtOffices,
+        rawMoneyAtOffices,
+        cashReconciliationDifference,
         moneyBanked: sum(bankOutflows, (row) => numberValue(row.amount)),
         moneyAtBank,
         adminCashBalance,
         moneyWithCollectors: collectorCash,
-        companyCashPosition: moneyAtBank + adminCashBalance + collectorCash + sum(summaries as unknown as Row[], (row) => numberValue(row.moneyAtOffice)),
+        companyCashPosition: moneyAtBank + adminCashBalance + collectorCash + moneyAtOffices,
         adminFloatGiven: sum(adminFloatInflows, (row) => numberValue(row.amount)) - sum(adminFloatOutflows, (row) => numberValue(row.amount)),
     };
 

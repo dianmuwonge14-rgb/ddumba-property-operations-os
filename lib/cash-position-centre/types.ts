@@ -23,6 +23,8 @@ export type CashPositionOfficeRow = {
     bankingPercentage: number;
     cashAfterApprovedExpenses: number;
     cashBeforeExpenses: number;
+    cashReconciliationCause: string;
+    cashReconciliationDifference: number;
     cashCollectedToday: number;
     dailyApprovedExpenses: number;
     dailyBanked: number;
@@ -44,6 +46,7 @@ export type CashPositionOfficeRow = {
     outstandingToBank: number;
     pendingExpensesPeriod: number;
     projectedCashAfterPendingExpenses: number;
+    rawCashAtOffice: number;
     securityDeposits: number;
     status: "healthy" | "attention" | "critical";
     statusReason: string;
@@ -95,9 +98,11 @@ export type CashPositionDailyCard = {
     amountBanked: number;
     amountHandedToAdmin: number;
     cashStillHeld: number;
+    cashReconciliationDifference: number;
     changeFromPreviousDay: number;
     date: string;
     receiptCount: number;
+    rawCashStillHeld: number;
     strongestCollector: string;
     strongestOffice: string;
     totalCollected: number;
@@ -165,6 +170,8 @@ export type CashPositionData = {
         dailyCashRemainingAtOffice: number;
         dailyCollected: number;
         dailyHandedToAdmin: number;
+        rawDailyCashRemainingAtOffice: number;
+        cashReconciliationDifference: number;
         cashDifferenceAlerts: number;
         cashHeldByCollectors: number;
         cashHeldByOffices: number;

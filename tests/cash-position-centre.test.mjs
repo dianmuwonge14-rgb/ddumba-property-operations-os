@@ -13,11 +13,24 @@ const expensesComponentSource = readFileSync(new URL("../components/office/expen
 const sidebarSource = readFileSync(new URL("../components/office/shared/OfficeSidebar.tsx", import.meta.url), "utf8");
 const loginSource = readFileSync(new URL("../app/api/auth/office-login/route.ts", import.meta.url), "utf8");
 const officeHomeSource = readFileSync(new URL("../app/office/page.tsx", import.meta.url), "utf8");
+const cashBankingDataSource = readFileSync(new URL("../lib/cash-banking/data.ts", import.meta.url), "utf8");
+const cashBankingTypesSource = readFileSync(new URL("../lib/cash-banking/types.ts", import.meta.url), "utf8");
+const cashBankingComponentSource = readFileSync(new URL("../components/office/cash-banking/CashBankingConsole.tsx", import.meta.url), "utf8");
+const cashBankingActionSource = readFileSync(new URL("../app/actions/cash-banking.ts", import.meta.url), "utf8");
 
 function selectedPeriodOfficeCash({ approvedExpenses = [], banked = [], collections = [], handedToAdmin = [], periodEnd, periodStart }) {
   const inRange = (row) => row.date >= periodStart && row.date <= periodEnd;
   const sum = (rows) => rows.filter(inRange).reduce((total, row) => total + row.amount, 0);
   return sum(collections) - sum(approvedExpenses) - sum(banked) - sum(handedToAdmin);
+}
+
+function displayedSelectedPeriodOfficeCash(input) {
+  const raw = selectedPeriodOfficeCash(input);
+  return {
+    raw,
+    displayed: Math.max(0, raw),
+    reconciliationDifference: raw < 0 ? Math.abs(raw) : 0,
+  };
 }
 
 test("cash position centre is an admin-only live Supabase page", () => {
@@ -68,7 +81,7 @@ test("cash position centre includes requested executive KPIs and live office tab
   ]) {
     assert.match(dataSource + componentSource, new RegExp(label));
   }
-  for (const field of ["cashCollectedToday", "cashHeldInOffice", "cashHeldByCollectors", "alreadyBanked", "outstandingToBank", "bankingPercentage", "weeklyPerformance", "monthlyPerformance", "approvedExpensesPeriod", "pendingExpensesPeriod", "cashBeforeExpenses", "cashAfterApprovedExpenses", "projectedCashAfterPendingExpenses", "expenseCount", "currentAccumulatedOfficeCash"]) {
+  for (const field of ["cashCollectedToday", "cashHeldInOffice", "cashHeldByCollectors", "alreadyBanked", "outstandingToBank", "bankingPercentage", "weeklyPerformance", "monthlyPerformance", "approvedExpensesPeriod", "pendingExpensesPeriod", "cashBeforeExpenses", "cashAfterApprovedExpenses", "projectedCashAfterPendingExpenses", "expenseCount", "currentAccumulatedOfficeCash", "rawCashAtOffice", "cashReconciliationDifference", "cashReconciliationCause"]) {
     assert.match(typesSource, new RegExp(field));
   }
 });
@@ -113,7 +126,8 @@ test("cash position selected-period card excludes carried-forward office cash", 
   assert.match(typesSource, /dailyBanked/);
   assert.match(typesSource, /dailyHandedToAdmin/);
   assert.match(typesSource, /dailyCashRemainingAtOffice/);
-  assert.match(dataSource, /dailyCollected - dailyApprovedExpenses - dailyBanked - dailyHandedToAdmin/);
+  assert.match(dataSource, /rawDailyCashRemainingAtOffice = dailyCollected - dailyApprovedExpenses - dailyBanked - dailyHandedToAdmin/);
+  assert.match(dataSource, /dailyCashRemainingAtOffice = Math\.max\(0, rawDailyCashRemainingAtOffice\)/);
   assert.match(dataSource, /cashAfterExpenses = dailyCashRemainingAtOffice/);
   assert.match(dataSource, /currentAccumulatedOfficeCash/);
   assert.match(dataSource, /adminHandedToAdminOutflows/);
@@ -122,6 +136,7 @@ test("cash position selected-period card excludes carried-forward office cash", 
   assert.match(componentSource, /Net Cash Movement for Selected Period/);
   assert.match(componentSource, /Current accumulated office cash/);
   assert.match(componentSource, /Money at office for selected period/);
+  assert.match(componentSource, /Cash Reconciliation Difference/);
 });
 
 test("selected period office cash ignores expenses outside the selected range", () => {
@@ -138,6 +153,47 @@ test("selected period office cash ignores expenses outside the selected range", 
   });
 
   assert.equal(selectedDayCash, 1_500_000);
+});
+
+test("cash position displays zero when the raw selected-period cash is fully cleared or overdrawn", () => {
+  const fullyBanked = displayedSelectedPeriodOfficeCash({
+    collections: [{ amount: 2_000_000, date: "2026-07-28" }],
+    approvedExpenses: [{ amount: 500_000, date: "2026-07-28" }],
+    banked: [{ amount: 1_500_000, date: "2026-07-28" }],
+    handedToAdmin: [{ amount: 0, date: "2026-07-28" }],
+    periodStart: "2026-07-28",
+    periodEnd: "2026-07-28",
+  });
+  assert.equal(fullyBanked.raw, 0);
+  assert.equal(fullyBanked.displayed, 0);
+  assert.equal(fullyBanked.reconciliationDifference, 0);
+
+  const overdrawn = displayedSelectedPeriodOfficeCash({
+    collections: [{ amount: 2_000_000, date: "2026-07-28" }],
+    approvedExpenses: [{ amount: 500_000, date: "2026-07-28" }],
+    banked: [{ amount: 1_600_000, date: "2026-07-28" }],
+    handedToAdmin: [{ amount: 0, date: "2026-07-28" }],
+    periodStart: "2026-07-28",
+    periodEnd: "2026-07-28",
+  });
+  assert.equal(overdrawn.raw, -100_000);
+  assert.equal(overdrawn.displayed, 0);
+  assert.equal(overdrawn.reconciliationDifference, 100_000);
+
+  assert.match(dataSource, /Math\.max\(0, rawCashAtOffice\)/);
+  assert.match(dataSource, /cashReconciliationDifference = rawCashAtOffice < 0 \? Math\.abs\(rawCashAtOffice\) : 0/);
+  assert.match(dataSource, /detectCashReconciliationCause/);
+});
+
+test("cash banking display also clamps negative office cash and reports reconciliation difference", () => {
+  assert.match(cashBankingTypesSource, /rawMoneyAtOffice/);
+  assert.match(cashBankingTypesSource, /cashReconciliationDifference/);
+  assert.match(cashBankingTypesSource, /cashReconciliationCause/);
+  assert.match(cashBankingDataSource, /moneyAtOffice: Math\.max\(0, rawMoneyAtOffice\)/);
+  assert.match(cashBankingDataSource, /cashReconciliationDifference = rawMoneyAtOffice < 0 \? Math\.abs\(rawMoneyAtOffice\) : 0/);
+  assert.match(cashBankingActionSource, /displayedOfficeBalanceAfter = Math\.max\(0, officeBalanceAfter\)/);
+  assert.match(cashBankingComponentSource, /Cash Reconciliation Difference/);
+  assert.match(cashBankingComponentSource, /Raw Money At Office/);
 });
 
 test("cash position data loader names query failures and uses production-safe enrichment columns", () => {

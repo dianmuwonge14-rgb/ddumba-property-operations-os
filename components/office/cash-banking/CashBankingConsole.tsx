@@ -105,8 +105,19 @@ export default function CashBankingConsole({ data }: Props) {
                 row.notes ?? "",
             ]),
         ];
+        rows.push([]);
+        rows.push(["Office", "Money At Office", "Raw Money At Office", "Cash Reconciliation Difference", "Likely Cause"]);
+        for (const office of data.officeSummaries) {
+            rows.push([
+                office.officeName,
+                office.moneyAtOffice,
+                office.rawMoneyAtOffice,
+                office.cashReconciliationDifference,
+                office.cashReconciliationCause,
+            ]);
+        }
         return rows.map((row) => row.map((cell) => `"${String(cell).replaceAll("\"", "\"\"")}"`).join(",")).join("\n");
-    }, [data.ledger]);
+    }, [data.ledger, data.officeSummaries]);
 
     function applyFilters() {
         const params = new URLSearchParams();
@@ -231,7 +242,8 @@ export default function CashBankingConsole({ data }: Props) {
 
     const syncedAt = new Date(data.generatedAt).toLocaleString("en-UG", { dateStyle: "medium", timeStyle: "short" });
     const topCards = [
-        { label: "Money At Office", value: data.totals.moneyAtOffices, icon: WalletCards, hint: "Live office cash after banking and expenses" },
+        { label: "Money At Office", value: data.totals.moneyAtOffices, icon: WalletCards, hint: "Displayed at zero when the raw ledger is fully banked or short" },
+        { label: "Cash Reconciliation Difference", value: data.totals.cashReconciliationDifference, icon: AlertTriangle, hint: "Raw negative office cash that needs banking, handover, expense or date review" },
         { label: "Money At Bank", value: data.totals.moneyAtBank, icon: Landmark, hint: "Banked cash less bank-funded office float" },
         { label: "Collected Period", value: data.totals.collectedPeriod, icon: Banknote, hint: "Active tenant collections in selected period" },
         { label: "With Collectors", value: data.totals.moneyWithCollectors, icon: Send, hint: "Live collector money in hand" },
@@ -267,7 +279,7 @@ export default function CashBankingConsole({ data }: Props) {
                     </div>
                 </header>
 
-                <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
                     {topCards.map((card, index) => {
                         const Icon = card.icon;
                         return (
@@ -458,6 +470,11 @@ export default function CashBankingConsole({ data }: Props) {
                                         <Metric label="Money banked" value={office.moneyBanked} />
                                         <Metric label="Expenses period" value={office.expensesPeriod} />
                                         <Metric label="Money at office" value={office.moneyAtOffice} strong />
+                                        <Metric label="Cash reconciliation difference" value={office.cashReconciliationDifference} />
+                                        <div className="col-span-2 rounded-2xl border border-white/10 bg-white/[0.04] p-3">
+                                            <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">Likely cause</p>
+                                            <p className="mt-1 text-xs font-bold text-slate-200">{office.cashReconciliationCause}</p>
+                                        </div>
                                     </div>
                                 </div>
                             ))}

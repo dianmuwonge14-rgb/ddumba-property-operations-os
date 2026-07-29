@@ -262,11 +262,12 @@ export async function depositOfficeCashToBank(input: BankMoneyInput): Promise<De
     const transferId = String(data.transfer_id);
     const officeBalanceAfter = amountValue(data.money_at_office_after);
     const bankBalanceAfter = amountValue(data.bank_balance_after);
+    const displayedOfficeBalanceAfter = Math.max(0, officeBalanceAfter);
     return {
         ok: true,
         transferId,
         balances: {
-            moneyAtOffice: officeBalanceAfter,
+            moneyAtOffice: displayedOfficeBalanceAfter,
             moneyAtBank: bankBalanceAfter,
         },
         debug: {

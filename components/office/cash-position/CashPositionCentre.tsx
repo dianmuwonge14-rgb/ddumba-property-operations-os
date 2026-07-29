@@ -191,6 +191,9 @@ export default function CashPositionCentre({ data }: Props) {
                 "Selected Period Banked",
                 "Selected Period Handed To Admin",
                 "Selected Period Cash Remaining At Office",
+                "Raw Selected Period Cash At Office",
+                "Cash Reconciliation Difference",
+                "Cash Reconciliation Cause",
                 "Cash Collected Today",
                 "Cash Currently Held In Office",
                 "Cash Currently Held By Collectors",
@@ -214,6 +217,9 @@ export default function CashPositionCentre({ data }: Props) {
                 row.dailyBanked,
                 row.dailyHandedToAdmin,
                 row.dailyCashRemainingAtOffice,
+                row.rawCashAtOffice,
+                row.cashReconciliationDifference,
+                row.cashReconciliationCause,
                 row.cashCollectedToday,
                 row.cashHeldInOffice,
                 row.cashHeldByCollectors,
@@ -350,7 +356,7 @@ export default function CashPositionCentre({ data }: Props) {
             ? "Cash Remaining at Office Today"
             : `Cash Remaining at Office for ${dateFullLabel(data.filters.startDate)}`;
     const dailyMovementNoun = data.selectedPeriodMode === "range" ? "Selected period" : selectedIsToday ? "Today" : dateFullLabel(data.filters.startDate);
-    const headerTone = data.totals.dailyCashRemainingAtOffice < 0 ? "red" : data.totals.dailyCashRemainingAtOffice < 1_000_000 || data.totals.cashDifferenceAlerts > 0 ? "amber" : "green";
+    const headerTone = data.totals.cashReconciliationDifference > 0 ? "red" : data.totals.dailyCashRemainingAtOffice < 1_000_000 || data.totals.cashDifferenceAlerts > 0 ? "amber" : "green";
     const headerStatus = headerTone === "red" ? "Critical" : headerTone === "amber" ? "Attention required" : "Healthy";
 
     return (
@@ -387,7 +393,8 @@ export default function CashPositionCentre({ data }: Props) {
                                 <Mini label={`Approved expenses ${dailyMovementNoun}`} value={money(data.totals.dailyApprovedExpenses)} />
                                 <Mini label={`Banked ${dailyMovementNoun}`} value={money(data.totals.dailyBanked)} />
                                 <Mini label={`Handed to Admin ${dailyMovementNoun}`} value={money(data.totals.dailyHandedToAdmin)} />
-                                <Mini label="Overall money at offices after expenses" value={money(data.totals.cashAfterExpenses)} risky={data.totals.cashAfterExpenses < 0} />
+                                <Mini label="Overall money at offices after expenses" value={money(data.totals.cashAfterExpenses)} risky={data.totals.cashReconciliationDifference > 0} />
+                                <Mini label="Cash Reconciliation Difference" value={money(data.totals.cashReconciliationDifference)} risky={data.totals.cashReconciliationDifference > 0} />
                                 <Mini label="Current accumulated office cash" value={money(data.totals.currentAccumulatedOfficeCash)} risky={data.totals.currentAccumulatedOfficeCash < 0} />
                                 <Mini label="Last updated" value={syncedAt} />
                                 <Mini label="Current status" value={headerStatus} risky={headerTone === "red"} />
@@ -400,7 +407,8 @@ export default function CashPositionCentre({ data }: Props) {
                         <Mini label={`Approved Expenses ${dailyMovementNoun}`} value={money(data.totals.dailyApprovedExpenses)} />
                         <Mini label={`Banked ${dailyMovementNoun}`} value={money(data.totals.dailyBanked)} />
                         <Mini label={`Handed to Admin ${dailyMovementNoun}`} value={money(data.totals.dailyHandedToAdmin)} />
-                        <Mini label={`Money at Offices ${dailyMovementNoun}`} value={money(data.totals.dailyCashRemainingAtOffice)} risky={data.totals.dailyCashRemainingAtOffice < 0} />
+                        <Mini label={`Money at Offices ${dailyMovementNoun}`} value={money(data.totals.dailyCashRemainingAtOffice)} risky={data.totals.cashReconciliationDifference > 0} />
+                        <Mini label="Cash Reconciliation Difference" value={money(data.totals.cashReconciliationDifference)} risky={data.totals.cashReconciliationDifference > 0} />
                     </div>
 
                     <div className="mt-5 rounded-[28px] border border-white/10 bg-slate-950/58 p-4 shadow-2xl shadow-black/20">
@@ -671,7 +679,8 @@ function DailyCashCards({
                             <Mini label="Approved expenses" value={money(card.approvedExpenses)} />
                             <Mini label="Banked" value={money(card.amountBanked)} />
                             <Mini label="Admin" value={money(card.amountHandedToAdmin)} />
-                            <Mini label="Still held" value={money(card.cashStillHeld)} risky={card.cashStillHeld > 1_000_000} />
+                            <Mini label="Still held" value={money(card.cashStillHeld)} risky={card.cashReconciliationDifference > 0 || card.cashStillHeld > 1_000_000} />
+                            <Mini label="Cash Reconciliation Difference" value={money(card.cashReconciliationDifference)} risky={card.cashReconciliationDifference > 0} />
                             <Mini label="Receipts" value={card.receiptCount.toLocaleString()} onClick={() => onViewReceipts(card)} />
                             <Mini label="Strongest office" value={card.strongestOffice} wide />
                             <Mini label="Strongest collector" value={card.strongestCollector} wide />
@@ -714,7 +723,7 @@ function OfficeComparisonCards({
                             </div>
                             <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-black uppercase ${statusBadge(office.status)}`}>{office.status}</span>
                         </div>
-                        <div className={`mt-4 rounded-[24px] border p-4 ${office.dailyCashRemainingAtOffice < 0 ? "border-red-300/25 bg-red-400/12" : office.dailyCashRemainingAtOffice < 1_000_000 ? "border-amber-300/25 bg-amber-400/12" : "border-emerald-300/25 bg-emerald-400/12"}`}>
+                        <div className={`mt-4 rounded-[24px] border p-4 ${office.cashReconciliationDifference > 0 ? "border-red-300/25 bg-red-400/12" : office.dailyCashRemainingAtOffice < 1_000_000 ? "border-amber-300/25 bg-amber-400/12" : "border-emerald-300/25 bg-emerald-400/12"}`}>
                             <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">Money at office for selected period</p>
                             <p className="mt-2 break-words text-[clamp(1.3rem,2vw,2.1rem)] font-black leading-tight text-white">{money(office.dailyCashRemainingAtOffice)}</p>
                             <p className="mt-1 text-xs font-bold text-slate-300">Collections minus approved expenses, banking and Admin handover dated inside the selected period.</p>
@@ -729,7 +738,9 @@ function OfficeComparisonCards({
                             <Mini label="Approved expenses for selected period" value={money(office.dailyApprovedExpenses)} />
                             <Mini label="Banked for selected period" value={money(office.dailyBanked)} />
                             <Mini label="Handed to Admin for selected period" value={money(office.dailyHandedToAdmin)} />
-                            <Mini label="Money at office for selected period" value={money(office.dailyCashRemainingAtOffice)} risky={office.dailyCashRemainingAtOffice < 0} />
+                            <Mini label="Money at office for selected period" value={money(office.dailyCashRemainingAtOffice)} risky={office.cashReconciliationDifference > 0} />
+                            <Mini label="Cash Reconciliation Difference" value={money(office.cashReconciliationDifference)} risky={office.cashReconciliationDifference > 0} />
+                            <Mini label="Likely cause" value={office.cashReconciliationCause} wide />
                             <Mini label="Expense count" value={office.expenseCount.toLocaleString()} />
                             <Mini label="Cash collected today" value={money(office.cashCollectedToday)} />
                             <Mini label="Cash before expenses" value={money(office.cashBeforeExpenses)} />
@@ -1015,7 +1026,8 @@ function OfficeExpansionPanel({ office, onViewReceiptsBreakdown }: { office: Cas
                 <Mini label="Approved expenses for selected period" value={money(office.dailyApprovedExpenses)} />
                 <Mini label="Banked for selected period" value={money(office.dailyBanked)} />
                 <Mini label="Handed to Admin for selected period" value={money(office.dailyHandedToAdmin)} />
-                <Mini label="Money at office for selected period" value={money(office.dailyCashRemainingAtOffice)} risky={office.dailyCashRemainingAtOffice < 0} />
+                <Mini label="Money at office for selected period" value={money(office.dailyCashRemainingAtOffice)} risky={office.cashReconciliationDifference > 0} />
+                <Mini label="Cash Reconciliation Difference" value={money(office.cashReconciliationDifference)} risky={office.cashReconciliationDifference > 0} />
                 <Mini label="Expense count" value={office.expenseCount.toLocaleString()} />
                 <Mini label="Collectors" value={office.collectorCount.toLocaleString()} />
                 <Mini label="Collector cash" value={money(office.cashHeldByCollectors)} />
@@ -1031,6 +1043,7 @@ function OfficeExpansionPanel({ office, onViewReceiptsBreakdown }: { office: Cas
                 <Mini label="Average payment" value={money(office.numberOfReceipts ? office.monthlyPerformance / office.numberOfReceipts : 0)} />
                 <Mini label="Largest payment" value={money(office.largestPayment)} />
                 <Mini label="Last payment" value={dateTime(office.lastPaymentAt)} wide />
+                <Mini label="Likely reconciliation cause" value={office.cashReconciliationCause} wide />
                 <Mini label="Reconciliation status" value={office.statusReason} wide />
             </div>
         </section>

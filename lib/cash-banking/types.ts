@@ -15,7 +15,10 @@ export type CashOfficeSummary = {
     collectedToday: number;
     collectedPeriod: number;
     expensesPeriod: number;
+    cashReconciliationCause: string;
+    cashReconciliationDifference: number;
     moneyAtOffice: number;
+    rawMoneyAtOffice: number;
     moneyBanked: number;
     adminFloatReceived: number;
     bankingCount: number;
@@ -63,6 +66,8 @@ export type CashBankingData = {
         collectedPeriod: number;
         expensesPeriod: number;
         moneyAtOffices: number;
+        rawMoneyAtOffices: number;
+        cashReconciliationDifference: number;
         moneyBanked: number;
         moneyAtBank: number;
         adminCashBalance: number;
