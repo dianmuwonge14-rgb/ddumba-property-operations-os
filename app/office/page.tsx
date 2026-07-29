@@ -1,5 +1,7 @@
 import { getDashboardLiveData } from "@/lib/dashboard-live/data";
 import DashboardMissionControl from "@/components/office/dashboard-live/DashboardMissionControl";
+import { requireAuth } from "@/lib/auth/permissions";
+import { redirect } from "next/navigation";
 
 type PageProps = {
     searchParams: Promise<{ startDate?: string; endDate?: string; period?: string }>;
@@ -22,6 +24,11 @@ function resolvePeriod(searchParams: Awaited<PageProps["searchParams"]>) {
 }
 
 export default async function OfficeHomePage({ searchParams }: PageProps) {
+    const context = await requireAuth();
+    if (context.isCompanyAdmin && !context.isOfficeMode) {
+        redirect("/office/admin/cash-position");
+    }
+
     const data = await getDashboardLiveData(resolvePeriod(await searchParams));
 
     return <DashboardMissionControl data={data} />;

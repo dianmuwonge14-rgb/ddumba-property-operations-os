@@ -1,4 +1,6 @@
 export type CashPositionFilters = {
+    bankingStatus?: string | null;
+    collectorId?: string | null;
     endDate?: string;
     officeId?: string | null;
     paymentMethod?: string | null;
@@ -8,6 +10,7 @@ export type CashPositionFilters = {
 
 export type CashPositionKpi = {
     label: string;
+    previousValue?: number;
     value: number;
     hint: string;
     tone: "green" | "blue" | "cyan" | "amber" | "red" | "violet";
@@ -74,6 +77,19 @@ export type CashPositionChartPoint = {
     value: number;
 };
 
+export type CashPositionDailyCard = {
+    amountBanked: number;
+    amountHandedToAdmin: number;
+    cashStillHeld: number;
+    changeFromPreviousDay: number;
+    date: string;
+    receiptCount: number;
+    strongestCollector: string;
+    strongestOffice: string;
+    totalCollected: number;
+    trend: "up" | "down" | "flat";
+};
+
 export type CashPositionData = {
     charts: {
         bankingTimeline: CashPositionChartPoint[];
@@ -82,10 +98,14 @@ export type CashPositionData = {
         monthlyCollections: CashPositionChartPoint[];
         officeComparison: CashPositionChartPoint[];
         officeRanking: CashPositionChartPoint[];
+        securityLiability: CashPositionChartPoint[];
     };
     collectors: CashPositionCollectorRow[];
     companyName: string;
+    dailyCards: CashPositionDailyCard[];
     filters: Required<Omit<CashPositionFilters, "officeId" | "paymentMethod">> & {
+        bankingStatus: string | null;
+        collectorId: string | null;
         officeId: string | null;
         paymentMethod: string | null;
     };

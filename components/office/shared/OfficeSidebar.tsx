@@ -41,6 +41,7 @@ const adminSections = [
     {
         label: "Executive Command",
         items: [
+            { href: "/office/admin/cash-position", label: "Cash Position Centre", icon: Landmark },
             { href: "/office", label: "Dashboard", icon: Home },
         ],
     },
@@ -61,7 +62,6 @@ const adminSections = [
             { href: "/office/landlords", label: "Landlords Portfolio", icon: UsersRound },
             { href: "/office/notifications", label: "Notifications", icon: Bell },
             { href: "/office/admin/cash-banking", label: "Cash Banking", icon: WalletCards },
-            { href: "/office/admin/cash-position", label: "Cash Position Centre", icon: Landmark },
             { href: "/office/bad-debt", label: "Bad Debt Recovery", icon: Archive },
         ],
     },
@@ -183,6 +183,7 @@ export default function OfficeSidebar({ isAdmin, isCollector = false, officeName
     const pathname = usePathname();
     const moduleTheme = themeForPath(pathname);
     const sections = isCollector ? collectorSections : isAdmin ? adminSections : officeSections;
+    const logoHref = isAdmin ? "/office/admin/cash-position" : isCollector ? "/office/collector" : "/office";
     const activeItem = sections.flatMap((section) => section.items).find((item) => pathname === item.href || (item.href !== "/office" && pathname.startsWith(item.href)));
     const checkInTime = attendance.firstCheckIn
         ? new Intl.DateTimeFormat("en-UG", { timeZone: "Africa/Kampala", hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(attendance.firstCheckIn))
@@ -210,9 +211,9 @@ export default function OfficeSidebar({ isAdmin, isCollector = false, officeName
                 <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_14%_0%,rgba(59,130,246,0.28),transparent_28%),radial-gradient(circle_at_86%_0%,rgba(20,184,166,0.18),transparent_26%)]" />
                 <div className="app-header-main relative mx-auto grid max-w-[1800px] grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-3">
                     <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
-                        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-blue-500 via-cyan-400 to-emerald-400 text-white shadow-lg shadow-cyan-500/20 ring-1 ring-white/20 sm:h-11 sm:w-11">
+                        <Link href={logoHref} aria-label="Open role landing page" className="grid h-9 w-9 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-blue-500 via-cyan-400 to-emerald-400 text-white shadow-lg shadow-cyan-500/20 ring-1 ring-white/20 transition hover:scale-105 motion-reduce:transform-none sm:h-11 sm:w-11">
                             <WalletCards size={19} />
-                        </div>
+                        </Link>
                         <div className="min-w-0">
                             <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
                                 <p className="whitespace-nowrap text-xs font-black tracking-wide text-white sm:text-sm">DDUMBA OS</p>

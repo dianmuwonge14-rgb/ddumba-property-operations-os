@@ -82,6 +82,8 @@ function resolveFilters(input: CashPositionFilters = {}) {
 
     if (startDate > endDate) [startDate, endDate] = [endDate, startDate];
     return {
+        bankingStatus: input.bankingStatus || null,
+        collectorId: input.collectorId || null,
         endDate,
         officeId: input.officeId || null,
         paymentMethod: input.paymentMethod || null,
@@ -251,6 +253,7 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
     const allCollections = ((collectionsResult.data ?? []) as Row[])
         .filter((row) => row.office_id && visibleOfficeIds.has(String(row.office_id)))
         .filter(isActiveCollection)
+        .filter((row) => !filters.collectorId || String(row.recorded_by ?? "") === filters.collectorId)
         .filter((row) => !filters.paymentMethod || String(row.payment_method ?? "").toLowerCase() === filters.paymentMethod.toLowerCase());
     const periodCollections = allCollections.filter((row) => inRange(collectionDate(row), filters.startDate, filters.endDate));
     const today = kampalaDate();
@@ -337,7 +340,7 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         collectorCashByOffice.set(collector.officeId, (collectorCashByOffice.get(collector.officeId) ?? 0) + collector.cashInHand);
     }
 
-    const officeRows: CashPositionOfficeRow[] = offices.map((office) => {
+    let officeRows: CashPositionOfficeRow[] = offices.map((office) => {
         const officeCollections = periodCollections.filter((row) => row.office_id === office.id);
         const officeToday = todayCollections.filter((row) => row.office_id === office.id);
         const officeWeek = weekCollections.filter((row) => row.office_id === office.id);
@@ -380,6 +383,14 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         };
     });
 
+    if (filters.bankingStatus === "healthy" || filters.bankingStatus === "attention" || filters.bankingStatus === "critical") {
+        officeRows = officeRows.filter((row) => row.status === filters.bankingStatus);
+    } else if (filters.bankingStatus === "waiting") {
+        officeRows = officeRows.filter((row) => row.outstandingToBank > 0);
+    } else if (filters.bankingStatus === "banked") {
+        officeRows = officeRows.filter((row) => row.alreadyBanked > 0);
+    }
+
     const cashHeldByOffices = sum(officeRows, (row) => row.cashHeldInOffice);
     const cashHeldByCollectors = sum(collectors, (row) => row.cashInHand);
     const totalBanked = sum(bankOutflows, (row) => numberValue(row.amount));
@@ -401,16 +412,16 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         unreconciledCash,
     };
     const kpis: CashPositionKpi[] = [
-        { label: "Total Cash Collected Today", value: totals.totalCashCollectedToday, hint: "Posted collections dated today", tone: "green" },
-        { label: "Cash Currently Held By Offices", value: totals.cashHeldByOffices, hint: "Live office cash ledger", tone: totals.cashHeldByOffices < 0 ? "red" : "blue" },
-        { label: "Cash Currently Held By Collectors", value: totals.cashHeldByCollectors, hint: "Field collector profile balances", tone: "cyan" },
-        { label: "Total Cash Already Banked", value: totals.totalBanked, hint: "Bank deposit outflows", tone: "violet" },
-        { label: "Total Cash Handed To Admin", value: totals.totalCashHandedToAdmin, hint: "Admin cash received ledger", tone: "amber" },
-        { label: "Security Deposits Held", value: totals.securityDepositsHeld, hint: "Separate tenant liability", tone: "violet" },
-        { label: "Company Cash Available", value: totals.companyCashAvailable, hint: "Bank + admin + office + collector cash", tone: totals.companyCashAvailable < 0 ? "red" : "green" },
-        { label: "Cash Waiting To Be Banked", value: totals.cashWaitingToBeBanked, hint: "Positive office cash exposure", tone: totals.cashWaitingToBeBanked > 1_000_000 ? "amber" : "blue" },
-        { label: "Unreconciled Cash", value: totals.unreconciledCash, hint: "Negative office cash requiring review", tone: totals.unreconciledCash > 0 ? "red" : "green" },
-        { label: "Cash Difference Alerts", value: totals.cashDifferenceAlerts, hint: "Offices in attention or critical state", tone: totals.cashDifferenceAlerts > 0 ? "red" : "green" },
+        { label: "Total Cash Collected", previousValue: sum(previousComparableCollections, collectionAmount), value: totals.totalCashCollectedToday, hint: "Posted collections dated today", tone: "green" },
+        { label: "Cash Held by Offices", previousValue: 0, value: totals.cashHeldByOffices, hint: "Live office cash ledger", tone: totals.cashHeldByOffices < 0 ? "red" : "blue" },
+        { label: "Cash Held by Collectors", previousValue: 0, value: totals.cashHeldByCollectors, hint: "Field collector profile balances", tone: "cyan" },
+        { label: "Cash Banked", previousValue: sum(bankOutflows.filter((row) => inRange(movementDate(row), addDays(filters.startDate, -7), addDays(filters.endDate, -7))), (row) => numberValue(row.amount)), value: totals.totalBanked, hint: "Bank deposit outflows", tone: "violet" },
+        { label: "Cash Handed to Admin", previousValue: 0, value: totals.totalCashHandedToAdmin, hint: "Admin cash received ledger", tone: "amber" },
+        { label: "Outstanding to Bank", previousValue: 0, value: totals.cashWaitingToBeBanked, hint: "Positive office cash exposure", tone: totals.cashWaitingToBeBanked > 1_000_000 ? "amber" : "blue" },
+        { label: "Unreconciled Cash", previousValue: 0, value: totals.unreconciledCash, hint: "Negative office cash requiring review", tone: totals.unreconciledCash > 0 ? "red" : "green" },
+        { label: "Security Deposit Cash", previousValue: 0, value: totals.securityDepositsHeld, hint: "Separate tenant liability", tone: "violet" },
+        { label: "Security Shortfall", previousValue: 0, value: securityShortfall, hint: "Security liability not physically available", tone: securityShortfall > 0 ? "red" : "green" },
+        { label: "Today’s Collection Performance", previousValue: sum(previousComparableCollections, collectionAmount), value: totals.totalCashCollectedToday, hint: "Today versus comparable recent cash", tone: totals.totalCashCollectedToday >= sum(previousComparableCollections, collectionAmount) ? "green" : "amber" },
     ];
 
     const byDay = new Map<string, number>();
@@ -419,6 +430,34 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         const date = collectionDate(row);
         if (byDay.has(date)) byDay.set(date, (byDay.get(date) ?? 0) + collectionAmount(row));
     }
+    const dailyCards = [...byDay.entries()].map(([date, totalCollected], index, entries) => {
+        const rows = allCollections.filter((row) => collectionDate(row) === date);
+        const banked = sum(bankOutflows.filter((row) => movementDate(row) === date), (row) => numberValue(row.amount));
+        const handedToAdmin = sum(adminCashReceived.filter((row) => movementDate(row) === date), (row) => numberValue(row.amount));
+        const previous = index > 0 ? entries[index - 1][1] : 0;
+        const officesForDay = new Map<string, number>();
+        const collectorsForDay = new Map<string, number>();
+        for (const row of rows) {
+            const officeId = String(row.office_id ?? "");
+            const collectorId = String(row.recorded_by ?? "");
+            officesForDay.set(officeId, (officesForDay.get(officeId) ?? 0) + collectionAmount(row));
+            collectorsForDay.set(collectorId, (collectorsForDay.get(collectorId) ?? 0) + collectionAmount(row));
+        }
+        const topOfficeId = [...officesForDay.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+        const topCollectorId = [...collectorsForDay.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+        return {
+            amountBanked: banked,
+            amountHandedToAdmin: handedToAdmin,
+            cashStillHeld: Math.max(0, totalCollected - banked - handedToAdmin),
+            changeFromPreviousDay: totalCollected - previous,
+            date,
+            receiptCount: rows.length,
+            strongestCollector: topCollectorId ? String(userById.get(topCollectorId)?.full_name ?? userById.get(topCollectorId)?.email ?? "Collector") : "No collections",
+            strongestOffice: topOfficeId ? officeById.get(topOfficeId) ?? "Office" : "No office",
+            totalCollected,
+            trend: totalCollected > previous ? "up" as const : totalCollected < previous ? "down" as const : "flat" as const,
+        };
+    });
     const byMonth = new Map<string, number>();
     for (const row of allCollections) {
         const month = collectionDate(row).slice(0, 7);
@@ -432,12 +471,19 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         monthlyCollections: [...byMonth.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-6).map(([label, value]) => ({ label, value })),
         officeComparison: chartTop(officeRows.map((row) => ({ label: row.officeName, value: row.monthlyPerformance }))),
         officeRanking: chartTop(officeRows.map((row) => ({ label: row.officeName, value: row.cashCollectedToday }))),
+        securityLiability: [
+            { label: "Liability", value: securityDepositsHeld },
+            { label: "Available", value: sum(securityRows, (row) => numberValue(row.cash_available)) },
+            { label: "Used", value: sum(securityRows, (row) => numberValue(row.amount_used_by_company)) },
+            { label: "Shortfall", value: securityShortfall },
+        ],
     };
 
     return {
         charts,
         collectors: collectors.sort((a, b) => b.todayCollections - a.todayCollections),
         companyName: context.activeCompany?.name ?? "Ddumba OS",
+        dailyCards,
         filters,
         generatedAt: new Date().toISOString(),
         insights: buildInsights({ collectors, offices: officeRows, securityShortfall, totals }),

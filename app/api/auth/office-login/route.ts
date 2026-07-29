@@ -232,6 +232,6 @@ export async function POST(request: Request) {
             id: identity.office_id,
             name: identity.office_name ?? "Office",
         },
-        redirectTo: identity.redirect_to ?? (isAdmin ? "/office/admin" : isCollector ? "/office/collector" : "/office"),
+        redirectTo: identity.redirect_to ?? (isAdmin ? "/office/admin/cash-position" : isCollector ? "/office/collector" : "/office"),
     });
 }

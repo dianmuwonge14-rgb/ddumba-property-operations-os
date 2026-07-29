@@ -5,25 +5,36 @@ import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
     AlertTriangle,
+    ArrowDownRight,
+    ArrowUpRight,
     Banknote,
     Brain,
     Building2,
     CalendarDays,
     ChevronDown,
     Download,
+    Eye,
     FileSpreadsheet,
     FileText,
     Landmark,
     LineChart,
     Printer,
     RefreshCw,
+    Search,
     ShieldAlert,
     TrendingDown,
     TrendingUp,
     UsersRound,
     WalletCards,
+    X,
 } from "lucide-react";
-import type { CashPositionChartPoint, CashPositionData, CashPositionOfficeRow } from "@/lib/cash-position-centre/types";
+import type {
+    CashPositionChartPoint,
+    CashPositionCollectorRow,
+    CashPositionDailyCard,
+    CashPositionData,
+    CashPositionOfficeRow,
+} from "@/lib/cash-position-centre/types";
 
 type Props = {
     data: CashPositionData;
@@ -34,6 +45,18 @@ const moneyFormatter = new Intl.NumberFormat("en-UG", {
     maximumFractionDigits: 0,
     style: "currency",
 });
+
+const periodOptions = [
+    ["today", "Today"],
+    ["yesterday", "Yesterday"],
+    ["last7", "Last 7 Days"],
+    ["month", "This Month"],
+    ["previousMonth", "Previous Month"],
+    ["year", "This Year"],
+    ["financialYear", "Financial Year"],
+    ["specificDay", "Specific Day"],
+    ["custom", "Custom Range"],
+] as const;
 
 function money(value: number) {
     return moneyFormatter.format(Math.round(value || 0)).replace("UGX", "UGX ");
@@ -50,14 +73,31 @@ function dateTime(value: string | null | undefined) {
     return parsed.toLocaleString("en-UG", { dateStyle: "medium", timeStyle: "short" });
 }
 
+function dateLabel(value: string) {
+    const parsed = new Date(`${value}T00:00:00+03:00`);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleDateString("en-UG", { day: "2-digit", month: "short" });
+}
+
+function kpiIcon(label: string) {
+    if (label.includes("Collected")) return <Banknote size={20} />;
+    if (label.includes("Offices")) return <Building2 size={20} />;
+    if (label.includes("Collectors")) return <UsersRound size={20} />;
+    if (label.includes("Banked")) return <Landmark size={20} />;
+    if (label.includes("Admin")) return <ShieldAlert size={20} />;
+    if (label.includes("Security")) return <WalletCards size={20} />;
+    if (label.includes("Unreconciled") || label.includes("Shortfall")) return <AlertTriangle size={20} />;
+    return <LineChart size={20} />;
+}
+
 function toneClasses(tone: string) {
     const tones: Record<string, string> = {
-        amber: "border-amber-300/20 bg-amber-300/10 text-amber-50",
-        blue: "border-blue-300/20 bg-blue-300/10 text-blue-50",
-        cyan: "border-cyan-300/20 bg-cyan-300/10 text-cyan-50",
-        green: "border-emerald-300/20 bg-emerald-300/10 text-emerald-50",
-        red: "border-red-300/20 bg-red-400/10 text-red-50",
-        violet: "border-violet-300/20 bg-violet-300/10 text-violet-50",
+        amber: "border-amber-300/25 from-amber-400/18 via-slate-900/80 to-slate-950 text-amber-50 shadow-amber-950/20",
+        blue: "border-blue-300/25 from-blue-400/18 via-slate-900/80 to-slate-950 text-blue-50 shadow-blue-950/20",
+        cyan: "border-cyan-300/25 from-cyan-400/18 via-slate-900/80 to-slate-950 text-cyan-50 shadow-cyan-950/20",
+        green: "border-emerald-300/25 from-emerald-400/18 via-slate-900/80 to-slate-950 text-emerald-50 shadow-emerald-950/20",
+        red: "border-red-300/30 from-red-400/20 via-slate-900/80 to-slate-950 text-red-50 shadow-red-950/20",
+        violet: "border-violet-300/25 from-violet-400/18 via-slate-900/80 to-slate-950 text-violet-50 shadow-violet-950/20",
     };
     return tones[tone] ?? tones.blue;
 }
@@ -71,6 +111,8 @@ function statusBadge(status: CashPositionOfficeRow["status"]) {
 export default function CashPositionCentre({ data }: Props) {
     const router = useRouter();
     const [filters, setFilters] = useState({
+        bankingStatus: data.filters.bankingStatus ?? "",
+        collectorId: data.filters.collectorId ?? "",
         endDate: data.filters.endDate,
         officeId: data.filters.officeId ?? "",
         paymentMethod: data.filters.paymentMethod ?? "",
@@ -78,6 +120,7 @@ export default function CashPositionCentre({ data }: Props) {
         startDate: data.filters.startDate,
     });
     const [expandedOffice, setExpandedOffice] = useState<string | null>(data.officeRows[0]?.officeId ?? null);
+    const [spotlight, setSpotlight] = useState<string | null>(null);
 
     const csv = useMemo(() => {
         const rows = [
@@ -129,8 +172,22 @@ export default function CashPositionCentre({ data }: Props) {
             params.set("endDate", filters.endDate);
         }
         if (filters.officeId) params.set("officeId", filters.officeId);
+        if (filters.collectorId) params.set("collectorId", filters.collectorId);
         if (filters.paymentMethod) params.set("paymentMethod", filters.paymentMethod);
+        if (filters.bankingStatus) params.set("bankingStatus", filters.bankingStatus);
         router.push(`/office/admin/cash-position?${params.toString()}`);
+    }
+
+    function clearFilters() {
+        setFilters((current) => ({
+            ...current,
+            bankingStatus: "",
+            collectorId: "",
+            officeId: "",
+            paymentMethod: "",
+            period: "today",
+        }));
+        router.push("/office/admin/cash-position");
     }
 
     function downloadCsv(filename = "cash-position-centre.csv", content = csv, type = "text/csv;charset=utf-8") {
@@ -145,106 +202,127 @@ export default function CashPositionCentre({ data }: Props) {
 
     const syncedAt = dateTime(data.generatedAt);
     const expanded = data.officeRows.find((office) => office.officeId === expandedOffice) ?? data.officeRows[0] ?? null;
+    const activeFilters = [
+        filters.period !== "today" ? periodOptions.find(([value]) => value === filters.period)?.[1] : null,
+        filters.officeId ? data.offices.find((office) => office.id === filters.officeId)?.name : null,
+        filters.collectorId ? data.collectors.find((collector) => collector.collectorId === filters.collectorId)?.collectorName : null,
+        filters.paymentMethod || null,
+        filters.bankingStatus || null,
+    ].filter(Boolean);
 
     return (
-        <main className="min-h-screen bg-slate-950 px-3 py-5 text-white sm:px-5 lg:px-8">
-            <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_8%_0%,rgba(20,184,166,0.22),transparent_28%),radial-gradient(circle_at_92%_5%,rgba(59,130,246,0.24),transparent_28%),linear-gradient(180deg,rgba(15,23,42,0),rgba(2,6,23,0.88))]" />
+        <main className="min-h-screen bg-[#030712] px-3 py-5 text-white sm:px-5 lg:px-8">
+            <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_9%_0%,rgba(16,185,129,0.22),transparent_26%),radial-gradient(circle_at_75%_2%,rgba(14,165,233,0.22),transparent_28%),radial-gradient(circle_at_95%_18%,rgba(245,158,11,0.12),transparent_22%),linear-gradient(135deg,#020617_0%,#07111f_48%,#111827_100%)]" />
+            <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:72px_72px] opacity-20" />
             <div className="relative mx-auto max-w-[1800px] space-y-5">
-                <header className="overflow-hidden rounded-[28px] border border-white/10 bg-white/[0.06] p-5 shadow-2xl shadow-black/30 backdrop-blur-2xl">
+                <header className="overflow-hidden rounded-[30px] border border-white/10 bg-white/[0.065] p-5 shadow-2xl shadow-black/35 backdrop-blur-2xl">
+                    <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-200/70 to-transparent" />
                     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
                         <div>
                             <div className="flex flex-wrap items-center gap-2">
-                                <span className="rounded-full border border-emerald-300/25 bg-emerald-300/10 px-3 py-1 text-xs font-black uppercase tracking-wide text-emerald-100">Admin only</span>
-                                <span className="rounded-full border border-cyan-300/25 bg-cyan-300/10 px-3 py-1 text-xs font-black uppercase tracking-wide text-cyan-100">Live Supabase</span>
-                                <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black uppercase tracking-wide text-slate-200">CFO dashboard</span>
+                                <Pill tone="green">Admin only</Pill>
+                                <Pill tone="cyan">Live Supabase</Pill>
+                                <Pill tone="gold">CFO command centre</Pill>
                             </div>
-                            <h1 className="mt-4 text-3xl font-black tracking-tight sm:text-5xl">Cash Position Centre</h1>
+                            <h1 className="mt-4 max-w-5xl text-3xl font-black tracking-tight sm:text-5xl">Cash Position Centre</h1>
                             <p className="mt-2 max-w-4xl text-sm font-semibold leading-6 text-slate-300 sm:text-base">
-                                Real-time treasury control across collection, office cash, collector cash, banking, admin handover and security-liability exposure for {data.companyName}.
+                                Executive treasury control across office cash, collector cash, banking, admin handover and security-liability exposure for {data.companyName}.
                             </p>
                             <p className="mt-3 text-xs font-black uppercase tracking-[0.2em] text-slate-400">Last synced {syncedAt}</p>
                         </div>
                         <div className="flex flex-wrap gap-2">
-                            <button onClick={() => router.refresh()} className="inline-flex items-center gap-2 rounded-2xl border border-cyan-300/20 bg-cyan-300/10 px-4 py-3 text-sm font-black text-cyan-100 hover:bg-cyan-300 hover:text-slate-950">
-                                <RefreshCw size={16} /> Refresh
-                            </button>
-                            <button onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-black text-white hover:bg-white/15">
-                                <Printer size={16} /> Print
-                            </button>
-                            <button onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-black text-white hover:bg-white/15">
-                                <FileText size={16} /> PDF
-                            </button>
-                            <button onClick={() => downloadCsv()} className="inline-flex items-center gap-2 rounded-2xl bg-emerald-300 px-4 py-3 text-sm font-black text-slate-950 hover:bg-emerald-200">
-                                <Download size={16} /> CSV
-                            </button>
-                            <button onClick={() => downloadCsv("cash-position-centre.xls", csv, "application/vnd.ms-excel")} className="inline-flex items-center gap-2 rounded-2xl bg-cyan-300 px-4 py-3 text-sm font-black text-slate-950 hover:bg-cyan-200">
-                                <FileSpreadsheet size={16} /> Excel
-                            </button>
+                            <ActionButton onClick={() => router.refresh()} icon={<RefreshCw size={16} />}>Refresh Live Data</ActionButton>
+                            <ActionButton onClick={() => window.print()} icon={<Printer size={16} />}>Print</ActionButton>
+                            <ActionButton onClick={() => window.print()} icon={<FileText size={16} />}>PDF</ActionButton>
+                            <PrimaryButton onClick={() => downloadCsv()} icon={<Download size={16} />}>CSV</PrimaryButton>
+                            <PrimaryButton onClick={() => downloadCsv("cash-position-centre.xls", csv, "application/vnd.ms-excel")} icon={<FileSpreadsheet size={16} />}>Excel</PrimaryButton>
                         </div>
                     </div>
                 </header>
 
                 <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                     {data.kpis.map((kpi) => (
-                        <article key={kpi.label} className={`rounded-[24px] border p-4 shadow-xl shadow-black/20 backdrop-blur ${toneClasses(kpi.tone)}`}>
-                            <p className="text-[11px] font-black uppercase tracking-wide text-slate-300">{kpi.label}</p>
-                            <p className="mt-3 break-words text-2xl font-black tracking-tight text-white">{kpi.label.includes("Alerts") ? Math.round(kpi.value).toLocaleString() : money(kpi.value)}</p>
-                            <p className="mt-2 text-xs font-semibold leading-5 text-slate-300">{kpi.hint}</p>
-                        </article>
+                        <button
+                            key={kpi.label}
+                            title={kpi.hint}
+                            onClick={() => setSpotlight((current) => current === kpi.label ? null : kpi.label)}
+                            className={`group relative min-h-[160px] overflow-hidden rounded-[26px] border bg-gradient-to-br p-4 text-left shadow-2xl backdrop-blur transition duration-300 hover:-translate-y-1 hover:shadow-cyan-950/40 focus:outline-none focus:ring-4 focus:ring-cyan-300/15 motion-reduce:transform-none ${toneClasses(kpi.tone)} ${spotlight === kpi.label ? "ring-2 ring-cyan-200/60" : ""}`}
+                        >
+                            <div className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-white/10 blur-2xl transition group-hover:bg-white/16" />
+                            <div className="flex items-start justify-between gap-3">
+                                <span className="grid h-11 w-11 place-items-center rounded-2xl border border-white/10 bg-white/10 text-white shadow-lg transition duration-300 group-hover:scale-105 motion-reduce:transform-none">{kpiIcon(kpi.label)}</span>
+                                <TrendChip current={kpi.value} previous={kpi.previousValue} tone={kpi.tone} />
+                            </div>
+                            <p className="mt-4 text-[11px] font-black uppercase tracking-wide text-slate-300">{kpi.label}</p>
+                            <p className="mt-2 break-words text-2xl font-black tracking-tight text-white">{kpi.label.includes("Alerts") ? Math.round(kpi.value).toLocaleString() : money(kpi.value)}</p>
+                            <p className="mt-2 text-xs font-bold leading-5 text-slate-300">{kpi.hint}</p>
+                            <p className="mt-3 text-[10px] font-black uppercase tracking-wide text-cyan-100">Updated {syncedAt}</p>
+                        </button>
                     ))}
                 </section>
 
-                <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-                    <div className="rounded-[28px] border border-white/10 bg-white/[0.055] p-4 shadow-2xl shadow-black/25 backdrop-blur-2xl">
-                        <div className="mb-3 flex items-center gap-3">
-                            <CalendarDays size={18} className="text-cyan-200" />
+                <section className="rounded-[30px] border border-white/10 bg-white/[0.06] p-4 shadow-2xl shadow-black/25 backdrop-blur-2xl">
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                            <span className="grid h-11 w-11 place-items-center rounded-2xl bg-cyan-300/15 text-cyan-100"><Search size={18} /></span>
                             <div>
-                                <h2 className="text-lg font-black">Treasury Filters</h2>
-                                <p className="text-xs font-semibold text-slate-400">Filter by period, office and payment method without loading unrelated ledgers into the browser.</p>
+                                <h2 className="text-lg font-black">Treasury Filter Bar</h2>
+                                <p className="text-xs font-semibold text-slate-400">Fast server summaries, scoped filters and export actions without loading every receipt.</p>
                             </div>
                         </div>
-                        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-                            <Select label="Period" value={filters.period} onChange={(value) => setFilters((current) => ({ ...current, period: value }))} options={[
-                                ["today", "Today"],
-                                ["yesterday", "Yesterday"],
-                                ["last7", "Last 7 Days"],
-                                ["month", "This Month"],
-                                ["previousMonth", "Previous Month"],
-                                ["year", "Year"],
-                                ["financialYear", "Financial Year"],
-                                ["custom", "Custom Date Range"],
-                                ["specificDay", "Specific Day"],
-                            ]} />
-                            <Input label="Start date" type="date" value={filters.startDate} onChange={(value) => setFilters((current) => ({ ...current, startDate: value }))} />
-                            <Input label="End date" type="date" value={filters.endDate} onChange={(value) => setFilters((current) => ({ ...current, endDate: value }))} />
-                            <Select label="Office" value={filters.officeId} onChange={(value) => setFilters((current) => ({ ...current, officeId: value }))} options={[["", "All offices"], ...data.offices.map((office) => [office.id, office.name] as [string, string])]} />
-                            <Select label="Payment Method" value={filters.paymentMethod} onChange={(value) => setFilters((current) => ({ ...current, paymentMethod: value }))} options={[["", "All methods"], ["cash", "Cash"], ["mobile_money", "Mobile Money"], ["bank", "Bank"], ["other", "Other"]]} />
-                            <button onClick={applyFilters} className="mt-5 inline-flex h-[46px] items-center justify-center gap-2 rounded-2xl bg-white px-4 text-sm font-black text-slate-950 hover:bg-cyan-100">
-                                <RefreshCw size={16} /> Apply
-                            </button>
+                        <div className="flex flex-wrap gap-2">
+                            {activeFilters.map((filter) => <Pill key={String(filter)} tone="cyan">{filter}</Pill>)}
+                            {activeFilters.length ? <button onClick={clearFilters} className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white hover:bg-white/15"><X size={13} /> Clear Filters</button> : null}
                         </div>
                     </div>
+                    <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">
+                        <Select label="Period" value={filters.period} onChange={(value) => setFilters((current) => ({ ...current, period: value }))} options={periodOptions as unknown as Array<[string, string]>} />
+                        <Input label="Start date" type="date" value={filters.startDate} onChange={(value) => setFilters((current) => ({ ...current, startDate: value }))} />
+                        <Input label="End date" type="date" value={filters.endDate} onChange={(value) => setFilters((current) => ({ ...current, endDate: value }))} />
+                        <Select label="Office" value={filters.officeId} onChange={(value) => setFilters((current) => ({ ...current, officeId: value }))} options={[["", "All offices"], ...data.offices.map((office) => [office.id, office.name] as [string, string])]} />
+                        <Select label="Collector" value={filters.collectorId} onChange={(value) => setFilters((current) => ({ ...current, collectorId: value }))} options={[["", "All collectors"], ...data.collectors.map((collector) => [collector.collectorId, collector.collectorName] as [string, string])]} />
+                        <Select label="Payment Method" value={filters.paymentMethod} onChange={(value) => setFilters((current) => ({ ...current, paymentMethod: value }))} options={[["", "All methods"], ["cash", "Cash"], ["mobile_money", "Mobile Money"], ["bank", "Bank"], ["other", "Other"]]} />
+                        <Select label="Banking Status" value={filters.bankingStatus} onChange={(value) => setFilters((current) => ({ ...current, bankingStatus: value }))} options={[["", "All status"], ["healthy", "Healthy"], ["attention", "Needs attention"], ["critical", "Critical"], ["waiting", "Waiting to bank"], ["banked", "Banked"]]} />
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                        <PrimaryButton onClick={applyFilters} icon={<RefreshCw size={16} />}>Apply Filters</PrimaryButton>
+                        <ActionButton onClick={clearFilters} icon={<X size={16} />}>Clear Filters</ActionButton>
+                        <a href="/office/admin/cash-banking" className="inline-flex items-center gap-2 rounded-2xl border border-emerald-300/25 bg-emerald-300/12 px-4 py-3 text-sm font-black text-emerald-100 transition hover:-translate-y-0.5 hover:bg-emerald-300 hover:text-slate-950 motion-reduce:transform-none">
+                            <Landmark size={16} /> Open Banking Module
+                        </a>
+                    </div>
+                </section>
+
+                <section className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
                     <AICashDirector data={data} />
+                    <PremiumChart title="Security Liability vs Available Cash" icon={<ShieldAlert size={18} />} points={data.charts.securityLiability} mode="tiles" />
+                </section>
+
+                <section className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+                    <DailyCashCards cards={data.dailyCards} />
+                    <OfficeComparisonCards offices={data.officeRows} expandedOffice={expandedOffice} onSelect={setExpandedOffice} />
                 </section>
 
                 <section className="grid gap-4 xl:grid-cols-3">
-                    <ChartPanel title="Daily Cash Movement" icon={<LineChart size={18} />} points={data.charts.dailyCashMovement} />
-                    <ChartPanel title="Office Comparison" icon={<Building2 size={18} />} points={data.charts.officeComparison} />
-                    <ChartPanel title="Collector Comparison" icon={<UsersRound size={18} />} points={data.charts.collectorComparison} />
-                    <ChartPanel title="Monthly Collections" icon={<TrendingUp size={18} />} points={data.charts.monthlyCollections} />
-                    <ChartPanel title="Banking Timeline" icon={<Landmark size={18} />} points={data.charts.bankingTimeline} />
-                    <ChartPanel title="Office Ranking Heat Map" icon={<ShieldAlert size={18} />} points={data.charts.officeRanking} heat />
+                    <PremiumChart title="Banked vs Cash Held" icon={<Landmark size={18} />} points={[
+                        { label: "Banked", value: data.totals.totalBanked },
+                        { label: "Office cash", value: Math.max(0, data.totals.cashHeldByOffices) },
+                        { label: "Collector cash", value: data.totals.cashHeldByCollectors },
+                        { label: "To bank", value: data.totals.cashWaitingToBeBanked },
+                    ]} />
+                    <PremiumChart title="Collector Comparison" icon={<UsersRound size={18} />} points={data.charts.collectorComparison} />
+                    <PremiumChart title="Monthly Collection Trend" icon={<TrendingUp size={18} />} points={data.charts.monthlyCollections} />
                 </section>
 
-                <section className="rounded-[28px] border border-white/10 bg-white/[0.055] p-4 shadow-2xl shadow-black/25">
+                <section className="rounded-[30px] border border-white/10 bg-white/[0.06] p-4 shadow-2xl shadow-black/25">
                     <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                         <div>
                             <h2 className="text-xl font-black">Live Cash Position Table</h2>
-                            <p className="text-xs font-semibold text-slate-400">Every office, ranked by today’s collections and live cash exposure.</p>
+                            <p className="text-xs font-semibold text-slate-400">Every operational office ranked by today’s collections and live cash exposure.</p>
                         </div>
-                        <a href="/office/admin/cash-banking" className="rounded-2xl bg-emerald-300 px-4 py-2 text-sm font-black text-slate-950 hover:bg-emerald-200">Open Banking Module</a>
+                        <Pill tone="cyan">{data.officeRows.length.toLocaleString()} offices</Pill>
                     </div>
-                    <div className="overflow-auto rounded-2xl border border-white/10">
+                    <div className="overflow-auto rounded-3xl border border-white/10">
                         <table className="min-w-[1500px] border-collapse text-left text-sm">
                             <thead className="sticky top-0 bg-slate-950 text-[11px] uppercase text-slate-400">
                                 <tr>
@@ -255,7 +333,7 @@ export default function CashPositionCentre({ data }: Props) {
                             </thead>
                             <tbody>
                                 {data.officeRows.map((office) => (
-                                    <tr key={office.officeId} className="border-b border-white/6 bg-slate-950/50 hover:bg-white/[0.06]">
+                                    <tr key={office.officeId} className="border-b border-white/6 bg-slate-950/50 transition hover:bg-cyan-300/[0.07]">
                                         <td className="px-3 py-3">
                                             <button onClick={() => setExpandedOffice((current) => current === office.officeId ? null : office.officeId)} className="inline-flex items-center gap-2 font-black text-white">
                                                 <ChevronDown size={14} className={expandedOffice === office.officeId ? "rotate-180 transition" : "transition"} />
@@ -275,15 +353,8 @@ export default function CashPositionCentre({ data }: Props) {
                                         <MoneyCell value={office.todayPerformance} positive />
                                         <MoneyCell value={office.weeklyPerformance} positive />
                                         <MoneyCell value={office.monthlyPerformance} positive />
-                                        <td className="px-3 py-3">
-                                            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-black ${office.trend === "up" ? "bg-emerald-300/10 text-emerald-100" : office.trend === "down" ? "bg-red-300/10 text-red-100" : "bg-white/10 text-slate-200"}`}>
-                                                {office.trend === "up" ? <TrendingUp size={12} /> : office.trend === "down" ? <TrendingDown size={12} /> : <LineChart size={12} />}
-                                                {office.trend}
-                                            </span>
-                                        </td>
-                                        <td className="px-3 py-3">
-                                            <span className={`rounded-full border px-2 py-1 text-xs font-black uppercase ${statusBadge(office.status)}`}>{office.status}</span>
-                                        </td>
+                                        <td className="px-3 py-3"><TrendLabel trend={office.trend} /></td>
+                                        <td className="px-3 py-3"><span className={`rounded-full border px-2 py-1 text-xs font-black uppercase ${statusBadge(office.status)}`}>{office.status}</span></td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -293,101 +364,185 @@ export default function CashPositionCentre({ data }: Props) {
 
                 {expanded ? <OfficeExpansionPanel office={expanded} /> : null}
 
-                <section className="rounded-[28px] border border-white/10 bg-white/[0.055] p-4 shadow-2xl shadow-black/25">
-                    <div className="mb-4 flex items-center justify-between gap-3">
-                        <div>
-                            <h2 className="text-xl font-black">Collector Performance</h2>
-                            <p className="text-xs font-semibold text-slate-400">Live collector rankings from payment records and collector cash balances.</p>
-                        </div>
-                        <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-xs font-black text-cyan-100">{data.collectors.length.toLocaleString()} collectors</span>
-                    </div>
-                    <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
-                        {data.collectors.map((collector) => (
-                            <article key={collector.collectorId} className="rounded-[24px] border border-white/10 bg-slate-950/72 p-4">
-                                <div className="flex items-start gap-3">
-                                    <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-2xl bg-gradient-to-br from-cyan-300 to-emerald-300 text-lg font-black text-slate-950">
-                                        {collector.photoUrl ? <img src={collector.photoUrl} alt="" className="h-full w-full object-cover" /> : collector.collectorName.slice(0, 1)}
-                                    </div>
-                                    <div className="min-w-0 flex-1">
-                                        <p className="truncate text-sm font-black text-white">{collector.collectorName}</p>
-                                        <p className="text-xs font-semibold text-slate-400">{collector.officeName} · {collector.currentStatus}</p>
-                                    </div>
-                                    <span className={`rounded-full px-2 py-1 text-xs font-black ${collector.riskScore >= 70 ? "bg-red-400/15 text-red-100" : collector.riskScore >= 40 ? "bg-amber-400/15 text-amber-100" : "bg-emerald-400/15 text-emerald-100"}`}>Risk {collector.riskScore}%</span>
-                                </div>
-                                <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-                                    <Mini label="Today" value={money(collector.todayCollections)} />
-                                    <Mini label="This Week" value={money(collector.thisWeek)} />
-                                    <Mini label="This Month" value={money(collector.thisMonth)} />
-                                    <Mini label="Cash In Hand" value={money(collector.cashInHand)} risky={collector.cashInHand > 500_000} />
-                                    <Mini label="Submitted" value={money(collector.cashSubmitted)} />
-                                    <Mini label="Outstanding" value={money(collector.outstanding)} risky={collector.outstanding > 500_000} />
-                                    <Mini label="Average Receipt" value={money(collector.averageReceipt)} />
-                                    <Mini label="Largest Receipt" value={money(collector.largestReceipt)} />
-                                    <Mini label="Last Activity" value={dateTime(collector.lastActivity)} wide />
-                                    <Mini label="Reliability" value={percent(collector.reliability)} />
-                                    <Mini label="Speed" value={collector.collectionSpeed} />
-                                    <Mini label="Customer Rating" value={collector.customerRating} />
-                                </div>
-                            </article>
-                        ))}
-                        {!data.collectors.length ? <p className="rounded-2xl border border-dashed border-white/20 p-5 text-sm font-bold text-slate-400">No collector records are available for this company yet.</p> : null}
-                    </div>
-                </section>
+                <CollectorCards collectors={data.collectors} />
             </div>
         </main>
     );
 }
 
 function AICashDirector({ data }: { data: CashPositionData }) {
+    const lead = data.insights[0];
     return (
-        <section className="rounded-[28px] border border-cyan-300/20 bg-cyan-300/10 p-4 shadow-2xl shadow-cyan-950/20">
-            <div className="flex items-start gap-3">
-                <span className="grid h-11 w-11 place-items-center rounded-2xl bg-cyan-300 text-slate-950"><Brain size={20} /></span>
+        <section className="relative overflow-hidden rounded-[30px] border border-cyan-300/20 bg-gradient-to-br from-cyan-300/14 via-slate-900/78 to-slate-950 p-5 shadow-2xl shadow-cyan-950/25">
+            <div className="absolute -right-14 -top-14 h-44 w-44 rounded-full bg-cyan-300/16 blur-3xl" />
+            <div className="relative flex items-start gap-3">
+                <span className="grid h-12 w-12 place-items-center rounded-2xl bg-cyan-300 text-slate-950 shadow-lg shadow-cyan-400/20"><Brain size={22} /></span>
                 <div>
-                    <h2 className="text-lg font-black">AI Cash Director</h2>
-                    <p className="text-xs font-semibold leading-5 text-cyan-100">Executive recommendations from office balances, collector cash, banking movement and security exposure.</p>
+                    <p className="text-xs font-black uppercase tracking-[0.22em] text-cyan-100">Executive AI panel</p>
+                    <h2 className="mt-1 text-2xl font-black">AI Cash Director</h2>
+                    <p className="mt-1 text-sm font-semibold leading-6 text-cyan-50">Live treasury intelligence from office balances, collector cash, banking movement and security exposure.</p>
                 </div>
             </div>
-            <div className="mt-4 grid gap-3">
-                {data.insights.map((insight) => (
-                    <article key={insight.id} className={`rounded-2xl border p-3 ${insight.severity === "critical" ? "border-red-300/20 bg-red-400/10" : insight.severity === "warning" ? "border-amber-300/20 bg-amber-400/10" : insight.severity === "success" ? "border-emerald-300/20 bg-emerald-400/10" : "border-white/10 bg-slate-950/50"}`}>
-                        <p className="text-sm font-black text-white">{insight.title}</p>
-                        <p className="mt-1 text-xs font-semibold leading-5 text-slate-200">{insight.message}</p>
-                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+            {lead ? (
+                <article className="relative mt-5 rounded-3xl border border-white/10 bg-white/[0.07] p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-lg font-black text-white">{lead.title}</p>
+                        <RiskPill severity={lead.severity} />
+                    </div>
+                    <p className="mt-2 text-sm font-semibold leading-6 text-slate-200">{lead.message}</p>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                        <Mini label="UGX affected" value={money(lead.amount)} />
+                        <Mini label="Recommended action" value={lead.action} wide />
+                    </div>
+                </article>
+            ) : null}
+            <div className="relative mt-4 grid gap-3 lg:grid-cols-2">
+                {data.insights.slice(1).map((insight) => (
+                    <article key={insight.id} className={`rounded-2xl border p-3 transition hover:-translate-y-0.5 motion-reduce:transform-none ${insight.severity === "critical" ? "border-red-300/20 bg-red-400/10" : insight.severity === "warning" ? "border-amber-300/20 bg-amber-400/10" : insight.severity === "success" ? "border-emerald-300/20 bg-emerald-400/10" : "border-white/10 bg-slate-950/50"}`}>
+                        <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm font-black text-white">{insight.title}</p>
                             <span className="text-xs font-black text-cyan-100">{money(insight.amount)}</span>
-                            <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white">{insight.action}</span>
                         </div>
+                        <p className="mt-1 text-xs font-semibold leading-5 text-slate-300">{insight.message}</p>
+                        <button className="mt-3 rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white hover:bg-white hover:text-slate-950">{insight.action}</button>
                     </article>
+                ))}
+            </div>
+            <p className="relative mt-4 text-[10px] font-black uppercase tracking-wide text-slate-400">Last refreshed {dateTime(data.generatedAt)}</p>
+        </section>
+    );
+}
+
+function DailyCashCards({ cards }: { cards: CashPositionDailyCard[] }) {
+    return (
+        <section className="rounded-[30px] border border-white/10 bg-white/[0.055] p-4 shadow-2xl shadow-black/25">
+            <PanelHeading icon={<CalendarDays size={18} />} title="Daily Cash Movement" subtitle="Compact day cards replace plain bars and open a date-level cash story." />
+            <div className="mt-4 grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+                {cards.map((card) => (
+                    <button key={card.date} className="group rounded-[24px] border border-white/10 bg-slate-950/72 p-4 text-left shadow-xl shadow-black/15 transition duration-300 hover:-translate-y-1 hover:border-cyan-200/35 hover:bg-slate-900 motion-reduce:transform-none">
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <p className="text-xs font-black uppercase tracking-wide text-slate-400">{dateLabel(card.date)}</p>
+                                <p className="mt-1 text-xl font-black text-white">{money(card.totalCollected)}</p>
+                            </div>
+                            <TrendLabel trend={card.trend} value={card.changeFromPreviousDay} />
+                        </div>
+                        <div className="mt-4 grid grid-cols-2 gap-2">
+                            <Mini label="Banked" value={money(card.amountBanked)} />
+                            <Mini label="Admin" value={money(card.amountHandedToAdmin)} />
+                            <Mini label="Still held" value={money(card.cashStillHeld)} risky={card.cashStillHeld > 1_000_000} />
+                            <Mini label="Receipts" value={card.receiptCount.toLocaleString()} />
+                            <Mini label="Strongest office" value={card.strongestOffice} wide />
+                            <Mini label="Strongest collector" value={card.strongestCollector} wide />
+                        </div>
+                        <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-800">
+                            <div className="h-full rounded-full bg-gradient-to-r from-emerald-300 via-cyan-300 to-blue-400 transition-all group-hover:brightness-125" style={{ width: `${Math.min(100, Math.max(6, card.totalCollected ? ((card.amountBanked + card.amountHandedToAdmin) / card.totalCollected) * 100 : 6))}%` }} />
+                        </div>
+                    </button>
                 ))}
             </div>
         </section>
     );
 }
 
-function ChartPanel({ heat = false, icon, points, title }: { heat?: boolean; icon: ReactNode; points: CashPositionChartPoint[]; title: string }) {
+function OfficeComparisonCards({ expandedOffice, offices, onSelect }: { expandedOffice: string | null; offices: CashPositionOfficeRow[]; onSelect: (officeId: string) => void }) {
+    return (
+        <section className="rounded-[30px] border border-white/10 bg-white/[0.055] p-4 shadow-2xl shadow-black/25">
+            <PanelHeading icon={<Building2 size={18} />} title="Office Performance Comparison" subtitle="Finance cards ranked by live cash exposure, banking discipline and collection performance." />
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {offices.map((office, index) => (
+                    <button key={office.officeId} onClick={() => onSelect(office.officeId)} className={`group rounded-[24px] border p-4 text-left shadow-xl shadow-black/15 transition duration-300 hover:-translate-y-1 hover:shadow-cyan-950/25 motion-reduce:transform-none ${expandedOffice === office.officeId ? "border-cyan-200/60 bg-cyan-300/10" : "border-white/10 bg-slate-950/72 hover:border-cyan-200/35"}`}>
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                                <p className="truncate text-base font-black text-white">#{index + 1} {office.officeName}</p>
+                                <p className="mt-1 text-xs font-bold text-slate-400">Last cash activity: {dateTime(office.lastPaymentAt)}</p>
+                            </div>
+                            <span className={`rounded-full border px-2 py-1 text-[10px] font-black uppercase ${statusBadge(office.status)}`}>{office.status}</span>
+                        </div>
+                        <div className="mt-4 grid grid-cols-2 gap-2">
+                            <Mini label="Collected" value={money(office.cashCollectedToday)} />
+                            <Mini label="Held" value={money(office.cashHeldInOffice)} risky={office.cashHeldInOffice < 0} />
+                            <Mini label="Banked" value={money(office.alreadyBanked)} />
+                            <Mini label="Outstanding" value={money(office.outstandingToBank)} risky={office.outstandingToBank > 1_000_000} />
+                            <Mini label="Receipts" value={office.numberOfReceipts.toLocaleString()} />
+                            <Mini label="Banking %" value={percent(office.bankingPercentage)} />
+                            <Mini label="Top collector" value={office.collectorCount ? `${office.collectorCount} active` : "No collector"} />
+                            <Mini label="Trend" value={office.trend} />
+                        </div>
+                        <span className="mt-4 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white transition group-hover:bg-white group-hover:text-slate-950">
+                            <Eye size={13} /> View Office Position
+                        </span>
+                    </button>
+                ))}
+            </div>
+        </section>
+    );
+}
+
+function CollectorCards({ collectors }: { collectors: CashPositionCollectorRow[] }) {
+    return (
+        <section className="rounded-[30px] border border-white/10 bg-white/[0.055] p-4 shadow-2xl shadow-black/25">
+            <div className="mb-4 flex items-center justify-between gap-3">
+                <PanelHeading icon={<UsersRound size={18} />} title="Collector Performance" subtitle="Rankings from payment records, collector cash balances and last activity." />
+                <Pill tone="cyan">{collectors.length.toLocaleString()} collectors</Pill>
+            </div>
+            <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+                {collectors.map((collector, index) => (
+                    <article key={collector.collectorId} className="group rounded-[26px] border border-white/10 bg-slate-950/72 p-4 shadow-xl shadow-black/15 transition duration-300 hover:-translate-y-1 hover:border-cyan-200/35 motion-reduce:transform-none">
+                        <div className="flex items-start gap-3">
+                            <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-2xl bg-gradient-to-br from-cyan-300 to-emerald-300 text-lg font-black text-slate-950">
+                                {collector.photoUrl ? <img src={collector.photoUrl} alt="" className="h-full w-full object-cover" /> : collector.collectorName.slice(0, 1)}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                                <p className="truncate text-sm font-black text-white">#{index + 1} {collector.collectorName}</p>
+                                <p className="text-xs font-semibold text-slate-400">{collector.officeName} · {collector.currentStatus}</p>
+                            </div>
+                            <span className={`rounded-full px-2 py-1 text-xs font-black ${collector.riskScore >= 70 ? "bg-red-400/15 text-red-100" : collector.riskScore >= 40 ? "bg-amber-400/15 text-amber-100" : "bg-emerald-400/15 text-emerald-100"}`}>Risk {collector.riskScore}%</span>
+                        </div>
+                        <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+                            <Mini label="Today" value={money(collector.todayCollections)} />
+                            <Mini label="This Week" value={money(collector.thisWeek)} />
+                            <Mini label="This Month" value={money(collector.thisMonth)} />
+                            <Mini label="Cash Held" value={money(collector.cashInHand)} risky={collector.cashInHand > 500_000} />
+                            <Mini label="Submitted" value={money(collector.cashSubmitted)} />
+                            <Mini label="Last Receipt" value={money(collector.largestReceipt)} />
+                            <Mini label="Receipt Count" value={collector.todayCollections ? "Live" : "None today"} />
+                            <Mini label="Reliability" value={percent(collector.reliability)} />
+                            <Mini label="Delay Risk" value={collector.riskScore >= 70 ? "High" : collector.riskScore >= 40 ? "Medium" : "Low"} />
+                            <Mini label="Trend" value={collector.collectionSpeed} />
+                            <Mini label="Last Activity" value={dateTime(collector.lastActivity)} wide />
+                        </div>
+                        <div className="mt-4 hidden flex-wrap gap-2 group-hover:flex">
+                            {["View receipts", "View cash position", "View activity", "Reconcile collector"].map((action) => (
+                                <button key={action} className="rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white hover:bg-white hover:text-slate-950">{action}</button>
+                            ))}
+                        </div>
+                    </article>
+                ))}
+                {!collectors.length ? <p className="rounded-2xl border border-dashed border-white/20 p-5 text-sm font-bold text-slate-400">No collector records are available for this company yet.</p> : null}
+            </div>
+        </section>
+    );
+}
+
+function PremiumChart({ icon, mode = "bars", points, title }: { icon: ReactNode; mode?: "bars" | "tiles"; points: CashPositionChartPoint[]; title: string }) {
     const max = Math.max(1, ...points.map((point) => point.value));
     return (
-        <section className="rounded-[26px] border border-white/10 bg-white/[0.055] p-4 shadow-xl shadow-black/20">
-            <div className="mb-4 flex items-center gap-2">
-                <span className="grid h-9 w-9 place-items-center rounded-2xl bg-white/10 text-cyan-100">{icon}</span>
-                <h3 className="text-sm font-black text-white">{title}</h3>
-            </div>
-            <div className={heat ? "grid grid-cols-2 gap-2" : "space-y-3"}>
-                {points.map((point) => heat ? (
-                    <div key={point.label} className="rounded-2xl border border-white/10 bg-slate-950/70 p-3">
-                        <p className="truncate text-xs font-black text-white">{point.label}</p>
-                        <p className="mt-2 text-sm font-black text-emerald-100">{money(point.value)}</p>
-                    </div>
-                ) : (
-                    <div key={point.label}>
-                        <div className="mb-1 flex items-center justify-between gap-2 text-xs font-bold">
-                            <span className="truncate text-slate-300">{point.label}</span>
-                            <span className="text-white">{money(point.value)}</span>
+        <section className="rounded-[30px] border border-white/10 bg-white/[0.055] p-4 shadow-2xl shadow-black/25">
+            <PanelHeading icon={icon} title={title} subtitle="Hover-ready executive chart with compact legends and UGX formatting." />
+            <div className={mode === "tiles" ? "mt-4 grid grid-cols-2 gap-3" : "mt-4 grid grid-cols-2 gap-3"}>
+                {points.map((point) => (
+                    <article key={point.label} title={`${point.label}: ${money(point.value)}`} className="group rounded-2xl border border-white/10 bg-slate-950/72 p-3 transition hover:-translate-y-0.5 hover:border-cyan-200/35 motion-reduce:transform-none">
+                        <div className="flex items-center justify-between gap-2">
+                            <p className="min-w-0 truncate text-xs font-black text-slate-300">{point.label}</p>
+                            <p className="text-xs font-black text-white">{money(point.value)}</p>
                         </div>
-                        <div className="h-2 overflow-hidden rounded-full bg-slate-800">
-                            <div className="h-full rounded-full bg-gradient-to-r from-cyan-300 to-emerald-300" style={{ width: `${Math.max(3, Math.round((point.value / max) * 100))}%` }} />
+                        <div className="mt-3 flex h-16 items-end gap-1">
+                            <div className="w-full overflow-hidden rounded-xl bg-slate-800">
+                                <div className="rounded-xl bg-gradient-to-t from-emerald-300 via-cyan-300 to-blue-400 transition-all group-hover:brightness-125" style={{ height: `${Math.max(8, Math.round((point.value / max) * 64))}px` }} />
+                            </div>
                         </div>
-                    </div>
+                    </article>
                 ))}
                 {!points.length ? <p className="text-xs font-bold text-slate-400">No live data for this chart yet.</p> : null}
             </div>
@@ -397,7 +552,7 @@ function ChartPanel({ heat = false, icon, points, title }: { heat?: boolean; ico
 
 function OfficeExpansionPanel({ office }: { office: CashPositionOfficeRow }) {
     return (
-        <section className="rounded-[28px] border border-emerald-300/20 bg-emerald-300/10 p-4 shadow-2xl shadow-emerald-950/20">
+        <section className="rounded-[30px] border border-emerald-300/20 bg-emerald-300/10 p-4 shadow-2xl shadow-emerald-950/20">
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                     <p className="text-xs font-black uppercase tracking-[0.2em] text-emerald-100">Office Expansion Panel</p>
@@ -407,22 +562,51 @@ function OfficeExpansionPanel({ office }: { office: CashPositionOfficeRow }) {
                 <span className={`rounded-full border px-3 py-1 text-xs font-black uppercase ${statusBadge(office.status)}`}>{office.status}</span>
             </div>
             <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
-                <Mini label="Collectors in office" value={office.collectorCount.toLocaleString()} />
+                <Mini label="Collectors" value={office.collectorCount.toLocaleString()} />
                 <Mini label="Collector cash" value={money(office.cashHeldByCollectors)} />
                 <Mini label="Cash submitted" value={money(Math.max(0, office.todayPerformance - office.cashHeldByCollectors))} />
                 <Mini label="Cash waiting" value={money(office.outstandingToBank)} risky={office.outstandingToBank > 1_000_000} />
                 <Mini label="Receipts" value={office.numberOfReceipts.toLocaleString()} />
                 <Mini label="Bank history" value={money(office.alreadyBanked)} />
-                <Mini label="Admin transfers" value={money(office.givenToAdmin)} />
+                <Mini label="Admin handovers" value={money(office.givenToAdmin)} />
+                <Mini label="Cash adjustments" value={money(office.cashHeldInOffice - office.todayPerformance)} />
                 <Mini label="Collection efficiency" value={percent(office.bankingPercentage)} />
                 <Mini label="Outstanding cash" value={money(office.cashHeldInOffice)} risky={office.cashHeldInOffice < 0} />
                 <Mini label="Security deposits" value={money(office.securityDeposits)} />
                 <Mini label="Average payment" value={money(office.numberOfReceipts ? office.monthlyPerformance / office.numberOfReceipts : 0)} />
                 <Mini label="Largest payment" value={money(office.largestPayment)} />
                 <Mini label="Last payment" value={dateTime(office.lastPaymentAt)} wide />
+                <Mini label="Reconciliation status" value={office.statusReason} wide />
             </div>
         </section>
     );
+}
+
+function TrendChip({ current, previous = 0, tone }: { current: number; previous?: number; tone: string }) {
+    const delta = current - previous;
+    const pct = previous ? (delta / Math.abs(previous)) * 100 : current > 0 ? 100 : 0;
+    const good = delta >= 0;
+    const riskTone = tone === "red" || tone === "amber";
+    return (
+        <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-black ${good && !riskTone ? "border-emerald-300/25 bg-emerald-300/12 text-emerald-100" : "border-amber-300/25 bg-amber-300/12 text-amber-100"}`}>
+            {good ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+            {Math.abs(Math.round(pct)).toLocaleString()}%
+        </span>
+    );
+}
+
+function TrendLabel({ trend, value }: { trend: "up" | "down" | "flat"; value?: number }) {
+    return (
+        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-black ${trend === "up" ? "bg-emerald-300/10 text-emerald-100" : trend === "down" ? "bg-red-300/10 text-red-100" : "bg-white/10 text-slate-200"}`}>
+            {trend === "up" ? <TrendingUp size={12} /> : trend === "down" ? <TrendingDown size={12} /> : <LineChart size={12} />}
+            {typeof value === "number" ? money(value) : trend}
+        </span>
+    );
+}
+
+function RiskPill({ severity }: { severity: string }) {
+    const classes = severity === "critical" ? "border-red-300/25 bg-red-400/15 text-red-100" : severity === "warning" ? "border-amber-300/25 bg-amber-400/15 text-amber-100" : severity === "success" ? "border-emerald-300/25 bg-emerald-400/15 text-emerald-100" : "border-cyan-300/25 bg-cyan-400/15 text-cyan-100";
+    return <span className={`rounded-full border px-3 py-1 text-xs font-black uppercase ${classes}`}>{severity}</span>;
 }
 
 function MoneyCell({ positive = false, value, warning = false }: { positive?: boolean; value: number; warning?: boolean }) {
@@ -436,6 +620,39 @@ function Mini({ label, risky = false, value, wide = false }: { label: string; ri
             <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">{label}</p>
             <p className={`mt-1 break-words text-sm font-black ${risky ? "text-red-100" : "text-white"}`}>{value}</p>
         </div>
+    );
+}
+
+function PanelHeading({ icon, subtitle, title }: { icon: ReactNode; subtitle: string; title: string }) {
+    return (
+        <div className="flex items-center gap-3">
+            <span className="grid h-10 w-10 place-items-center rounded-2xl bg-white/10 text-cyan-100">{icon}</span>
+            <div className="min-w-0">
+                <h2 className="text-lg font-black text-white">{title}</h2>
+                <p className="text-xs font-semibold leading-5 text-slate-400">{subtitle}</p>
+            </div>
+        </div>
+    );
+}
+
+function Pill({ children, tone }: { children: ReactNode; tone: "green" | "cyan" | "gold" }) {
+    const classes = tone === "green" ? "border-emerald-300/25 bg-emerald-300/10 text-emerald-100" : tone === "gold" ? "border-amber-300/25 bg-amber-300/10 text-amber-100" : "border-cyan-300/25 bg-cyan-300/10 text-cyan-100";
+    return <span className={`rounded-full border px-3 py-1 text-xs font-black uppercase tracking-wide ${classes}`}>{children}</span>;
+}
+
+function ActionButton({ children, icon, onClick }: { children: ReactNode; icon: ReactNode; onClick: () => void }) {
+    return (
+        <button onClick={onClick} className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-black text-white transition hover:-translate-y-0.5 hover:bg-white/15 hover:shadow-lg hover:shadow-cyan-950/20 motion-reduce:transform-none">
+            {icon} {children}
+        </button>
+    );
+}
+
+function PrimaryButton({ children, icon, onClick }: { children: ReactNode; icon: ReactNode; onClick: () => void }) {
+    return (
+        <button onClick={onClick} className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-300 to-cyan-300 px-4 py-3 text-sm font-black text-slate-950 shadow-lg shadow-cyan-950/20 transition hover:-translate-y-0.5 hover:brightness-110 motion-reduce:transform-none">
+            {icon} {children}
+        </button>
     );
 }
 
