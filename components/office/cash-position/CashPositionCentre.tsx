@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -49,6 +49,7 @@ const moneyFormatter = new Intl.NumberFormat("en-UG", {
 });
 
 const periodOptions = [
+    ["", "All Dates"],
     ["today", "Today"],
     ["yesterday", "Yesterday"],
     ["last7", "Last 7 Days"],
@@ -61,7 +62,7 @@ const periodOptions = [
 ] as const;
 
 const firstCashKpis = new Set([
-    "Total Cash After Approved Expenses",
+    "Company Cash Position",
     "Cash Before Expenses",
     "Approved Expenses",
     "Pending Expenses",
@@ -107,6 +108,7 @@ function dateLabel(value: string) {
 }
 
 function dateFullLabel(value: string) {
+    if (!value) return "All Dates";
     const parsed = new Date(`${value}T00:00:00+03:00`);
     if (Number.isNaN(parsed.getTime())) return value;
     const formatter = new Intl.DateTimeFormat("en-GB", {
@@ -168,12 +170,12 @@ export default function CashPositionCentre({ data }: Props) {
     const [filters, setFilters] = useState({
         bankingStatus: data.filters.bankingStatus ?? "",
         collectorId: data.filters.collectorId ?? "",
-        endDate: data.filters.endDate,
+        endDate: data.filters.endDate ?? "",
         expenseStatus: data.filters.expenseStatus ?? "",
         officeId: data.filters.officeId ?? "",
         paymentMethod: data.filters.paymentMethod ?? "",
-        period: data.filters.period ?? "today",
-        startDate: data.filters.startDate,
+        period: data.filters.period ?? "",
+        startDate: data.filters.startDate ?? "",
     });
     const [expandedOffice, setExpandedOffice] = useState<string | null>(data.officeRows[0]?.officeId ?? null);
     const [receiptPanel, setReceiptPanel] = useState<null | { title: string; records: CashPositionReceiptBreakdownItem[] }>(null);
@@ -181,6 +183,19 @@ export default function CashPositionCentre({ data }: Props) {
     const [collectorPanel, setCollectorPanel] = useState<null | { collectorId: string; mode: "cash" | "activity" | "reconcile" }>(
         data.filters.collectorId ? { collectorId: data.filters.collectorId, mode: "cash" } : null,
     );
+
+    useEffect(() => {
+        setFilters({
+            bankingStatus: data.filters.bankingStatus ?? "",
+            collectorId: data.filters.collectorId ?? "",
+            endDate: data.filters.endDate ?? "",
+            expenseStatus: data.filters.expenseStatus ?? "",
+            officeId: data.filters.officeId ?? "",
+            paymentMethod: data.filters.paymentMethod ?? "",
+            period: data.filters.period ?? "",
+            startDate: data.filters.startDate ?? "",
+        });
+    }, [data.filters.bankingStatus, data.filters.collectorId, data.filters.endDate, data.filters.expenseStatus, data.filters.officeId, data.filters.paymentMethod, data.filters.period, data.filters.startDate]);
 
     const csv = useMemo(() => {
         const rows = [
@@ -190,7 +205,7 @@ export default function CashPositionCentre({ data }: Props) {
                 "Selected Period Approved Expenses",
                 "Selected Period Banked",
                 "Selected Period Handed To Admin",
-                "Selected Period Cash Remaining At Office",
+                "Company Cash Position",
                 "Raw Selected Period Cash At Office",
                 "Cash Reconciliation Difference",
                 "Cash Reconciliation Cause",
@@ -242,11 +257,9 @@ export default function CashPositionCentre({ data }: Props) {
 
     function cashPositionUrl(nextFilters = filters, extra: Record<string, string | null | undefined> = {}, path = "/office/admin/cash-position") {
         const params = new URLSearchParams();
-        params.set("period", nextFilters.period);
-        if (nextFilters.period === "custom" || nextFilters.period === "customDate" || nextFilters.period === "specificDay") {
-            params.set("startDate", nextFilters.startDate);
-            params.set("endDate", nextFilters.endDate);
-        }
+        if (nextFilters.period) params.set("period", nextFilters.period);
+        if (nextFilters.startDate) params.set("startDate", nextFilters.startDate);
+        if (nextFilters.endDate) params.set("endDate", nextFilters.endDate);
         if (nextFilters.officeId) params.set("officeId", nextFilters.officeId);
         if (nextFilters.collectorId) params.set("collectorId", nextFilters.collectorId);
         if (nextFilters.paymentMethod) params.set("paymentMethod", nextFilters.paymentMethod);
@@ -260,9 +273,27 @@ export default function CashPositionCentre({ data }: Props) {
 
     function updateFilter(key: keyof typeof filters, value: string) {
         const next = { ...filters, [key]: value };
-        if ((key === "period" && (value === "customDate" || value === "specificDay")) || filters.period === "customDate" || filters.period === "specificDay") {
+        if (key === "startDate" || key === "endDate") {
+            next.period = value ? "custom" : "";
+        }
+        if ((key === "period" && (value === "customDate" || value === "specificDay")) || next.period === "customDate" || next.period === "specificDay") {
             next.endDate = next.startDate;
         }
+        if (key === "period" && !value) {
+            next.startDate = "";
+            next.endDate = "";
+        }
+        setFilters(next);
+        startTransition(() => router.push(cashPositionUrl(next)));
+    }
+
+    function clearFilter(key: keyof typeof filters) {
+        const next = { ...filters, [key]: "" };
+        if (key === "period") {
+            next.startDate = "";
+            next.endDate = "";
+        }
+        if (key === "startDate" || key === "endDate") next.period = "";
         setFilters(next);
         startTransition(() => router.push(cashPositionUrl(next)));
     }
@@ -276,10 +307,12 @@ export default function CashPositionCentre({ data }: Props) {
             ...filters,
             bankingStatus: "",
             collectorId: "",
+            endDate: "",
             expenseStatus: "",
             officeId: "",
             paymentMethod: "",
-            period: "today",
+            period: "",
+            startDate: "",
         };
         setFilters(next);
         startTransition(() => router.push("/office/admin/cash-position"));
@@ -339,25 +372,30 @@ export default function CashPositionCentre({ data }: Props) {
     const selectedCollector = collectorPanel
         ? data.collectors.find((collector) => collector.collectorId === collectorPanel.collectorId) ?? null
         : null;
+    type ActiveFilterChip = { key: keyof typeof filters; label: string };
     const activeFilters = [
-        filters.period !== "today" ? periodOptions.find(([value]) => value === filters.period)?.[1] : null,
-        filters.officeId ? data.offices.find((office) => office.id === filters.officeId)?.name : null,
-        filters.collectorId ? data.collectors.find((collector) => collector.collectorId === filters.collectorId)?.collectorName : null,
-        filters.paymentMethod || null,
-        filters.bankingStatus || null,
-        filters.expenseStatus ? `Expenses: ${filters.expenseStatus}` : null,
-    ].filter(Boolean);
+        filters.period ? { key: "period" as const, label: `Period: ${periodOptions.find(([value]) => value === filters.period)?.[1] ?? filters.period}` } : null,
+        filters.startDate ? { key: "startDate" as const, label: `Start Date: ${filters.startDate}` } : null,
+        filters.endDate ? { key: "endDate" as const, label: `End Date: ${filters.endDate}` } : null,
+        filters.officeId ? { key: "officeId" as const, label: `Office: ${data.offices.find((office) => office.id === filters.officeId)?.name ?? filters.officeId}` } : null,
+        filters.collectorId ? { key: "collectorId" as const, label: `Collector: ${data.collectors.find((collector) => collector.collectorId === filters.collectorId)?.collectorName ?? filters.collectorId}` } : null,
+        filters.paymentMethod ? { key: "paymentMethod" as const, label: `Payment Method: ${filters.paymentMethod}` } : null,
+        filters.bankingStatus ? { key: "bankingStatus" as const, label: `Banking Status: ${filters.bankingStatus}` } : null,
+        filters.expenseStatus ? { key: "expenseStatus" as const, label: `Expense Status: ${filters.expenseStatus}` } : null,
+    ].filter((filter): filter is ActiveFilterChip => Boolean(filter));
     const netKpis = data.kpis.filter((kpi) => firstCashKpis.has(kpi.label));
     const grossKpis = data.kpis.filter((kpi) => !firstCashKpis.has(kpi.label));
     const selectedIsToday = data.selectedPeriodMode === "single-day" && data.filters.startDate === dateFullTodayKey();
-    const dailyMovementTitle = data.selectedPeriodMode === "range"
-        ? "Net Cash Movement for Selected Period"
-        : selectedIsToday
-            ? "Cash Remaining at Office Today"
-            : `Cash Remaining at Office for ${dateFullLabel(data.filters.startDate)}`;
-    const dailyMovementNoun = data.selectedPeriodMode === "range" ? "Selected period" : selectedIsToday ? "Today" : dateFullLabel(data.filters.startDate);
-    const headerTone = data.totals.cashReconciliationDifference > 0 ? "red" : data.totals.dailyCashRemainingAtOffice < 1_000_000 || data.totals.cashDifferenceAlerts > 0 ? "amber" : "green";
-    const headerStatus = headerTone === "red" ? "Critical" : headerTone === "amber" ? "Attention required" : "Healthy";
+    const dailyMovementTitle = data.selectedPeriodMode === "all-dates"
+        ? "Company Cash Position for All Dates"
+        : data.selectedPeriodMode === "range"
+            ? "Company Cash Position for Selected Period"
+            : selectedIsToday
+                ? "Company Cash Position Today"
+                : `Company Cash Position for ${dateFullLabel(data.filters.startDate ?? "")}`;
+    const dailyMovementNoun = data.selectedPeriodMode === "all-dates" ? "All Dates" : data.selectedPeriodMode === "range" ? "Selected period" : selectedIsToday ? "Today" : dateFullLabel(data.filters.startDate ?? "");
+    const headerTone = data.totals.companyCashPosition < 1_000_000 || data.totals.cashDifferenceAlerts > 0 ? "amber" : "green";
+    const headerStatus = headerTone === "amber" ? "Attention required" : "Healthy";
 
     return (
         <main className="min-h-screen overflow-x-hidden bg-[#030712] px-3 py-5 text-white sm:px-5 lg:px-8">
@@ -382,9 +420,9 @@ export default function CashPositionCentre({ data }: Props) {
                         <div className={`min-w-0 rounded-[28px] border bg-gradient-to-br p-4 shadow-2xl ${toneClasses(headerTone)}`}>
                             <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
-                                    <p className="break-words text-[11px] font-black uppercase tracking-[0.22em] text-slate-300">Overall Money at Offices After Expenses</p>
+                                    <p className="break-words text-[11px] font-black uppercase tracking-[0.22em] text-slate-300">Company Cash Position</p>
                                     <p className="mt-2 break-words text-sm font-black uppercase tracking-wide text-cyan-100">{dailyMovementTitle}</p>
-                                    <p className="mt-2 break-words text-[clamp(1.8rem,3vw,3.4rem)] font-black leading-none text-white">{money(data.totals.dailyCashRemainingAtOffice)}</p>
+                                    <p className="mt-2 break-words text-[clamp(1.8rem,3vw,3.4rem)] font-black leading-none text-white">{money(data.totals.companyCashPosition)}</p>
                                 </div>
                                 <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-white/10 bg-white/10"><WalletCards size={22} /></span>
                             </div>
@@ -393,11 +431,11 @@ export default function CashPositionCentre({ data }: Props) {
                                 <Mini label={`Approved expenses ${dailyMovementNoun}`} value={money(data.totals.dailyApprovedExpenses)} />
                                 <Mini label={`Banked ${dailyMovementNoun}`} value={money(data.totals.dailyBanked)} />
                                 <Mini label={`Handed to Admin ${dailyMovementNoun}`} value={money(data.totals.dailyHandedToAdmin)} />
-                                <Mini label="Overall money at offices after expenses" value={money(data.totals.cashAfterExpenses)} risky={data.totals.cashReconciliationDifference > 0} />
+                                <Mini label="Company Cash Position" value={money(data.totals.companyCashPosition)} />
                                 <Mini label="Cash Reconciliation Difference" value={money(data.totals.cashReconciliationDifference)} risky={data.totals.cashReconciliationDifference > 0} />
-                                <Mini label="Current accumulated office cash" value={money(data.totals.currentAccumulatedOfficeCash)} risky={data.totals.currentAccumulatedOfficeCash < 0} />
+                                <Mini label="Current Physical Office Cash" value={money(data.totals.currentPhysicalOfficeCash)} risky={data.totals.currentPhysicalOfficeCash < 0} />
                                 <Mini label="Last updated" value={syncedAt} />
-                                <Mini label="Current status" value={headerStatus} risky={headerTone === "red"} />
+                                <Mini label="Current status" value={headerStatus} risky={data.totals.cashDifferenceAlerts > 0} />
                             </div>
                         </div>
                     </div>
@@ -407,7 +445,8 @@ export default function CashPositionCentre({ data }: Props) {
                         <Mini label={`Approved Expenses ${dailyMovementNoun}`} value={money(data.totals.dailyApprovedExpenses)} />
                         <Mini label={`Banked ${dailyMovementNoun}`} value={money(data.totals.dailyBanked)} />
                         <Mini label={`Handed to Admin ${dailyMovementNoun}`} value={money(data.totals.dailyHandedToAdmin)} />
-                        <Mini label={`Money at Offices ${dailyMovementNoun}`} value={money(data.totals.dailyCashRemainingAtOffice)} risky={data.totals.cashReconciliationDifference > 0} />
+                        <Mini label={`Company Cash Position ${dailyMovementNoun}`} value={money(data.totals.companyCashPosition)} />
+                        <Mini label="Current Physical Office Cash" value={money(data.totals.currentPhysicalOfficeCash)} risky={data.totals.currentPhysicalOfficeCash < 0} />
                         <Mini label="Cash Reconciliation Difference" value={money(data.totals.cashReconciliationDifference)} risky={data.totals.cashReconciliationDifference > 0} />
                     </div>
 
@@ -421,24 +460,29 @@ export default function CashPositionCentre({ data }: Props) {
                                 </div>
                             </div>
                             <div className="flex flex-wrap gap-2">
-                                {activeFilters.map((filter) => <Pill key={String(filter)} tone="cyan">{filter}</Pill>)}
-                                {activeFilters.length ? <button onClick={clearFilters} className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white hover:bg-white/15"><X size={13} /> Clear Filters</button> : null}
+                                {activeFilters.length ? activeFilters.map((filter) => (
+                                    <button key={filter.label} type="button" onClick={() => clearFilter(filter.key)} className="inline-flex items-center gap-1 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-xs font-black uppercase tracking-wide text-cyan-100 hover:bg-cyan-300 hover:text-slate-950">
+                                        {filter.label} <X size={13} />
+                                    </button>
+                                )) : <Pill tone="cyan">Showing all authorised cash-position records</Pill>}
+                                {activeFilters.length ? <button onClick={clearFilters} className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white hover:bg-white/15"><X size={13} /> Clear All Filters</button> : null}
                             </div>
                         </div>
+                        <p className="mb-3 text-xs font-bold text-slate-300">Showing results for: {activeFilters.length ? `${activeFilters.length} active filter${activeFilters.length === 1 ? "" : "s"}` : "All Dates and all authorised cash-position records"}</p>
                         <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-8">
-                            <Select label="Period" value={filters.period} onChange={(value) => updateFilter("period", value)} options={periodOptions as unknown as Array<[string, string]>} />
-                            <Input label="Start date" type="date" value={filters.startDate} onChange={(value) => updateFilter("startDate", value)} />
-                            <Input label="End date" type="date" value={filters.endDate} onChange={(value) => updateFilter("endDate", value)} />
-                            <Select label="Office" value={filters.officeId} onChange={(value) => updateFilter("officeId", value)} options={[["", "All offices"], ...data.offices.map((office) => [office.id, office.name] as [string, string])]} />
-                            <Select label="Collector" value={filters.collectorId} onChange={(value) => updateFilter("collectorId", value)} options={[["", "All collectors"], ...data.collectors.map((collector) => [collector.collectorId, collector.collectorName] as [string, string])]} />
-                            <Select label="Payment Method" value={filters.paymentMethod} onChange={(value) => updateFilter("paymentMethod", value)} options={[["", "All methods"], ["cash", "Cash"], ["mobile_money", "Mobile Money"], ["bank", "Bank"], ["other", "Other"]]} />
-                            <Select label="Banking Status" value={filters.bankingStatus} onChange={(value) => updateFilter("bankingStatus", value)} options={[["", "All status"], ["healthy", "Healthy"], ["attention", "Needs attention"], ["critical", "Critical"], ["waiting", "Waiting to bank"], ["banked", "Banked"]]} />
-                            <Select label="Expense Status" value={filters.expenseStatus} onChange={(value) => updateFilter("expenseStatus", value)} options={[["", "All expenses"], ["approved", "Approved"], ["pending", "Pending"], ["pending_admin_approval", "Pending Admin Approval"], ["submitted", "Submitted"], ["rejected", "Rejected"], ["cancelled", "Cancelled"], ["reversed", "Reversed"]]} />
+                            <Select label="Period" value={filters.period} onChange={(value) => updateFilter("period", value)} onClear={() => clearFilter("period")} options={periodOptions as unknown as Array<[string, string]>} />
+                            <Input label="Start date" type="date" value={filters.startDate} onChange={(value) => updateFilter("startDate", value)} onClear={() => clearFilter("startDate")} />
+                            <Input label="End date" type="date" value={filters.endDate} onChange={(value) => updateFilter("endDate", value)} onClear={() => clearFilter("endDate")} />
+                            <Select label="Office" value={filters.officeId} onChange={(value) => updateFilter("officeId", value)} onClear={() => clearFilter("officeId")} options={[["", "All offices"], ...data.offices.map((office) => [office.id, office.name] as [string, string])]} />
+                            <Select label="Collector" value={filters.collectorId} onChange={(value) => updateFilter("collectorId", value)} onClear={() => clearFilter("collectorId")} options={[["", "All collectors"], ...data.collectors.map((collector) => [collector.collectorId, collector.collectorName] as [string, string])]} />
+                            <Select label="Payment Method" value={filters.paymentMethod} onChange={(value) => updateFilter("paymentMethod", value)} onClear={() => clearFilter("paymentMethod")} options={[["", "All methods"], ["cash", "Cash"], ["mobile_money", "Mobile Money"], ["bank", "Bank"], ["other", "Other"]]} />
+                            <Select label="Banking Status" value={filters.bankingStatus} onChange={(value) => updateFilter("bankingStatus", value)} onClear={() => clearFilter("bankingStatus")} options={[["", "All status"], ["healthy", "Healthy"], ["attention", "Needs attention"], ["critical", "Critical"], ["waiting", "Unbanked"], ["banked", "Banked"]]} />
+                            <Select label="Expense Status" value={filters.expenseStatus} onChange={(value) => updateFilter("expenseStatus", value)} onClear={() => clearFilter("expenseStatus")} options={[["", "All expenses"], ["approved", "Approved"], ["pending", "Pending"], ["pending_admin_approval", "Pending Admin Approval"], ["submitted", "Submitted"], ["rejected", "Rejected"], ["cancelled", "Cancelled"], ["reversed", "Reversed"]]} />
                         </div>
                         <div className="mt-4 flex flex-wrap gap-2">
                         <PrimaryButton onClick={applyFilters} icon={<RefreshCw size={16} />}>Apply Filters</PrimaryButton>
                         <ActionButton onClick={() => router.refresh()} icon={<RefreshCw size={16} />}>Refresh Live Data</ActionButton>
-                        <ActionButton onClick={clearFilters} icon={<X size={16} />}>Clear Filters</ActionButton>
+                        <ActionButton onClick={clearFilters} icon={<X size={16} />}>Clear All Filters</ActionButton>
                         <ActionButton onClick={() => window.print()} icon={<Printer size={16} />}>Print</ActionButton>
                         <ActionButton onClick={() => window.print()} icon={<FileText size={16} />}>PDF</ActionButton>
                         <PrimaryButton onClick={() => downloadCsv()} icon={<Download size={16} />}>Export CSV</PrimaryButton>
@@ -487,7 +531,7 @@ export default function CashPositionCentre({ data }: Props) {
                         onSelectDate={(date) => router.push(actionUrl("/office/admin/cash-position", { endDate: date, period: "specificDay", startDate: date }))}
                         onViewReceipts={(card) => openReceiptBreakdown(`Receipts for ${dateLabel(card.date)}`, card.receiptBreakdown)}
                     />
-                    <PremiumChart title="Office Period Cash Movement" icon={<Building2 size={18} />} points={data.charts.officeComparison} />
+                    <PremiumChart title="Office Company Cash Position" icon={<Building2 size={18} />} points={data.charts.officeComparison} />
                 </section>
 
                 {receiptPanel ? <ReceiptBreakdownPanel panel={receiptPanel} onClose={() => setReceiptPanel(null)} /> : null}
@@ -495,7 +539,7 @@ export default function CashPositionCentre({ data }: Props) {
                 <section className="grid gap-4 xl:grid-cols-3">
                     <PremiumChart title="Banked vs Cash Held" icon={<Landmark size={18} />} points={[
                         { label: "Banked", value: data.totals.totalBanked },
-                        { label: "Current accumulated office cash", value: Math.max(0, data.totals.currentAccumulatedOfficeCash) },
+                        { label: "Current Physical Office Cash", value: Math.max(0, data.totals.currentPhysicalOfficeCash) },
                         { label: "Collector cash", value: data.totals.cashHeldByCollectors },
                         { label: "To bank", value: data.totals.cashWaitingToBeBanked },
                     ]} />
@@ -712,7 +756,7 @@ function OfficeComparisonCards({
 }) {
     return (
         <section className="rounded-[30px] border border-white/10 bg-white/[0.055] p-4 shadow-2xl shadow-black/25">
-            <PanelHeading icon={<Building2 size={18} />} title="Office Performance Comparison" subtitle="Finance cards ranked by selected-period money at office after approved expenses, banking and Admin handovers." />
+            <PanelHeading icon={<Building2 size={18} />} title="Office Performance Comparison" subtitle="Finance cards ranked by Company Cash Position: selected-period collections minus approved expenses." />
             <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-3">
                 {offices.map((office, index) => (
                     <article key={office.officeId} className={`group min-w-0 max-w-full overflow-hidden rounded-[24px] border p-4 text-left shadow-xl shadow-black/15 transition duration-300 hover:-translate-y-1 hover:shadow-cyan-950/25 motion-reduce:transform-none ${expandedOffice === office.officeId ? "border-cyan-200/60 bg-cyan-300/10" : "border-white/10 bg-slate-950/72 hover:border-cyan-200/35"}`}>
@@ -724,12 +768,12 @@ function OfficeComparisonCards({
                             <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-black uppercase ${statusBadge(office.status)}`}>{office.status}</span>
                         </div>
                         <div className={`mt-4 rounded-[24px] border p-4 ${office.cashReconciliationDifference > 0 ? "border-red-300/25 bg-red-400/12" : office.dailyCashRemainingAtOffice < 1_000_000 ? "border-amber-300/25 bg-amber-400/12" : "border-emerald-300/25 bg-emerald-400/12"}`}>
-                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">Money at office for selected period</p>
+                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">Company Cash Position</p>
                             <p className="mt-2 break-words text-[clamp(1.3rem,2vw,2.1rem)] font-black leading-tight text-white">{money(office.dailyCashRemainingAtOffice)}</p>
-                            <p className="mt-1 text-xs font-bold text-slate-300">Collections minus approved expenses, banking and Admin handover dated inside the selected period.</p>
+                            <p className="mt-1 text-xs font-bold text-slate-300">Collections minus approved expenses dated inside the selected period. Banking remains separate.</p>
                         </div>
                         <div className={`mt-3 rounded-[24px] border p-4 ${office.cashHeldInOffice < 0 ? "border-red-300/25 bg-red-400/12" : "border-white/10 bg-slate-950/55"}`}>
-                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">Current accumulated office cash</p>
+                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">Current Physical Office Cash</p>
                             <p className="mt-2 break-words text-[clamp(1.3rem,2vw,2.1rem)] font-black leading-tight text-white">{money(office.cashHeldInOffice)}</p>
                             <p className="mt-1 text-xs font-bold text-slate-300">Separate live ledger balance across all dates. It is not mixed into the selected-period card.</p>
                         </div>
@@ -738,7 +782,7 @@ function OfficeComparisonCards({
                             <Mini label="Approved expenses for selected period" value={money(office.dailyApprovedExpenses)} />
                             <Mini label="Banked for selected period" value={money(office.dailyBanked)} />
                             <Mini label="Handed to Admin for selected period" value={money(office.dailyHandedToAdmin)} />
-                            <Mini label="Money at office for selected period" value={money(office.dailyCashRemainingAtOffice)} risky={office.cashReconciliationDifference > 0} />
+                            <Mini label="Company Cash Position" value={money(office.dailyCashRemainingAtOffice)} />
                             <Mini label="Cash Reconciliation Difference" value={money(office.cashReconciliationDifference)} risky={office.cashReconciliationDifference > 0} />
                             <Mini label="Likely cause" value={office.cashReconciliationCause} wide />
                             <Mini label="Expense count" value={office.expenseCount.toLocaleString()} />
@@ -746,7 +790,7 @@ function OfficeComparisonCards({
                             <Mini label="Cash before expenses" value={money(office.cashBeforeExpenses)} />
                             <Mini label="Approved expenses" value={money(office.approvedExpensesPeriod)} />
                             <Mini label="Pending expenses" value={money(office.pendingExpensesPeriod)} risky={office.pendingExpensesPeriod > office.cashHeldInOffice && office.pendingExpensesPeriod > 0} />
-                            <Mini label="Current accumulated office cash" value={money(office.cashHeldInOffice)} risky={office.cashHeldInOffice < 0} />
+                            <Mini label="Current Physical Office Cash" value={money(office.cashHeldInOffice)} risky={office.cashHeldInOffice < 0} />
                             <Mini label="Projected cash after pending expenses" value={money(office.projectedCashAfterPendingExpenses)} risky={office.projectedCashAfterPendingExpenses < 0} />
                             <Mini label="Cash banked" value={money(office.alreadyBanked)} />
                             <Mini label="Cash handed to Admin" value={money(office.givenToAdmin)} />
@@ -1026,7 +1070,7 @@ function OfficeExpansionPanel({ office, onViewReceiptsBreakdown }: { office: Cas
                 <Mini label="Approved expenses for selected period" value={money(office.dailyApprovedExpenses)} />
                 <Mini label="Banked for selected period" value={money(office.dailyBanked)} />
                 <Mini label="Handed to Admin for selected period" value={money(office.dailyHandedToAdmin)} />
-                <Mini label="Money at office for selected period" value={money(office.dailyCashRemainingAtOffice)} risky={office.cashReconciliationDifference > 0} />
+                <Mini label="Company Cash Position" value={money(office.dailyCashRemainingAtOffice)} />
                 <Mini label="Cash Reconciliation Difference" value={money(office.cashReconciliationDifference)} risky={office.cashReconciliationDifference > 0} />
                 <Mini label="Expense count" value={office.expenseCount.toLocaleString()} />
                 <Mini label="Collectors" value={office.collectorCount.toLocaleString()} />
@@ -1036,7 +1080,7 @@ function OfficeExpansionPanel({ office, onViewReceiptsBreakdown }: { office: Cas
                 <Mini label="Receipts" value={office.numberOfReceipts.toLocaleString()} onClick={() => onViewReceiptsBreakdown(office)} />
                 <Mini label="Bank history" value={money(office.alreadyBanked)} />
                 <Mini label="Admin handovers" value={money(office.givenToAdmin)} />
-                <Mini label="Current accumulated office cash" value={money(office.cashHeldInOffice)} risky={office.cashHeldInOffice < 0} />
+                <Mini label="Current Physical Office Cash" value={money(office.cashHeldInOffice)} risky={office.cashHeldInOffice < 0} />
                 <Mini label="Collection efficiency" value={percent(office.bankingPercentage)} />
                 <Mini label="Selected-period cash waiting" value={money(office.outstandingToBank)} risky={office.outstandingToBank > 1_000_000} />
                 <Mini label="Security deposits" value={money(office.securityDeposits)} />
@@ -1127,19 +1171,25 @@ function PrimaryButton({ children, icon, onClick }: { children: ReactNode; icon:
     );
 }
 
-function Input({ label, onChange, type = "text", value }: { label: string; onChange: (value: string) => void; type?: string; value: string }) {
+function Input({ label, onChange, onClear, type = "text", value }: { label: string; onChange: (value: string) => void; onClear?: () => void; type?: string; value: string }) {
     return (
         <label className="text-xs font-black uppercase text-slate-400">
-            {label}
+            <span className="flex items-center justify-between gap-2">
+                {label}
+                {onClear && value ? <button type="button" onClick={(event) => { event.preventDefault(); onClear(); }} className="rounded-full border border-white/10 bg-white/10 px-2 py-0.5 text-[10px] font-black text-white hover:bg-white hover:text-slate-950">Clear ×</button> : null}
+            </span>
             <input type={type} value={value} onChange={(event) => onChange(event.target.value)} className="mt-2 h-[46px] w-full rounded-2xl border border-white/10 bg-slate-950 px-3 text-sm font-bold text-white outline-none ring-cyan-300/0 transition focus:border-cyan-300/50 focus:ring-4 focus:ring-cyan-300/10" />
         </label>
     );
 }
 
-function Select({ label, onChange, options, value }: { label: string; onChange: (value: string) => void; options: Array<[string, string]>; value: string }) {
+function Select({ label, onChange, onClear, options, value }: { label: string; onChange: (value: string) => void; onClear?: () => void; options: Array<[string, string]>; value: string }) {
     return (
         <label className="text-xs font-black uppercase text-slate-400">
-            {label}
+            <span className="flex items-center justify-between gap-2">
+                {label}
+                {onClear && value ? <button type="button" onClick={(event) => { event.preventDefault(); onClear(); }} className="rounded-full border border-white/10 bg-white/10 px-2 py-0.5 text-[10px] font-black text-white hover:bg-white hover:text-slate-950">Clear ×</button> : null}
+            </span>
             <select value={value} onChange={(event) => onChange(event.target.value)} className="mt-2 h-[46px] w-full rounded-2xl border border-white/10 bg-slate-950 px-3 text-sm font-bold text-white outline-none ring-cyan-300/0 transition focus:border-cyan-300/50 focus:ring-4 focus:ring-cyan-300/10">
                 {options.map(([optionValue, optionLabel]) => <option key={`${label}-${optionValue}`} value={optionValue}>{optionLabel}</option>)}
             </select>

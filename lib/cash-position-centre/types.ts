@@ -1,12 +1,12 @@
 export type CashPositionFilters = {
     bankingStatus?: string | null;
     collectorId?: string | null;
-    endDate?: string;
+    endDate?: string | null;
     expenseStatus?: string | null;
     officeId?: string | null;
     paymentMethod?: string | null;
     period?: string | null;
-    startDate?: string;
+    startDate?: string | null;
 };
 
 export type CashPositionKpi = {
@@ -23,6 +23,8 @@ export type CashPositionOfficeRow = {
     bankingPercentage: number;
     cashAfterApprovedExpenses: number;
     cashBeforeExpenses: number;
+    companyCashPosition: number;
+    currentPhysicalOfficeCash: number;
     cashReconciliationCause: string;
     cashReconciliationDifference: number;
     cashCollectedToday: number;
@@ -147,12 +149,15 @@ export type CashPositionData = {
     collectors: CashPositionCollectorRow[];
     companyName: string;
     dailyCards: CashPositionDailyCard[];
-    filters: Required<Omit<CashPositionFilters, "expenseStatus" | "officeId" | "paymentMethod">> & {
+    filters: {
         bankingStatus: string | null;
         collectorId: string | null;
+        endDate: string | null;
         expenseStatus: string | null;
         officeId: string | null;
         paymentMethod: string | null;
+        period: string | null;
+        startDate: string | null;
     };
     generatedAt: string;
     insights: CashPositionInsight[];
@@ -160,7 +165,7 @@ export type CashPositionData = {
     offices: Array<{ id: string; name: string }>;
     officeRows: CashPositionOfficeRow[];
     selectedPeriodLabel: string;
-    selectedPeriodMode: "single-day" | "range";
+    selectedPeriodMode: "all-dates" | "single-day" | "range";
     totals: {
         approvedExpensesToday: number;
         approvedExpensesPeriod: number;
@@ -178,7 +183,9 @@ export type CashPositionData = {
         cashWaitingToBeBanked: number;
         cashAfterExpenses: number;
         cashBeforeExpenses: number;
+        companyCashPosition: number;
         currentAccumulatedOfficeCash: number;
+        currentPhysicalOfficeCash: number;
         companyCashAvailable: number;
         pendingExpensesPeriod: number;
         pendingExpenseRequests: number;

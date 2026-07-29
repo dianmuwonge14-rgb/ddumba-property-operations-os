@@ -24,6 +24,12 @@ function selectedPeriodOfficeCash({ approvedExpenses = [], banked = [], collecti
   return sum(collections) - sum(approvedExpenses) - sum(banked) - sum(handedToAdmin);
 }
 
+function selectedPeriodCompanyCashPosition({ approvedExpenses = [], collections = [], periodEnd, periodStart }) {
+  const inRange = (row) => row.date >= periodStart && row.date <= periodEnd;
+  const sum = (rows) => rows.filter(inRange).reduce((total, row) => total + row.amount, 0);
+  return sum(collections) - sum(approvedExpenses);
+}
+
 function displayedSelectedPeriodOfficeCash(input) {
   const raw = selectedPeriodOfficeCash(input);
   return {
@@ -57,13 +63,13 @@ test("admin navigation makes Cash Position Centre the CFO landing page", () => {
 
 test("cash position centre includes requested executive KPIs and live office table fields", () => {
   for (const label of [
-    "Total Cash After Approved Expenses",
+    "Company Cash Position",
     "Approved Expenses",
     "Pending Expenses",
     "Projected Cash After Pending Approval",
     "Offices With Negative or Low Cash",
     "Total Cash Collected",
-    "Cash Held by Offices",
+    "Current Physical Office Cash",
     "Cash Held by Collectors",
     "Cash Banked",
     "Cash Handed to Admin",
@@ -76,18 +82,17 @@ test("cash position centre includes requested executive KPIs and live office tab
     "Approved Expenses This Month",
     "Pending Expense Requests",
     "Cash Before Expenses",
-    "Cash After Expenses",
     "Projected Cash After Pending Approvals",
   ]) {
     assert.match(dataSource + componentSource, new RegExp(label));
   }
-  for (const field of ["cashCollectedToday", "cashHeldInOffice", "cashHeldByCollectors", "alreadyBanked", "outstandingToBank", "bankingPercentage", "weeklyPerformance", "monthlyPerformance", "approvedExpensesPeriod", "pendingExpensesPeriod", "cashBeforeExpenses", "cashAfterApprovedExpenses", "projectedCashAfterPendingExpenses", "expenseCount", "currentAccumulatedOfficeCash", "rawCashAtOffice", "cashReconciliationDifference", "cashReconciliationCause"]) {
+  for (const field of ["cashCollectedToday", "cashHeldInOffice", "cashHeldByCollectors", "alreadyBanked", "outstandingToBank", "bankingPercentage", "weeklyPerformance", "monthlyPerformance", "approvedExpensesPeriod", "pendingExpensesPeriod", "cashBeforeExpenses", "cashAfterApprovedExpenses", "companyCashPosition", "currentPhysicalOfficeCash", "projectedCashAfterPendingExpenses", "expenseCount", "currentAccumulatedOfficeCash", "rawCashAtOffice", "cashReconciliationDifference", "cashReconciliationCause"]) {
     assert.match(typesSource, new RegExp(field));
   }
 });
 
 test("cash position centre ships filters, AI insights, charts and exports", () => {
-  for (const label of ["Today", "Yesterday", "Last 7 Days", "This Month", "Previous Month", "This Year", "Custom Date", "Custom Date Range", "Specific Day of Month", "Collector", "Banking Status", "Expense Status"]) {
+  for (const label of ["All Dates", "Today", "Yesterday", "Last 7 Days", "This Month", "Previous Month", "This Year", "Custom Date", "Custom Date Range", "Specific Day of Month", "Collector", "Banking Status", "Expense Status"]) {
     assert.match(componentSource, new RegExp(label));
   }
   assert.match(pageSource, /expenseStatus: scalar\(params\.expenseStatus\)/);
@@ -108,7 +113,7 @@ test("cash position centre ships filters, AI insights, charts and exports", () =
 });
 
 test("cash position centre leads with net cash after approved expenses", () => {
-  const header = componentSource.indexOf("Overall Money at Offices After Expenses");
+  const header = componentSource.indexOf("Company Cash Position");
   const filters = componentSource.indexOf("Treasury Filter Bar");
   const officeCards = componentSource.indexOf("<OfficeComparisonCards");
   const firstKpi = componentSource.indexOf("{netKpis.map");
@@ -127,32 +132,38 @@ test("cash position selected-period card excludes carried-forward office cash", 
   assert.match(typesSource, /dailyHandedToAdmin/);
   assert.match(typesSource, /dailyCashRemainingAtOffice/);
   assert.match(dataSource, /rawDailyCashRemainingAtOffice = dailyCollected - dailyApprovedExpenses - dailyBanked - dailyHandedToAdmin/);
-  assert.match(dataSource, /dailyCashRemainingAtOffice = Math\.max\(0, rawDailyCashRemainingAtOffice\)/);
+  assert.match(dataSource, /dailyCashRemainingAtOffice = Math\.max\(0, dailyCollected - dailyApprovedExpenses\)/);
   assert.match(dataSource, /cashAfterExpenses = dailyCashRemainingAtOffice/);
   assert.match(dataSource, /currentAccumulatedOfficeCash/);
   assert.match(dataSource, /adminHandedToAdminOutflows/);
   assert.match(dataSource, /\["admin_float", "office_to_admin_transfer"\]/);
-  assert.match(componentSource, /Cash Remaining at Office Today/);
-  assert.match(componentSource, /Net Cash Movement for Selected Period/);
-  assert.match(componentSource, /Current accumulated office cash/);
-  assert.match(componentSource, /Money at office for selected period/);
+  assert.match(componentSource, /Company Cash Position Today/);
+  assert.match(componentSource, /Company Cash Position for Selected Period/);
+  assert.match(componentSource, /Current Physical Office Cash/);
+  assert.match(componentSource, /Company Cash Position/);
   assert.match(componentSource, /Cash Reconciliation Difference/);
 });
 
 test("selected period office cash ignores expenses outside the selected range", () => {
-  const selectedDayCash = selectedPeriodOfficeCash({
+  const selectedDayCash = selectedPeriodCompanyCashPosition({
     collections: [{ amount: 2_000_000, date: "2026-07-28" }],
     approvedExpenses: [
       { amount: 500_000, date: "2026-07-28" },
       { amount: 300_000, date: "2026-07-27" },
     ],
-    banked: [{ amount: 0, date: "2026-07-28" }],
-    handedToAdmin: [{ amount: 0, date: "2026-07-28" }],
     periodStart: "2026-07-28",
     periodEnd: "2026-07-28",
   });
 
   assert.equal(selectedDayCash, 1_500_000);
+
+  const bankedIsInformational = selectedPeriodCompanyCashPosition({
+    collections: [{ amount: 6_685_000, date: "2026-07-29" }],
+    approvedExpenses: [{ amount: 3_414_000, date: "2026-07-29" }],
+    periodStart: "2026-07-29",
+    periodEnd: "2026-07-29",
+  });
+  assert.equal(bankedIsInformational, 3_271_000);
 });
 
 test("cash position displays zero when the raw selected-period cash is fully cleared or overdrawn", () => {
@@ -181,8 +192,28 @@ test("cash position displays zero when the raw selected-period cash is fully cle
   assert.equal(overdrawn.reconciliationDifference, 100_000);
 
   assert.match(dataSource, /Math\.max\(0, rawCashAtOffice\)/);
+  assert.match(dataSource, /companyCashPosition = Math\.max\(0, collectedPeriod - approvedExpensesPeriod\)/);
   assert.match(dataSource, /cashReconciliationDifference = rawCashAtOffice < 0 \? Math\.abs\(rawCashAtOffice\) : 0/);
   assert.match(dataSource, /detectCashReconciliationCause/);
+});
+
+test("cash position filters can be cleared independently without restoring today", () => {
+  assert.match(dataSource, /const period = input\.period \|\| null/);
+  assert.match(componentSource, /\["", "All Dates"\]/);
+  assert.match(componentSource, /function clearFilter/);
+  assert.match(componentSource, /Clear All Filters/);
+  assert.match(componentSource, /Showing all authorised cash-position records/);
+  assert.match(componentSource, /Showing results for:/);
+  assert.match(componentSource, /onClear=\{\(\) => clearFilter\("period"\)\}/);
+  assert.match(componentSource, /onClear=\{\(\) => clearFilter\("startDate"\)\}/);
+  assert.match(componentSource, /onClear=\{\(\) => clearFilter\("endDate"\)\}/);
+  assert.match(componentSource, /onClear=\{\(\) => clearFilter\("officeId"\)\}/);
+  assert.match(componentSource, /onClear=\{\(\) => clearFilter\("collectorId"\)\}/);
+  assert.match(componentSource, /onClear=\{\(\) => clearFilter\("paymentMethod"\)\}/);
+  assert.match(componentSource, /onClear=\{\(\) => clearFilter\("bankingStatus"\)\}/);
+  assert.match(componentSource, /onClear=\{\(\) => clearFilter\("expenseStatus"\)\}/);
+  assert.match(componentSource, /if \(nextFilters\.period\) params\.set\("period"/);
+  assert.doesNotMatch(componentSource, /period: data\.filters\.period \?\? "today"/);
 });
 
 test("cash banking display also clamps negative office cash and reports reconciliation difference", () => {

@@ -40,6 +40,11 @@ function addDays(date: string, days: number) {
     return kampalaDate(next);
 }
 
+function shiftedRange(startDate: string | null, endDate: string | null, days: number) {
+    if (!startDate || !endDate) return null;
+    return { startDate: addDays(startDate, days), endDate: addDays(endDate, days) };
+}
+
 function monthStart(date: string) {
     return `${date.slice(0, 8)}01`;
 }
@@ -48,8 +53,11 @@ function yearStart(date: string) {
     return `${date.slice(0, 4)}-01-01`;
 }
 
-function periodLabel(startDate: string, endDate: string) {
-    return startDate === endDate ? startDate : `${startDate} to ${endDate}`;
+function periodLabel(startDate: string | null, endDate: string | null) {
+    if (!startDate && !endDate) return "All Dates";
+    if (startDate && !endDate) return `From ${startDate}`;
+    if (!startDate && endDate) return `Until ${endDate}`;
+    return startDate === endDate ? String(startDate) : `${startDate} to ${endDate}`;
 }
 
 function previousMonthStart(date: string) {
@@ -64,9 +72,9 @@ function previousMonthEnd(date: string) {
 
 function resolveFilters(input: CashPositionFilters = {}) {
     const today = kampalaDate();
-    const period = input.period || "today";
-    let startDate = input.startDate || today;
-    let endDate = input.endDate || today;
+    const period = input.period || null;
+    let startDate = input.startDate || null;
+    let endDate = input.endDate || null;
 
     if (period === "yesterday") {
         startDate = addDays(today, -1);
@@ -84,13 +92,13 @@ function resolveFilters(input: CashPositionFilters = {}) {
         startDate = yearStart(today);
         endDate = today;
     } else if (period === "customDate" || period === "specificDay") {
-        endDate = startDate;
-    } else if (period !== "custom") {
+        if (startDate) endDate = startDate;
+    } else if (period === "today") {
         startDate = today;
         endDate = today;
     }
 
-    if (startDate > endDate) [startDate, endDate] = [endDate, startDate];
+    if (startDate && endDate && startDate > endDate) [startDate, endDate] = [endDate, startDate];
     return {
         bankingStatus: input.bankingStatus || null,
         collectorId: input.collectorId || null,
@@ -107,9 +115,9 @@ function dateOnly(value: string | null | undefined) {
     return String(value ?? "").slice(0, 10);
 }
 
-function inRange(value: string | null | undefined, startDate: string, endDate: string) {
+function inRange(value: string | null | undefined, startDate: string | null, endDate: string | null) {
     const date = dateOnly(value);
-    return Boolean(date && date >= startDate && date <= endDate);
+    return Boolean(date && (!startDate || date >= startDate) && (!endDate || date <= endDate));
 }
 
 function isActiveCollection(row: Row) {
@@ -224,18 +232,18 @@ function chartTop(rows: CashPositionChartPoint[], limit = 8) {
 
 function logCashPositionQueryError(input: {
     details?: string | null;
-    endDate: string;
+    endDate: string | null;
     hint?: string | null;
     message?: string | null;
     name: string;
     period: string | null;
-    startDate: string;
+    startDate: string | null;
     code?: string | null;
 }) {
     console.error("Cash Position Centre query failed", {
         code: input.code ?? null,
-        dateFrom: `${input.startDate}T00:00:00+03:00`,
-        dateTo: `${input.endDate}T23:59:59.999+03:00`,
+        dateFrom: input.startDate ? `${input.startDate}T00:00:00+03:00` : null,
+        dateTo: input.endDate ? `${input.endDate}T23:59:59.999+03:00` : null,
         details: input.details ?? null,
         hint: input.hint ?? null,
         message: input.message ?? null,
@@ -287,9 +295,9 @@ function buildInsights(input: {
             action: "Use net cash as the first treasury control figure.",
             amount: highestNetOffice.cashAfterApprovedExpenses,
             id: `net-office-${highestNetOffice.officeId}`,
-            message: `${highestNetOffice.officeName} has UGX ${Math.round(highestNetOffice.cashAfterApprovedExpenses).toLocaleString()} available after approved expenses.`,
+            message: `${highestNetOffice.officeName} has a Company Cash Position of UGX ${Math.round(highestNetOffice.cashAfterApprovedExpenses).toLocaleString()} after approved expenses. Banking is shown separately.`,
             severity: highestNetOffice.cashReconciliationDifference > 0 ? "critical" : highestNetOffice.cashAfterApprovedExpenses < 1_000_000 ? "warning" : "success",
-            title: "Net cash after approved expenses",
+            title: "Company Cash Position",
         });
     }
     const reconciliationOffice = input.offices.find((office) => office.cashReconciliationDifference > 0);
@@ -310,7 +318,7 @@ function buildInsights(input: {
             action: "Review approved expense pressure against collections.",
             amount: highestExpenseOffice.approvedExpensesPeriod,
             id: `approved-expense-${highestExpenseOffice.officeId}`,
-            message: `${highestExpenseOffice.officeName} approved expenses consumed ${percentage}% of available office cash in this period.`,
+            message: `${highestExpenseOffice.officeName} approved expenses consumed ${percentage}% of selected-period collections.`,
             severity: percentage >= 35 ? "warning" : "info",
             title: "Approved expense pressure",
         });
@@ -320,7 +328,7 @@ function buildInsights(input: {
             action: "Approve only where projected cash remains healthy.",
             amount: input.totals.pendingExpensesPeriod,
             id: "pending-expense-projection",
-            message: `Pending expenses would reduce company office cash by UGX ${Math.round(input.totals.pendingExpensesPeriod).toLocaleString()} if approved.`,
+            message: `Pending expenses would reduce Company Cash Position by UGX ${Math.round(input.totals.pendingExpensesPeriod).toLocaleString()} if approved.`,
             severity: input.totals.projectedCashAfterPendingApprovals < 0 ? "critical" : "warning",
             title: "Pending expense projection",
         });
@@ -331,7 +339,7 @@ function buildInsights(input: {
             action: "Hold or sequence pending approvals for this office.",
             amount: projectedNegativeOffice.projectedCashAfterPendingExpenses,
             id: `projected-negative-${projectedNegativeOffice.officeId}`,
-            message: `${projectedNegativeOffice.officeName} may enter a negative cash position after pending expenses.`,
+            message: `${projectedNegativeOffice.officeName} may enter a negative projected Company Cash Position after pending expenses.`,
             severity: "critical",
             title: "Projected negative office cash",
         });
@@ -381,9 +389,9 @@ function buildInsights(input: {
     }
     insights.push({
         action: "Use this centre as the daily CFO cash control desk.",
-        amount: input.totals.cashAfterExpenses,
+        amount: input.totals.companyCashPosition,
         id: "cash-after-expense-forecast",
-        message: `Selected-period office cash movement is UGX ${Math.round(input.totals.cashAfterExpenses).toLocaleString()} after approved expenses, banking and Admin handovers; reconciliation difference is UGX ${Math.round(input.totals.cashReconciliationDifference).toLocaleString()}.`,
+        message: `Company Cash Position is UGX ${Math.round(input.totals.companyCashPosition).toLocaleString()} from collections minus approved expenses only; banked cash remains a separate informational metric.`,
         severity: input.totals.cashReconciliationDifference > 0 ? "warning" : "info",
         title: "Cash flow position",
     });
@@ -444,7 +452,10 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
     const todayCollections = allCollections.filter((row) => collectionDate(row) === today);
     const weekCollections = allCollections.filter((row) => inRange(collectionDate(row), addDays(today, -6), today));
     const monthCollections = allCollections.filter((row) => inRange(collectionDate(row), monthStart(today), today));
-    const previousComparableCollections = allCollections.filter((row) => inRange(collectionDate(row), addDays(filters.startDate, -7), addDays(filters.endDate, -7)));
+    const previousComparableRange = shiftedRange(filters.startDate, filters.endDate, -7);
+    const previousComparableCollections = previousComparableRange
+        ? allCollections.filter((row) => inRange(collectionDate(row), previousComparableRange.startDate, previousComparableRange.endDate))
+        : [];
     const expenses = ((expensesResult.data ?? []) as Row[])
         .filter((row) => row.office_id && visibleOfficeIds.has(String(row.office_id)))
         .filter((row) => !filters.expenseStatus || expenseStatus(row) === filters.expenseStatus);
@@ -534,8 +545,8 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         collectorCashByOffice.set(collector.officeId, (collectorCashByOffice.get(collector.officeId) ?? 0) + collector.cashInHand);
     }
 
-    const enrichmentStartDate = filters.startDate < addDays(today, -6) ? filters.startDate : addDays(today, -6);
-    const enrichmentEndDate = filters.endDate > today ? filters.endDate : today;
+    const enrichmentStartDate = filters.startDate && filters.startDate < addDays(today, -6) ? filters.startDate : addDays(today, -6);
+    const enrichmentEndDate = filters.endDate && filters.endDate > today ? filters.endDate : today;
     const enrichmentCollections = allCollections.filter((row) => inRange(collectionDate(row), enrichmentStartDate, enrichmentEndDate));
     const paymentIds = [...new Set(enrichmentCollections.map((row) => String(row.id ?? "")).filter(Boolean))];
     const roomIds = [...new Set(enrichmentCollections.map((row) => String(row.room_id ?? "")).filter(Boolean))];
@@ -633,8 +644,10 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         const handedToAdminPeriod = sum(officeHandedToAdmin, (row) => numberValue(row.amount));
         const cashHeldByCollectors = collectorCashByOffice.get(office.id) ?? 0;
         const collectedPeriod = sum(officeCollections, collectionAmount);
+        const companyCashPosition = Math.max(0, collectedPeriod - approvedExpensesPeriod);
         const rawCashAtOffice = collectedPeriod - approvedExpensesPeriod - alreadyBanked - handedToAdminPeriod;
-        const dailyCashRemainingAtOffice = Math.max(0, rawCashAtOffice);
+        const currentPhysicalCashForPeriod = Math.max(0, rawCashAtOffice);
+        const dailyCashRemainingAtOffice = companyCashPosition;
         const cashReconciliationDifference = rawCashAtOffice < 0 ? Math.abs(rawCashAtOffice) : 0;
         const cashReconciliationCause = detectCashReconciliationCause({
             approvedExpenses: approvedExpensesPeriod,
@@ -644,21 +657,23 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
             rawCashAtOffice,
         });
         const cashBeforeExpenses = collectedPeriod;
-        const projectedCashAfterPendingExpenses = Math.max(0, dailyCashRemainingAtOffice - pendingExpensesPeriod);
-        const outstandingToBank = Math.max(0, dailyCashRemainingAtOffice);
+        const projectedCashAfterPendingExpenses = Math.max(0, companyCashPosition - pendingExpensesPeriod);
+        const outstandingToBank = currentPhysicalCashForPeriod;
         const previousPeriod = sum(officePrevious, collectionAmount);
         const trend = collectedPeriod > previousPeriod ? "up" : collectedPeriod < previousPeriod ? "down" : "flat";
-        const status = statusForOffice({ moneyAtOffice: dailyCashRemainingAtOffice, outstandingToBank, unreconciled: cashReconciliationDifference });
+        const status = statusForOffice({ moneyAtOffice: currentPhysicalCashForPeriod, outstandingToBank, unreconciled: cashReconciliationDifference });
         const officeAmounts = officeCollections.map(collectionAmount);
         return {
             alreadyBanked,
             approvedExpensesPeriod,
             bankingPercentage: collectedPeriod > 0 ? Math.min(100, Math.round((alreadyBanked / collectedPeriod) * 100)) : alreadyBanked > 0 ? 100 : 0,
-            cashAfterApprovedExpenses: dailyCashRemainingAtOffice,
+            cashAfterApprovedExpenses: companyCashPosition,
             cashBeforeExpenses,
+            companyCashPosition,
             cashReconciliationCause,
             cashReconciliationDifference,
             cashCollectedToday: sum(officeToday, collectionAmount),
+            currentPhysicalOfficeCash: cashHeldInOffice,
             dailyApprovedExpenses: approvedExpensesPeriod,
             dailyBanked: alreadyBanked,
             dailyCashRemainingAtOffice,
@@ -700,14 +715,15 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
 
     const currentAccumulatedOfficeCash = sum(officeRows, (row) => row.cashHeldInOffice);
     const cashHeldByCollectors = sum(collectors, (row) => row.cashInHand);
-    const totalBanked = sum(bankOutflows, (row) => numberValue(row.amount));
-    const totalCashHandedToAdmin = sum(adminCashReceived, (row) => numberValue(row.amount));
+    const totalBanked = sum(bankOutflows.filter((row) => inRange(movementDate(row), filters.startDate, filters.endDate)), (row) => numberValue(row.amount));
+    const totalCashHandedToAdmin = sum(adminHandedToAdminOutflows.filter((row) => inRange(movementDate(row), filters.startDate, filters.endDate)), (row) => numberValue(row.amount));
     const dailyCollected = sum(officeRows, (row) => row.dailyCollected);
     const dailyApprovedExpenses = sum(officeRows, (row) => row.dailyApprovedExpenses);
     const dailyBanked = sum(officeRows, (row) => row.dailyBanked);
     const dailyHandedToAdmin = sum(officeRows, (row) => row.dailyHandedToAdmin);
     const rawDailyCashRemainingAtOffice = dailyCollected - dailyApprovedExpenses - dailyBanked - dailyHandedToAdmin;
-    const dailyCashRemainingAtOffice = Math.max(0, rawDailyCashRemainingAtOffice);
+    const currentPhysicalOfficeCash = currentAccumulatedOfficeCash;
+    const dailyCashRemainingAtOffice = Math.max(0, dailyCollected - dailyApprovedExpenses);
     const cashReconciliationDifference = sum(officeRows, (row) => row.cashReconciliationDifference);
     const approvedExpensesToday = sum(todayApprovedExpenses, expenseAmount);
     const approvedExpensesThisMonth = sum(monthApprovedExpenses, expenseAmount);
@@ -737,7 +753,9 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         cashHeldByOffices: currentAccumulatedOfficeCash,
         cashWaitingToBeBanked,
         companyCashAvailable: moneyAtBank + adminCash + currentAccumulatedOfficeCash + cashHeldByCollectors,
+        companyCashPosition: cashAfterExpenses,
         currentAccumulatedOfficeCash,
+        currentPhysicalOfficeCash,
         pendingExpensesPeriod: sum(periodPendingExpenses, expenseAmount),
         pendingExpenseRequests,
         projectedCashAfterPendingApprovals,
@@ -748,16 +766,16 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         unreconciledCash,
     };
     const kpis: CashPositionKpi[] = [
-        { label: "Total Cash After Approved Expenses", previousValue: 0, value: totals.cashAfterExpenses, hint: "Selected-period collections minus approved expenses, banking and Admin handovers, displayed at zero when fully cleared", tone: totals.cashReconciliationDifference > 0 ? "red" : totals.cashAfterExpenses < 1_000_000 ? "amber" : "green" },
+        { label: "Company Cash Position", previousValue: 0, value: totals.companyCashPosition, hint: "Selected-period collections minus approved expenses. Banking and Admin handovers are shown separately.", tone: totals.companyCashPosition < 1_000_000 ? "amber" : "green" },
         { label: "Cash Before Expenses", previousValue: 0, value: totals.cashBeforeExpenses, hint: "Selected-period office collections before approved expenses", tone: "cyan" },
         { label: "Approved Expenses", previousValue: 0, value: totals.approvedExpensesPeriod, hint: "Approved expenses dated inside the selected period", tone: totals.approvedExpensesPeriod > totals.cashBeforeExpenses * 0.35 ? "amber" : "blue" },
         { label: "Pending Expenses", previousValue: 0, value: totals.pendingExpensesPeriod, hint: "Pending only; not deducted from live net cash", tone: totals.pendingExpensesPeriod ? "amber" : "green" },
         { label: "Projected Cash After Pending Approval", previousValue: 0, value: totals.projectedCashAfterPendingApprovals, hint: "Cash if pending expenses are approved", tone: totals.projectedCashAfterPendingApprovals < 0 ? "red" : "amber" },
         { label: "Offices With Negative or Low Cash", previousValue: 0, value: totals.cashDifferenceAlerts, hint: "Offices marked attention or critical", tone: totals.cashDifferenceAlerts ? "red" : "green" },
         { label: "Total Cash Collected", previousValue: sum(previousComparableCollections, collectionAmount), value: totals.totalCashCollectedToday, hint: "Posted collections dated today", tone: "green" },
-        { label: "Cash Held by Offices", previousValue: 0, value: totals.cashHeldByOffices, hint: "Current accumulated office cash ledger across all dates", tone: totals.cashHeldByOffices < 0 ? "red" : "blue" },
+        { label: "Current Physical Office Cash", previousValue: 0, value: totals.currentPhysicalOfficeCash, hint: "Current accumulated office cash ledger after banking, Admin handovers and carried-forward movements", tone: totals.currentPhysicalOfficeCash < 0 ? "red" : "blue" },
         { label: "Cash Held by Collectors", previousValue: 0, value: totals.cashHeldByCollectors, hint: "Field collector profile balances", tone: "cyan" },
-        { label: "Cash Banked", previousValue: sum(bankOutflows.filter((row) => inRange(movementDate(row), addDays(filters.startDate, -7), addDays(filters.endDate, -7))), (row) => numberValue(row.amount)), value: totals.totalBanked, hint: "Bank deposit outflows", tone: "violet" },
+        { label: "Cash Banked", previousValue: previousComparableRange ? sum(bankOutflows.filter((row) => inRange(movementDate(row), previousComparableRange.startDate, previousComparableRange.endDate)), (row) => numberValue(row.amount)) : 0, value: totals.totalBanked, hint: "Bank deposit outflows; informational only and not deducted from Company Cash Position", tone: "violet" },
         { label: "Cash Handed to Admin", previousValue: 0, value: totals.totalCashHandedToAdmin, hint: "Admin cash received ledger", tone: "amber" },
         { label: "Outstanding to Bank", previousValue: 0, value: totals.cashWaitingToBeBanked, hint: "Positive office cash exposure", tone: totals.cashWaitingToBeBanked > 1_000_000 ? "amber" : "blue" },
         { label: "Cash Reconciliation Difference", previousValue: 0, value: totals.cashReconciliationDifference, hint: "Raw selected-period cash below zero; review banking, handovers, expense deductions or dates", tone: totals.cashReconciliationDifference > 0 ? "red" : "green" },
@@ -769,7 +787,7 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         { label: "Approved Expenses This Month", previousValue: 0, value: totals.approvedExpensesThisMonth, hint: "Month-to-date approved expenses", tone: "violet" },
         { label: "Pending Expense Requests", previousValue: 0, value: totals.pendingExpenseRequests, hint: "Awaiting Admin decision; not deducted from cash", tone: totals.pendingExpenseRequests ? "amber" : "green" },
         { label: "Cash Before Expenses", previousValue: 0, value: totals.cashBeforeExpenses, hint: "Office cash plus approved expense outflows for the period", tone: "cyan" },
-        { label: "Cash After Expenses", previousValue: 0, value: totals.cashAfterExpenses, hint: "Selected-period cash after approved expenses, banking and Admin handovers, displayed at zero when fully cleared", tone: totals.cashReconciliationDifference > 0 ? "red" : "green" },
+        { label: "Company Cash Position", previousValue: 0, value: totals.companyCashPosition, hint: "Selected-period collections minus approved expenses only", tone: totals.companyCashPosition < 1_000_000 ? "amber" : "green" },
         { label: "Projected Cash After Pending Approvals", previousValue: 0, value: totals.projectedCashAfterPendingApprovals, hint: "Cash if pending expenses are approved", tone: totals.projectedCashAfterPendingApprovals < 0 ? "red" : "amber" },
         { label: "Unusual Expense Alerts", previousValue: 0, value: officeRows.filter((row) => row.pendingExpensesPeriod > row.cashHeldInOffice && row.pendingExpensesPeriod > 0).length, hint: "Offices where pending approvals may overdraw cash", tone: officeRows.some((row) => row.pendingExpensesPeriod > row.cashHeldInOffice && row.pendingExpensesPeriod > 0) ? "red" : "green" },
     ];
@@ -847,9 +865,9 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         insights: [...receiptIntegrityAlerts, ...buildInsights({ collectors, offices: officeRows, securityShortfall, totals })],
         kpis,
         offices,
-        officeRows: officeRows.sort((a, b) => b.dailyCashRemainingAtOffice - a.dailyCashRemainingAtOffice),
+        officeRows: officeRows.sort((a, b) => b.companyCashPosition - a.companyCashPosition),
         selectedPeriodLabel: periodLabel(filters.startDate, filters.endDate),
-        selectedPeriodMode: filters.startDate === filters.endDate ? "single-day" : "range",
+        selectedPeriodMode: !filters.startDate && !filters.endDate ? "all-dates" : filters.startDate === filters.endDate ? "single-day" : "range",
         totals,
     };
 }
