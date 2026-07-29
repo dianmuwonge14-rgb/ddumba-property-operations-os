@@ -18,7 +18,10 @@ export type CashPositionKpi = {
 
 export type CashPositionOfficeRow = {
     alreadyBanked: number;
+    approvedExpensesPeriod: number;
     bankingPercentage: number;
+    cashAfterApprovedExpenses: number;
+    cashBeforeExpenses: number;
     cashCollectedToday: number;
     cashHeldByCollectors: number;
     cashHeldInOffice: number;
@@ -32,6 +35,8 @@ export type CashPositionOfficeRow = {
     officeName: string;
     outstandingToAdmin: number;
     outstandingToBank: number;
+    pendingExpensesPeriod: number;
+    projectedCashAfterPendingExpenses: number;
     securityDeposits: number;
     status: "healthy" | "attention" | "critical";
     statusReason: string;
@@ -116,10 +121,16 @@ export type CashPositionData = {
     officeRows: CashPositionOfficeRow[];
     totals: {
         cashDifferenceAlerts: number;
+        approvedExpensesToday: number;
+        approvedExpensesThisMonth: number;
         cashHeldByCollectors: number;
         cashHeldByOffices: number;
         cashWaitingToBeBanked: number;
+        cashAfterExpenses: number;
+        cashBeforeExpenses: number;
         companyCashAvailable: number;
+        pendingExpenseRequests: number;
+        projectedCashAfterPendingApprovals: number;
         securityDepositsHeld: number;
         totalBanked: number;
         totalCashCollectedToday: number;

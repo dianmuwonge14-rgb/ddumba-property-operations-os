@@ -730,11 +730,17 @@ function paymentLabelForKind(kind: RecordCollectionInput["paymentKind"], source:
 }
 
 export async function recordCollection(input: RecordCollectionInput) {
+    const perfStart = performance.now();
+    const perfMarks: Record<string, number> = {};
+    const mark = (stage: string) => {
+        perfMarks[stage] = Number((performance.now() - perfStart).toFixed(1));
+    };
     const context = await requireAuth();
     const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
     if (!isCollector && !hasPermission(context, "collections.payment.post")) {
         throw new Error("You do not have permission to post tenant payments.");
     }
+    mark("auth");
     const supabase = isCollector ? createSupabaseAdminClient() : await createSupabaseServerClient();
     const amount = Number(input.amount);
     assertPositiveAmount(amount, "Collection amount");
@@ -747,6 +753,7 @@ export async function recordCollection(input: RecordCollectionInput) {
         supabase,
         tenantId: input.tenantId,
     });
+    mark("tenant_context");
 
     const resolvedOfficeId =
         tenantContext.lease?.office_id ??
@@ -814,6 +821,7 @@ export async function recordCollection(input: RecordCollectionInput) {
     if (error) {
         throw new Error(error.message);
     }
+    mark("collection_insert");
 
     const rentAllocations = buildTenantPaymentCoverageAllocations({
         amount,
@@ -912,6 +920,7 @@ export async function recordCollection(input: RecordCollectionInput) {
     if (criticalError && !/does not exist|schema cache|Could not find/i.test(criticalError.message ?? "")) {
         throw new Error(criticalError.message ?? "Payment balance update failed.");
     }
+    mark("critical_writes");
 
     const reconciliation = await reconcileTenantBalanceAfterWrite({
         actorId: context.profile?.id ?? null,
@@ -936,6 +945,7 @@ export async function recordCollection(input: RecordCollectionInput) {
             .eq("company_id", context.activeCompany.id);
         if (paymentBalanceUpdate.error) throw new Error(paymentBalanceUpdate.error.message);
     }
+    mark("balance_reconciliation");
 
     const backgroundWrites: Array<PromiseLike<unknown>> = [
         recordCollectionLedgerAndCash({
@@ -999,6 +1009,7 @@ export async function recordCollection(input: RecordCollectionInput) {
         const rejected = results.find((result) => result.status === "rejected");
         if (rejected) console.warn("Payment background update failed:", rejected.reason);
     });
+    mark("background_queued");
 
     let receipt = null;
     let receiptError: string | null = null;
@@ -1008,8 +1019,18 @@ export async function recordCollection(input: RecordCollectionInput) {
         receiptError = error instanceof Error ? error.message : "Receipt could not be generated.";
         console.warn("Payment receipt generation failed:", receiptError);
     }
+    mark("receipt_generation");
 
     revalidateFastPaymentPages();
+    mark("targeted_revalidation");
+    console.info("payments_entry_performance", {
+        collectionId: data.id,
+        companyId: context.activeCompany.id,
+        officeId: resolvedOfficeId,
+        paymentDate,
+        stagesMs: perfMarks,
+        totalMs: Number((performance.now() - perfStart).toFixed(1)),
+    });
     return {
         ...data,
         balance: finalBalance,

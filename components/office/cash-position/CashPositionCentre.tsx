@@ -237,6 +237,14 @@ export default function CashPositionCentre({ data }: Props) {
         router.push(actionUrl("/office/receipts", { collectorId }));
     }
 
+    function handleKpiClick(label: string) {
+        if (label.includes("Expense")) {
+            router.push(actionUrl("/office/expenses", filters.officeId ? { officeId: filters.officeId } : {}));
+            return;
+        }
+        setSpotlight((current) => current === label ? null : label);
+    }
+
     const syncedAt = dateTime(data.generatedAt);
     const expanded = data.officeRows.find((office) => office.officeId === expandedOffice) ?? data.officeRows[0] ?? null;
     const selectedCollector = collectorPanel
@@ -285,10 +293,10 @@ export default function CashPositionCentre({ data }: Props) {
                         <button
                             key={kpi.label}
                             title={kpi.hint}
-                            onClick={() => setSpotlight((current) => current === kpi.label ? null : kpi.label)}
+                            onClick={() => handleKpiClick(kpi.label)}
                             className={`group relative min-h-[160px] min-w-0 max-w-full overflow-hidden rounded-[26px] border bg-gradient-to-br p-4 text-left shadow-2xl backdrop-blur transition duration-300 hover:-translate-y-1 hover:shadow-cyan-950/40 focus:outline-none focus:ring-4 focus:ring-cyan-300/15 motion-reduce:transform-none ${toneClasses(kpi.tone)} ${spotlight === kpi.label ? "ring-2 ring-cyan-200/60" : ""}`}
                         >
-                            <div className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-white/10 blur-2xl transition group-hover:bg-white/16" />
+                            <div className="absolute right-2 top-2 h-20 w-20 rounded-full bg-white/10 blur-2xl transition group-hover:bg-white/16" />
                             <div className="flex items-start justify-between gap-3">
                                 <span className="grid h-11 w-11 place-items-center rounded-2xl border border-white/10 bg-white/10 text-white shadow-lg transition duration-300 group-hover:scale-105 motion-reduce:transform-none">{kpiIcon(kpi.label)}</span>
                                 <TrendChip current={kpi.value} previous={kpi.previousValue} tone={kpi.tone} />
@@ -437,7 +445,7 @@ function AICashDirector({ data, onAction }: { data: CashPositionData; onAction: 
     const lead = data.insights[0];
     return (
         <section className="relative overflow-hidden rounded-[30px] border border-cyan-300/20 bg-gradient-to-br from-cyan-300/14 via-slate-900/78 to-slate-950 p-5 shadow-2xl shadow-cyan-950/25">
-            <div className="absolute -right-14 -top-14 h-44 w-44 rounded-full bg-cyan-300/16 blur-3xl" />
+            <div className="absolute right-3 top-3 h-28 w-28 rounded-full bg-cyan-300/16 blur-3xl" />
             <div className="relative flex items-start gap-3">
                 <span className="grid h-12 w-12 place-items-center rounded-2xl bg-cyan-300 text-slate-950 shadow-lg shadow-cyan-400/20"><Brain size={22} /></span>
                 <div>
@@ -539,6 +547,11 @@ function OfficeComparisonCards({
                             <Mini label="Held" value={money(office.cashHeldInOffice)} risky={office.cashHeldInOffice < 0} />
                             <Mini label="Banked" value={money(office.alreadyBanked)} />
                             <Mini label="Outstanding" value={money(office.outstandingToBank)} risky={office.outstandingToBank > 1_000_000} />
+                            <Mini label="Approved expenses" value={money(office.approvedExpensesPeriod)} />
+                            <Mini label="Pending expenses" value={money(office.pendingExpensesPeriod)} risky={office.pendingExpensesPeriod > office.cashHeldInOffice && office.pendingExpensesPeriod > 0} />
+                            <Mini label="Before expenses" value={money(office.cashBeforeExpenses)} />
+                            <Mini label="After expenses" value={money(office.cashAfterApprovedExpenses)} risky={office.cashAfterApprovedExpenses < 0} />
+                            <Mini label="Projected if approved" value={money(office.projectedCashAfterPendingExpenses)} risky={office.projectedCashAfterPendingExpenses < 0} />
                             <Mini label="Receipts" value={office.numberOfReceipts.toLocaleString()} />
                             <Mini label="Banking %" value={percent(office.bankingPercentage)} />
                             <Mini label="Top collector" value={office.collectorCount ? `${office.collectorCount} active` : "No collector"} />

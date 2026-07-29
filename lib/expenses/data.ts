@@ -37,6 +37,14 @@ function dateOnly(value: string | null | undefined) {
     return value?.slice(0, 10) || "";
 }
 
+function expenseStatus(expense: Record<string, unknown>) {
+    return String(expense.status ?? (expense.approved_at ? "approved" : "pending")).toLowerCase();
+}
+
+function isApprovedExpense(expense: Record<string, unknown>) {
+    return expenseStatus(expense) === "approved";
+}
+
 function monthBounds(monthKey: string | null | undefined) {
     const fallback = new Date().toISOString().slice(0, 7);
     const value = /^\d{4}-\d{2}$/.test(monthKey ?? "") ? String(monthKey) : fallback;
@@ -323,7 +331,8 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
     const items = hydrateExpenseItems(expenses, categoriesResult.data ?? [], propertiesResult.data ?? [], landlordsResult.data ?? [], usersResult.data ?? []);
     const officeById = new Map((officesResult.data ?? []).map((office) => [office.id, office.office_name ?? office.name ?? "Office"]));
     const totalCollections = collections.reduce((total, collection) => total + Number(collection.amount_paid ?? collection.amount ?? 0), 0);
-    const totalExpenses = sumExpenses(expenses);
+    const approvedExpenses = expenses.filter(isApprovedExpense);
+    const totalExpenses = sumExpenses(approvedExpenses);
 
     return {
         filters: resolved,
@@ -335,7 +344,7 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
             totalCollections,
             totalExpenses,
             remainingBalance: totalCollections - totalExpenses,
-            expenseRows: expenses.length,
+            expenseRows: approvedExpenses.length,
             paymentRows: collections.length,
         },
         expenses: items.map((expense) => ({
@@ -383,7 +392,7 @@ function hydrateExpenseItems(
         };
         const property = expense.property_id ? propertyById.get(expense.property_id) ?? null : null;
         const landlord = property?.landlord_id ? landlordById.get(property.landlord_id) ?? null : null;
-        const rejected = (expense.description ?? "").toLowerCase().includes("[rejected]");
+        const status = expenseStatus(rawExpense);
 
         return {
             ...expense,
@@ -394,7 +403,7 @@ function hydrateExpenseItems(
             landlordName: landlord?.full_name ?? null,
             paymentMethod: rawExpense.payment_method ?? null,
             submittedByName: expense.submitted_by ? userById.get(expense.submitted_by)?.full_name ?? null : null,
-            approvalState: rejected ? "rejected" : expense.approved_at ? "approved" : "pending",
+            approvalState: status === "approved" ? "approved" : status === "rejected" ? "rejected" : "pending",
             status: rawExpense.status ?? null,
         };
     });
@@ -408,11 +417,12 @@ function calculateKpis(
 ): ExpenseKpis {
     const today = dayRange();
     const month = monthRange();
-    const totalExpenses = sumExpenses(expenses);
-    const todayExpenses = sumExpenses(expenses.filter((expense) => expense.expense_date && expense.expense_date >= today.start && expense.expense_date <= today.end));
-    const monthExpenses = sumExpenses(expenses.filter((expense) => expense.expense_date && expense.expense_date >= month.start && expense.expense_date <= month.end));
+    const approvedExpenses = expenses.filter(isApprovedExpense);
+    const totalExpenses = sumExpenses(approvedExpenses);
+    const todayExpenses = sumExpenses(approvedExpenses.filter((expense) => expense.expense_date && expense.expense_date >= today.start && expense.expense_date <= today.end));
+    const monthExpenses = sumExpenses(approvedExpenses.filter((expense) => expense.expense_date && expense.expense_date >= month.start && expense.expense_date <= month.end));
     const propertyIds = new Set(properties.map((property) => property.id));
-    const propertyExpenses = sumExpenses(expenses.filter((expense) => expense.property_id && propertyIds.has(expense.property_id)));
+    const propertyExpenses = sumExpenses(approvedExpenses.filter((expense) => expense.property_id && propertyIds.has(expense.property_id)));
     const collectionValue = collections.reduce((total, collection) => total + Number(collection.amount_paid ?? collection.amount ?? 0), 0);
     const netCashPosition = collectionValue - totalExpenses;
 

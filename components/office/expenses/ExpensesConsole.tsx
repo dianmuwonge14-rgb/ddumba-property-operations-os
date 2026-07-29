@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { ReactNode } from "react";
 import { AlertTriangle, Banknote, Bot, CheckCircle2, Download, Edit3, Eye, FileText, History, Loader2, Printer, ReceiptText, Trash2, UserRound, WalletCards } from "lucide-react";
-import { adminEditExpenseDirect, adminSafeDeleteExpense, createEmployeeExpenseFromExpenses, createExpense, createLandlordPaidExpenseRequest, decideEmployeeExpenseRequest, decideExpenseChangeRequest, previewEmployeeExpense, previewLandlordPaymentExpense, submitExpenseChangeRequest } from "@/app/actions/expenses";
+import { adminEditExpenseDirect, adminSafeDeleteExpense, approveExpense, createEmployeeExpenseFromExpenses, createExpense, createLandlordPaidExpenseRequest, decideEmployeeExpenseRequest, decideExpenseChangeRequest, previewEmployeeExpense, previewLandlordPaymentExpense, rejectExpense, submitExpenseChangeRequest } from "@/app/actions/expenses";
 import type { EmployeeExpensePreview, ExpenseBalanceReport, ExpenseChangePayload, ExpenseItem, ExpensePeriodMode, ExpensesPageData } from "@/lib/expenses/types";
 
 type Props = {
@@ -398,7 +398,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                         item: trimmedItem,
                     });
                     flashExpense(saved.id);
-                    setMessage("Expense recorded.");
+                    setMessage(isAdmin ? "Expense recorded and approved." : "Sent for Admin Approval. Cash position is unchanged until approval.");
                 }
                 clearForNext();
                 setContinueAsAdvance(false);
@@ -754,6 +754,11 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                 </section>
 
                 <LandlordPaymentRequestLedger requests={data.landlordPaymentRequests} />
+                <GenericExpenseApprovalQueue
+                    isAdmin={isAdmin}
+                    requests={data.expenses.filter((expense) => (expense.status ?? expense.approvalState) === "pending")}
+                    onReviewed={() => setRefreshToken((token) => token + 1)}
+                />
                 <EmployeeExpenseRequestLedger isAdmin={isAdmin} requests={data.employeeExpenseRequests} />
                 <ExpenseChangeRequestLedger isAdmin={isAdmin} requests={data.expenseChangeRequests} onReviewed={() => setRefreshToken((token) => token + 1)} />
 
@@ -1218,6 +1223,94 @@ function AdvanceAgreementPanel({
                 <AgreementField label="Deduct every month">
                     <input value={agreement.monthlyDeductionAmount} onChange={(event) => setField("monthlyDeductionAmount", event.target.value)} placeholder="UGX amount" inputMode="numeric" className="mt-1 h-12 w-full rounded-2xl border border-white/10 bg-white px-4 text-sm font-black text-slate-950 outline-none focus:border-blue-300 focus:ring-4 focus:ring-blue-400/20" />
                 </AgreementField>
+            </div>
+        </section>
+    );
+}
+
+function GenericExpenseApprovalQueue({ isAdmin, onReviewed, requests }: { isAdmin: boolean; onReviewed: () => void; requests: ExpenseItem[] }) {
+    const [comments, setComments] = useState<Record<string, string>>({});
+    const [message, setMessage] = useState<string | null>(null);
+    const [pendingId, setPendingId] = useState<string | null>(null);
+    const [isPending, startTransition] = useTransition();
+    if (!isAdmin || !requests.length) return null;
+
+    function decide(expense: ExpenseItem, decision: "approved" | "rejected") {
+        const note = comments[expense.id]?.trim() ?? "";
+        if (decision === "rejected" && !note) {
+            setMessage("Enter a rejection reason before rejecting an expense.");
+            return;
+        }
+        setPendingId(expense.id);
+        startTransition(async () => {
+            try {
+                if (decision === "approved") {
+                    await approveExpense({ expenseId: expense.id, notes: note || undefined });
+                    setMessage("Expense approved. Cash Position Centre will reflect the outflow once.");
+                } else {
+                    await rejectExpense({ expenseId: expense.id, notes: note });
+                    setMessage("Expense rejected. Cash position remains unchanged.");
+                }
+                setComments((current) => ({ ...current, [expense.id]: "" }));
+                onReviewed();
+            } catch (error) {
+                setMessage(error instanceof Error ? error.message : "Expense decision failed.");
+            } finally {
+                setPendingId(null);
+            }
+        });
+    }
+
+    return (
+        <section className="mx-auto mt-5 max-w-6xl overflow-hidden rounded-[26px] border border-amber-200 bg-white shadow-2xl shadow-slate-950/15">
+            <div className="border-b border-amber-100 bg-amber-50 px-4 py-3">
+                <p className="text-xs font-black uppercase tracking-wide text-amber-700">Admin approval centre</p>
+                <h2 className="text-lg font-black text-slate-950">Pending Office Expenses</h2>
+                <p className="mt-1 text-sm font-bold text-slate-600">Pending expenses are visible here but do not reduce cash until Admin approval.</p>
+                {message ? <p className="mt-2 rounded-xl bg-white px-3 py-2 text-sm font-black text-slate-700">{message}</p> : null}
+            </div>
+            <div className="grid gap-3 p-4 lg:grid-cols-2">
+                {requests.map((expense) => {
+                    const note = comments[expense.id] ?? "";
+                    const busy = isPending && pendingId === expense.id;
+                    return (
+                        <article key={`generic-expense-approval:${expense.id}`} className="min-w-0 rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                <div className="min-w-0">
+                                    <p className="break-words text-base font-black text-slate-950">{expense.item ?? expense.expense_number ?? "Office expense"}</p>
+                                    <p className="mt-1 text-xs font-bold text-slate-500">{expense.officeName ?? "Office"} · Submitted by {expense.submittedByName ?? "account"} · {expense.expense_date ?? "No date"}</p>
+                                </div>
+                                <span className="shrink-0 rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">{money(expense.amount)}</span>
+                            </div>
+                            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                                <MiniFinance label="Category" value={expense.categoryName ?? expense.category ?? "Expense"} tone="slate" />
+                                <MiniFinance label="Cash impact now" value="UGX 0 pending" tone="amber" />
+                                <MiniFinance label="Payment method" value={expense.paymentMethod ?? "Not set"} tone="slate" />
+                                <MiniFinance label="Projected after approval" value={`-${money(expense.amount)}`} tone="amber" />
+                            </div>
+                            <label className="mt-3 block">
+                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Admin note / rejection reason</span>
+                                <input
+                                    value={note}
+                                    onChange={(event) => setComments((current) => ({ ...current, [expense.id]: event.target.value }))}
+                                    placeholder="Required for rejection"
+                                    className="mt-1 h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-950 outline-none focus:border-amber-400 focus:ring-4 focus:ring-amber-100"
+                                />
+                            </label>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                                <button disabled={isPending} onClick={() => decide(expense, "approved")} className="rounded-xl bg-emerald-700 px-4 py-2 text-xs font-black text-white disabled:opacity-40">
+                                    {busy ? "Processing..." : "Approve"}
+                                </button>
+                                <button disabled={isPending} onClick={() => decide(expense, "rejected")} className="rounded-xl bg-rose-700 px-4 py-2 text-xs font-black text-white disabled:opacity-40">
+                                    Reject
+                                </button>
+                                <a href={`/office/admin/cash-position?officeId=${encodeURIComponent(String(expense.office_id ?? ""))}`} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-700">
+                                    Open office cash position
+                                </a>
+                            </div>
+                        </article>
+                    );
+                })}
             </div>
         </section>
     );

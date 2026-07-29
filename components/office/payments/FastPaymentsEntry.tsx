@@ -300,6 +300,7 @@ export default function FastPaymentsEntry({
 
             void (async () => {
                 try {
+                    const requestStartedAt = performance.now();
                     const params = new URLSearchParams({
                         paymentDate,
                         q: lookup,
@@ -315,9 +316,16 @@ export default function FastPaymentsEntry({
                         signal: controller.signal,
                     });
                     const payload = await response.json();
+                    const visibleMs = Math.round(performance.now() - requestStartedAt);
 
                     if (controller.signal.aborted || requestSeqRef.current !== requestSeq) return;
                     if (!response.ok) throw new Error(payload.error ?? "Room search failed.");
+                    console.info("payments_entry_search_performance", {
+                        queryLength: lookup.length,
+                        resultCount: Array.isArray(payload.results) ? payload.results.length : 0,
+                        serverTiming: response.headers.get("server-timing"),
+                        visibleMs,
+                    });
 
                     const nextResults = payload.results ?? [];
                     setResults(nextResults);
@@ -829,6 +837,7 @@ export default function FastPaymentsEntry({
 
         startTransition(async () => {
             try {
+                const submitStartedAt = performance.now();
                 setMessage(null);
                 setAllocationMessage(null);
                 if (!confirmDuplicate && duplicateCount > 0) {
@@ -852,6 +861,10 @@ export default function FastPaymentsEntry({
                         paymentKind: "tenant_normal",
                         paymentSource: "tenant",
                     });
+                console.info("payments_entry_save_performance", {
+                    paymentId: collection.id,
+                    visibleMs: Math.round(performance.now() - submitStartedAt),
+                });
                 const receipt = (collection as typeof collection & { receipt?: PaymentReceiptSummary | null; receiptError?: string | null }).receipt ?? null;
                 const receiptError = (collection as typeof collection & { receiptError?: string | null }).receiptError ?? null;
                 const allocationSummary = (collection as typeof collection & {

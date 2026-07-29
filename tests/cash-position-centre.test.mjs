@@ -6,6 +6,9 @@ const pageSource = readFileSync(new URL("../app/office/admin/cash-position/page.
 const dataSource = readFileSync(new URL("../lib/cash-position-centre/data.ts", import.meta.url), "utf8");
 const typesSource = readFileSync(new URL("../lib/cash-position-centre/types.ts", import.meta.url), "utf8");
 const componentSource = readFileSync(new URL("../components/office/cash-position/CashPositionCentre.tsx", import.meta.url), "utf8");
+const expensesActionSource = readFileSync(new URL("../app/actions/expenses.ts", import.meta.url), "utf8");
+const expensesDataSource = readFileSync(new URL("../lib/expenses/data.ts", import.meta.url), "utf8");
+const expensesComponentSource = readFileSync(new URL("../components/office/expenses/ExpensesConsole.tsx", import.meta.url), "utf8");
 const sidebarSource = readFileSync(new URL("../components/office/shared/OfficeSidebar.tsx", import.meta.url), "utf8");
 const loginSource = readFileSync(new URL("../app/api/auth/office-login/route.ts", import.meta.url), "utf8");
 const officeHomeSource = readFileSync(new URL("../app/office/page.tsx", import.meta.url), "utf8");
@@ -44,10 +47,16 @@ test("cash position centre includes requested executive KPIs and live office tab
     "Security Deposit Cash",
     "Security Shortfall",
     "Today’s Collection Performance",
+    "Approved Expenses Today",
+    "Approved Expenses This Month",
+    "Pending Expense Requests",
+    "Cash Before Expenses",
+    "Cash After Expenses",
+    "Projected Cash After Pending Approvals",
   ]) {
     assert.match(dataSource + componentSource, new RegExp(label));
   }
-  for (const field of ["cashCollectedToday", "cashHeldInOffice", "cashHeldByCollectors", "alreadyBanked", "outstandingToBank", "bankingPercentage", "weeklyPerformance", "monthlyPerformance"]) {
+  for (const field of ["cashCollectedToday", "cashHeldInOffice", "cashHeldByCollectors", "alreadyBanked", "outstandingToBank", "bankingPercentage", "weeklyPerformance", "monthlyPerformance", "approvedExpensesPeriod", "pendingExpensesPeriod", "cashBeforeExpenses", "cashAfterApprovedExpenses", "projectedCashAfterPendingExpenses"]) {
     assert.match(typesSource, new RegExp(field));
   }
 });
@@ -102,4 +111,20 @@ test("cash position centre keeps banking writes on the canonical cash banking wo
   assert.match(componentSource, /\/office\/admin\/cash-banking/);
   assert.doesNotMatch(componentSource, /from\("cash_transactions"\)\.insert/);
   assert.doesNotMatch(componentSource, /from\("collections"\)\.insert/);
+});
+
+test("non-admin office expenses require admin approval before cash impact", () => {
+  assert.match(expensesActionSource, /isDirectAdmin \? "approved" : "pending"/);
+  assert.match(expensesActionSource, /expense_submitted_for_admin_approval/);
+  assert.match(expensesActionSource, /Expense pending Admin approval/);
+  assert.match(expensesActionSource, /if \(isDirectAdmin\) \{\s*await postOfficeCashOutflow/s);
+  assert.match(expensesActionSource, /export async function approveExpense/);
+  assert.match(expensesActionSource, /requireCompanyAdminMode\(\)/);
+  assert.match(expensesActionSource, /\.eq\("status", "pending"\)/);
+  assert.match(expensesActionSource, /sourceType: "expense"/);
+  assert.match(expensesActionSource, /Expense is already approved/);
+  assert.match(expensesActionSource, /Rejection reason is required/);
+  assert.match(expensesDataSource, /const approvedExpenses = expenses\.filter\(isApprovedExpense\)/);
+  assert.match(expensesComponentSource, /GenericExpenseApprovalQueue/);
+  assert.match(expensesComponentSource, /Sent for Admin Approval/);
 });

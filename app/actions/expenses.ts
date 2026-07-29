@@ -352,13 +352,15 @@ export async function createExpense(input: CreateExpenseInput) {
 
     const expenseDate = input.expenseDate || new Date().toISOString().slice(0, 10);
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
-    const expenseActorId = await resolveExpenseEmployeeActorId(context);
+    const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
     const expensePayload = {
         amount,
-        approved_at: new Date().toISOString(),
-        approved_by: expenseActorId,
+        approved_at: isDirectAdmin ? new Date().toISOString() : null,
+        approved_by: isDirectAdmin ? actorId : null,
         category: input.category || null,
         category_id: input.categoryId || null,
+        cash_source_id: context.activeOffice!.id,
+        cash_source_type: "office_cash",
         company_id: context.activeCompany!.id,
         description: input.description || null,
         expense_date: expenseDate,
@@ -368,7 +370,7 @@ export async function createExpense(input: CreateExpenseInput) {
         payment_method: input.paymentMethod || null,
         property_id: input.propertyId || null,
         receipt_url: input.receiptUrl || null,
-        status: "approved",
+        status: isDirectAdmin ? "approved" : "pending",
         submitted_by: actorId,
         vendor: input.vendor || null,
     };
@@ -385,6 +387,8 @@ export async function createExpense(input: CreateExpenseInput) {
     if (insertResult.error) {
         const fallbackPayload = { ...expensePayload };
         delete (fallbackPayload as Partial<typeof fallbackPayload>).payment_method;
+        delete (fallbackPayload as Partial<typeof fallbackPayload>).cash_source_id;
+        delete (fallbackPayload as Partial<typeof fallbackPayload>).cash_source_type;
         delete (fallbackPayload as Partial<typeof fallbackPayload>).status;
         delete (fallbackPayload as Partial<typeof fallbackPayload>).approved_at;
         delete (fallbackPayload as Partial<typeof fallbackPayload>).approved_by;
@@ -400,35 +404,37 @@ export async function createExpense(input: CreateExpenseInput) {
     }
     const data = insertResult.data;
 
-    try {
+    if (isDirectAdmin) {
         await postOfficeCashOutflow({
             amount,
             companyId: context.activeCompany!.id,
             db: adminDb,
-            description: `Office expense recorded: ${input.item || input.category || "Expense"}`,
+            description: `Admin-approved office expense: ${input.item || input.category || "Expense"}`,
             officeId: context.activeOffice!.id,
-            recordedBy: context.profile?.id ?? null,
+            recordedBy: actorId,
             sourceId: data.id,
             sourceType: "expense",
             transactionDate: expenseDate,
         });
-    } catch (error) {
-        console.error("Expense saved but office cash ledger posting failed:", error);
-        await logUserAction({
-            action: "expense_cash_ledger_warning",
-            entityType: "expense",
-            entityId: data.id,
-            companyId: context.activeCompany!.id,
-            officeId: context.activeOffice!.id,
-            afterData: {
-                expenseId: data.id,
-                warning: error instanceof Error ? error.message : "Office cash ledger posting failed.",
-            },
+    } else {
+        await createNotificationWithEmail(adminDb, {
+            action_url: "/office/expenses",
+            channel: "in_app",
+            company_id: context.activeCompany!.id,
+            delivery_status: "pending",
+            entity_id: data.id,
+            entity_type: "expense",
+            is_read: false,
+            message: `Expense approval requested for ${input.item || input.category || "office expense"}: UGX ${Math.round(amount).toLocaleString()} on ${expenseDate}.`,
+            office_id: context.activeOffice!.id,
+            recipient_type: "admin",
+            severity: "warning",
+            title: "Expense pending Admin approval",
         });
     }
 
     await logUserAction({
-        action: "expense_created",
+        action: isDirectAdmin ? "expense_admin_direct_approved" : "expense_submitted_for_admin_approval",
         entityType: "expense",
         entityId: data.id,
         companyId: context.activeCompany!.id,
@@ -2384,8 +2390,8 @@ export async function editExpense(input: EditExpenseInput) {
         action: "expense_edited",
         entityType: "expense",
         entityId: data.id,
-        beforeData: existing,
-        afterData: data,
+        beforeData: existing as any,
+        afterData: data as any,
         companyId: context.activeCompany!.id,
         officeId: context.activeOffice!.id,
     });
@@ -2395,30 +2401,74 @@ export async function editExpense(input: EditExpenseInput) {
 }
 
 export async function approveExpense(input: ExpenseDecisionInput) {
-    const context = await activeWriteContext();
-    const existing = await getExpenseInActiveOffice(input.expenseId);
+    const context = await requireCompanyAdminMode();
     const supabase = await createSupabaseServerClient();
+    const db = supabase as unknown as { from: (table: string) => any };
+    const adminDb = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
+    const companyId = context.activeCompany?.id;
+    const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    if (!companyId) throw new Error("Active company is required.");
+    const existing = await loadExpenseForCompany(db, { companyId, expenseId: input.expenseId });
+    const existingStatus = String(existing.status ?? (existing.approved_at ? "approved" : "pending")).toLowerCase();
+    if (existingStatus === "approved") throw new Error("Expense is already approved.");
+    if (existingStatus !== "pending") throw new Error(`Only pending expenses can be approved. Current status: ${existingStatus}.`);
+    const approvedAt = new Date().toISOString();
 
-    const { data, error } = await supabase
+    const { data, error } = await db
         .from("expenses")
         .update({
-            approved_at: new Date().toISOString(),
-            description: input.notes ? `${existing.description ?? ""}\n[approved] ${input.notes}`.trim() : existing.description,
+            approved_at: approvedAt,
+            approved_by: actorId,
+            description: input.notes ? `${String(existing.description ?? "")}\n[approved] ${input.notes}`.trim() : String(existing.description ?? ""),
+            status: "approved",
         })
-        .eq("id", existing.id)
+        .eq("id", input.expenseId)
+        .eq("company_id", companyId)
+        .eq("status", "pending")
         .select("*")
         .single();
 
     if (error) throw new Error(error.message);
+    if (!data) throw new Error("Expense approval failed. No changes were applied.");
+
+    await postOfficeCashOutflow({
+        amount: amount(data.amount),
+        companyId,
+        db: adminDb,
+        description: `Approved office expense: ${String(data.item ?? data.category ?? "Expense")}`,
+        officeId: String(data.office_id),
+        recordedBy: actorId,
+        sourceId: data.id,
+        sourceType: "expense",
+        transactionDate: String(data.expense_date ?? approvedAt.slice(0, 10)),
+    });
+
+    if (data.submitted_by) {
+        await createNotificationWithEmail(adminDb, {
+            action_url: "/office/expenses",
+            channel: "in_app",
+            company_id: companyId,
+            delivery_status: "pending",
+            entity_id: data.id,
+            entity_type: "expense",
+            is_read: false,
+            message: `Your expense request for UGX ${Math.round(amount(data.amount)).toLocaleString()} was approved by Admin.`,
+            office_id: data.office_id ?? undefined,
+            recipient_id: data.submitted_by,
+            recipient_type: "user",
+            severity: "success",
+            title: "Expense approved",
+        } as any);
+    }
 
     await logUserAction({
         action: "expense_approved",
         entityType: "expense",
         entityId: data.id,
-        beforeData: existing,
-        afterData: data,
-        companyId: context.activeCompany!.id,
-        officeId: context.activeOffice!.id,
+        beforeData: existing as any,
+        afterData: data as any,
+        companyId,
+        officeId: String(data.office_id ?? existing.office_id ?? ""),
     });
 
     revalidateExpenseSurfaces();
@@ -2426,31 +2476,66 @@ export async function approveExpense(input: ExpenseDecisionInput) {
 }
 
 export async function rejectExpense(input: ExpenseDecisionInput) {
-    const context = await activeWriteContext();
-    const existing = await getExpenseInActiveOffice(input.expenseId);
+    const context = await requireCompanyAdminMode();
     const supabase = await createSupabaseServerClient();
+    const db = supabase as unknown as { from: (table: string) => any };
+    const adminDb = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
+    const companyId = context.activeCompany?.id;
+    const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    if (!companyId) throw new Error("Active company is required.");
+    if (!input.notes?.trim()) throw new Error("Rejection reason is required.");
+    const existing = await loadExpenseForCompany(db, { companyId, expenseId: input.expenseId });
+    const existingStatus = String(existing.status ?? (existing.approved_at ? "approved" : "pending")).toLowerCase();
+    if (existingStatus === "approved") throw new Error("Approved expenses cannot be rejected from this queue. Use a correction or reversal workflow.");
+    if (existingStatus !== "pending") throw new Error(`Only pending expenses can be rejected. Current status: ${existingStatus}.`);
     const rejectionNote = `[rejected] ${input.notes || "Rejected"}`;
+    const rejectedAt = new Date().toISOString();
 
-    const { data, error } = await supabase
+    const { data, error } = await db
         .from("expenses")
         .update({
             approved_at: null,
-            description: `${existing.description ?? ""}\n${rejectionNote}`.trim(),
+            rejected_at: rejectedAt,
+            rejected_by: actorId,
+            rejection_reason: input.notes.trim(),
+            description: `${String(existing.description ?? "")}\n${rejectionNote}`.trim(),
+            status: "rejected",
         })
-        .eq("id", existing.id)
+        .eq("id", input.expenseId)
+        .eq("company_id", companyId)
+        .eq("status", "pending")
         .select("*")
         .single();
 
     if (error) throw new Error(error.message);
+    if (!data) throw new Error("Expense rejection failed. No changes were applied.");
+
+    if (data.submitted_by) {
+        await createNotificationWithEmail(adminDb, {
+            action_url: "/office/expenses",
+            channel: "in_app",
+            company_id: companyId,
+            delivery_status: "pending",
+            entity_id: data.id,
+            entity_type: "expense",
+            is_read: false,
+            message: `Your expense request for UGX ${Math.round(amount(data.amount)).toLocaleString()} was rejected: ${input.notes.trim()}`,
+            office_id: data.office_id ?? undefined,
+            recipient_id: data.submitted_by,
+            recipient_type: "user",
+            severity: "warning",
+            title: "Expense rejected",
+        } as any);
+    }
 
     await logUserAction({
         action: "expense_rejected",
         entityType: "expense",
         entityId: data.id,
-        beforeData: existing,
-        afterData: data,
-        companyId: context.activeCompany!.id,
-        officeId: context.activeOffice!.id,
+        beforeData: existing as any,
+        afterData: data as any,
+        companyId,
+        officeId: String(data.office_id ?? existing.office_id ?? ""),
     });
 
     revalidateExpenseSurfaces();
