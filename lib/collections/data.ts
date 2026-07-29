@@ -2022,18 +2022,23 @@ function normalizeSearchValue(value: string | null | undefined) {
     return String(value ?? "").trim().toLowerCase();
 }
 
+function normalizeRoomSearchValue(value: string | null | undefined) {
+    return normalizeSearchValue(value).replace(/\s+/g, "");
+}
+
 function scoreTenantSearchResult(result: CollectionTenantResult, term: string) {
-    const lookup = normalizeSearchValue(term);
-    const roomNumber = normalizeSearchValue(result.room?.room_number);
+    const lookup = normalizeRoomSearchValue(term);
+    const roomNumber = normalizeRoomSearchValue(result.room?.room_number);
     const tenantName = normalizeSearchValue(result.tenant.full_name);
-    const tenantPhone = normalizeSearchValue(result.tenant.phone);
+    const tenantPhone = String(result.tenant.phone ?? "").replace(/\D/g, "");
+    const phoneLookup = String(term ?? "").replace(/\D/g, "");
     const landlordName = normalizeSearchValue(result.landlord?.full_name);
 
     if (roomNumber === lookup) return 0;
     if (roomNumber.startsWith(lookup)) return 1;
     if (roomNumber.includes(lookup)) return 2;
-    if (tenantPhone.startsWith(lookup)) return 3;
-    if (tenantPhone.includes(lookup)) return 4;
+    if (phoneLookup && tenantPhone.startsWith(phoneLookup)) return 3;
+    if (phoneLookup && tenantPhone.includes(phoneLookup)) return 4;
     if (tenantName.startsWith(lookup)) return 5;
     if (tenantName.includes(lookup)) return 6;
     if (landlordName.startsWith(lookup)) return 7;

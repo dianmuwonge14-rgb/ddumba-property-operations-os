@@ -42,14 +42,13 @@ async function setPinCredential(userId: string, pin: string, adminUserId: string
     const { error: metadataError } = await (createSupabaseAdminClient() as unknown as DynamicDb)
         .from("pin_credentials")
         .update({
-            admin_visible_pin: pin,
+            admin_visible_pin: null,
             failed_attempts: 0,
             failed_login_attempts: 0,
             is_locked: false,
             locked_at: null,
             reset_at: new Date().toISOString(),
             reset_by_admin: adminUserId,
-            status: "active",
             updated_at: new Date().toISOString(),
         })
         .eq("user_id", userId);

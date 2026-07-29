@@ -104,14 +104,13 @@ async function setPinCredential(userId: string, pin: string, status = "active", 
     const { error: metadataError } = await admin
         .from("pin_credentials")
         .update({
-            admin_visible_pin: pin,
+            admin_visible_pin: null,
             failed_attempts: 0,
             failed_login_attempts: 0,
             is_locked: status === "locked",
             locked_at: status === "locked" ? now : null,
             reset_at: now,
             reset_by_admin: resetByAdmin ?? null,
-            status,
             updated_at: now,
         })
         .eq("user_id", userId);
