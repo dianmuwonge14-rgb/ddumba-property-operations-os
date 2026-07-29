@@ -42,6 +42,20 @@ test("office banking RPC is protected by transaction lock and duplicate-referenc
   assert.ok(migration.includes("coalesce(ct.status, 'approved') in ('approved','completed')"));
 });
 
+test("prior-day office banking calculates from signed office ledger and excludes selected-day cash", () => {
+  const migration = readFileSync("supabase/upgrade_migrations/0224_prior_day_office_cash_banking.sql", "utf8");
+
+  assert.match(migration, /ddumba_v1_office_cash_ledger_balance/);
+  assert.match(migration, /ddumba_v1_office_daily_cash_remaining/);
+  assert.match(migration, /ddumba_v1_calculate_prior_day_bankable_office_cash/);
+  assert.match(migration, /ddumba_v1_bank_prior_day_office_cash/);
+  assert.match(migration, /v_eligible_amount := greatest\(v_total_office_cash - v_today_cash_remaining, 0\)/);
+  assert.match(migration, /source_type = 'bank_deposit'/);
+  assert.match(migration, /This deposit reference has already been recorded/);
+  assert.match(migration, /pg_advisory_xact_lock/);
+  assert.doesNotMatch(migration, /v_office_balance_before :=[\s\S]*collections c/);
+});
+
 test("admin cash entry posts through the authoritative cash transaction ledger", () => {
   const action = readFileSync("app/actions/cash-banking.ts", "utf8");
 
