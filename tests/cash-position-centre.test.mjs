@@ -30,8 +30,8 @@ test("admin navigation exposes Cash Position Centre near cash control", () => {
 test("cash position centre includes requested executive KPIs and live office table fields", () => {
   for (const label of [
     "Total Cash Collected Today",
-    "Cash Held By Offices",
-    "Cash Held By Collectors",
+    "Cash Currently Held By Offices",
+    "Cash Currently Held By Collectors",
     "Total Cash Already Banked",
     "Total Cash Handed To Admin",
     "Security Deposits Held",
@@ -57,6 +57,7 @@ test("cash position centre ships filters, AI insights, charts and exports", () =
   assert.match(componentSource, /Collector Comparison/);
   assert.match(componentSource, /CSV/);
   assert.match(componentSource, /Excel/);
+  assert.match(componentSource, /PDF/);
   assert.match(componentSource, /window\.print\(\)/);
 });
 

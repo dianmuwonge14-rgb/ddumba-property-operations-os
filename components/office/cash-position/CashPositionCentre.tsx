@@ -12,6 +12,7 @@ import {
     ChevronDown,
     Download,
     FileSpreadsheet,
+    FileText,
     Landmark,
     LineChart,
     Printer,
@@ -83,8 +84,8 @@ export default function CashPositionCentre({ data }: Props) {
             [
                 "Office",
                 "Cash Collected Today",
-                "Cash Held In Office",
-                "Cash Held By Collectors",
+                "Cash Currently Held In Office",
+                "Cash Currently Held By Collectors",
                 "Already Banked",
                 "Given To Admin",
                 "Outstanding To Bank",
@@ -169,6 +170,9 @@ export default function CashPositionCentre({ data }: Props) {
                             </button>
                             <button onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-black text-white hover:bg-white/15">
                                 <Printer size={16} /> Print
+                            </button>
+                            <button onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-black text-white hover:bg-white/15">
+                                <FileText size={16} /> PDF
                             </button>
                             <button onClick={() => downloadCsv()} className="inline-flex items-center gap-2 rounded-2xl bg-emerald-300 px-4 py-3 text-sm font-black text-slate-950 hover:bg-emerald-200">
                                 <Download size={16} /> CSV

@@ -402,8 +402,8 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
     };
     const kpis: CashPositionKpi[] = [
         { label: "Total Cash Collected Today", value: totals.totalCashCollectedToday, hint: "Posted collections dated today", tone: "green" },
-        { label: "Cash Held By Offices", value: totals.cashHeldByOffices, hint: "Live office cash ledger", tone: totals.cashHeldByOffices < 0 ? "red" : "blue" },
-        { label: "Cash Held By Collectors", value: totals.cashHeldByCollectors, hint: "Field collector profile balances", tone: "cyan" },
+        { label: "Cash Currently Held By Offices", value: totals.cashHeldByOffices, hint: "Live office cash ledger", tone: totals.cashHeldByOffices < 0 ? "red" : "blue" },
+        { label: "Cash Currently Held By Collectors", value: totals.cashHeldByCollectors, hint: "Field collector profile balances", tone: "cyan" },
         { label: "Total Cash Already Banked", value: totals.totalBanked, hint: "Bank deposit outflows", tone: "violet" },
         { label: "Total Cash Handed To Admin", value: totals.totalCashHandedToAdmin, hint: "Admin cash received ledger", tone: "amber" },
         { label: "Security Deposits Held", value: totals.securityDepositsHeld, hint: "Separate tenant liability", tone: "violet" },
