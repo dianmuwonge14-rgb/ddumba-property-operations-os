@@ -93,7 +93,7 @@ as $$
             regexp_replace(coalesce(p_query, ''), '\D', '', 'g') as q_digits,
             greatest(1, least(coalesce(p_limit, 10), 20)) as result_limit
     ),
-    candidates as (
+    room_candidates as (
         select
             r.id as room_id,
             r.room_number,
@@ -125,6 +125,63 @@ as $$
                 when upper(regexp_replace(coalesce(r.room_number, ''), '\s+', '', 'g')) = (select q_room from search_input) then 0
                 when upper(regexp_replace(coalesce(r.room_number, ''), '\s+', '', 'g')) like (select q_room from search_input) || '%' then 1
                 when upper(regexp_replace(coalesce(r.room_number, ''), '\s+', '', 'g')) like '%' || (select q_room from search_input) || '%' then 2
+                else 20
+            end as match_rank
+        from public.rooms r
+        join public.tenants t
+          on t.company_id = r.company_id
+         and t.room_id = r.id
+         and t.status = 'active'
+        left join public.leases l
+          on l.company_id = r.company_id
+         and l.room_id = r.id
+         and l.tenant_id = t.id
+         and l.status = 'active'
+        left join public.offices o on o.id = r.office_id
+        left join public.properties p on p.id = r.property_id
+        left join public.landlords ld on ld.id = coalesce(r.landlord_id, p.landlord_id)
+        where r.company_id = p_company_id
+          and (p_search_all or r.office_id = p_office_id)
+          and lower(coalesce(r.status, '')) in ('occupied', 'active')
+          and (
+            upper(regexp_replace(coalesce(r.room_number, ''), '\s+', '', 'g')) like (select q_room from search_input) || '%'
+            or upper(regexp_replace(coalesce(r.room_number, ''), '\s+', '', 'g')) like '%' || (select q_room from search_input) || '%'
+          )
+        order by match_rank, length(coalesce(r.room_number, '')), r.room_number, t.full_name
+        limit (select result_limit from search_input)
+    ),
+    room_match_count as (
+        select count(*) as total from room_candidates
+    ),
+    person_candidates as (
+        select
+            r.id as room_id,
+            r.room_number,
+            r.monthly_rent as room_monthly_rent,
+            r.outstanding_balance as room_outstanding_balance,
+            r.office_id as room_office_id,
+            r.property_id as room_property_id,
+            r.landlord_id as room_landlord_id,
+            t.id as tenant_id,
+            t.full_name as tenant_name,
+            t.phone as tenant_phone,
+            t.balance as tenant_balance,
+            t.monthly_rent as tenant_monthly_rent,
+            t.office_id as tenant_office_id,
+            t.property_id as tenant_property_id,
+            coalesce(t.billing_day, l.billing_day, 1) as tenant_billing_day,
+            t.created_at as tenant_created_at,
+            l.id as lease_id,
+            l.start_date as lease_start_date,
+            coalesce(l.billing_day, t.billing_day, 1) as lease_billing_day,
+            l.monthly_rent as lease_monthly_rent,
+            l.office_id as lease_office_id,
+            l.property_id as lease_property_id,
+            o.id as office_id,
+            coalesce(o.office_name, o.name) as office_name,
+            coalesce(r.landlord_id, p.landlord_id) as landlord_id,
+            ld.full_name as landlord_name,
+            case
                 when (select q_digits from search_input) <> '' and regexp_replace(coalesce(t.phone, ''), '\D', '', 'g') like (select q_digits from search_input) || '%' then 3
                 when (select q_digits from search_input) <> '' and regexp_replace(coalesce(t.phone, ''), '\D', '', 'g') like '%' || (select q_digits from search_input) || '%' then 4
                 when lower(trim(coalesce(t.full_name, ''))) like (select q_text from search_input) || '%' then 5
@@ -147,19 +204,22 @@ as $$
         where r.company_id = p_company_id
           and (p_search_all or r.office_id = p_office_id)
           and lower(coalesce(r.status, '')) in ('occupied', 'active')
+          and (select total from room_match_count) = 0
           and (
-            upper(regexp_replace(coalesce(r.room_number, ''), '\s+', '', 'g')) like (select q_room from search_input) || '%'
-            or upper(regexp_replace(coalesce(r.room_number, ''), '\s+', '', 'g')) like '%' || (select q_room from search_input) || '%'
-            or (
+            (
                 (select q_digits from search_input) <> ''
                 and regexp_replace(coalesce(t.phone, ''), '\D', '', 'g') like '%' || (select q_digits from search_input) || '%'
             )
             or lower(trim(coalesce(t.full_name, ''))) like (select q_text from search_input) || '%'
             or lower(trim(coalesce(t.full_name, ''))) like '%' || (select q_text from search_input) || '%'
           )
+        order by match_rank, length(coalesce(r.room_number, '')), r.room_number, t.full_name
+        limit (select result_limit from search_input)
     ),
-    room_match_count as (
-        select count(*) as total from candidates where match_rank <= 2
+    candidates as (
+        select * from room_candidates
+        union all
+        select * from person_candidates
     )
     select
         c.room_id,
@@ -197,8 +257,6 @@ as $$
         0::numeric as advance_rent_balance,
         '[]'::jsonb as advance_months
     from candidates c
-    cross join room_match_count m
-    where c.match_rank <= 2 or m.total = 0
     order by c.match_rank, length(coalesce(c.room_number, '')), c.room_number, c.tenant_name
     limit (select result_limit from search_input);
 $$;

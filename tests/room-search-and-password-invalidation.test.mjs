@@ -39,7 +39,9 @@ test("payments entry uses a lightweight indexed room search before hydrating ful
   assert.match(hotPathMigration, /idx_leases_active_tenant_company/);
   assert.match(hotPathMigration, /idx_collections_hot_tenant_date/);
   assert.match(hotPathMigration, /idx_tenant_exit_records_hot_room_date/);
-  assert.match(hotPathMigration, /where c\.match_rank <= 2 or m\.total = 0/);
+  assert.match(hotPathMigration, /room_candidates as/);
+  assert.match(hotPathMigration, /person_candidates as/);
+  assert.match(hotPathMigration, /and \(select total from room_match_count\) = 0/);
   assert.match(hotPathMigration, /limit \(select result_limit from search_input\)/);
   assert.doesNotMatch(hotPathMigration, /latest_collections/);
   assert.doesNotMatch(hotPathMigration, /payment_receipts pr/);
