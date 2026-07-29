@@ -15,6 +15,7 @@ export default async function AdminCashPositionCentrePage({ searchParams }: Prop
         endDate: scalar(params.endDate),
         bankingStatus: scalar(params.bankingStatus) ?? null,
         collectorId: scalar(params.collectorId) ?? null,
+        expenseStatus: scalar(params.expenseStatus) ?? null,
         officeId: scalar(params.officeId) ?? null,
         paymentMethod: scalar(params.paymentMethod) ?? null,
         period: scalar(params.period) ?? null,

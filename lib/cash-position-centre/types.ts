@@ -2,6 +2,7 @@ export type CashPositionFilters = {
     bankingStatus?: string | null;
     collectorId?: string | null;
     endDate?: string;
+    expenseStatus?: string | null;
     officeId?: string | null;
     paymentMethod?: string | null;
     period?: string | null;
@@ -108,9 +109,10 @@ export type CashPositionData = {
     collectors: CashPositionCollectorRow[];
     companyName: string;
     dailyCards: CashPositionDailyCard[];
-    filters: Required<Omit<CashPositionFilters, "officeId" | "paymentMethod">> & {
+    filters: Required<Omit<CashPositionFilters, "expenseStatus" | "officeId" | "paymentMethod">> & {
         bankingStatus: string | null;
         collectorId: string | null;
+        expenseStatus: string | null;
         officeId: string | null;
         paymentMethod: string | null;
     };
@@ -120,15 +122,17 @@ export type CashPositionData = {
     offices: Array<{ id: string; name: string }>;
     officeRows: CashPositionOfficeRow[];
     totals: {
-        cashDifferenceAlerts: number;
         approvedExpensesToday: number;
+        approvedExpensesPeriod: number;
         approvedExpensesThisMonth: number;
+        cashDifferenceAlerts: number;
         cashHeldByCollectors: number;
         cashHeldByOffices: number;
         cashWaitingToBeBanked: number;
         cashAfterExpenses: number;
         cashBeforeExpenses: number;
         companyCashAvailable: number;
+        pendingExpensesPeriod: number;
         pendingExpenseRequests: number;
         projectedCashAfterPendingApprovals: number;
         securityDepositsHeld: number;

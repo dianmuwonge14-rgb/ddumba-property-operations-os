@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -53,10 +53,19 @@ const periodOptions = [
     ["month", "This Month"],
     ["previousMonth", "Previous Month"],
     ["year", "This Year"],
-    ["financialYear", "Financial Year"],
-    ["specificDay", "Specific Day"],
-    ["custom", "Custom Range"],
+    ["specificDay", "Specific Day of Month"],
+    ["customDate", "Custom Date"],
+    ["custom", "Custom Date Range"],
 ] as const;
+
+const firstCashKpis = new Set([
+    "Total Cash After Approved Expenses",
+    "Cash Before Expenses",
+    "Approved Expenses",
+    "Pending Expenses",
+    "Projected Cash After Pending Approval",
+    "Offices With Negative or Low Cash",
+]);
 
 function money(value: number) {
     return moneyFormatter.format(Math.round(value || 0)).replace("UGX", "UGX ");
@@ -70,16 +79,37 @@ function dateTime(value: string | null | undefined) {
     if (!value) return "No activity";
     const parsed = new Date(value);
     if (Number.isNaN(parsed.getTime())) return String(value);
-    return parsed.toLocaleString("en-UG", { dateStyle: "medium", timeStyle: "short" });
+    const formatter = new Intl.DateTimeFormat("en-GB", {
+        day: "2-digit",
+        hour: "2-digit",
+        hour12: false,
+        minute: "2-digit",
+        month: "short",
+        timeZone: "Africa/Kampala",
+        year: "numeric",
+    });
+    const parts = Object.fromEntries(formatter.formatToParts(parsed).map((part) => [part.type, part.value]));
+    return `${parts.day} ${parts.month} ${parts.year}, ${parts.hour}:${parts.minute}`;
 }
 
 function dateLabel(value: string) {
     const parsed = new Date(`${value}T00:00:00+03:00`);
     if (Number.isNaN(parsed.getTime())) return value;
-    return parsed.toLocaleDateString("en-UG", { day: "2-digit", month: "short" });
+    const formatter = new Intl.DateTimeFormat("en-GB", {
+        day: "2-digit",
+        month: "short",
+        timeZone: "Africa/Kampala",
+    });
+    const parts = Object.fromEntries(formatter.formatToParts(parsed).map((part) => [part.type, part.value]));
+    return `${parts.day} ${parts.month}`;
 }
 
 function kpiIcon(label: string) {
+    if (label.includes("After Approved Expenses") || label.includes("After Expenses")) return <WalletCards size={20} />;
+    if (label.includes("Before Expenses")) return <Banknote size={20} />;
+    if (label.includes("Approved Expenses")) return <FileText size={20} />;
+    if (label.includes("Pending Expenses")) return <CalendarDays size={20} />;
+    if (label.includes("Negative or Low Cash")) return <AlertTriangle size={20} />;
     if (label.includes("Collected")) return <Banknote size={20} />;
     if (label.includes("Offices")) return <Building2 size={20} />;
     if (label.includes("Collectors")) return <UsersRound size={20} />;
@@ -110,10 +140,12 @@ function statusBadge(status: CashPositionOfficeRow["status"]) {
 
 export default function CashPositionCentre({ data }: Props) {
     const router = useRouter();
+    const [, startTransition] = useTransition();
     const [filters, setFilters] = useState({
         bankingStatus: data.filters.bankingStatus ?? "",
         collectorId: data.filters.collectorId ?? "",
         endDate: data.filters.endDate,
+        expenseStatus: data.filters.expenseStatus ?? "",
         officeId: data.filters.officeId ?? "",
         paymentMethod: data.filters.paymentMethod ?? "",
         period: data.filters.period ?? "today",
@@ -167,30 +199,49 @@ export default function CashPositionCentre({ data }: Props) {
         return rows.map((row) => row.map((cell) => `"${String(cell).replaceAll("\"", "\"\"")}"`).join(",")).join("\n");
     }, [data.officeRows]);
 
-    function applyFilters() {
+    function cashPositionUrl(nextFilters = filters, extra: Record<string, string | null | undefined> = {}, path = "/office/admin/cash-position") {
         const params = new URLSearchParams();
-        params.set("period", filters.period);
-        if (filters.period === "custom" || filters.period === "specificDay") {
-            params.set("startDate", filters.startDate);
-            params.set("endDate", filters.endDate);
+        params.set("period", nextFilters.period);
+        if (nextFilters.period === "custom" || nextFilters.period === "customDate" || nextFilters.period === "specificDay") {
+            params.set("startDate", nextFilters.startDate);
+            params.set("endDate", nextFilters.endDate);
         }
-        if (filters.officeId) params.set("officeId", filters.officeId);
-        if (filters.collectorId) params.set("collectorId", filters.collectorId);
-        if (filters.paymentMethod) params.set("paymentMethod", filters.paymentMethod);
-        if (filters.bankingStatus) params.set("bankingStatus", filters.bankingStatus);
-        router.push(`/office/admin/cash-position?${params.toString()}`);
+        if (nextFilters.officeId) params.set("officeId", nextFilters.officeId);
+        if (nextFilters.collectorId) params.set("collectorId", nextFilters.collectorId);
+        if (nextFilters.paymentMethod) params.set("paymentMethod", nextFilters.paymentMethod);
+        if (nextFilters.bankingStatus) params.set("bankingStatus", nextFilters.bankingStatus);
+        if (nextFilters.expenseStatus) params.set("expenseStatus", nextFilters.expenseStatus);
+        for (const [key, value] of Object.entries(extra)) {
+            if (value) params.set(key, value);
+        }
+        return `${path}?${params.toString()}`;
+    }
+
+    function updateFilter(key: keyof typeof filters, value: string) {
+        const next = { ...filters, [key]: value };
+        if ((key === "period" && (value === "customDate" || value === "specificDay")) || filters.period === "customDate" || filters.period === "specificDay") {
+            next.endDate = next.startDate;
+        }
+        setFilters(next);
+        startTransition(() => router.push(cashPositionUrl(next)));
+    }
+
+    function applyFilters() {
+        startTransition(() => router.push(cashPositionUrl()));
     }
 
     function clearFilters() {
-        setFilters((current) => ({
-            ...current,
+        const next = {
+            ...filters,
             bankingStatus: "",
             collectorId: "",
+            expenseStatus: "",
             officeId: "",
             paymentMethod: "",
             period: "today",
-        }));
-        router.push("/office/admin/cash-position");
+        };
+        setFilters(next);
+        startTransition(() => router.push("/office/admin/cash-position"));
     }
 
     function downloadCsv(filename = "cash-position-centre.csv", content = csv, type = "text/csv;charset=utf-8") {
@@ -204,19 +255,12 @@ export default function CashPositionCentre({ data }: Props) {
     }
 
     function actionUrl(path: string, extra: Record<string, string | null | undefined> = {}) {
-        const params = new URLSearchParams();
-        params.set("period", filters.period);
-        params.set("startDate", filters.startDate);
-        params.set("endDate", filters.endDate);
-        params.set("dateFrom", filters.startDate);
-        params.set("dateTo", filters.endDate);
-        if (filters.paymentMethod) params.set("paymentMethod", filters.paymentMethod);
-        if (filters.bankingStatus) params.set("bankingStatus", filters.bankingStatus);
-        if (filters.officeId) params.set("activeOfficeFilter", filters.officeId);
-        for (const [key, value] of Object.entries(extra)) {
-            if (value) params.set(key, value);
-        }
-        return `${path}?${params.toString()}`;
+        return cashPositionUrl(filters, {
+            activeOfficeFilter: filters.officeId,
+            dateFrom: filters.startDate,
+            dateTo: filters.endDate,
+            ...extra,
+        }, path);
     }
 
     function viewOfficePosition(officeId: string) {
@@ -256,7 +300,12 @@ export default function CashPositionCentre({ data }: Props) {
         filters.collectorId ? data.collectors.find((collector) => collector.collectorId === filters.collectorId)?.collectorName : null,
         filters.paymentMethod || null,
         filters.bankingStatus || null,
+        filters.expenseStatus ? `Expenses: ${filters.expenseStatus}` : null,
     ].filter(Boolean);
+    const netKpis = data.kpis.filter((kpi) => firstCashKpis.has(kpi.label));
+    const grossKpis = data.kpis.filter((kpi) => !firstCashKpis.has(kpi.label));
+    const headerTone = data.totals.cashAfterExpenses < 0 ? "red" : data.totals.cashAfterExpenses < 1_000_000 || data.totals.cashDifferenceAlerts > 0 ? "amber" : "green";
+    const headerStatus = headerTone === "red" ? "Critical" : headerTone === "amber" ? "Attention required" : "Healthy";
 
     return (
         <main className="min-h-screen overflow-x-hidden bg-[#030712] px-3 py-5 text-white sm:px-5 lg:px-8">
@@ -265,7 +314,7 @@ export default function CashPositionCentre({ data }: Props) {
             <div className="relative mx-auto max-w-[1800px] space-y-5">
                 <header className="overflow-hidden rounded-[30px] border border-white/10 bg-white/[0.065] p-5 shadow-2xl shadow-black/35 backdrop-blur-2xl">
                     <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-200/70 to-transparent" />
-                    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
+                    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(360px,520px)] xl:items-start">
                         <div>
                             <div className="flex flex-wrap items-center gap-2">
                                 <Pill tone="green">Admin only</Pill>
@@ -278,66 +327,76 @@ export default function CashPositionCentre({ data }: Props) {
                             </p>
                             <p className="mt-3 text-xs font-black uppercase tracking-[0.2em] text-slate-400">Last synced {syncedAt}</p>
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                            <ActionButton onClick={() => router.refresh()} icon={<RefreshCw size={16} />}>Refresh Live Data</ActionButton>
-                            <ActionButton onClick={() => window.print()} icon={<Printer size={16} />}>Print</ActionButton>
-                            <ActionButton onClick={() => window.print()} icon={<FileText size={16} />}>PDF</ActionButton>
-                            <PrimaryButton onClick={() => downloadCsv()} icon={<Download size={16} />}>CSV</PrimaryButton>
-                            <PrimaryButton onClick={() => downloadCsv("cash-position-centre.xls", csv, "application/vnd.ms-excel")} icon={<FileSpreadsheet size={16} />}>Excel</PrimaryButton>
+                        <div className={`min-w-0 rounded-[28px] border bg-gradient-to-br p-4 shadow-2xl ${toneClasses(headerTone)}`}>
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <p className="break-words text-[11px] font-black uppercase tracking-[0.22em] text-slate-300">Total Office Cash After Expenses</p>
+                                    <p className="mt-2 break-words text-[clamp(1.8rem,3vw,3.4rem)] font-black leading-none text-white">{money(data.totals.cashAfterExpenses)}</p>
+                                </div>
+                                <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-white/10 bg-white/10"><WalletCards size={22} /></span>
+                            </div>
+                            <div className="mt-4 grid grid-cols-2 gap-2">
+                                <Mini label="Cash before expenses" value={money(data.totals.cashBeforeExpenses)} />
+                                <Mini label="Approved expenses" value={money(data.totals.approvedExpensesPeriod)} />
+                                <Mini label="Net cash after expenses" value={money(data.totals.cashAfterExpenses)} risky={data.totals.cashAfterExpenses < 0} />
+                                <Mini label="Pending expenses" value={money(data.totals.pendingExpensesPeriod)} />
+                                <Mini label="Last updated" value={syncedAt} />
+                                <Mini label="Current status" value={headerStatus} risky={headerTone === "red"} />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="mt-5 rounded-[28px] border border-white/10 bg-slate-950/58 p-4 shadow-2xl shadow-black/20">
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                                <span className="grid h-11 w-11 place-items-center rounded-2xl bg-cyan-300/15 text-cyan-100"><Search size={18} /></span>
+                                <div>
+                                    <h2 className="text-lg font-black">Treasury Filter Bar</h2>
+                                    <p className="text-xs font-semibold text-slate-400">Filters update the net cash, expense, office, collector, chart and AI views without a full page refresh.</p>
+                                </div>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                {activeFilters.map((filter) => <Pill key={String(filter)} tone="cyan">{filter}</Pill>)}
+                                {activeFilters.length ? <button onClick={clearFilters} className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white hover:bg-white/15"><X size={13} /> Clear Filters</button> : null}
+                            </div>
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-8">
+                            <Select label="Period" value={filters.period} onChange={(value) => updateFilter("period", value)} options={periodOptions as unknown as Array<[string, string]>} />
+                            <Input label="Start date" type="date" value={filters.startDate} onChange={(value) => updateFilter("startDate", value)} />
+                            <Input label="End date" type="date" value={filters.endDate} onChange={(value) => updateFilter("endDate", value)} />
+                            <Select label="Office" value={filters.officeId} onChange={(value) => updateFilter("officeId", value)} options={[["", "All offices"], ...data.offices.map((office) => [office.id, office.name] as [string, string])]} />
+                            <Select label="Collector" value={filters.collectorId} onChange={(value) => updateFilter("collectorId", value)} options={[["", "All collectors"], ...data.collectors.map((collector) => [collector.collectorId, collector.collectorName] as [string, string])]} />
+                            <Select label="Payment Method" value={filters.paymentMethod} onChange={(value) => updateFilter("paymentMethod", value)} options={[["", "All methods"], ["cash", "Cash"], ["mobile_money", "Mobile Money"], ["bank", "Bank"], ["other", "Other"]]} />
+                            <Select label="Banking Status" value={filters.bankingStatus} onChange={(value) => updateFilter("bankingStatus", value)} options={[["", "All status"], ["healthy", "Healthy"], ["attention", "Needs attention"], ["critical", "Critical"], ["waiting", "Waiting to bank"], ["banked", "Banked"]]} />
+                            <Select label="Expense Status" value={filters.expenseStatus} onChange={(value) => updateFilter("expenseStatus", value)} options={[["", "All expenses"], ["approved", "Approved"], ["pending", "Pending"], ["pending_admin_approval", "Pending Admin Approval"], ["submitted", "Submitted"], ["rejected", "Rejected"], ["cancelled", "Cancelled"], ["reversed", "Reversed"]]} />
+                        </div>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                        <PrimaryButton onClick={applyFilters} icon={<RefreshCw size={16} />}>Apply Filters</PrimaryButton>
+                        <ActionButton onClick={() => router.refresh()} icon={<RefreshCw size={16} />}>Refresh Live Data</ActionButton>
+                        <ActionButton onClick={clearFilters} icon={<X size={16} />}>Clear Filters</ActionButton>
+                        <ActionButton onClick={() => window.print()} icon={<Printer size={16} />}>Print</ActionButton>
+                        <ActionButton onClick={() => window.print()} icon={<FileText size={16} />}>PDF</ActionButton>
+                        <PrimaryButton onClick={() => downloadCsv()} icon={<Download size={16} />}>Export CSV</PrimaryButton>
+                        <PrimaryButton onClick={() => downloadCsv("cash-position-centre.xls", csv, "application/vnd.ms-excel")} icon={<FileSpreadsheet size={16} />}>Export Excel</PrimaryButton>
+                        <a href="/office/admin/cash-banking" className="inline-flex items-center gap-2 rounded-2xl border border-emerald-300/25 bg-emerald-300/12 px-4 py-3 text-sm font-black text-emerald-100 transition hover:-translate-y-0.5 hover:bg-emerald-300 hover:text-slate-950 motion-reduce:transform-none">
+                            <Landmark size={16} /> Open Banking Module
+                        </a>
                         </div>
                     </div>
                 </header>
 
                 <section className="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3">
-                    {data.kpis.map((kpi) => (
-                        <button
-                            key={kpi.label}
-                            title={kpi.hint}
-                            onClick={() => handleKpiClick(kpi.label)}
-                            className={`group relative min-h-[160px] min-w-0 max-w-full overflow-hidden rounded-[26px] border bg-gradient-to-br p-4 text-left shadow-2xl backdrop-blur transition duration-300 hover:-translate-y-1 hover:shadow-cyan-950/40 focus:outline-none focus:ring-4 focus:ring-cyan-300/15 motion-reduce:transform-none ${toneClasses(kpi.tone)} ${spotlight === kpi.label ? "ring-2 ring-cyan-200/60" : ""}`}
-                        >
-                            <div className="absolute right-2 top-2 h-20 w-20 rounded-full bg-white/10 blur-2xl transition group-hover:bg-white/16" />
-                            <div className="flex items-start justify-between gap-3">
-                                <span className="grid h-11 w-11 place-items-center rounded-2xl border border-white/10 bg-white/10 text-white shadow-lg transition duration-300 group-hover:scale-105 motion-reduce:transform-none">{kpiIcon(kpi.label)}</span>
-                                <TrendChip current={kpi.value} previous={kpi.previousValue} tone={kpi.tone} />
-                            </div>
-                            <p className="mt-4 min-w-0 max-w-full break-words text-[11px] font-black uppercase tracking-wide text-slate-300">{kpi.label}</p>
-                            <p className="mt-2 min-w-0 max-w-full break-words text-[clamp(1.05rem,1.45vw,1.55rem)] font-black tracking-tight text-white">{kpi.label.includes("Alerts") ? Math.round(kpi.value).toLocaleString() : money(kpi.value)}</p>
-                            <p className="mt-2 min-w-0 max-w-full break-words text-xs font-bold leading-5 text-slate-300">{kpi.hint}</p>
-                            <p className="mt-3 text-[10px] font-black uppercase tracking-wide text-cyan-100">Updated {syncedAt}</p>
-                        </button>
+                    {netKpis.map((kpi) => (
+                        <KpiButton key={kpi.label} kpi={kpi} spotlight={spotlight} syncedAt={syncedAt} onClick={() => handleKpiClick(kpi.label)} />
                     ))}
                 </section>
 
-                <section className="rounded-[30px] border border-white/10 bg-white/[0.06] p-4 shadow-2xl shadow-black/25 backdrop-blur-2xl">
-                    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                            <span className="grid h-11 w-11 place-items-center rounded-2xl bg-cyan-300/15 text-cyan-100"><Search size={18} /></span>
-                            <div>
-                                <h2 className="text-lg font-black">Treasury Filter Bar</h2>
-                                <p className="text-xs font-semibold text-slate-400">Fast server summaries, scoped filters and export actions without loading every receipt.</p>
-                            </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                            {activeFilters.map((filter) => <Pill key={String(filter)} tone="cyan">{filter}</Pill>)}
-                            {activeFilters.length ? <button onClick={clearFilters} className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black text-white hover:bg-white/15"><X size={13} /> Clear Filters</button> : null}
-                        </div>
-                    </div>
-                    <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">
-                        <Select label="Period" value={filters.period} onChange={(value) => setFilters((current) => ({ ...current, period: value }))} options={periodOptions as unknown as Array<[string, string]>} />
-                        <Input label="Start date" type="date" value={filters.startDate} onChange={(value) => setFilters((current) => ({ ...current, startDate: value }))} />
-                        <Input label="End date" type="date" value={filters.endDate} onChange={(value) => setFilters((current) => ({ ...current, endDate: value }))} />
-                        <Select label="Office" value={filters.officeId} onChange={(value) => setFilters((current) => ({ ...current, officeId: value }))} options={[["", "All offices"], ...data.offices.map((office) => [office.id, office.name] as [string, string])]} />
-                        <Select label="Collector" value={filters.collectorId} onChange={(value) => setFilters((current) => ({ ...current, collectorId: value }))} options={[["", "All collectors"], ...data.collectors.map((collector) => [collector.collectorId, collector.collectorName] as [string, string])]} />
-                        <Select label="Payment Method" value={filters.paymentMethod} onChange={(value) => setFilters((current) => ({ ...current, paymentMethod: value }))} options={[["", "All methods"], ["cash", "Cash"], ["mobile_money", "Mobile Money"], ["bank", "Bank"], ["other", "Other"]]} />
-                        <Select label="Banking Status" value={filters.bankingStatus} onChange={(value) => setFilters((current) => ({ ...current, bankingStatus: value }))} options={[["", "All status"], ["healthy", "Healthy"], ["attention", "Needs attention"], ["critical", "Critical"], ["waiting", "Waiting to bank"], ["banked", "Banked"]]} />
-                    </div>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                        <PrimaryButton onClick={applyFilters} icon={<RefreshCw size={16} />}>Apply Filters</PrimaryButton>
-                        <ActionButton onClick={clearFilters} icon={<X size={16} />}>Clear Filters</ActionButton>
-                        <a href="/office/admin/cash-banking" className="inline-flex items-center gap-2 rounded-2xl border border-emerald-300/25 bg-emerald-300/12 px-4 py-3 text-sm font-black text-emerald-100 transition hover:-translate-y-0.5 hover:bg-emerald-300 hover:text-slate-950 motion-reduce:transform-none">
-                            <Landmark size={16} /> Open Banking Module
-                        </a>
+                <section className="rounded-[30px] border border-white/10 bg-white/[0.055] p-4 shadow-2xl shadow-black/25">
+                    <PanelHeading icon={<LineChart size={18} />} title="Gross Cash Movement and Control" subtitle="Gross cash cards remain available after the net cash position." />
+                    <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3">
+                        {grossKpis.map((kpi) => (
+                            <KpiButton key={kpi.label} kpi={kpi} spotlight={spotlight} syncedAt={syncedAt} onClick={() => handleKpiClick(kpi.label)} />
+                        ))}
                     </div>
                 </section>
 
@@ -438,6 +497,35 @@ export default function CashPositionCentre({ data }: Props) {
                 ) : null}
             </div>
         </main>
+    );
+}
+
+function KpiButton({ kpi, onClick, spotlight, syncedAt }: { kpi: CashPositionData["kpis"][number]; onClick: () => void; spotlight: string | null; syncedAt: string }) {
+    const displayValue = kpi.label.includes("Alerts") || kpi.label.includes("Offices With")
+        ? Math.round(kpi.value).toLocaleString()
+        : money(kpi.value);
+    const status = kpi.tone === "red" ? "Critical" : kpi.tone === "amber" ? "Attention" : "Healthy";
+    return (
+        <button
+            type="button"
+            title={kpi.hint}
+            onClick={onClick}
+            className={`group relative min-h-[160px] min-w-0 max-w-full overflow-hidden rounded-[26px] border bg-gradient-to-br p-4 text-left shadow-2xl backdrop-blur transition duration-300 hover:-translate-y-1 hover:shadow-cyan-950/40 focus:outline-none focus:ring-4 focus:ring-cyan-300/15 motion-reduce:transform-none ${toneClasses(kpi.tone)} ${spotlight === kpi.label ? "ring-2 ring-cyan-200/60" : ""}`}
+        >
+            <div className="absolute right-2 top-2 h-20 w-20 rounded-full bg-white/10 blur-2xl transition group-hover:bg-white/16" />
+            <div className="relative flex items-start justify-between gap-3">
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-white/10 bg-white/10 text-white shadow-lg transition duration-300 group-hover:scale-105 motion-reduce:transform-none">{kpiIcon(kpi.label)}</span>
+                <TrendChip current={kpi.value} previous={kpi.previousValue} tone={kpi.tone} />
+            </div>
+            <p className="relative mt-4 min-w-0 max-w-full break-words text-[11px] font-black uppercase tracking-wide text-slate-300">{kpi.label}</p>
+            <p className="relative mt-2 min-w-0 max-w-full break-words text-[clamp(1.05rem,1.45vw,1.55rem)] font-black tracking-tight text-white">{displayValue}</p>
+            <div className="relative mt-2 flex flex-wrap gap-2">
+                <span className="rounded-full border border-white/10 bg-white/10 px-2 py-1 text-[10px] font-black uppercase text-white">{status}</span>
+                <span className="rounded-full border border-white/10 bg-white/10 px-2 py-1 text-[10px] font-black uppercase text-cyan-100">Live</span>
+            </div>
+            <p className="relative mt-2 min-w-0 max-w-full break-words text-xs font-bold leading-5 text-slate-300">{kpi.hint}</p>
+            <p className="relative mt-3 text-[10px] font-black uppercase tracking-wide text-cyan-100">Updated {syncedAt}</p>
+        </button>
     );
 }
 
@@ -542,16 +630,22 @@ function OfficeComparisonCards({
                             </div>
                             <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-black uppercase ${statusBadge(office.status)}`}>{office.status}</span>
                         </div>
+                        <div className={`mt-4 rounded-[24px] border p-4 ${office.cashAfterApprovedExpenses < 0 ? "border-red-300/25 bg-red-400/12" : office.cashAfterApprovedExpenses < 1_000_000 ? "border-amber-300/25 bg-amber-400/12" : "border-emerald-300/25 bg-emerald-400/12"}`}>
+                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">Net cash after expenses</p>
+                            <p className="mt-2 break-words text-[clamp(1.3rem,2vw,2.1rem)] font-black leading-tight text-white">{money(office.cashAfterApprovedExpenses)}</p>
+                            <p className="mt-1 text-xs font-bold text-slate-300">Approved expenses are deducted once; pending expenses are projected separately.</p>
+                        </div>
                         <div className="mt-4 grid grid-cols-2 gap-2">
-                            <Mini label="Collected" value={money(office.cashCollectedToday)} />
-                            <Mini label="Held" value={money(office.cashHeldInOffice)} risky={office.cashHeldInOffice < 0} />
-                            <Mini label="Banked" value={money(office.alreadyBanked)} />
-                            <Mini label="Outstanding" value={money(office.outstandingToBank)} risky={office.outstandingToBank > 1_000_000} />
+                            <Mini label="Cash collected" value={money(office.cashCollectedToday)} />
+                            <Mini label="Cash before expenses" value={money(office.cashBeforeExpenses)} />
                             <Mini label="Approved expenses" value={money(office.approvedExpensesPeriod)} />
                             <Mini label="Pending expenses" value={money(office.pendingExpensesPeriod)} risky={office.pendingExpensesPeriod > office.cashHeldInOffice && office.pendingExpensesPeriod > 0} />
-                            <Mini label="Before expenses" value={money(office.cashBeforeExpenses)} />
-                            <Mini label="After expenses" value={money(office.cashAfterApprovedExpenses)} risky={office.cashAfterApprovedExpenses < 0} />
-                            <Mini label="Projected if approved" value={money(office.projectedCashAfterPendingExpenses)} risky={office.projectedCashAfterPendingExpenses < 0} />
+                            <Mini label="Net cash after approved expenses" value={money(office.cashAfterApprovedExpenses)} risky={office.cashAfterApprovedExpenses < 0} />
+                            <Mini label="Projected cash after pending expenses" value={money(office.projectedCashAfterPendingExpenses)} risky={office.projectedCashAfterPendingExpenses < 0} />
+                            <Mini label="Cash banked" value={money(office.alreadyBanked)} />
+                            <Mini label="Cash handed to Admin" value={money(office.givenToAdmin)} />
+                            <Mini label="Outstanding cash" value={money(office.outstandingToBank)} risky={office.outstandingToBank > 1_000_000} />
+                            <Mini label="Expense-to-collection %" value={percent(office.cashBeforeExpenses > 0 ? (office.approvedExpensesPeriod / office.cashBeforeExpenses) * 100 : 0)} />
                             <Mini label="Receipts" value={office.numberOfReceipts.toLocaleString()} />
                             <Mini label="Banking %" value={percent(office.bankingPercentage)} />
                             <Mini label="Top collector" value={office.collectorCount ? `${office.collectorCount} active` : "No collector"} />

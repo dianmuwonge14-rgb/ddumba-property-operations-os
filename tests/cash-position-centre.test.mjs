@@ -37,6 +37,11 @@ test("admin navigation makes Cash Position Centre the CFO landing page", () => {
 
 test("cash position centre includes requested executive KPIs and live office table fields", () => {
   for (const label of [
+    "Total Cash After Approved Expenses",
+    "Approved Expenses",
+    "Pending Expenses",
+    "Projected Cash After Pending Approval",
+    "Offices With Negative or Low Cash",
     "Total Cash Collected",
     "Cash Held by Offices",
     "Cash Held by Collectors",
@@ -62,9 +67,12 @@ test("cash position centre includes requested executive KPIs and live office tab
 });
 
 test("cash position centre ships filters, AI insights, charts and exports", () => {
-  for (const label of ["Today", "Yesterday", "Last 7 Days", "This Month", "Previous Month", "This Year", "Custom Range", "Specific Day", "Collector", "Banking Status"]) {
+  for (const label of ["Today", "Yesterday", "Last 7 Days", "This Month", "Previous Month", "This Year", "Custom Date", "Custom Date Range", "Specific Day of Month", "Collector", "Banking Status", "Expense Status"]) {
     assert.match(componentSource, new RegExp(label));
   }
+  assert.match(pageSource, /expenseStatus: scalar\(params\.expenseStatus\)/);
+  assert.match(dataSource, /expenseStatus: input\.expenseStatus \|\| null/);
+  assert.match(componentSource, /updateFilter\("expenseStatus", value\)/);
   assert.match(componentSource, /AI Cash Director/);
   assert.match(componentSource, /Daily Cash Movement/);
   assert.match(componentSource, /Office Performance Comparison/);
@@ -77,6 +85,17 @@ test("cash position centre ships filters, AI insights, charts and exports", () =
   assert.match(componentSource, /Excel/);
   assert.match(componentSource, /PDF/);
   assert.match(componentSource, /window\.print\(\)/);
+});
+
+test("cash position centre leads with net cash after approved expenses", () => {
+  const header = componentSource.indexOf("Total Office Cash After Expenses");
+  const filters = componentSource.indexOf("Treasury Filter Bar");
+  const firstKpi = componentSource.indexOf("{netKpis.map");
+  const gross = componentSource.indexOf("Gross Cash Movement and Control");
+  assert.ok(header > 0, "top header should include the net cash summary card");
+  assert.ok(filters > header, "filters should sit inside the top header after the net summary");
+  assert.ok(firstKpi > filters, "net KPI row should follow the header filters");
+  assert.ok(gross > firstKpi, "gross movement section should move below the net KPI row");
 });
 
 test("cash position centre cards are responsive and action buttons are wired", () => {
