@@ -33,7 +33,7 @@ test("collector defaulters route is collector-only and uses collector workflows"
   assert.match(collectorDefaultersPage, /redirect\("\/office\/defaulters"\)/);
   assert.match(defaultersData, /const isCollector = isCollectorContext\(context\)/);
   assert.match(defaultersData, /collectorOfficeIds/);
-  assert.match(defaultersData, /tenantQuery = tenantQuery\.in\("office_id", collectorOfficeIds\)/);
+  assert.match(defaultersData, /return query\.in\("office_id", collectorOfficeIds\)/);
   assert.match(defaultersConsole, /data\.isCollector \? "\/office\/collector\/payments"/);
   assert.match(defaultersConsole, /data\.isCollector \? "\/office\/collector\/promises"/);
   assert.match(defaultersConsole, /Collector defaulters/);

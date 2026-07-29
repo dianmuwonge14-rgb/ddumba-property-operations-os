@@ -16,8 +16,11 @@ test("defaulters are sourced directly from live positive tenant balances", () =>
 
 test("admin remains company-wide while offices and collectors are scoped", () => {
   assert.match(dataSource, /const isAdmin = Boolean\(options\.admin && context\.isCompanyAdmin && !context\.isOfficeMode\)/);
+  assert.match(dataSource, /const readSupabase = isAdmin \? createSupabaseAdminClient\(\) : supabase/);
+  assert.match(dataSource, /pagedRows<TenantRow>/);
+  assert.match(dataSource, /pagedRows<RoomRow>/);
   assert.match(dataSource, /else if \(!isAdmin && activeOfficeId\)/);
-  assert.match(dataSource, /tenantQuery = tenantQuery\.in\("office_id", collectorOfficeIds\)/);
+  assert.match(dataSource, /return query\.in\("office_id", collectorOfficeIds\)/);
   assert.doesNotMatch(dataSource, /if \(isAdmin && activeOfficeId\)/);
 });
 

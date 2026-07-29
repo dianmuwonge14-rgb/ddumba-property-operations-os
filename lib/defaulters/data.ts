@@ -1,5 +1,6 @@
 import { requireAuth } from "@/lib/auth/permissions";
 import { getScopedSupabase } from "@/lib/auth/query";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { Database } from "@/types/database.types";
 import type { DefaulterAssistant, DefaulterItem, DefaultersKpis, DefaultersPageData } from "./types";
 
@@ -186,94 +187,53 @@ async function safeRows(query: Promise<{ data: unknown[] | null; error: { messag
     return result.data ?? [];
 }
 
+type QueryResult<T> = PromiseLike<{ data: T[] | null; error: { message: string } | null }>;
+
+async function pagedRows<T>(buildQuery: (from: number, to: number) => QueryResult<T>, pageSize = 1000) {
+    const rows: T[] = [];
+    for (let from = 0; ; from += pageSize) {
+        const result = await buildQuery(from, from + pageSize - 1);
+        if (result.error) throw new Error(result.error.message);
+        const page = result.data ?? [];
+        rows.push(...page);
+        if (page.length < pageSize) break;
+    }
+    return rows;
+}
+
+async function safePagedRows<T>(buildQuery: (from: number, to: number) => QueryResult<T>, pageSize = 1000) {
+    const rows: T[] = [];
+    for (let from = 0; ; from += pageSize) {
+        const result = await buildQuery(from, from + pageSize - 1);
+        if (result.error && /does not exist|schema cache|Could not find/i.test(result.error.message ?? "")) return [];
+        if (result.error) throw new Error(result.error.message);
+        const page = result.data ?? [];
+        rows.push(...page);
+        if (page.length < pageSize) break;
+    }
+    return rows;
+}
+
 export async function getDefaultersPageData(options: { admin?: boolean } = {}): Promise<DefaultersPageData> {
     const context = await requireAuth();
     const { supabase } = await getScopedSupabase();
-    const db = supabase as unknown as DynamicDb;
     const companyId = context.activeCompany?.id;
     const activeOfficeId = context.activeOffice?.id;
     const isAdmin = Boolean(options.admin && context.isCompanyAdmin && !context.isOfficeMode);
     const isCollector = isCollectorContext(context);
     const collectorOfficeIds = isCollector ? context.offices.map((office) => office.id).filter(Boolean) : [];
     const now = new Date();
+    const readSupabase = isAdmin ? createSupabaseAdminClient() : supabase;
+    const db = readSupabase as unknown as DynamicDb;
 
     if (!companyId || (!isAdmin && !isCollector && !activeOfficeId) || (isCollector && !collectorOfficeIds.length)) {
         return emptyData(isAdmin, isCollector, dateOnly(now));
     }
 
-    let tenantQuery = supabase
-        .from("tenants")
-        .select("*")
-        .eq("company_id", companyId)
-        .order("full_name", { ascending: true, nullsFirst: false })
-        .limit(10000);
-    let roomQuery = supabase
-        .from("rooms")
-        .select("*")
-        .eq("company_id", companyId)
-        .limit(10000);
-    let leaseQuery = supabase
-        .from("leases")
-        .select("*")
-        .eq("company_id", companyId)
-        .eq("status", "active")
-        .limit(10000);
-    let collectionQuery = supabase
-        .from("collections")
-        .select("*")
-        .eq("company_id", companyId)
-        .order("payment_date", { ascending: false, nullsFirst: false })
-        .order("created_at", { ascending: false, nullsFirst: false })
-        .limit(10000);
-    let promiseQuery = supabase
-        .from("promises")
-        .select("*")
-        .eq("company_id", companyId)
-        .limit(10000);
-    let actionQuery = supabase
-        .from("collection_actions")
-        .select("*")
-        .eq("company_id", companyId)
-        .order("created_at", { ascending: false, nullsFirst: false })
-        .limit(10000);
-    let assignmentQuery = supabase
-        .from("collector_assignments")
-        .select("*")
-        .eq("company_id", companyId)
-        .eq("active", true)
-        .limit(10000);
-    let debtQuery = db
-        .from("vacated_tenant_debts")
-        .select("*")
-        .eq("company_id", companyId)
-        .gt("remaining_amount", 0)
-        .limit(10000);
-    let deductionQuery = db
-        .from("landlord_debt_deductions")
-        .select("*")
-        .eq("company_id", companyId)
-        .limit(10000);
-
-    if (!isAdmin && isCollector) {
-        tenantQuery = tenantQuery.in("office_id", collectorOfficeIds);
-        roomQuery = roomQuery.in("office_id", collectorOfficeIds);
-        leaseQuery = leaseQuery.in("office_id", collectorOfficeIds);
-        collectionQuery = collectionQuery.in("office_id", collectorOfficeIds);
-        promiseQuery = promiseQuery.in("office_id", collectorOfficeIds);
-        actionQuery = actionQuery.in("office_id", collectorOfficeIds);
-        assignmentQuery = assignmentQuery.in("office_id", collectorOfficeIds);
-        debtQuery = debtQuery.in("office_id", collectorOfficeIds);
-        deductionQuery = deductionQuery.in("office_id", collectorOfficeIds);
-    } else if (!isAdmin && activeOfficeId) {
-        tenantQuery = tenantQuery.eq("office_id", activeOfficeId);
-        roomQuery = roomQuery.eq("office_id", activeOfficeId);
-        leaseQuery = leaseQuery.eq("office_id", activeOfficeId);
-        collectionQuery = collectionQuery.eq("office_id", activeOfficeId);
-        promiseQuery = promiseQuery.eq("office_id", activeOfficeId);
-        actionQuery = actionQuery.eq("office_id", activeOfficeId);
-        assignmentQuery = assignmentQuery.eq("office_id", activeOfficeId);
-        debtQuery = debtQuery.eq("office_id", activeOfficeId);
-        deductionQuery = deductionQuery.eq("office_id", activeOfficeId);
+    function scopeOffice(query: any) {
+        if (!isAdmin && isCollector) return query.in("office_id", collectorOfficeIds);
+        if (!isAdmin && activeOfficeId) return query.eq("office_id", activeOfficeId);
+        return query;
     }
 
     let allocationQuery = db
@@ -287,40 +247,24 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
         allocationQuery = allocationQuery.eq("office_id", activeOfficeId);
     }
 
-    const [tenantsResult, roomsResult, leasesResult, officesResult, propertiesResult, landlordsResult, collectionsResult, promisesResult, actionsResult, assignmentsResult, usersResult, debtRows, deductionRows, allocationRows] = await Promise.all([
-        tenantQuery,
-        roomQuery,
-        leaseQuery,
-        supabase.from("offices").select("id, office_name, name").eq("company_id", companyId),
-        supabase.from("properties").select("*").eq("company_id", companyId),
-        supabase.from("landlords").select("*").eq("company_id", companyId),
-        collectionQuery,
-        promiseQuery,
-        actionQuery,
-        assignmentQuery,
-        supabase.from("users").select("id, full_name, account_type, default_office_id").eq("company_id", companyId),
-        safeRows(debtQuery),
-        safeRows(deductionQuery),
+    const [tenants, rooms, leases, offices, properties, landlords, collections, promises, actions, assignments, users, debtRows, deductionRows, allocationRows] = await Promise.all([
+        pagedRows<TenantRow>((from, to) => scopeOffice(readSupabase.from("tenants").select("*").eq("company_id", companyId).order("full_name", { ascending: true, nullsFirst: false })).range(from, to)),
+        pagedRows<RoomRow>((from, to) => scopeOffice(readSupabase.from("rooms").select("*").eq("company_id", companyId)).range(from, to)),
+        pagedRows<LeaseRow>((from, to) => scopeOffice(readSupabase.from("leases").select("*").eq("company_id", companyId).eq("status", "active")).range(from, to)),
+        pagedRows<OfficeRow>((from, to) => readSupabase.from("offices").select("*").eq("company_id", companyId).range(from, to)),
+        pagedRows<PropertyRow>((from, to) => readSupabase.from("properties").select("*").eq("company_id", companyId).range(from, to)),
+        pagedRows<LandlordRow>((from, to) => readSupabase.from("landlords").select("*").eq("company_id", companyId).range(from, to)),
+        pagedRows<CollectionRow>((from, to) => scopeOffice(readSupabase.from("collections").select("*").eq("company_id", companyId).order("payment_date", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false, nullsFirst: false })).range(from, to)),
+        pagedRows<PromiseRow>((from, to) => scopeOffice(readSupabase.from("promises").select("*").eq("company_id", companyId)).range(from, to)),
+        pagedRows<CollectionActionRow>((from, to) => scopeOffice(readSupabase.from("collection_actions").select("*").eq("company_id", companyId).order("created_at", { ascending: false, nullsFirst: false })).range(from, to)),
+        pagedRows<CollectorAssignmentRow>((from, to) => scopeOffice(readSupabase.from("collector_assignments").select("*").eq("company_id", companyId).eq("active", true)).range(from, to)),
+        pagedRows<Pick<UserRow, "id" | "full_name" | "account_type" | "default_office_id">>((from, to) => readSupabase.from("users").select("id, full_name, account_type, default_office_id").eq("company_id", companyId).range(from, to)),
+        safePagedRows<VacatedTenantDebtRow>((from, to) => scopeOffice(db.from("vacated_tenant_debts").select("*").eq("company_id", companyId).gt("remaining_amount", 0)).range(from, to)),
+        safePagedRows<LandlordDebtDeductionRow>((from, to) => scopeOffice(db.from("landlord_debt_deductions").select("*").eq("company_id", companyId)).range(from, to)),
         safeRows(allocationQuery),
     ]);
-
-    for (const result of [tenantsResult, roomsResult, leasesResult, officesResult, propertiesResult, landlordsResult, collectionsResult, promisesResult, actionsResult, assignmentsResult, usersResult]) {
-        if (result.error) throw new Error(result.error.message);
-    }
-
-    const tenants = (tenantsResult.data ?? []) as TenantRow[];
-    const rooms = (roomsResult.data ?? []) as RoomRow[];
-    const leases = (leasesResult.data ?? []) as LeaseRow[];
-    const offices = (officesResult.data ?? []) as OfficeRow[];
-    const properties = (propertiesResult.data ?? []) as PropertyRow[];
-    const landlords = (landlordsResult.data ?? []) as LandlordRow[];
-    const collections = (collectionsResult.data ?? []) as CollectionRow[];
-    const promises = (promisesResult.data ?? []) as PromiseRow[];
-    const actions = (actionsResult.data ?? []) as CollectionActionRow[];
-    const assignments = (assignmentsResult.data ?? []) as CollectorAssignmentRow[];
-    const users = (usersResult.data ?? []) as Pick<UserRow, "id" | "full_name" | "account_type" | "default_office_id">[];
-    const vacatedDebts = debtRows as VacatedTenantDebtRow[];
-    const deductions = deductionRows as LandlordDebtDeductionRow[];
+    const vacatedDebts = debtRows;
+    const deductions = deductionRows;
     const currentAllocationByTenant = new Map<string, number>();
     for (const allocation of allocationRows as Array<Record<string, unknown>>) {
         const tenantId = String(allocation.tenant_id ?? "");
