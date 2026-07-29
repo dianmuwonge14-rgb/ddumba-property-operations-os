@@ -44,6 +44,7 @@ export type CashPositionOfficeRow = {
     todayPerformance: number;
     trend: "up" | "down" | "flat";
     weeklyPerformance: number;
+    receiptBreakdown: CashPositionReceiptBreakdownItem[];
 };
 
 export type CashPositionCollectorRow = {
@@ -94,6 +95,31 @@ export type CashPositionDailyCard = {
     strongestOffice: string;
     totalCollected: number;
     trend: "up" | "down" | "flat";
+    receiptBreakdown: CashPositionReceiptBreakdownItem[];
+};
+
+export type CashPositionReceiptBreakdownItem = {
+    amount: number;
+    auditHref: string;
+    collectorId: string | null;
+    collectorName: string;
+    contributesToCashTotals: boolean;
+    contributesToReceiptCount: boolean;
+    createdAt: string | null;
+    issuedAt: string | null;
+    officeId: string | null;
+    officeName: string;
+    openPaymentHref: string;
+    paymentDate: string | null;
+    paymentId: string;
+    paymentMethod: string;
+    receiptId: string | null;
+    receiptNumber: string | null;
+    roomNumber: string | null;
+    status: string;
+    tenantName: string;
+    viewReceiptHref: string | null;
+    warning: string | null;
 };
 
 export type CashPositionData = {

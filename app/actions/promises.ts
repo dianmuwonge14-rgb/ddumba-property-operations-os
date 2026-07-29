@@ -8,6 +8,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getTenantCollectionContext } from "@/lib/collections/data";
 import { recordCollectionLedgerAndCash } from "@/lib/collections/payment-ledger";
+import { createTenantPaymentReceipt } from "@/lib/receipts/payment-receipts";
 import { getPromiseInActiveOffice, getPromiseTenantWriteContext } from "@/lib/promises/data";
 import { moneyAmount } from "@/lib/tenants/balance-reconciliation";
 import { recalculateTenantScore } from "@/lib/tenants/scoring";
@@ -551,6 +552,7 @@ export async function fulfilPromise(input: PromiseStateInput) {
             notes: input.notes || `Promise payment recorded for ${amount}`,
             office_id: resolvedOfficeId,
             paid_at: paidAt,
+            payment_date: paidAt.slice(0, 10),
             payment_method: "promise",
             property_id: tenantContext.property?.id ?? tenantContext.tenant.property_id,
             recorded_by: context.profile?.id ?? null,
@@ -615,6 +617,8 @@ export async function fulfilPromise(input: PromiseStateInput) {
 
         if (roomUpdateError) throw new Error(roomUpdateError.message);
     }
+
+    await createTenantPaymentReceipt(collection.id, { issuedBy: context.profile?.id ?? null });
 
     const { data, error } = await supabase
         .from("promises")

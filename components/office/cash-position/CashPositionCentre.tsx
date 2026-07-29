@@ -14,6 +14,7 @@ import {
     ChevronDown,
     Download,
     Eye,
+    ExternalLink,
     FileSpreadsheet,
     FileText,
     Landmark,
@@ -34,6 +35,7 @@ import type {
     CashPositionDailyCard,
     CashPositionData,
     CashPositionOfficeRow,
+    CashPositionReceiptBreakdownItem,
 } from "@/lib/cash-position-centre/types";
 
 type Props = {
@@ -152,6 +154,7 @@ export default function CashPositionCentre({ data }: Props) {
         startDate: data.filters.startDate,
     });
     const [expandedOffice, setExpandedOffice] = useState<string | null>(data.officeRows[0]?.officeId ?? null);
+    const [receiptPanel, setReceiptPanel] = useState<null | { title: string; records: CashPositionReceiptBreakdownItem[] }>(null);
     const [spotlight, setSpotlight] = useState<string | null>(null);
     const [collectorPanel, setCollectorPanel] = useState<null | { collectorId: string; mode: "cash" | "activity" | "reconcile" }>(
         data.filters.collectorId ? { collectorId: data.filters.collectorId, mode: "cash" } : null,
@@ -270,6 +273,10 @@ export default function CashPositionCentre({ data }: Props) {
 
     function viewOfficeReceipts(officeId: string) {
         router.push(actionUrl("/office/receipts", { officeId }));
+    }
+
+    function openReceiptBreakdown(title: string, records: CashPositionReceiptBreakdownItem[]) {
+        setReceiptPanel({ title, records });
     }
 
     function openCollectorPanel(collectorId: string, mode: "cash" | "activity" | "reconcile") {
@@ -406,15 +413,22 @@ export default function CashPositionCentre({ data }: Props) {
                 </section>
 
                 <section className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
-                    <DailyCashCards cards={data.dailyCards} onSelectDate={(date) => router.push(actionUrl("/office/admin/cash-position", { endDate: date, period: "specificDay", startDate: date }))} />
+                    <DailyCashCards
+                        cards={data.dailyCards}
+                        onSelectDate={(date) => router.push(actionUrl("/office/admin/cash-position", { endDate: date, period: "specificDay", startDate: date }))}
+                        onViewReceipts={(card) => openReceiptBreakdown(`Receipts for ${dateLabel(card.date)}`, card.receiptBreakdown)}
+                    />
                     <OfficeComparisonCards
                         offices={data.officeRows}
                         expandedOffice={expandedOffice}
                         onSelect={setExpandedOffice}
                         onViewOffice={viewOfficePosition}
                         onViewReceipts={viewOfficeReceipts}
+                        onViewReceiptsBreakdown={(office) => openReceiptBreakdown(`${office.officeName} receipts`, office.receiptBreakdown)}
                     />
                 </section>
+
+                {receiptPanel ? <ReceiptBreakdownPanel panel={receiptPanel} onClose={() => setReceiptPanel(null)} /> : null}
 
                 <section className="grid gap-4 xl:grid-cols-3">
                     <PremiumChart title="Banked vs Cash Held" icon={<Landmark size={18} />} points={[
@@ -460,7 +474,11 @@ export default function CashPositionCentre({ data }: Props) {
                                         <MoneyCell value={office.givenToAdmin} />
                                         <MoneyCell value={office.outstandingToBank} warning={office.outstandingToBank > 1_000_000} />
                                         <MoneyCell value={office.outstandingToAdmin} />
-                                        <td className="px-3 py-3 font-black text-slate-200">{office.numberOfReceipts.toLocaleString()}</td>
+                                        <td className="px-3 py-3">
+                                            <button type="button" onClick={() => openReceiptBreakdown(`${office.officeName} receipts`, office.receiptBreakdown)} className="font-black text-cyan-100 underline decoration-cyan-200/30 underline-offset-4 hover:text-white">
+                                                {office.numberOfReceipts.toLocaleString()}
+                                            </button>
+                                        </td>
                                         <td className="px-3 py-3 font-black text-slate-200">{office.collectorCount.toLocaleString()}</td>
                                         <td className="px-3 py-3 font-black text-cyan-100">{percent(office.bankingPercentage)}</td>
                                         <MoneyCell value={office.todayPerformance} positive />
@@ -475,7 +493,7 @@ export default function CashPositionCentre({ data }: Props) {
                     </div>
                 </section>
 
-                {expanded ? <OfficeExpansionPanel office={expanded} /> : null}
+                {expanded ? <OfficeExpansionPanel office={expanded} onViewReceiptsBreakdown={(office) => openReceiptBreakdown(`${office.officeName} receipts`, office.receiptBreakdown)} /> : null}
 
                 <CollectorCards
                     collectors={data.collectors}
@@ -572,13 +590,21 @@ function AICashDirector({ data, onAction }: { data: CashPositionData; onAction: 
     );
 }
 
-function DailyCashCards({ cards, onSelectDate }: { cards: CashPositionDailyCard[]; onSelectDate: (date: string) => void }) {
+function DailyCashCards({
+    cards,
+    onSelectDate,
+    onViewReceipts,
+}: {
+    cards: CashPositionDailyCard[];
+    onSelectDate: (date: string) => void;
+    onViewReceipts: (card: CashPositionDailyCard) => void;
+}) {
     return (
         <section className="rounded-[30px] border border-white/10 bg-white/[0.055] p-4 shadow-2xl shadow-black/25">
             <PanelHeading icon={<CalendarDays size={18} />} title="Daily Cash Movement" subtitle="Compact day cards replace plain bars and open a date-level cash story." />
             <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3">
                 {cards.map((card) => (
-                    <button key={card.date} type="button" onClick={() => onSelectDate(card.date)} className="group min-w-0 max-w-full overflow-hidden rounded-[24px] border border-white/10 bg-slate-950/72 p-4 text-left shadow-xl shadow-black/15 transition duration-300 hover:-translate-y-1 hover:border-cyan-200/35 hover:bg-slate-900 focus:outline-none focus:ring-4 focus:ring-cyan-300/15 motion-reduce:transform-none">
+                    <article key={card.date} role="button" tabIndex={0} onClick={() => onSelectDate(card.date)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelectDate(card.date); }} className="group min-w-0 max-w-full overflow-hidden rounded-[24px] border border-white/10 bg-slate-950/72 p-4 text-left shadow-xl shadow-black/15 transition duration-300 hover:-translate-y-1 hover:border-cyan-200/35 hover:bg-slate-900 focus:outline-none focus:ring-4 focus:ring-cyan-300/15 motion-reduce:transform-none">
                         <div className="flex items-start justify-between gap-3">
                             <div>
                                 <p className="text-xs font-black uppercase tracking-wide text-slate-400">{dateLabel(card.date)}</p>
@@ -590,14 +616,14 @@ function DailyCashCards({ cards, onSelectDate }: { cards: CashPositionDailyCard[
                             <Mini label="Banked" value={money(card.amountBanked)} />
                             <Mini label="Admin" value={money(card.amountHandedToAdmin)} />
                             <Mini label="Still held" value={money(card.cashStillHeld)} risky={card.cashStillHeld > 1_000_000} />
-                            <Mini label="Receipts" value={card.receiptCount.toLocaleString()} />
+                            <Mini label="Receipts" value={card.receiptCount.toLocaleString()} onClick={() => onViewReceipts(card)} />
                             <Mini label="Strongest office" value={card.strongestOffice} wide />
                             <Mini label="Strongest collector" value={card.strongestCollector} wide />
                         </div>
                         <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-800">
                             <div className="h-full rounded-full bg-gradient-to-r from-emerald-300 via-cyan-300 to-blue-400 transition-all group-hover:brightness-125" style={{ width: `${Math.min(100, Math.max(6, card.totalCollected ? ((card.amountBanked + card.amountHandedToAdmin) / card.totalCollected) * 100 : 6))}%` }} />
                         </div>
-                    </button>
+                    </article>
                 ))}
             </div>
         </section>
@@ -610,12 +636,14 @@ function OfficeComparisonCards({
     onSelect,
     onViewOffice,
     onViewReceipts,
+    onViewReceiptsBreakdown,
 }: {
     expandedOffice: string | null;
     offices: CashPositionOfficeRow[];
     onSelect: (officeId: string) => void;
     onViewOffice: (officeId: string) => void;
     onViewReceipts: (officeId: string) => void;
+    onViewReceiptsBreakdown: (office: CashPositionOfficeRow) => void;
 }) {
     return (
         <section className="rounded-[30px] border border-white/10 bg-white/[0.055] p-4 shadow-2xl shadow-black/25">
@@ -646,7 +674,7 @@ function OfficeComparisonCards({
                             <Mini label="Cash handed to Admin" value={money(office.givenToAdmin)} />
                             <Mini label="Outstanding cash" value={money(office.outstandingToBank)} risky={office.outstandingToBank > 1_000_000} />
                             <Mini label="Expense-to-collection %" value={percent(office.cashBeforeExpenses > 0 ? (office.approvedExpensesPeriod / office.cashBeforeExpenses) * 100 : 0)} />
-                            <Mini label="Receipts" value={office.numberOfReceipts.toLocaleString()} />
+                            <Mini label="Receipts" value={office.numberOfReceipts.toLocaleString()} onClick={() => onViewReceiptsBreakdown(office)} />
                             <Mini label="Banking %" value={percent(office.bankingPercentage)} />
                             <Mini label="Top collector" value={office.collectorCount ? `${office.collectorCount} active` : "No collector"} />
                             <Mini label="Trend" value={office.trend} />
@@ -838,7 +866,73 @@ function PremiumChart({ icon, mode = "bars", points, title }: { icon: ReactNode;
     );
 }
 
-function OfficeExpansionPanel({ office }: { office: CashPositionOfficeRow }) {
+function ReceiptBreakdownPanel({
+    onClose,
+    panel,
+}: {
+    onClose: () => void;
+    panel: { title: string; records: CashPositionReceiptBreakdownItem[] };
+}) {
+    const total = panel.records.reduce((sum, record) => sum + record.amount, 0);
+    const count = panel.records.filter((record) => record.contributesToReceiptCount).length;
+    return (
+        <section className="rounded-[30px] border border-cyan-300/20 bg-cyan-300/10 p-4 shadow-2xl shadow-cyan-950/20">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                    <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100">Receipt Breakdown</p>
+                    <h2 className="mt-2 break-words text-2xl font-black">{panel.title}</h2>
+                    <p className="mt-1 text-sm font-semibold text-cyan-50">{count.toLocaleString()} canonical receipts · {money(total)}</p>
+                </div>
+                <button type="button" onClick={onClose} className="rounded-full border border-white/10 bg-white/10 px-3 py-2 text-xs font-black text-white hover:bg-white hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-cyan-200">
+                    Close
+                </button>
+            </div>
+            <div className="mt-4 overflow-auto rounded-3xl border border-white/10">
+                <table className="min-w-[1180px] border-collapse text-left text-sm">
+                    <thead className="bg-slate-950 text-[11px] uppercase text-slate-400">
+                        <tr>
+                            {["Receipt", "Room", "Tenant", "Amount", "Collector", "Method", "Office", "Time", "Status", "Actions"].map((head) => (
+                                <th key={head} className="border-b border-white/10 px-3 py-3 font-black">{head}</th>
+                            ))}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {panel.records.map((record) => (
+                            <tr key={record.paymentId} className="border-b border-white/6 bg-slate-950/50">
+                                <td className="px-3 py-3 font-black text-white">
+                                    {record.receiptNumber ?? "Missing receipt"}
+                                    {record.warning ? <p className="mt-1 text-[11px] font-bold text-amber-100">{record.warning}</p> : null}
+                                </td>
+                                <td className="px-3 py-3 font-bold text-slate-200">{record.roomNumber ?? "Unassigned"}</td>
+                                <td className="px-3 py-3 font-bold text-slate-200">{record.tenantName}</td>
+                                <td className="px-3 py-3 font-black text-emerald-100">{money(record.amount)}</td>
+                                <td className="px-3 py-3 font-bold text-slate-200">{record.collectorName}</td>
+                                <td className="px-3 py-3 font-bold text-slate-200">{record.paymentMethod}</td>
+                                <td className="px-3 py-3 font-bold text-slate-200">{record.officeName}</td>
+                                <td className="px-3 py-3 font-bold text-slate-200">{dateTime(record.issuedAt ?? record.createdAt ?? record.paymentDate)}</td>
+                                <td className="px-3 py-3">
+                                    <span className={`rounded-full border px-2 py-1 text-xs font-black uppercase ${record.warning ? "border-amber-300/25 bg-amber-300/12 text-amber-100" : "border-emerald-300/25 bg-emerald-300/12 text-emerald-100"}`}>
+                                        {record.status}
+                                    </span>
+                                </td>
+                                <td className="px-3 py-3">
+                                    <div className="flex flex-wrap gap-2">
+                                        {record.viewReceiptHref ? <a href={record.viewReceiptHref} className="inline-flex items-center gap-1 rounded-full bg-cyan-300 px-3 py-2 text-xs font-black text-slate-950 hover:brightness-110"><ExternalLink size={12} /> View Receipt</a> : null}
+                                        <a href={record.openPaymentHref} className="inline-flex items-center gap-1 rounded-full bg-white/10 px-3 py-2 text-xs font-black text-white hover:bg-white hover:text-slate-950"><FileText size={12} /> Open Payment</a>
+                                        <a href={record.auditHref} className="inline-flex items-center gap-1 rounded-full bg-white/10 px-3 py-2 text-xs font-black text-white hover:bg-white hover:text-slate-950"><AlertTriangle size={12} /> View Audit History</a>
+                                    </div>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+            {!panel.records.length ? <p className="mt-4 rounded-2xl border border-dashed border-white/20 p-5 text-sm font-bold text-slate-400">No valid receipt-contributing payments match this selection.</p> : null}
+        </section>
+    );
+}
+
+function OfficeExpansionPanel({ office, onViewReceiptsBreakdown }: { office: CashPositionOfficeRow; onViewReceiptsBreakdown: (office: CashPositionOfficeRow) => void }) {
     return (
         <section className="rounded-[30px] border border-emerald-300/20 bg-emerald-300/10 p-4 shadow-2xl shadow-emerald-950/20">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -854,7 +948,7 @@ function OfficeExpansionPanel({ office }: { office: CashPositionOfficeRow }) {
                 <Mini label="Collector cash" value={money(office.cashHeldByCollectors)} />
                 <Mini label="Cash submitted" value={money(Math.max(0, office.todayPerformance - office.cashHeldByCollectors))} />
                 <Mini label="Cash waiting" value={money(office.outstandingToBank)} risky={office.outstandingToBank > 1_000_000} />
-                <Mini label="Receipts" value={office.numberOfReceipts.toLocaleString()} />
+                <Mini label="Receipts" value={office.numberOfReceipts.toLocaleString()} onClick={() => onViewReceiptsBreakdown(office)} />
                 <Mini label="Bank history" value={money(office.alreadyBanked)} />
                 <Mini label="Admin handovers" value={money(office.givenToAdmin)} />
                 <Mini label="Cash adjustments" value={money(office.cashHeldInOffice - office.todayPerformance)} />
@@ -902,13 +996,16 @@ function MoneyCell({ positive = false, value, warning = false }: { positive?: bo
     return <td className={`px-3 py-3 font-black ${color}`}>{money(value)}</td>;
 }
 
-function Mini({ label, risky = false, value, wide = false }: { label: string; risky?: boolean; value: string; wide?: boolean }) {
-    return (
-        <div className={`min-w-0 max-w-full overflow-hidden rounded-2xl border border-white/10 bg-slate-950/60 p-3 ${wide ? "sm:col-span-2" : ""}`}>
+function Mini({ label, onClick, risky = false, value, wide = false }: { label: string; onClick?: () => void; risky?: boolean; value: string; wide?: boolean }) {
+    const className = `min-w-0 max-w-full overflow-hidden rounded-2xl border border-white/10 bg-slate-950/60 p-3 ${wide ? "sm:col-span-2" : ""} ${onClick ? "text-left transition hover:border-cyan-200/35 hover:bg-cyan-300/10 focus:outline-none focus:ring-2 focus:ring-cyan-200" : ""}`;
+    const content = (
+        <>
             <p className="min-w-0 break-words text-[10px] font-black uppercase tracking-wide text-slate-400">{label}</p>
             <p className={`mt-1 min-w-0 max-w-full break-words text-[clamp(0.78rem,1vw,0.95rem)] font-black leading-5 ${risky ? "text-red-100" : "text-white"}`}>{value}</p>
-        </div>
+        </>
     );
+    if (onClick) return <button type="button" onClick={(event) => { event.stopPropagation(); onClick(); }} className={className}>{content}</button>;
+    return <div className={className}>{content}</div>;
 }
 
 function PanelHeading({ icon, subtitle, title }: { icon: ReactNode; subtitle: string; title: string }) {

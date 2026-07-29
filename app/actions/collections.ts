@@ -2305,6 +2305,8 @@ export async function followUpPromise(input: FollowUpPromiseInput) {
             }
         }
 
+        await createTenantPaymentReceipt(collection.id, { issuedBy: context.profile?.id ?? null });
+
         const { data, error } = await supabase
             .from("promises")
             .update({

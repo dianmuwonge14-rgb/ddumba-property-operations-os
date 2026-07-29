@@ -5,6 +5,7 @@ import { test } from "node:test";
 const migration = readFileSync(new URL("../supabase/upgrade_migrations/0204_payment_receipts.sql", import.meta.url), "utf8");
 const receiptService = readFileSync(new URL("../lib/receipts/payment-receipts.ts", import.meta.url), "utf8");
 const collectionsAction = readFileSync(new URL("../app/actions/collections.ts", import.meta.url), "utf8");
+const promisesAction = readFileSync(new URL("../app/actions/promises.ts", import.meta.url), "utf8");
 const expensesAction = readFileSync(new URL("../app/actions/expenses.ts", import.meta.url), "utf8");
 const landlordsAction = readFileSync(new URL("../app/actions/landlords.ts", import.meta.url), "utf8");
 const paymentEntry = readFileSync(new URL("../components/office/payments/FastPaymentsEntry.tsx", import.meta.url), "utf8");
@@ -38,6 +39,15 @@ test("tenant payment save returns receipt metadata without blocking successful p
   assert.match(collectionsAction, /createTenantPaymentReceipt\(data\.id/);
   assert.match(collectionsAction, /receiptError/);
   assert.match(collectionsAction, /Payment receipt generation failed/);
+});
+
+test("fulfilled promises create traceable tenant payment receipts", () => {
+  assert.match(collectionsAction, /payment_method: "promise"/);
+  assert.match(collectionsAction, /payment_date: dateOnly\(paidAt\)/);
+  assert.match(collectionsAction, /createTenantPaymentReceipt\(collection\.id/);
+  assert.match(promisesAction, /payment_method: "promise"/);
+  assert.match(promisesAction, /payment_date: paidAt\.slice\(0, 10\)/);
+  assert.match(promisesAction, /createTenantPaymentReceipt\(collection\.id/);
 });
 
 test("landlord payment save creates receipt metadata where applicable", () => {

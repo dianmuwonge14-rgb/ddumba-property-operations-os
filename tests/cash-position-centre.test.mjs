@@ -126,6 +126,23 @@ test("cash position action filters reach receipt history", () => {
   assert.match(componentSource, /collectorId/);
 });
 
+test("cash position receipt counts use canonical payment drill-down rows", () => {
+  assert.match(dataSource, /ACTIVE_RECEIPT_STATUSES/);
+  assert.match(dataSource, /distinctById/);
+  assert.match(dataSource, /\.from\("payment_receipts"\)/);
+  assert.match(dataSource, /canonicalReceiptByPayment/);
+  assert.match(dataSource, /receiptBreakdown\.filter\(\(item\) => item\.contributesToReceiptCount\)\.length/);
+  assert.match(typesSource, /CashPositionReceiptBreakdownItem/);
+  assert.match(typesSource, /contributesToCashTotals/);
+  assert.match(typesSource, /contributesToReceiptCount/);
+  assert.match(componentSource, /ReceiptBreakdownPanel/);
+  assert.match(componentSource, /View Receipt/);
+  assert.match(componentSource, /Open Payment/);
+  assert.match(componentSource, /View Audit History/);
+  assert.match(componentSource, /Missing receipt/);
+  assert.match(componentSource, /onViewReceiptsBreakdown/);
+});
+
 test("cash position centre keeps banking writes on the canonical cash banking workflow", () => {
   assert.match(componentSource, /\/office\/admin\/cash-banking/);
   assert.doesNotMatch(componentSource, /from\("cash_transactions"\)\.insert/);

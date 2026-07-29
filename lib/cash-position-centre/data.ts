@@ -10,11 +10,13 @@ import type {
     CashPositionInsight,
     CashPositionKpi,
     CashPositionOfficeRow,
+    CashPositionReceiptBreakdownItem,
 } from "./types";
 
 type Row = Record<string, any>;
 
 const INACTIVE_PAYMENT_STATUSES = new Set(["voided", "removed", "removed_by_admin_approval", "rejected", "pending", "cancelled", "canceled"]);
+const ACTIVE_RECEIPT_STATUSES = new Set(["issued", "reissued", "corrected"]);
 const APPROVED_EXPENSE_STATUSES = new Set(["approved"]);
 const PENDING_EXPENSE_STATUSES = new Set(["pending", "pending_admin_approval", "submitted"]);
 
@@ -110,6 +112,10 @@ function isActiveCollection(row: Row) {
     return !INACTIVE_PAYMENT_STATUSES.has(String(row.status ?? "posted").toLowerCase());
 }
 
+function isActiveReceipt(row: Row) {
+    return ACTIVE_RECEIPT_STATUSES.has(String(row.status ?? "issued").toLowerCase());
+}
+
 function expenseStatus(row: Row) {
     return String(row.status ?? (row.approved_at ? "approved" : "pending")).toLowerCase();
 }
@@ -136,6 +142,16 @@ function collectionAmount(row: Row) {
 
 function collectionDate(row: Row) {
     return dateOnly(row.payment_date ?? row.paid_at ?? row.created_at);
+}
+
+function distinctById(rows: Row[]) {
+    const byId = new Map<string, Row>();
+    for (const row of rows) {
+        const id = String(row.id ?? "");
+        if (!id || byId.has(id)) continue;
+        byId.set(id, row);
+    }
+    return [...byId.values()];
 }
 
 function movementDate(row: Row) {
@@ -300,7 +316,7 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         securityResult,
     ] = await Promise.all([
         db.from("offices").select("id, office_name, name, status").eq("company_id", companyId).order("office_name", { ascending: true, nullsFirst: false }).limit(1000),
-        db.from("collections").select("id, company_id, office_id, amount, amount_paid, payment_date, paid_at, created_at, payment_method, reference_number, recorded_by, status").eq("company_id", companyId).limit(10000),
+        db.from("collections").select("id, company_id, office_id, amount, amount_paid, payment_date, paid_at, created_at, payment_method, reference_number, recorded_by, status, room_id, tenant_id").eq("company_id", companyId).limit(10000),
         db.from("expenses").select("id, company_id, office_id, amount, expense_date, created_at, item, category, submitted_by, approved_at, approved_by, status").eq("company_id", companyId).limit(10000),
         db.from("cash_accounts").select("id, company_id, office_id, account_type, name, status").eq("company_id", companyId).eq("status", "active").limit(2000),
         db.from("cash_transactions").select("id, company_id, office_id, cash_account_id, amount, transaction_type, source_type, source_id, transaction_date, created_at, description, recorded_by").eq("company_id", companyId).limit(10000),
@@ -420,8 +436,91 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         collectorCashByOffice.set(collector.officeId, (collectorCashByOffice.get(collector.officeId) ?? 0) + collector.cashInHand);
     }
 
+    const paymentIds = [...new Set(allCollections.map((row) => String(row.id ?? "")).filter(Boolean))];
+    const roomIds = [...new Set(allCollections.map((row) => String(row.room_id ?? "")).filter(Boolean))];
+    const tenantIds = [...new Set(allCollections.map((row) => String(row.tenant_id ?? "")).filter(Boolean))];
+    const [receiptRowsResult, roomRowsResult, tenantRowsResult] = paymentIds.length
+        ? await Promise.all([
+            db.from("payment_receipts").select("id, company_id, office_id, payment_id, payment_type, receipt_number, status, issued_at, created_at").eq("company_id", companyId).eq("payment_type", "tenant_collection").in("payment_id", paymentIds).limit(10000),
+            roomIds.length ? db.from("rooms").select("id, room_number, room_label, unit_number, office_id").eq("company_id", companyId).in("id", roomIds).limit(10000) : Promise.resolve({ data: [], error: null }),
+            tenantIds.length ? db.from("tenants").select("id, full_name, name, first_name, last_name, phone, office_id").eq("company_id", companyId).in("id", tenantIds).limit(10000) : Promise.resolve({ data: [], error: null }),
+        ])
+        : [
+            { data: [], error: null },
+            { data: [], error: null },
+            { data: [], error: null },
+        ];
+    for (const result of [receiptRowsResult, roomRowsResult, tenantRowsResult]) {
+        if (result.error) throw new Error(result.error.message);
+    }
+    const receiptRows = (receiptRowsResult.data ?? []) as Row[];
+    const receiptsByPayment = new Map<string, Row[]>();
+    for (const receipt of receiptRows) {
+        const paymentId = String(receipt.payment_id ?? "");
+        if (!paymentId) continue;
+        if (!receiptsByPayment.has(paymentId)) receiptsByPayment.set(paymentId, []);
+        receiptsByPayment.get(paymentId)!.push(receipt);
+    }
+    const canonicalReceiptByPayment = new Map<string, Row>();
+    const receiptWarningsByPayment = new Map<string, string>();
+    for (const [paymentId, rows] of receiptsByPayment.entries()) {
+        const activeRows = rows.filter(isActiveReceipt).sort((a, b) => String(b.issued_at ?? b.created_at).localeCompare(String(a.issued_at ?? a.created_at)));
+        if (activeRows.length > 1) receiptWarningsByPayment.set(paymentId, "More than one active receipt exists for this payment.");
+        if (activeRows[0]) canonicalReceiptByPayment.set(paymentId, activeRows[0]);
+    }
+    const roomById = new Map(((roomRowsResult.data ?? []) as Row[]).map((row) => [String(row.id), row]));
+    const tenantById = new Map(((tenantRowsResult.data ?? []) as Row[]).map((row) => [String(row.id), row]));
+
+    const buildReceiptBreakdown = (rows: Row[]): CashPositionReceiptBreakdownItem[] => distinctById(rows).map((row) => {
+        const paymentId = String(row.id);
+        const receipt = canonicalReceiptByPayment.get(paymentId) ?? null;
+        const tenant = tenantById.get(String(row.tenant_id ?? "")) ?? {};
+        const room = roomById.get(String(row.room_id ?? "")) ?? {};
+        const collector = userById.get(String(row.recorded_by ?? "")) ?? {};
+        const officeId = row.office_id ? String(row.office_id) : null;
+        const warning = receiptWarningsByPayment.get(paymentId) ?? (!receipt ? "No active payment receipt snapshot exists for this valid payment." : null);
+        return {
+            amount: collectionAmount(row),
+            auditHref: `/office/audit?entityId=${encodeURIComponent(paymentId)}`,
+            collectorId: row.recorded_by ? String(row.recorded_by) : null,
+            collectorName: String(collector.full_name ?? collector.email ?? "Unassigned"),
+            contributesToCashTotals: true,
+            contributesToReceiptCount: true,
+            createdAt: row.created_at ?? null,
+            issuedAt: receipt?.issued_at ?? receipt?.created_at ?? null,
+            officeId,
+            officeName: officeId ? officeById.get(officeId) ?? "Office" : "Company wide",
+            openPaymentHref: `/office/admin/payments?payment=${encodeURIComponent(paymentId)}`,
+            paymentDate: collectionDate(row) || null,
+            paymentId,
+            paymentMethod: String(row.payment_method ?? "unknown"),
+            receiptId: receipt?.id ? String(receipt.id) : null,
+            receiptNumber: receipt?.receipt_number ? String(receipt.receipt_number) : null,
+            roomNumber: String(room.room_number ?? room.room_label ?? room.unit_number ?? "Unassigned"),
+            status: String(row.status ?? "paid"),
+            tenantName: String(tenant.full_name ?? tenant.name ?? [tenant.first_name, tenant.last_name].filter(Boolean).join(" ") ?? "Unnamed Tenant"),
+            viewReceiptHref: receipt?.id ? `/receipt-print/${encodeURIComponent(String(receipt.id))}` : null,
+            warning,
+        };
+    }).sort((a, b) => b.amount - a.amount || a.tenantName.localeCompare(b.tenantName));
+
+    const receiptIntegrityAlerts: CashPositionInsight[] = [];
+    const periodReceiptBreakdown = buildReceiptBreakdown(periodCollections);
+    for (const item of periodReceiptBreakdown) {
+        if (!item.warning) continue;
+        receiptIntegrityAlerts.push({
+            action: "Open the receipt breakdown and repair the payment receipt snapshot.",
+            amount: item.amount,
+            id: `receipt-integrity-${item.paymentId}`,
+            message: `${item.officeName} payment ${item.paymentId} contributes UGX ${Math.round(item.amount).toLocaleString()} to cash totals but needs receipt integrity review: ${item.warning}`,
+            severity: "warning",
+            title: "Receipt integrity warning",
+        });
+    }
+
     let officeRows: CashPositionOfficeRow[] = offices.map((office) => {
         const officeCollections = periodCollections.filter((row) => row.office_id === office.id);
+        const officeReceiptBreakdown = buildReceiptBreakdown(officeCollections);
         const officeToday = todayCollections.filter((row) => row.office_id === office.id);
         const officeWeek = weekCollections.filter((row) => row.office_id === office.id);
         const officeMonth = monthCollections.filter((row) => row.office_id === office.id);
@@ -456,7 +555,7 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
             largestPayment: officeAmounts.length ? Math.max(...officeAmounts) : 0,
             lastPaymentAt: officeCollections.sort((a, b) => String(b.created_at ?? b.paid_at).localeCompare(String(a.created_at ?? a.paid_at)))[0]?.created_at ?? null,
             monthlyPerformance: sum(officeMonth, collectionAmount),
-            numberOfReceipts: officeCollections.length,
+            numberOfReceipts: officeReceiptBreakdown.filter((item) => item.contributesToReceiptCount).length,
             officeId: office.id,
             officeName: office.name,
             outstandingToAdmin: 0,
@@ -469,6 +568,7 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
             todayPerformance: sum(officeToday, collectionAmount),
             trend,
             weeklyPerformance: sum(officeWeek, collectionAmount),
+            receiptBreakdown: officeReceiptBreakdown,
         };
     });
 
@@ -548,6 +648,7 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
     }
     const dailyCards = [...byDay.entries()].map(([date, totalCollected], index, entries) => {
         const rows = allCollections.filter((row) => collectionDate(row) === date);
+        const receiptBreakdown = buildReceiptBreakdown(rows);
         const banked = sum(bankOutflows.filter((row) => movementDate(row) === date), (row) => numberValue(row.amount));
         const handedToAdmin = sum(adminCashReceived.filter((row) => movementDate(row) === date), (row) => numberValue(row.amount));
         const previous = index > 0 ? entries[index - 1][1] : 0;
@@ -567,7 +668,8 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
             cashStillHeld: Math.max(0, totalCollected - banked - handedToAdmin),
             changeFromPreviousDay: totalCollected - previous,
             date,
-            receiptCount: rows.length,
+            receiptCount: receiptBreakdown.filter((item) => item.contributesToReceiptCount).length,
+            receiptBreakdown,
             strongestCollector: topCollectorId ? String(userById.get(topCollectorId)?.full_name ?? userById.get(topCollectorId)?.email ?? "Collector") : "No collections",
             strongestOffice: topOfficeId ? officeById.get(topOfficeId) ?? "Office" : "No office",
             totalCollected,
@@ -602,7 +704,7 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         dailyCards,
         filters,
         generatedAt: new Date().toISOString(),
-        insights: buildInsights({ collectors, offices: officeRows, securityShortfall, totals }),
+        insights: [...receiptIntegrityAlerts, ...buildInsights({ collectors, offices: officeRows, securityShortfall, totals })],
         kpis,
         offices,
         officeRows: officeRows.sort((a, b) => b.cashCollectedToday - a.cashCollectedToday),
