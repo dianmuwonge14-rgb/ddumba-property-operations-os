@@ -58,7 +58,14 @@ export type ReceiptHistoryItem = {
     };
 };
 
-export const getReceiptHistoryData = cache(async function getReceiptHistoryData() {
+export type ReceiptHistoryFilters = {
+    collectorId?: string | null;
+    endDate?: string | null;
+    officeId?: string | null;
+    startDate?: string | null;
+};
+
+export const getReceiptHistoryData = cache(async function getReceiptHistoryData(filters: ReceiptHistoryFilters = {}) {
     const context = await requireAuth();
     if (!context.activeCompany?.id) {
         return { error: "Active company is required.", receipts: [] as ReceiptHistoryItem[] };
@@ -81,6 +88,19 @@ export const getReceiptHistoryData = cache(async function getReceiptHistoryData(
 
     if (!context.isCompanyAdmin && context.authMode !== "collector" && context.activeOffice?.id) {
         query = query.eq("office_id", context.activeOffice.id);
+    } else if (filters.officeId) {
+        query = query.eq("office_id", filters.officeId);
+    }
+
+    if (filters.collectorId) {
+        query = query.eq("issued_by", filters.collectorId);
+    }
+
+    if (filters.startDate) {
+        query = query.gte("issued_at", `${filters.startDate}T00:00:00+03:00`);
+    }
+    if (filters.endDate) {
+        query = query.lte("issued_at", `${filters.endDate}T23:59:59+03:00`);
     }
 
     const { data, error } = await query;

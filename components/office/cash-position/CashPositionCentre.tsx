@@ -121,6 +121,9 @@ export default function CashPositionCentre({ data }: Props) {
     });
     const [expandedOffice, setExpandedOffice] = useState<string | null>(data.officeRows[0]?.officeId ?? null);
     const [spotlight, setSpotlight] = useState<string | null>(null);
+    const [collectorPanel, setCollectorPanel] = useState<null | { collectorId: string; mode: "cash" | "activity" | "reconcile" }>(
+        data.filters.collectorId ? { collectorId: data.filters.collectorId, mode: "cash" } : null,
+    );
 
     const csv = useMemo(() => {
         const rows = [
@@ -200,8 +203,45 @@ export default function CashPositionCentre({ data }: Props) {
         URL.revokeObjectURL(url);
     }
 
+    function actionUrl(path: string, extra: Record<string, string | null | undefined> = {}) {
+        const params = new URLSearchParams();
+        params.set("period", filters.period);
+        params.set("startDate", filters.startDate);
+        params.set("endDate", filters.endDate);
+        params.set("dateFrom", filters.startDate);
+        params.set("dateTo", filters.endDate);
+        if (filters.paymentMethod) params.set("paymentMethod", filters.paymentMethod);
+        if (filters.bankingStatus) params.set("bankingStatus", filters.bankingStatus);
+        if (filters.officeId) params.set("activeOfficeFilter", filters.officeId);
+        for (const [key, value] of Object.entries(extra)) {
+            if (value) params.set(key, value);
+        }
+        return `${path}?${params.toString()}`;
+    }
+
+    function viewOfficePosition(officeId: string) {
+        setExpandedOffice(officeId);
+        router.push(actionUrl("/office/admin/cash-position", { officeId }));
+    }
+
+    function viewOfficeReceipts(officeId: string) {
+        router.push(actionUrl("/office/receipts", { officeId }));
+    }
+
+    function openCollectorPanel(collectorId: string, mode: "cash" | "activity" | "reconcile") {
+        setCollectorPanel({ collectorId, mode });
+        router.push(actionUrl("/office/admin/cash-position", { collectorId }));
+    }
+
+    function viewCollectorReceipts(collectorId: string) {
+        router.push(actionUrl("/office/receipts", { collectorId }));
+    }
+
     const syncedAt = dateTime(data.generatedAt);
     const expanded = data.officeRows.find((office) => office.officeId === expandedOffice) ?? data.officeRows[0] ?? null;
+    const selectedCollector = collectorPanel
+        ? data.collectors.find((collector) => collector.collectorId === collectorPanel.collectorId) ?? null
+        : null;
     const activeFilters = [
         filters.period !== "today" ? periodOptions.find(([value]) => value === filters.period)?.[1] : null,
         filters.officeId ? data.offices.find((office) => office.id === filters.officeId)?.name : null,
@@ -211,7 +251,7 @@ export default function CashPositionCentre({ data }: Props) {
     ].filter(Boolean);
 
     return (
-        <main className="min-h-screen bg-[#030712] px-3 py-5 text-white sm:px-5 lg:px-8">
+        <main className="min-h-screen overflow-x-hidden bg-[#030712] px-3 py-5 text-white sm:px-5 lg:px-8">
             <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_9%_0%,rgba(16,185,129,0.22),transparent_26%),radial-gradient(circle_at_75%_2%,rgba(14,165,233,0.22),transparent_28%),radial-gradient(circle_at_95%_18%,rgba(245,158,11,0.12),transparent_22%),linear-gradient(135deg,#020617_0%,#07111f_48%,#111827_100%)]" />
             <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:72px_72px] opacity-20" />
             <div className="relative mx-auto max-w-[1800px] space-y-5">
@@ -240,22 +280,22 @@ export default function CashPositionCentre({ data }: Props) {
                     </div>
                 </header>
 
-                <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                <section className="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3">
                     {data.kpis.map((kpi) => (
                         <button
                             key={kpi.label}
                             title={kpi.hint}
                             onClick={() => setSpotlight((current) => current === kpi.label ? null : kpi.label)}
-                            className={`group relative min-h-[160px] overflow-hidden rounded-[26px] border bg-gradient-to-br p-4 text-left shadow-2xl backdrop-blur transition duration-300 hover:-translate-y-1 hover:shadow-cyan-950/40 focus:outline-none focus:ring-4 focus:ring-cyan-300/15 motion-reduce:transform-none ${toneClasses(kpi.tone)} ${spotlight === kpi.label ? "ring-2 ring-cyan-200/60" : ""}`}
+                            className={`group relative min-h-[160px] min-w-0 max-w-full overflow-hidden rounded-[26px] border bg-gradient-to-br p-4 text-left shadow-2xl backdrop-blur transition duration-300 hover:-translate-y-1 hover:shadow-cyan-950/40 focus:outline-none focus:ring-4 focus:ring-cyan-300/15 motion-reduce:transform-none ${toneClasses(kpi.tone)} ${spotlight === kpi.label ? "ring-2 ring-cyan-200/60" : ""}`}
                         >
                             <div className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-white/10 blur-2xl transition group-hover:bg-white/16" />
                             <div className="flex items-start justify-between gap-3">
                                 <span className="grid h-11 w-11 place-items-center rounded-2xl border border-white/10 bg-white/10 text-white shadow-lg transition duration-300 group-hover:scale-105 motion-reduce:transform-none">{kpiIcon(kpi.label)}</span>
                                 <TrendChip current={kpi.value} previous={kpi.previousValue} tone={kpi.tone} />
                             </div>
-                            <p className="mt-4 text-[11px] font-black uppercase tracking-wide text-slate-300">{kpi.label}</p>
-                            <p className="mt-2 break-words text-2xl font-black tracking-tight text-white">{kpi.label.includes("Alerts") ? Math.round(kpi.value).toLocaleString() : money(kpi.value)}</p>
-                            <p className="mt-2 text-xs font-bold leading-5 text-slate-300">{kpi.hint}</p>
+                            <p className="mt-4 min-w-0 max-w-full break-words text-[11px] font-black uppercase tracking-wide text-slate-300">{kpi.label}</p>
+                            <p className="mt-2 min-w-0 max-w-full break-words text-[clamp(1.05rem,1.45vw,1.55rem)] font-black tracking-tight text-white">{kpi.label.includes("Alerts") ? Math.round(kpi.value).toLocaleString() : money(kpi.value)}</p>
+                            <p className="mt-2 min-w-0 max-w-full break-words text-xs font-bold leading-5 text-slate-300">{kpi.hint}</p>
                             <p className="mt-3 text-[10px] font-black uppercase tracking-wide text-cyan-100">Updated {syncedAt}</p>
                         </button>
                     ))}
@@ -294,13 +334,19 @@ export default function CashPositionCentre({ data }: Props) {
                 </section>
 
                 <section className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
-                    <AICashDirector data={data} />
+                    <AICashDirector data={data} onAction={() => router.push(actionUrl("/office/admin/cash-banking"))} />
                     <PremiumChart title="Security Liability vs Available Cash" icon={<ShieldAlert size={18} />} points={data.charts.securityLiability} mode="tiles" />
                 </section>
 
                 <section className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
-                    <DailyCashCards cards={data.dailyCards} />
-                    <OfficeComparisonCards offices={data.officeRows} expandedOffice={expandedOffice} onSelect={setExpandedOffice} />
+                    <DailyCashCards cards={data.dailyCards} onSelectDate={(date) => router.push(actionUrl("/office/admin/cash-position", { endDate: date, period: "specificDay", startDate: date }))} />
+                    <OfficeComparisonCards
+                        offices={data.officeRows}
+                        expandedOffice={expandedOffice}
+                        onSelect={setExpandedOffice}
+                        onViewOffice={viewOfficePosition}
+                        onViewReceipts={viewOfficeReceipts}
+                    />
                 </section>
 
                 <section className="grid gap-4 xl:grid-cols-3">
@@ -364,13 +410,30 @@ export default function CashPositionCentre({ data }: Props) {
 
                 {expanded ? <OfficeExpansionPanel office={expanded} /> : null}
 
-                <CollectorCards collectors={data.collectors} />
+                <CollectorCards
+                    collectors={data.collectors}
+                    onReconcile={(collectorId) => openCollectorPanel(collectorId, "reconcile")}
+                    onViewActivity={(collectorId) => openCollectorPanel(collectorId, "activity")}
+                    onViewCash={(collectorId) => openCollectorPanel(collectorId, "cash")}
+                    onViewReceipts={viewCollectorReceipts}
+                />
+
+                {selectedCollector ? (
+                    <CollectorActionPanel
+                        collector={selectedCollector}
+                        mode={collectorPanel?.mode ?? "cash"}
+                        onClose={() => setCollectorPanel(null)}
+                        onOpenAudit={() => router.push(actionUrl("/office/audit", { collectorId: selectedCollector.collectorId }))}
+                        onOpenBanking={() => router.push(actionUrl("/office/admin/cash-banking", { collectorId: selectedCollector.collectorId }))}
+                        onOpenReceipts={() => viewCollectorReceipts(selectedCollector.collectorId)}
+                    />
+                ) : null}
             </div>
         </main>
     );
 }
 
-function AICashDirector({ data }: { data: CashPositionData }) {
+function AICashDirector({ data, onAction }: { data: CashPositionData; onAction: () => void }) {
     const lead = data.insights[0];
     return (
         <section className="relative overflow-hidden rounded-[30px] border border-cyan-300/20 bg-gradient-to-br from-cyan-300/14 via-slate-900/78 to-slate-950 p-5 shadow-2xl shadow-cyan-950/25">
@@ -404,7 +467,7 @@ function AICashDirector({ data }: { data: CashPositionData }) {
                             <span className="text-xs font-black text-cyan-100">{money(insight.amount)}</span>
                         </div>
                         <p className="mt-1 text-xs font-semibold leading-5 text-slate-300">{insight.message}</p>
-                        <button className="mt-3 rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white hover:bg-white hover:text-slate-950">{insight.action}</button>
+                        <button type="button" onClick={onAction} className="mt-3 rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white hover:bg-white hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-cyan-200">{insight.action}</button>
                     </article>
                 ))}
             </div>
@@ -413,13 +476,13 @@ function AICashDirector({ data }: { data: CashPositionData }) {
     );
 }
 
-function DailyCashCards({ cards }: { cards: CashPositionDailyCard[] }) {
+function DailyCashCards({ cards, onSelectDate }: { cards: CashPositionDailyCard[]; onSelectDate: (date: string) => void }) {
     return (
         <section className="rounded-[30px] border border-white/10 bg-white/[0.055] p-4 shadow-2xl shadow-black/25">
             <PanelHeading icon={<CalendarDays size={18} />} title="Daily Cash Movement" subtitle="Compact day cards replace plain bars and open a date-level cash story." />
-            <div className="mt-4 grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+            <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3">
                 {cards.map((card) => (
-                    <button key={card.date} className="group rounded-[24px] border border-white/10 bg-slate-950/72 p-4 text-left shadow-xl shadow-black/15 transition duration-300 hover:-translate-y-1 hover:border-cyan-200/35 hover:bg-slate-900 motion-reduce:transform-none">
+                    <button key={card.date} type="button" onClick={() => onSelectDate(card.date)} className="group min-w-0 max-w-full overflow-hidden rounded-[24px] border border-white/10 bg-slate-950/72 p-4 text-left shadow-xl shadow-black/15 transition duration-300 hover:-translate-y-1 hover:border-cyan-200/35 hover:bg-slate-900 focus:outline-none focus:ring-4 focus:ring-cyan-300/15 motion-reduce:transform-none">
                         <div className="flex items-start justify-between gap-3">
                             <div>
                                 <p className="text-xs font-black uppercase tracking-wide text-slate-400">{dateLabel(card.date)}</p>
@@ -445,19 +508,31 @@ function DailyCashCards({ cards }: { cards: CashPositionDailyCard[] }) {
     );
 }
 
-function OfficeComparisonCards({ expandedOffice, offices, onSelect }: { expandedOffice: string | null; offices: CashPositionOfficeRow[]; onSelect: (officeId: string) => void }) {
+function OfficeComparisonCards({
+    expandedOffice,
+    offices,
+    onSelect,
+    onViewOffice,
+    onViewReceipts,
+}: {
+    expandedOffice: string | null;
+    offices: CashPositionOfficeRow[];
+    onSelect: (officeId: string) => void;
+    onViewOffice: (officeId: string) => void;
+    onViewReceipts: (officeId: string) => void;
+}) {
     return (
         <section className="rounded-[30px] border border-white/10 bg-white/[0.055] p-4 shadow-2xl shadow-black/25">
             <PanelHeading icon={<Building2 size={18} />} title="Office Performance Comparison" subtitle="Finance cards ranked by live cash exposure, banking discipline and collection performance." />
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-3">
                 {offices.map((office, index) => (
-                    <button key={office.officeId} onClick={() => onSelect(office.officeId)} className={`group rounded-[24px] border p-4 text-left shadow-xl shadow-black/15 transition duration-300 hover:-translate-y-1 hover:shadow-cyan-950/25 motion-reduce:transform-none ${expandedOffice === office.officeId ? "border-cyan-200/60 bg-cyan-300/10" : "border-white/10 bg-slate-950/72 hover:border-cyan-200/35"}`}>
+                    <article key={office.officeId} className={`group min-w-0 max-w-full overflow-hidden rounded-[24px] border p-4 text-left shadow-xl shadow-black/15 transition duration-300 hover:-translate-y-1 hover:shadow-cyan-950/25 motion-reduce:transform-none ${expandedOffice === office.officeId ? "border-cyan-200/60 bg-cyan-300/10" : "border-white/10 bg-slate-950/72 hover:border-cyan-200/35"}`}>
                         <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                                <p className="truncate text-base font-black text-white">#{index + 1} {office.officeName}</p>
-                                <p className="mt-1 text-xs font-bold text-slate-400">Last cash activity: {dateTime(office.lastPaymentAt)}</p>
+                                <p className="break-words text-base font-black text-white">#{index + 1} {office.officeName}</p>
+                                <p className="mt-1 break-words text-xs font-bold text-slate-400">Last cash activity: {dateTime(office.lastPaymentAt)}</p>
                             </div>
-                            <span className={`rounded-full border px-2 py-1 text-[10px] font-black uppercase ${statusBadge(office.status)}`}>{office.status}</span>
+                            <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-black uppercase ${statusBadge(office.status)}`}>{office.status}</span>
                         </div>
                         <div className="mt-4 grid grid-cols-2 gap-2">
                             <Mini label="Collected" value={money(office.cashCollectedToday)} />
@@ -469,35 +544,55 @@ function OfficeComparisonCards({ expandedOffice, offices, onSelect }: { expanded
                             <Mini label="Top collector" value={office.collectorCount ? `${office.collectorCount} active` : "No collector"} />
                             <Mini label="Trend" value={office.trend} />
                         </div>
-                        <span className="mt-4 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white transition group-hover:bg-white group-hover:text-slate-950">
-                            <Eye size={13} /> View Office Position
-                        </span>
-                    </button>
+                        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                            <button type="button" onClick={() => onSelect(office.officeId)} className="inline-flex min-w-0 items-center justify-center gap-2 rounded-full bg-white/10 px-3 py-2 text-xs font-black text-white transition hover:bg-white hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-cyan-200">
+                                <ChevronDown size={13} /> Expand
+                            </button>
+                            <button type="button" onClick={() => onViewOffice(office.officeId)} className="inline-flex min-w-0 items-center justify-center gap-2 rounded-full bg-cyan-300 px-3 py-2 text-xs font-black text-slate-950 transition hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-cyan-200">
+                                <Eye size={13} /> View Office Position
+                            </button>
+                            <button type="button" onClick={() => onViewReceipts(office.officeId)} className="inline-flex min-w-0 items-center justify-center gap-2 rounded-full bg-white/10 px-3 py-2 text-xs font-black text-white transition hover:bg-white hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-cyan-200 sm:col-span-2">
+                                <FileText size={13} /> View Receipts
+                            </button>
+                        </div>
+                    </article>
                 ))}
             </div>
         </section>
     );
 }
 
-function CollectorCards({ collectors }: { collectors: CashPositionCollectorRow[] }) {
+function CollectorCards({
+    collectors,
+    onReconcile,
+    onViewActivity,
+    onViewCash,
+    onViewReceipts,
+}: {
+    collectors: CashPositionCollectorRow[];
+    onReconcile: (collectorId: string) => void;
+    onViewActivity: (collectorId: string) => void;
+    onViewCash: (collectorId: string) => void;
+    onViewReceipts: (collectorId: string) => void;
+}) {
     return (
         <section className="rounded-[30px] border border-white/10 bg-white/[0.055] p-4 shadow-2xl shadow-black/25">
             <div className="mb-4 flex items-center justify-between gap-3">
                 <PanelHeading icon={<UsersRound size={18} />} title="Collector Performance" subtitle="Rankings from payment records, collector cash balances and last activity." />
                 <Pill tone="cyan">{collectors.length.toLocaleString()} collectors</Pill>
             </div>
-            <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3">
                 {collectors.map((collector, index) => (
-                    <article key={collector.collectorId} className="group rounded-[26px] border border-white/10 bg-slate-950/72 p-4 shadow-xl shadow-black/15 transition duration-300 hover:-translate-y-1 hover:border-cyan-200/35 motion-reduce:transform-none">
+                    <article key={collector.collectorId} className="group min-w-0 max-w-full overflow-hidden rounded-[26px] border border-white/10 bg-slate-950/72 p-4 shadow-xl shadow-black/15 transition duration-300 hover:-translate-y-1 hover:border-cyan-200/35 motion-reduce:transform-none">
                         <div className="flex items-start gap-3">
                             <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-2xl bg-gradient-to-br from-cyan-300 to-emerald-300 text-lg font-black text-slate-950">
                                 {collector.photoUrl ? <img src={collector.photoUrl} alt="" className="h-full w-full object-cover" /> : collector.collectorName.slice(0, 1)}
                             </div>
                             <div className="min-w-0 flex-1">
-                                <p className="truncate text-sm font-black text-white">#{index + 1} {collector.collectorName}</p>
-                                <p className="text-xs font-semibold text-slate-400">{collector.officeName} · {collector.currentStatus}</p>
+                                <p className="break-words text-sm font-black text-white">#{index + 1} {collector.collectorName}</p>
+                                <p className="break-words text-xs font-semibold text-slate-400">{collector.officeName} · {collector.currentStatus}</p>
                             </div>
-                            <span className={`rounded-full px-2 py-1 text-xs font-black ${collector.riskScore >= 70 ? "bg-red-400/15 text-red-100" : collector.riskScore >= 40 ? "bg-amber-400/15 text-amber-100" : "bg-emerald-400/15 text-emerald-100"}`}>Risk {collector.riskScore}%</span>
+                            <span className={`shrink-0 rounded-full px-2 py-1 text-xs font-black ${collector.riskScore >= 70 ? "bg-red-400/15 text-red-100" : collector.riskScore >= 40 ? "bg-amber-400/15 text-amber-100" : "bg-emerald-400/15 text-emerald-100"}`}>Risk {collector.riskScore}%</span>
                         </div>
                         <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
                             <Mini label="Today" value={money(collector.todayCollections)} />
@@ -512,14 +607,100 @@ function CollectorCards({ collectors }: { collectors: CashPositionCollectorRow[]
                             <Mini label="Trend" value={collector.collectionSpeed} />
                             <Mini label="Last Activity" value={dateTime(collector.lastActivity)} wide />
                         </div>
-                        <div className="mt-4 hidden flex-wrap gap-2 group-hover:flex">
-                            {["View receipts", "View cash position", "View activity", "Reconcile collector"].map((action) => (
-                                <button key={action} className="rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white hover:bg-white hover:text-slate-950">{action}</button>
-                            ))}
+                        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                            <button type="button" onClick={() => onViewReceipts(collector.collectorId)} className="rounded-full bg-white/10 px-3 py-2 text-xs font-black text-white hover:bg-white hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-cyan-200">View Receipts</button>
+                            <button type="button" onClick={() => onViewCash(collector.collectorId)} className="rounded-full bg-cyan-300 px-3 py-2 text-xs font-black text-slate-950 hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-cyan-200">View Cash Position</button>
+                            <button type="button" onClick={() => onViewActivity(collector.collectorId)} className="rounded-full bg-white/10 px-3 py-2 text-xs font-black text-white hover:bg-white hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-cyan-200">View Activity</button>
+                            <button type="button" onClick={() => onReconcile(collector.collectorId)} className="rounded-full bg-emerald-300 px-3 py-2 text-xs font-black text-slate-950 hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-emerald-200">Reconcile Collector</button>
                         </div>
                     </article>
                 ))}
                 {!collectors.length ? <p className="rounded-2xl border border-dashed border-white/20 p-5 text-sm font-bold text-slate-400">No collector records are available for this company yet.</p> : null}
+            </div>
+        </section>
+    );
+}
+
+function CollectorActionPanel({
+    collector,
+    mode,
+    onClose,
+    onOpenAudit,
+    onOpenBanking,
+    onOpenReceipts,
+}: {
+    collector: CashPositionCollectorRow;
+    mode: "cash" | "activity" | "reconcile";
+    onClose: () => void;
+    onOpenAudit: () => void;
+    onOpenBanking: () => void;
+    onOpenReceipts: () => void;
+}) {
+    const difference = Math.max(0, collector.cashInHand - collector.cashSubmitted - collector.banked);
+    const title = mode === "reconcile"
+        ? "Collector Reconciliation"
+        : mode === "activity"
+            ? "Collector Activity Timeline"
+            : "Collector Cash Position";
+    return (
+        <section className="rounded-[30px] border border-cyan-300/20 bg-cyan-300/10 p-4 shadow-2xl shadow-cyan-950/20">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                    <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100">{title}</p>
+                    <h2 className="mt-2 break-words text-2xl font-black">{collector.collectorName}</h2>
+                    <p className="mt-1 break-words text-sm font-semibold text-cyan-50">{collector.officeName} · {collector.currentStatus}</p>
+                </div>
+                <button type="button" onClick={onClose} className="rounded-full border border-white/10 bg-white/10 px-3 py-2 text-xs font-black text-white hover:bg-white hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-cyan-200">
+                    Close
+                </button>
+            </div>
+            <div className="mt-5 grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-3">
+                <Mini label="Today’s collections" value={money(collector.todayCollections)} />
+                <Mini label="Weekly collections" value={money(collector.thisWeek)} />
+                <Mini label="Monthly collections" value={money(collector.thisMonth)} />
+                <Mini label="Cash currently held" value={money(collector.cashInHand)} risky={collector.cashInHand > 500_000} />
+                <Mini label="Submitted amount" value={money(collector.cashSubmitted)} />
+                <Mini label="Banked amount" value={money(collector.banked)} />
+                <Mini label="Outstanding amount" value={money(collector.outstanding)} risky={collector.outstanding > 500_000} />
+                <Mini label="Receipt total" value={money(collector.todayCollections)} />
+                <Mini label="Average receipt" value={money(collector.averageReceipt)} />
+                <Mini label="Largest receipt" value={money(collector.largestReceipt)} />
+                <Mini label="Last receipt/activity" value={dateTime(collector.lastActivity)} />
+                <Mini label="Reliability" value={percent(collector.reliability)} />
+                <Mini label="Delay risk" value={collector.riskScore >= 70 ? "High" : collector.riskScore >= 40 ? "Medium" : "Low"} />
+                <Mini label="Performance trend" value={collector.collectionSpeed} />
+                <Mini label="Difference" value={money(difference)} risky={difference > 0} />
+                <Mini label="Reconciliation status" value={difference > 0 ? "Needs review" : "Balanced"} />
+            </div>
+            {mode === "activity" ? (
+                <div className="mt-4 rounded-3xl border border-white/10 bg-slate-950/60 p-4">
+                    <p className="text-sm font-black text-white">Recent live activity summary</p>
+                    <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-3">
+                        <Mini label="Payments recorded" value={money(collector.todayCollections)} />
+                        <Mini label="Receipts created" value={collector.todayCollections > 0 ? "Live receipts available" : "No receipts today"} />
+                        <Mini label="Cash submitted" value={money(collector.cashSubmitted)} />
+                        <Mini label="Corrections/Reversals" value="Open audit for details" />
+                    </div>
+                </div>
+            ) : null}
+            {mode === "reconcile" ? (
+                <div className="mt-4 rounded-3xl border border-emerald-300/20 bg-emerald-300/10 p-4">
+                    <p className="text-sm font-black text-white">Reconciliation actions</p>
+                    <p className="mt-1 text-xs font-semibold leading-5 text-emerald-50">
+                        Cash write actions remain in the canonical Cash Banking workflow so reconciliation, shortages, overages and audit history use the existing live ledger.
+                    </p>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                        <button type="button" onClick={onOpenBanking} className="rounded-2xl bg-emerald-300 px-4 py-3 text-xs font-black text-slate-950 hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-emerald-200">Confirm Reconciliation</button>
+                        <button type="button" onClick={onOpenBanking} className="rounded-2xl bg-white/10 px-4 py-3 text-xs font-black text-white hover:bg-white hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-cyan-200">Record Shortage</button>
+                        <button type="button" onClick={onOpenBanking} className="rounded-2xl bg-white/10 px-4 py-3 text-xs font-black text-white hover:bg-white hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-cyan-200">Record Overage</button>
+                        <button type="button" onClick={onOpenAudit} className="rounded-2xl bg-white/10 px-4 py-3 text-xs font-black text-white hover:bg-white hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-cyan-200">View Audit History</button>
+                    </div>
+                </div>
+            ) : null}
+            <div className="mt-4 flex flex-wrap gap-2">
+                <button type="button" onClick={onOpenReceipts} className="rounded-2xl bg-white/10 px-4 py-3 text-xs font-black text-white hover:bg-white hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-cyan-200">View Receipts</button>
+                <button type="button" onClick={onOpenBanking} className="rounded-2xl bg-cyan-300 px-4 py-3 text-xs font-black text-slate-950 hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-cyan-200">Open Cash Banking</button>
+                <button type="button" onClick={onOpenAudit} className="rounded-2xl bg-white/10 px-4 py-3 text-xs font-black text-white hover:bg-white hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-cyan-200">Open Activity Audit</button>
             </div>
         </section>
     );
@@ -530,12 +711,12 @@ function PremiumChart({ icon, mode = "bars", points, title }: { icon: ReactNode;
     return (
         <section className="rounded-[30px] border border-white/10 bg-white/[0.055] p-4 shadow-2xl shadow-black/25">
             <PanelHeading icon={icon} title={title} subtitle="Hover-ready executive chart with compact legends and UGX formatting." />
-            <div className={mode === "tiles" ? "mt-4 grid grid-cols-2 gap-3" : "mt-4 grid grid-cols-2 gap-3"}>
+            <div className={mode === "tiles" ? "mt-4 grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-3" : "mt-4 grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-3"}>
                 {points.map((point) => (
-                    <article key={point.label} title={`${point.label}: ${money(point.value)}`} className="group rounded-2xl border border-white/10 bg-slate-950/72 p-3 transition hover:-translate-y-0.5 hover:border-cyan-200/35 motion-reduce:transform-none">
+                    <article key={point.label} title={`${point.label}: ${money(point.value)}`} className="group min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-slate-950/72 p-3 transition hover:-translate-y-0.5 hover:border-cyan-200/35 motion-reduce:transform-none">
                         <div className="flex items-center justify-between gap-2">
-                            <p className="min-w-0 truncate text-xs font-black text-slate-300">{point.label}</p>
-                            <p className="text-xs font-black text-white">{money(point.value)}</p>
+                            <p className="min-w-0 break-words text-xs font-black text-slate-300">{point.label}</p>
+                            <p className="min-w-0 break-words text-right text-xs font-black text-white">{money(point.value)}</p>
                         </div>
                         <div className="mt-3 flex h-16 items-end gap-1">
                             <div className="w-full overflow-hidden rounded-xl bg-slate-800">
@@ -561,7 +742,7 @@ function OfficeExpansionPanel({ office }: { office: CashPositionOfficeRow }) {
                 </div>
                 <span className={`rounded-full border px-3 py-1 text-xs font-black uppercase ${statusBadge(office.status)}`}>{office.status}</span>
             </div>
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+            <div className="mt-5 grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-3">
                 <Mini label="Collectors" value={office.collectorCount.toLocaleString()} />
                 <Mini label="Collector cash" value={money(office.cashHeldByCollectors)} />
                 <Mini label="Cash submitted" value={money(Math.max(0, office.todayPerformance - office.cashHeldByCollectors))} />
@@ -588,7 +769,7 @@ function TrendChip({ current, previous = 0, tone }: { current: number; previous?
     const good = delta >= 0;
     const riskTone = tone === "red" || tone === "amber";
     return (
-        <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-black ${good && !riskTone ? "border-emerald-300/25 bg-emerald-300/12 text-emerald-100" : "border-amber-300/25 bg-amber-300/12 text-amber-100"}`}>
+        <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-black ${good && !riskTone ? "border-emerald-300/25 bg-emerald-300/12 text-emerald-100" : "border-amber-300/25 bg-amber-300/12 text-amber-100"}`}>
             {good ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
             {Math.abs(Math.round(pct)).toLocaleString()}%
         </span>
@@ -597,7 +778,7 @@ function TrendChip({ current, previous = 0, tone }: { current: number; previous?
 
 function TrendLabel({ trend, value }: { trend: "up" | "down" | "flat"; value?: number }) {
     return (
-        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-black ${trend === "up" ? "bg-emerald-300/10 text-emerald-100" : trend === "down" ? "bg-red-300/10 text-red-100" : "bg-white/10 text-slate-200"}`}>
+        <span className={`inline-flex min-w-0 items-center gap-1 rounded-full px-2 py-1 text-xs font-black ${trend === "up" ? "bg-emerald-300/10 text-emerald-100" : trend === "down" ? "bg-red-300/10 text-red-100" : "bg-white/10 text-slate-200"}`}>
             {trend === "up" ? <TrendingUp size={12} /> : trend === "down" ? <TrendingDown size={12} /> : <LineChart size={12} />}
             {typeof value === "number" ? money(value) : trend}
         </span>
@@ -616,9 +797,9 @@ function MoneyCell({ positive = false, value, warning = false }: { positive?: bo
 
 function Mini({ label, risky = false, value, wide = false }: { label: string; risky?: boolean; value: string; wide?: boolean }) {
     return (
-        <div className={`rounded-2xl border border-white/10 bg-slate-950/60 p-3 ${wide ? "sm:col-span-2" : ""}`}>
-            <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">{label}</p>
-            <p className={`mt-1 break-words text-sm font-black ${risky ? "text-red-100" : "text-white"}`}>{value}</p>
+        <div className={`min-w-0 max-w-full overflow-hidden rounded-2xl border border-white/10 bg-slate-950/60 p-3 ${wide ? "sm:col-span-2" : ""}`}>
+            <p className="min-w-0 break-words text-[10px] font-black uppercase tracking-wide text-slate-400">{label}</p>
+            <p className={`mt-1 min-w-0 max-w-full break-words text-[clamp(0.78rem,1vw,0.95rem)] font-black leading-5 ${risky ? "text-red-100" : "text-white"}`}>{value}</p>
         </div>
     );
 }
@@ -637,12 +818,12 @@ function PanelHeading({ icon, subtitle, title }: { icon: ReactNode; subtitle: st
 
 function Pill({ children, tone }: { children: ReactNode; tone: "green" | "cyan" | "gold" }) {
     const classes = tone === "green" ? "border-emerald-300/25 bg-emerald-300/10 text-emerald-100" : tone === "gold" ? "border-amber-300/25 bg-amber-300/10 text-amber-100" : "border-cyan-300/25 bg-cyan-300/10 text-cyan-100";
-    return <span className={`rounded-full border px-3 py-1 text-xs font-black uppercase tracking-wide ${classes}`}>{children}</span>;
+    return <span className={`min-w-0 max-w-full break-words rounded-full border px-3 py-1 text-xs font-black uppercase tracking-wide ${classes}`}>{children}</span>;
 }
 
 function ActionButton({ children, icon, onClick }: { children: ReactNode; icon: ReactNode; onClick: () => void }) {
     return (
-        <button onClick={onClick} className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-black text-white transition hover:-translate-y-0.5 hover:bg-white/15 hover:shadow-lg hover:shadow-cyan-950/20 motion-reduce:transform-none">
+        <button type="button" onClick={onClick} className="inline-flex min-w-0 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-black text-white transition hover:-translate-y-0.5 hover:bg-white/15 hover:shadow-lg hover:shadow-cyan-950/20 focus:outline-none focus:ring-2 focus:ring-cyan-200 motion-reduce:transform-none">
             {icon} {children}
         </button>
     );
@@ -650,7 +831,7 @@ function ActionButton({ children, icon, onClick }: { children: ReactNode; icon: 
 
 function PrimaryButton({ children, icon, onClick }: { children: ReactNode; icon: ReactNode; onClick: () => void }) {
     return (
-        <button onClick={onClick} className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-300 to-cyan-300 px-4 py-3 text-sm font-black text-slate-950 shadow-lg shadow-cyan-950/20 transition hover:-translate-y-0.5 hover:brightness-110 motion-reduce:transform-none">
+        <button type="button" onClick={onClick} className="inline-flex min-w-0 items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-300 to-cyan-300 px-4 py-3 text-sm font-black text-slate-950 shadow-lg shadow-cyan-950/20 transition hover:-translate-y-0.5 hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-cyan-200 motion-reduce:transform-none">
             {icon} {children}
         </button>
     );

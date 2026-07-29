@@ -70,6 +70,34 @@ test("cash position centre ships filters, AI insights, charts and exports", () =
   assert.match(componentSource, /window\.print\(\)/);
 });
 
+test("cash position centre cards are responsive and action buttons are wired", () => {
+  assert.match(componentSource, /grid-cols-\[repeat\(auto-fit,minmax\(260px,1fr\)\)\]/);
+  assert.match(componentSource, /grid-cols-\[repeat\(auto-fit,minmax\(280px,1fr\)\)\]/);
+  assert.match(componentSource, /grid-cols-\[repeat\(auto-fit,minmax\(300px,1fr\)\)\]/);
+  assert.match(componentSource, /overflow-x-hidden/);
+  assert.match(componentSource, /break-words/);
+  assert.match(componentSource, /overflow-wrap|break-words/);
+  assert.match(componentSource, /actionUrl/);
+  assert.match(componentSource, /viewOfficePosition/);
+  assert.match(componentSource, /viewOfficeReceipts/);
+  assert.match(componentSource, /viewCollectorReceipts/);
+  assert.match(componentSource, /openCollectorPanel/);
+  assert.match(componentSource, /CollectorActionPanel/);
+  for (const label of ["View Office Position", "View Receipts", "View Cash Position", "View Activity", "Reconcile Collector"]) {
+    assert.match(componentSource, new RegExp(label));
+  }
+  assert.doesNotMatch(componentSource, /onClick=\{\(\) => \{\}\}/);
+  assert.doesNotMatch(componentSource, /href="#"/);
+});
+
+test("cash position action filters reach receipt history", () => {
+  assert.match(pageSource, /collectorId: scalar\(params\.collectorId\)/);
+  assert.match(pageSource, /bankingStatus: scalar\(params\.bankingStatus\)/);
+  assert.match(componentSource, /\/office\/receipts/);
+  assert.match(componentSource, /officeId/);
+  assert.match(componentSource, /collectorId/);
+});
+
 test("cash position centre keeps banking writes on the canonical cash banking workflow", () => {
   assert.match(componentSource, /\/office\/admin\/cash-banking/);
   assert.doesNotMatch(componentSource, /from\("cash_transactions"\)\.insert/);

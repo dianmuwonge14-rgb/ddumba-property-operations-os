@@ -13,6 +13,8 @@ export default async function AdminCashPositionCentrePage({ searchParams }: Prop
     const params = await searchParams;
     const data = await getCashPositionCentreData({
         endDate: scalar(params.endDate),
+        bankingStatus: scalar(params.bankingStatus) ?? null,
+        collectorId: scalar(params.collectorId) ?? null,
         officeId: scalar(params.officeId) ?? null,
         paymentMethod: scalar(params.paymentMethod) ?? null,
         period: scalar(params.period) ?? null,
