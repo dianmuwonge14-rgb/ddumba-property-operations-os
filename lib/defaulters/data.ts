@@ -214,7 +214,7 @@ async function safePagedRows<T>(buildQuery: (from: number, to: number) => QueryR
     return rows;
 }
 
-export async function getDefaultersPageData(options: { admin?: boolean } = {}): Promise<DefaultersPageData> {
+export async function getDefaultersPageData(options: { admin?: boolean; landlordId?: string | null; officeId?: string | null } = {}): Promise<DefaultersPageData> {
     const context = await requireAuth();
     const { supabase } = await getScopedSupabase();
     const companyId = context.activeCompany?.id;
@@ -222,6 +222,8 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
     const isAdmin = Boolean(options.admin && context.isCompanyAdmin && !context.isOfficeMode);
     const isCollector = isCollectorContext(context);
     const collectorOfficeIds = isCollector ? context.offices.map((office) => office.id).filter(Boolean) : [];
+    const requestedOfficeId = options.officeId?.trim() || null;
+    const requestedLandlordId = options.landlordId?.trim() || null;
     const now = new Date();
     const readSupabase = isAdmin ? createSupabaseAdminClient() : supabase;
     const db = readSupabase as unknown as DynamicDb;
@@ -230,9 +232,21 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
         return emptyData(isAdmin, isCollector, dateOnly(now));
     }
 
+    if (isCollector && requestedOfficeId && !collectorOfficeIds.includes(requestedOfficeId)) {
+        throw new Error("You do not have permission to view defaulters for that office.");
+    }
+    if (!isAdmin && !isCollector && requestedOfficeId && requestedOfficeId !== activeOfficeId) {
+        throw new Error("You do not have permission to view defaulters for that office.");
+    }
+    const selectedOfficeId = isAdmin ? requestedOfficeId : isCollector ? requestedOfficeId : activeOfficeId ?? null;
+    const collectorScopedOfficeIds = isCollector
+        ? selectedOfficeId ? [selectedOfficeId] : collectorOfficeIds
+        : [];
+
     function scopeOffice(query: any) {
-        if (!isAdmin && isCollector) return query.in("office_id", collectorOfficeIds);
+        if (!isAdmin && isCollector) return query.in("office_id", collectorScopedOfficeIds);
         if (!isAdmin && activeOfficeId) return query.eq("office_id", activeOfficeId);
+        if (isAdmin && selectedOfficeId) return query.eq("office_id", selectedOfficeId);
         return query;
     }
 
@@ -242,9 +256,11 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
         .eq("company_id", companyId)
         .eq("allocation_month", firstOfCurrentMonth(now));
     if (!isAdmin && isCollector) {
-        allocationQuery = allocationQuery.in("office_id", collectorOfficeIds);
+        allocationQuery = allocationQuery.in("office_id", collectorScopedOfficeIds);
     } else if (!isAdmin && activeOfficeId) {
         allocationQuery = allocationQuery.eq("office_id", activeOfficeId);
+    } else if (isAdmin && selectedOfficeId) {
+        allocationQuery = allocationQuery.eq("office_id", selectedOfficeId);
     }
 
     const [tenants, rooms, leases, offices, properties, landlords, collections, promises, actions, assignments, users, debtRows, deductionRows, allocationRows] = await Promise.all([
@@ -279,6 +295,25 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
     const propertyById = new Map(properties.map((property) => [property.id, property]));
     const landlordById = new Map(landlords.map((landlord) => [landlord.id, landlord]));
     const userById = new Map(users.map((user) => [user.id, user]));
+    const landlordOfficeIds = new Map<string, Set<string>>();
+    const addLandlordOffice = (landlordId: string | null | undefined, officeId: string | null | undefined) => {
+        if (!landlordId || !officeId) return;
+        const current = landlordOfficeIds.get(landlordId) ?? new Set<string>();
+        current.add(officeId);
+        landlordOfficeIds.set(landlordId, current);
+    };
+    for (const room of rooms) {
+        const property = room.property_id ? propertyById.get(room.property_id) : null;
+        addLandlordOffice(room.landlord_id ?? property?.landlord_id, room.office_id);
+    }
+    for (const debt of vacatedDebts) {
+        const room = debt.room_id ? roomById.get(debt.room_id) : null;
+        const property = (debt.property_id ? propertyById.get(debt.property_id) : null) ?? (room?.property_id ? propertyById.get(room.property_id) : null);
+        addLandlordOffice(debt.landlord_id ?? room?.landlord_id ?? property?.landlord_id, debt.office_id ?? room?.office_id);
+    }
+    if (requestedLandlordId && !landlordOfficeIds.has(requestedLandlordId)) {
+        throw new Error("You do not have permission to view defaulters for that landlord.");
+    }
     const activeLeaseByTenant = new Map<string, LeaseRow>();
     const activeLeaseByRoom = new Map<string, LeaseRow>();
 
@@ -366,7 +401,9 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
 
         const office = (room.office_id ? officeById.get(room.office_id) : null) ?? (tenant.office_id ? officeById.get(tenant.office_id) : null) ?? null;
         const property = (room.property_id ? propertyById.get(room.property_id) : null) ?? (tenant.property_id ? propertyById.get(tenant.property_id) : null) ?? null;
-        const landlord = room.landlord_id ? landlordById.get(room.landlord_id) ?? null : null;
+        const landlordId = room.landlord_id ?? property?.landlord_id ?? null;
+        if (requestedLandlordId && landlordId !== requestedLandlordId) continue;
+        const landlord = landlordId ? landlordById.get(landlordId) ?? null : null;
         const lastPayment = latestPaymentByTenant.get(tenant.id);
         const daysDefaulted = daysBetween(paymentDueDate, now);
         const failedPromiseCount = failedPromiseCountByTenant.get(tenant.id) ?? 0;
@@ -393,7 +430,7 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
             tenantPhone: tenant.phone ?? tenant.alternative_phone,
             officeId: room.office_id ?? tenant.office_id,
             officeName: officeName(office),
-            landlordId: room.landlord_id,
+            landlordId,
             landlordName: landlord?.full_name ?? "No landlord",
             propertyName: propertyName(property),
             location: propertyLocation(property),
@@ -432,7 +469,8 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
         const tenant = debt.tenant_id ? tenants.find((row) => row.id === debt.tenant_id) ?? null : null;
         const office = (debt.office_id ? officeById.get(debt.office_id) : null) ?? (room?.office_id ? officeById.get(room.office_id) : null) ?? null;
         const property = (debt.property_id ? propertyById.get(debt.property_id) : null) ?? (room?.property_id ? propertyById.get(room.property_id) : null) ?? null;
-        const landlordId = debt.landlord_id ?? room?.landlord_id ?? null;
+        const landlordId = debt.landlord_id ?? room?.landlord_id ?? property?.landlord_id ?? null;
+        if (requestedLandlordId && landlordId !== requestedLandlordId) continue;
         const landlord = landlordId ? landlordById.get(landlordId) ?? null : null;
         const monthlyRent = amount(room?.monthly_rent ?? tenant?.monthly_rent);
         const paymentDueDate = debt.vacate_date ?? debt.created_at?.slice(0, 10) ?? firstOfCurrentMonth(now);
@@ -496,7 +534,9 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
         const actualRoom = (lease?.room_id ? roomById.get(lease.room_id) : null) ?? room ?? null;
         const office = (actualRoom?.office_id ? officeById.get(actualRoom.office_id) : null) ?? (tenant.office_id ? officeById.get(tenant.office_id) : null) ?? null;
         const property = (actualRoom?.property_id ? propertyById.get(actualRoom.property_id) : null) ?? (tenant.property_id ? propertyById.get(tenant.property_id) : null) ?? null;
-        const landlord = actualRoom?.landlord_id ? landlordById.get(actualRoom.landlord_id) ?? null : null;
+        const landlordId = actualRoom?.landlord_id ?? property?.landlord_id ?? null;
+        if (requestedLandlordId && landlordId !== requestedLandlordId) continue;
+        const landlord = landlordId ? landlordById.get(landlordId) ?? null : null;
         const monthlyRent = amount(lease?.monthly_rent ?? tenant.monthly_rent ?? actualRoom?.monthly_rent);
         const paymentDueDate = dueDateForDay(amount(lease?.billing_day ?? tenant.billing_day) || 1, now);
 
@@ -510,7 +550,7 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
             tenantPhone: tenant.phone ?? tenant.alternative_phone,
             officeId: actualRoom?.office_id ?? tenant.office_id,
             officeName: officeName(office),
-            landlordId: actualRoom?.landlord_id ?? null,
+            landlordId,
             landlordName: landlord?.full_name ?? "No landlord",
             propertyName: propertyName(property),
             location: propertyLocation(property),
@@ -546,9 +586,14 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
         if (!isActiveTenant(tenant.status)) return false;
         const lease = activeLeaseByTenant.get(tenant.id);
         const room = (lease?.room_id ? roomById.get(lease.room_id) : null) ?? (tenant.room_id ? roomById.get(tenant.room_id) : null);
+        const property = room?.property_id ? propertyById.get(room.property_id) : null;
+        if (requestedLandlordId && (room?.landlord_id ?? property?.landlord_id ?? null) !== requestedLandlordId) return false;
         return Boolean(room && isActiveRoom(room.status) && liveOutstanding(tenant, room) > 0);
     }).length + vacatedDebts.filter((debt) => {
         const rawRemaining = debt.remaining_amount == null ? amount(debt.final_outstanding_balance ?? debt.original_amount) - amount(debt.recovered_amount) : amount(debt.remaining_amount);
+        const room = debt.room_id ? roomById.get(debt.room_id) : null;
+        const property = (debt.property_id ? propertyById.get(debt.property_id) : null) ?? (room?.property_id ? propertyById.get(room.property_id) : null);
+        if (requestedLandlordId && (debt.landlord_id ?? room?.landlord_id ?? property?.landlord_id ?? null) !== requestedLandlordId) return false;
         return Math.max(0, rawRemaining) > 0;
     }).length;
     const displayedCount = defaulters.filter((item) => item.source !== "recently_cleared" && item.outstandingBalance > 0).length;
@@ -570,8 +615,18 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
         activeOffice: context.activeOffice,
         isAdmin,
         isCollector,
-        offices: offices.map((office) => ({ id: office.id, name: officeName(office) })).sort((a, b) => a.name.localeCompare(b.name)),
-        landlords: landlords.map((landlord) => ({ id: landlord.id, name: landlord.full_name ?? "No landlord" })).sort((a, b) => a.name.localeCompare(b.name)),
+        filters: {
+            officeId: selectedOfficeId,
+            landlordId: requestedLandlordId,
+        },
+        offices: offices
+            .filter((office) => isAdmin || isCollector ? (!isCollector || collectorOfficeIds.includes(office.id)) : office.id === activeOfficeId)
+            .map((office) => ({ id: office.id, name: officeName(office) }))
+            .sort((a, b) => a.name.localeCompare(b.name)),
+        landlords: landlords
+            .filter((landlord) => !isCollector || landlordOfficeIds.has(landlord.id))
+            .map((landlord) => ({ id: landlord.id, name: landlord.full_name ?? "No landlord", officeIds: [...(landlordOfficeIds.get(landlord.id) ?? new Set<string>())].sort() }))
+            .sort((a, b) => a.name.localeCompare(b.name)),
         properties: properties.map((property) => ({ id: property.id, name: propertyName(property) })).sort((a, b) => a.name.localeCompare(b.name)),
         collectors: [...new Map([...collectorByTenant.values()].map((name) => [name, { id: name, name }])).values()].sort((a, b) => a.name.localeCompare(b.name)),
         defaulters,
@@ -793,6 +848,10 @@ function emptyData(isAdmin: boolean, isCollector: boolean, currentDate: string):
         activeOffice: null,
         isAdmin,
         isCollector,
+        filters: {
+            officeId: null,
+            landlordId: null,
+        },
         offices: [],
         landlords: [],
         properties: [],

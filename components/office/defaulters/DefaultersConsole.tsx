@@ -45,8 +45,8 @@ function whatsappHref(value: string | null, tenant: string, room: string) {
 export default function DefaultersConsole({ data }: Props) {
     const router = useRouter();
     const [query, setQuery] = useState("");
-    const [officeId, setOfficeId] = useState("");
-    const [landlordId, setLandlordId] = useState("");
+    const [officeId, setOfficeId] = useState(data.filters.officeId ?? "");
+    const [landlordId, setLandlordId] = useState(data.filters.landlordId ?? "");
     const [propertyName, setPropertyName] = useState("");
     const [collector, setCollector] = useState("");
     const [listFilter, setListFilter] = useState<ListFilter>("active");
@@ -61,6 +61,11 @@ export default function DefaultersConsole({ data }: Props) {
     const [showPrintPreview, setShowPrintPreview] = useState(false);
     const [liveStatus, setLiveStatus] = useState("Live");
     const [isPending, startTransition] = useTransition();
+
+    useEffect(() => {
+        setOfficeId(data.filters.officeId ?? "");
+        setLandlordId(data.filters.landlordId ?? "");
+    }, [data.filters.landlordId, data.filters.officeId]);
 
     useEffect(() => {
         let mounted = true;
@@ -97,6 +102,59 @@ export default function DefaultersConsole({ data }: Props) {
         };
     }, [router]);
 
+    const landlordOptions = useMemo(() => {
+        if (!officeId) return data.landlords;
+        return data.landlords.filter((landlord) => landlord.officeIds.includes(officeId));
+    }, [data.landlords, officeId]);
+
+    useEffect(() => {
+        if (!landlordId) return;
+        if (landlordOptions.some((landlord) => landlord.id === landlordId)) return;
+        setLandlordId("");
+    }, [landlordId, landlordOptions]);
+
+    function pushCollectorFilters(nextOfficeId: string, nextLandlordId: string) {
+        if (!data.isCollector) return;
+        const params = new URLSearchParams(window.location.search);
+        if (nextOfficeId) params.set("officeId", nextOfficeId);
+        else params.delete("officeId");
+        if (nextLandlordId) params.set("landlordId", nextLandlordId);
+        else params.delete("landlordId");
+        const qs = params.toString();
+        startTransition(() => router.push(`/office/collector/defaulters${qs ? `?${qs}` : ""}`));
+    }
+
+    function changeOffice(nextOfficeId: string) {
+        const validLandlord = landlordId && (!nextOfficeId || data.landlords.find((landlord) => landlord.id === landlordId)?.officeIds.includes(nextOfficeId));
+        const nextLandlordId = validLandlord ? landlordId : "";
+        setOfficeId(nextOfficeId);
+        setLandlordId(nextLandlordId);
+        pushCollectorFilters(nextOfficeId, nextLandlordId);
+    }
+
+    function changeLandlord(nextLandlordId: string) {
+        setLandlordId(nextLandlordId);
+        pushCollectorFilters(officeId, nextLandlordId);
+    }
+
+    function resetFilters() {
+        setQuery("");
+        setOfficeId("");
+        setLandlordId("");
+        setPropertyName("");
+        setCollector("");
+        setListFilter("active");
+        setMinRent("");
+        setMaxRent("");
+        setPeriod("all");
+        setCustomDaysMin("");
+        setCustomDaysMax("");
+        setCustomMonthsMin("");
+        setCustomMonthsMax("");
+        setSort("risk_high");
+        if (data.isCollector) startTransition(() => router.push("/office/collector/defaulters"));
+    }
+
     const filteredDefaulters = useMemo(() => {
         const term = normalize(query);
         const min = Number(minRent || 0);
@@ -114,7 +172,7 @@ export default function DefaultersConsole({ data }: Props) {
                 if (listFilter === "promises_due" && item.promiseStatus !== "Due today") return false;
                 const searchable = [item.roomNumber, item.tenantName, item.tenantPhone, item.landlordName, item.officeName, item.propertyName, item.location, String(item.monthlyRent)].map(normalize).join(" ");
                 if (term && !searchable.includes(term)) return false;
-                if (data.isAdmin && officeId && item.officeId !== officeId) return false;
+                if ((data.isAdmin || data.isCollector) && officeId && item.officeId !== officeId) return false;
                 if (landlordId && item.landlordId !== landlordId) return false;
                 if (propertyName && item.propertyName !== propertyName) return false;
                 if (collector && item.collectorAssigned !== collector) return false;
@@ -146,7 +204,7 @@ export default function DefaultersConsole({ data }: Props) {
                 if (sort === "room_asc") return a.roomNumber.localeCompare(b.roomNumber);
                 return (b.daysDefaulted * b.outstandingBalance) - (a.daysDefaulted * a.outstandingBalance);
             });
-    }, [collector, customDaysMax, customDaysMin, customMonthsMax, customMonthsMin, data.defaulters, data.isAdmin, landlordId, listFilter, maxRent, minRent, officeId, period, propertyName, query, sort]);
+    }, [collector, customDaysMax, customDaysMin, customMonthsMax, customMonthsMin, data.defaulters, data.isAdmin, data.isCollector, landlordId, listFilter, maxRent, minRent, officeId, period, propertyName, query, sort]);
 
     const visibleKpis = useMemo(() => buildKpis(filteredDefaulters), [filteredDefaulters]);
     const visibleDefaulters = useMemo(() => filteredDefaulters.slice(0, INITIAL_TABLE_LIMIT), [filteredDefaulters]);
@@ -276,8 +334,8 @@ export default function DefaultersConsole({ data }: Props) {
                             { id: "custom_days", name: "Custom days" },
                             { id: "custom_months", name: "Custom months" },
                         ]} />
-                        {data.isAdmin ? <FilterSelect label="Office" value={officeId} onChange={setOfficeId} options={[{ id: "", name: "All offices" }, ...data.offices]} /> : null}
-                        <FilterSelect label="Landlord" value={landlordId} onChange={setLandlordId} options={[{ id: "", name: "All landlords" }, ...data.landlords]} />
+                        {data.isAdmin || data.isCollector ? <FilterSelect label="Office" value={officeId} onChange={data.isCollector ? changeOffice : setOfficeId} options={[{ id: "", name: data.isCollector ? "All Assigned Offices" : "All offices" }, ...data.offices]} /> : null}
+                        <SearchableFilterSelect label="Landlord" value={landlordId} onChange={data.isCollector ? changeLandlord : setLandlordId} options={[{ id: "", name: "All Landlords" }, ...landlordOptions]} />
                         <FilterSelect label="Property" value={propertyName} onChange={setPropertyName} options={[{ id: "", name: "All properties" }, ...data.properties.map((property) => ({ id: property.name, name: property.name }))]} />
                         <FilterSelect label="Collector" value={collector} onChange={setCollector} options={[{ id: "", name: "All collectors" }, ...data.collectors]} />
                         <FilterInput label="Min rent" value={minRent} onChange={setMinRent} />
@@ -301,6 +359,16 @@ export default function DefaultersConsole({ data }: Props) {
                             <FilterInput label="Max months defaulted" value={customMonthsMax} onChange={setCustomMonthsMax} />
                         </div>
                     ) : null}
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-2 text-xs font-black text-slate-200">
+                            <span className="rounded-full bg-white/10 px-3 py-1">Showing: {filteredDefaulters.length.toLocaleString()} Defaulters</span>
+                            {data.isCollector ? <span className="rounded-full bg-white/10 px-3 py-1">Office: {data.offices.find((office) => office.id === officeId)?.name ?? "All Assigned Offices"}</span> : null}
+                            {landlordId ? <span className="rounded-full bg-white/10 px-3 py-1">Landlord: {data.landlords.find((landlord) => landlord.id === landlordId)?.name ?? "Selected landlord"}</span> : <span className="rounded-full bg-white/10 px-3 py-1">Landlord: All Landlords</span>}
+                        </div>
+                        <button type="button" onClick={resetFilters} className="inline-flex h-10 items-center justify-center rounded-2xl border border-white/10 bg-white/10 px-4 text-xs font-black text-white hover:bg-white hover:text-slate-950">
+                            Reset Filters
+                        </button>
+                    </div>
                 </section>
 
                 <section className="mx-auto mt-5 max-w-7xl">
@@ -539,6 +607,25 @@ function FilterSelect({ label, onChange, options, value }: { label: string; onCh
             <span className="text-xs font-black uppercase tracking-wide text-slate-400">{label}</span>
             <select value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 h-12 w-full rounded-2xl border border-white/10 bg-slate-950 px-3 text-sm font-black text-white outline-none">
                 {options.map((option) => <option key={`filter-option:${label}:${option.id || option.name}`} value={option.id}>{option.name}</option>)}
+            </select>
+        </label>
+    );
+}
+
+function SearchableFilterSelect({ label, onChange, options, value }: { label: string; onChange: (value: string) => void; options: Array<{ id: string; name: string }>; value: string }) {
+    const [search, setSearch] = useState("");
+    const visibleOptions = useMemo(() => {
+        const term = normalize(search);
+        if (!term) return options;
+        return options.filter((option) => normalize(option.name).includes(term));
+    }, [options, search]);
+    return (
+        <label>
+            <span className="text-xs font-black uppercase tracking-wide text-slate-400">{label}</span>
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search landlords" className="mt-1 h-9 w-full rounded-t-2xl border border-b-0 border-white/10 bg-slate-950 px-3 text-xs font-bold text-white outline-none placeholder:text-slate-500" />
+            <select value={value} onChange={(event) => onChange(event.target.value)} className="h-12 w-full rounded-b-2xl border border-white/10 bg-slate-950 px-3 text-sm font-black text-white outline-none">
+                {visibleOptions.map((option) => <option key={`filter-option:${label}:${option.id || option.name}`} value={option.id}>{option.name}</option>)}
+                {!visibleOptions.length ? <option value="">No landlords found</option> : null}
             </select>
         </label>
     );

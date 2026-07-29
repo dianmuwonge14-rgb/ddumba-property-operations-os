@@ -20,7 +20,7 @@ test("admin remains company-wide while offices and collectors are scoped", () =>
   assert.match(dataSource, /pagedRows<TenantRow>/);
   assert.match(dataSource, /pagedRows<RoomRow>/);
   assert.match(dataSource, /else if \(!isAdmin && activeOfficeId\)/);
-  assert.match(dataSource, /return query\.in\("office_id", collectorOfficeIds\)/);
+  assert.match(dataSource, /return query\.in\("office_id", collectorScopedOfficeIds\)/);
   assert.doesNotMatch(dataSource, /if \(isAdmin && activeOfficeId\)/);
 });
 
@@ -44,7 +44,7 @@ test("defaulters screen exposes required operational fields and filters", () => 
     assert.match(typesSource, new RegExp(token));
     assert.match(consoleSource, new RegExp(token));
   }
-  for (const label of ["All offices", "All landlords", "All properties", "All collectors", "Vacated with debt", "Recently cleared"]) {
+  for (const label of ["All offices", "All Landlords", "All properties", "All collectors", "Vacated with debt", "Recently cleared"]) {
     assert.match(consoleSource, new RegExp(label));
   }
 });

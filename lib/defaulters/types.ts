@@ -81,8 +81,12 @@ export type DefaultersPageData = {
     activeOffice: OfficeRow | null;
     isAdmin: boolean;
     isCollector: boolean;
+    filters: {
+        officeId: string | null;
+        landlordId: string | null;
+    };
     offices: Array<{ id: string; name: string }>;
-    landlords: Array<{ id: string; name: string }>;
+    landlords: Array<{ id: string; name: string; officeIds: string[] }>;
     properties: Array<{ id: string; name: string }>;
     collectors: Array<{ id: string; name: string }>;
     defaulters: DefaulterItem[];
