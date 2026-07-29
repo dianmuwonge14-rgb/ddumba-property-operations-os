@@ -2094,46 +2094,6 @@ function TenantBalance({ isAdmin, onEditOutstanding, tenant }: { isAdmin: boolea
 
     return (
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-black uppercase text-slate-400">Room number</p>
-                <p className="mt-1 text-2xl font-black text-slate-950">{tenant.room?.room_number ?? "Unknown"}</p>
-            </div>
-            <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
-                <p className="text-xs font-black uppercase text-amber-500">Outstanding Before Last Payment</p>
-                <p className="mt-1 text-2xl font-black text-amber-700">{money(tenant.previousOutstandingBeforeLastPayment)}</p>
-            </div>
-            <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
-                <p className="text-xs font-black uppercase text-blue-500">Current Month Rent</p>
-                <p className="mt-1 text-2xl font-black text-blue-700">{money(tenant.monthlyRent)}</p>
-                {tenant.currentRentPeriod ? (
-                    <p className="mt-1 text-[11px] font-black text-blue-500">
-                        Period: {compactDate(tenant.currentRentPeriod.start)} - {compactDate(tenant.currentRentPeriod.end)}
-                    </p>
-                ) : null}
-            </div>
-            <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4">
-                <p className="text-xs font-black uppercase text-sky-500">Billing Anniversary</p>
-                <p className="mt-1 text-2xl font-black text-sky-700">
-                    {tenant.billingAnniversaryDay ? `${tenant.billingAnniversaryDay}${tenant.billingAnniversaryDay === 1 ? "st" : tenant.billingAnniversaryDay === 2 ? "nd" : tenant.billingAnniversaryDay === 3 ? "rd" : "th"}` : "Not set"}
-                </p>
-                <p className="mt-1 text-[11px] font-black text-sky-500">Next charge: {compactDate(tenant.nextRentChargeDate)}</p>
-            </div>
-            <div className="rounded-2xl border border-cyan-100 bg-cyan-50 p-4">
-                <p className="text-xs font-black uppercase text-cyan-500">Current Month Paid</p>
-                <p className="mt-1 text-2xl font-black text-cyan-700">{money(tenant.currentMonthPaid)}</p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                <p className="text-xs font-black uppercase text-slate-500">Last Amount Paid</p>
-                <p className="mt-1 text-2xl font-black text-slate-950">{money(tenant.lastAmountPaid)}</p>
-            </div>
-            <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
-                <p className="text-xs font-black uppercase text-indigo-500">Used to Clear Outstanding</p>
-                <p className="mt-1 text-2xl font-black text-indigo-700">{money(tenant.amountUsedToClearOutstanding)}</p>
-            </div>
-            <div className="rounded-2xl border border-teal-100 bg-teal-50 p-4">
-                <p className="text-xs font-black uppercase text-teal-500">Allocated to Next Month</p>
-                <p className="mt-1 text-2xl font-black text-teal-700">{money(tenant.amountAllocatedToNextMonth)}</p>
-            </div>
             <div className="rounded-2xl border border-rose-100 bg-rose-50 p-4">
                 <div className="flex items-start justify-between gap-3">
                     <p className="text-xs font-black uppercase text-rose-400">Outstanding Balance</p>
@@ -2150,6 +2110,39 @@ function TenantBalance({ isAdmin, onEditOutstanding, tenant }: { isAdmin: boolea
                 <p className="mt-1 text-[11px] font-bold text-rose-500">
                     {isAdmin ? "Admin changes apply instantly." : "Office changes require Admin approval."}
                 </p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-black uppercase text-slate-400">Room number</p>
+                <p className="mt-1 text-2xl font-black text-slate-950">{tenant.room?.room_number ?? "Unknown"}</p>
+            </div>
+            <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                <p className="text-xs font-black uppercase text-blue-500">Current Month Rent</p>
+                <p className="mt-1 text-2xl font-black text-blue-700">{money(tenant.monthlyRent)}</p>
+                {tenant.currentRentPeriod ? (
+                    <p className="mt-1 text-[11px] font-black text-blue-500">
+                        Period: {compactDate(tenant.currentRentPeriod.start)} - {compactDate(tenant.currentRentPeriod.end)}
+                    </p>
+                ) : null}
+            </div>
+            <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
+                <p className="text-xs font-black uppercase text-amber-500">Outstanding Before Last Payment</p>
+                <p className="mt-1 text-2xl font-black text-amber-700">{money(tenant.previousOutstandingBeforeLastPayment)}</p>
+            </div>
+            <div className="rounded-2xl border border-cyan-100 bg-cyan-50 p-4">
+                <p className="text-xs font-black uppercase text-cyan-500">Current Month Paid</p>
+                <p className="mt-1 text-2xl font-black text-cyan-700">{money(tenant.currentMonthPaid)}</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <p className="text-xs font-black uppercase text-slate-500">Last Amount Paid</p>
+                <p className="mt-1 text-2xl font-black text-slate-950">{money(tenant.lastAmountPaid)}</p>
+            </div>
+            <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
+                <p className="text-xs font-black uppercase text-indigo-500">Used to Clear Outstanding</p>
+                <p className="mt-1 text-2xl font-black text-indigo-700">{money(tenant.amountUsedToClearOutstanding)}</p>
+            </div>
+            <div className="rounded-2xl border border-teal-100 bg-teal-50 p-4">
+                <p className="text-xs font-black uppercase text-teal-500">Allocated to Next Month</p>
+                <p className="mt-1 text-2xl font-black text-teal-700">{money(tenant.amountAllocatedToNextMonth)}</p>
             </div>
             <div className="rounded-2xl border border-violet-100 bg-violet-50 p-4">
                 <p className="text-xs font-black uppercase text-violet-500">Advance Rent Balance</p>
@@ -2170,6 +2163,13 @@ function TenantBalance({ isAdmin, onEditOutstanding, tenant }: { isAdmin: boolea
             <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
                 <p className="text-xs font-black uppercase text-emerald-500">Amount to Collect Now</p>
                 <p className="mt-1 text-2xl font-black text-emerald-700">{money(amountToCollect(tenant))}</p>
+            </div>
+            <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4">
+                <p className="text-xs font-black uppercase text-sky-500">Billing Anniversary</p>
+                <p className="mt-1 text-2xl font-black text-sky-700">
+                    {tenant.billingAnniversaryDay ? `${tenant.billingAnniversaryDay}${tenant.billingAnniversaryDay === 1 ? "st" : tenant.billingAnniversaryDay === 2 ? "nd" : tenant.billingAnniversaryDay === 3 ? "rd" : "th"}` : "Not set"}
+                </p>
+                <p className="mt-1 text-[11px] font-black text-sky-500">Next charge: {compactDate(tenant.nextRentChargeDate)}</p>
             </div>
             {tenant.nextMonthCoveredAmount > 0 ? (
                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 xl:col-span-4">

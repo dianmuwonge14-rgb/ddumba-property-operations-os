@@ -76,6 +76,31 @@ test("payment entry shows receipt confirmation actions after successful payment"
   assert.match(paymentEntry, /Send SMS link/);
 });
 
+test("payment entry tenant summary shows outstanding balance first", () => {
+  const tenantBalanceStart = paymentEntry.indexOf("function TenantBalance");
+  const tenantBalanceSource = paymentEntry.slice(tenantBalanceStart);
+  const order = [
+    "Outstanding Balance",
+    "Room number",
+    "Current Month Rent",
+    "Outstanding Before Last Payment",
+    "Current Month Paid",
+    "Last Amount Paid",
+    "Used to Clear Outstanding",
+    "Allocated to Next Month",
+    "Advance Rent Balance",
+    "Amount to Collect Now",
+  ];
+  const positions = order.map((label) => tenantBalanceSource.indexOf(label));
+
+  assert.ok(tenantBalanceStart > 0, "TenantBalance component should exist");
+  for (const [index, position] of positions.entries()) {
+    assert.ok(position >= 0, `${order[index]} should exist`);
+    if (index > 0) assert.ok(position > positions[index - 1], `${order[index]} should appear after ${order[index - 1]}`);
+  }
+  assert.ok(tenantBalanceSource.indexOf("onClick={onEditOutstanding}") > positions[0], "Outstanding Balance keeps the Admin edit button");
+});
+
 test("tenant receipts include supermarket-style coverage and print scope", () => {
   assert.match(receiptService, /coverage_start/);
   assert.match(receiptService, /coveragePeriods/);
