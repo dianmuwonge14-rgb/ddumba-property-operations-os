@@ -20,6 +20,7 @@ import {
     Home,
     HousePlus,
     KeyRound,
+    Landmark,
     LineChart,
     Medal,
     Rocket,
@@ -60,6 +61,7 @@ const adminSections = [
             { href: "/office/landlords", label: "Landlords Portfolio", icon: UsersRound },
             { href: "/office/notifications", label: "Notifications", icon: Bell },
             { href: "/office/admin/cash-banking", label: "Cash Banking", icon: WalletCards },
+            { href: "/office/admin/cash-position", label: "Cash Position Centre", icon: Landmark },
             { href: "/office/bad-debt", label: "Bad Debt Recovery", icon: Archive },
         ],
     },
@@ -160,7 +162,7 @@ function themeForPath(pathname: string) {
     if (pathname.includes("/receipts")) return "payments";
     if (pathname.includes("/collections")) return "collections";
     if (pathname.includes("/payments")) return "payments";
-    if (pathname.includes("/cash-banking")) return "cash";
+    if (pathname.includes("/cash-banking") || pathname.includes("/cash-position")) return "cash";
     if (pathname.includes("/defaulters")) return "defaulters";
     if (pathname.includes("/promises")) return "promises";
     if (pathname.includes("/expenses")) return "expenses";
