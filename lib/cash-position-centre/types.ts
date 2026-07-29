@@ -32,6 +32,7 @@ export type CashPositionOfficeRow = {
     cashHeldByCollectors: number;
     cashHeldInOffice: number;
     collectorCount: number;
+    expenseCount: number;
     givenToAdmin: number;
     largestPayment: number;
     lastPaymentAt: string | null;
@@ -170,6 +171,7 @@ export type CashPositionData = {
         cashWaitingToBeBanked: number;
         cashAfterExpenses: number;
         cashBeforeExpenses: number;
+        currentAccumulatedOfficeCash: number;
         companyCashAvailable: number;
         pendingExpensesPeriod: number;
         pendingExpenseRequests: number;

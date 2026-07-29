@@ -14,6 +14,12 @@ const sidebarSource = readFileSync(new URL("../components/office/shared/OfficeSi
 const loginSource = readFileSync(new URL("../app/api/auth/office-login/route.ts", import.meta.url), "utf8");
 const officeHomeSource = readFileSync(new URL("../app/office/page.tsx", import.meta.url), "utf8");
 
+function selectedPeriodOfficeCash({ approvedExpenses = [], banked = [], collections = [], handedToAdmin = [], periodEnd, periodStart }) {
+  const inRange = (row) => row.date >= periodStart && row.date <= periodEnd;
+  const sum = (rows) => rows.filter(inRange).reduce((total, row) => total + row.amount, 0);
+  return sum(collections) - sum(approvedExpenses) - sum(banked) - sum(handedToAdmin);
+}
+
 test("cash position centre is an admin-only live Supabase page", () => {
   assert.match(pageSource, /getCashPositionCentreData/);
   assert.match(dataSource, /requireCompanyAdminMode\(\)/);
@@ -62,7 +68,7 @@ test("cash position centre includes requested executive KPIs and live office tab
   ]) {
     assert.match(dataSource + componentSource, new RegExp(label));
   }
-  for (const field of ["cashCollectedToday", "cashHeldInOffice", "cashHeldByCollectors", "alreadyBanked", "outstandingToBank", "bankingPercentage", "weeklyPerformance", "monthlyPerformance", "approvedExpensesPeriod", "pendingExpensesPeriod", "cashBeforeExpenses", "cashAfterApprovedExpenses", "projectedCashAfterPendingExpenses"]) {
+  for (const field of ["cashCollectedToday", "cashHeldInOffice", "cashHeldByCollectors", "alreadyBanked", "outstandingToBank", "bankingPercentage", "weeklyPerformance", "monthlyPerformance", "approvedExpensesPeriod", "pendingExpensesPeriod", "cashBeforeExpenses", "cashAfterApprovedExpenses", "projectedCashAfterPendingExpenses", "expenseCount", "currentAccumulatedOfficeCash"]) {
     assert.match(typesSource, new RegExp(field));
   }
 });
@@ -89,29 +95,49 @@ test("cash position centre ships filters, AI insights, charts and exports", () =
 });
 
 test("cash position centre leads with net cash after approved expenses", () => {
-  const header = componentSource.indexOf("Today’s Cash at Office After Expenses");
+  const header = componentSource.indexOf("Overall Money at Offices After Expenses");
   const filters = componentSource.indexOf("Treasury Filter Bar");
+  const officeCards = componentSource.indexOf("<OfficeComparisonCards");
   const firstKpi = componentSource.indexOf("{netKpis.map");
   const gross = componentSource.indexOf("Gross Cash Movement and Control");
   assert.ok(header > 0, "top header should include the daily cash-after-expenses summary card");
   assert.ok(filters > header, "filters should sit inside the top header after the net summary");
-  assert.ok(firstKpi > filters, "net KPI row should follow the header filters");
+  assert.ok(officeCards > filters, "office period cash cards should follow the header filters first");
+  assert.ok(firstKpi > officeCards, "net KPI row should follow the first office period cards");
   assert.ok(gross > firstKpi, "gross movement section should move below the net KPI row");
 });
 
-test("cash position top daily card excludes carried-forward office cash", () => {
+test("cash position selected-period card excludes carried-forward office cash", () => {
   assert.match(typesSource, /dailyCollected/);
   assert.match(typesSource, /dailyApprovedExpenses/);
   assert.match(typesSource, /dailyBanked/);
   assert.match(typesSource, /dailyHandedToAdmin/);
   assert.match(typesSource, /dailyCashRemainingAtOffice/);
   assert.match(dataSource, /dailyCollected - dailyApprovedExpenses - dailyBanked - dailyHandedToAdmin/);
+  assert.match(dataSource, /cashAfterExpenses = dailyCashRemainingAtOffice/);
+  assert.match(dataSource, /currentAccumulatedOfficeCash/);
   assert.match(dataSource, /adminHandedToAdminOutflows/);
   assert.match(dataSource, /\["admin_float", "office_to_admin_transfer"\]/);
   assert.match(componentSource, /Cash Remaining at Office Today/);
   assert.match(componentSource, /Net Cash Movement for Selected Period/);
-  assert.match(componentSource, /Overall office cash position/);
-  assert.match(componentSource, /Cash remaining from selected day/);
+  assert.match(componentSource, /Current accumulated office cash/);
+  assert.match(componentSource, /Money at office for selected period/);
+});
+
+test("selected period office cash ignores expenses outside the selected range", () => {
+  const selectedDayCash = selectedPeriodOfficeCash({
+    collections: [{ amount: 2_000_000, date: "2026-07-28" }],
+    approvedExpenses: [
+      { amount: 500_000, date: "2026-07-28" },
+      { amount: 300_000, date: "2026-07-27" },
+    ],
+    banked: [{ amount: 0, date: "2026-07-28" }],
+    handedToAdmin: [{ amount: 0, date: "2026-07-28" }],
+    periodStart: "2026-07-28",
+    periodEnd: "2026-07-28",
+  });
+
+  assert.equal(selectedDayCash, 1_500_000);
 });
 
 test("cash position data loader names query failures and uses production-safe enrichment columns", () => {

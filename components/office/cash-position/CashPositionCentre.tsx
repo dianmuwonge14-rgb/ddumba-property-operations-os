@@ -376,7 +376,7 @@ export default function CashPositionCentre({ data }: Props) {
                         <div className={`min-w-0 rounded-[28px] border bg-gradient-to-br p-4 shadow-2xl ${toneClasses(headerTone)}`}>
                             <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
-                                    <p className="break-words text-[11px] font-black uppercase tracking-[0.22em] text-slate-300">Today’s Cash at Office After Expenses</p>
+                                    <p className="break-words text-[11px] font-black uppercase tracking-[0.22em] text-slate-300">Overall Money at Offices After Expenses</p>
                                     <p className="mt-2 break-words text-sm font-black uppercase tracking-wide text-cyan-100">{dailyMovementTitle}</p>
                                     <p className="mt-2 break-words text-[clamp(1.8rem,3vw,3.4rem)] font-black leading-none text-white">{money(data.totals.dailyCashRemainingAtOffice)}</p>
                                 </div>
@@ -387,7 +387,8 @@ export default function CashPositionCentre({ data }: Props) {
                                 <Mini label={`Approved expenses ${dailyMovementNoun}`} value={money(data.totals.dailyApprovedExpenses)} />
                                 <Mini label={`Banked ${dailyMovementNoun}`} value={money(data.totals.dailyBanked)} />
                                 <Mini label={`Handed to Admin ${dailyMovementNoun}`} value={money(data.totals.dailyHandedToAdmin)} />
-                                <Mini label="Overall office cash position" value={money(data.totals.cashAfterExpenses)} risky={data.totals.cashAfterExpenses < 0} />
+                                <Mini label="Overall money at offices after expenses" value={money(data.totals.cashAfterExpenses)} risky={data.totals.cashAfterExpenses < 0} />
+                                <Mini label="Current accumulated office cash" value={money(data.totals.currentAccumulatedOfficeCash)} risky={data.totals.currentAccumulatedOfficeCash < 0} />
                                 <Mini label="Last updated" value={syncedAt} />
                                 <Mini label="Current status" value={headerStatus} risky={headerTone === "red"} />
                             </div>
@@ -399,7 +400,7 @@ export default function CashPositionCentre({ data }: Props) {
                         <Mini label={`Approved Expenses ${dailyMovementNoun}`} value={money(data.totals.dailyApprovedExpenses)} />
                         <Mini label={`Banked ${dailyMovementNoun}`} value={money(data.totals.dailyBanked)} />
                         <Mini label={`Handed to Admin ${dailyMovementNoun}`} value={money(data.totals.dailyHandedToAdmin)} />
-                        <Mini label={`Cash Remaining at Office ${dailyMovementNoun}`} value={money(data.totals.dailyCashRemainingAtOffice)} risky={data.totals.dailyCashRemainingAtOffice < 0} />
+                        <Mini label={`Money at Offices ${dailyMovementNoun}`} value={money(data.totals.dailyCashRemainingAtOffice)} risky={data.totals.dailyCashRemainingAtOffice < 0} />
                     </div>
 
                     <div className="mt-5 rounded-[28px] border border-white/10 bg-slate-950/58 p-4 shadow-2xl shadow-black/20">
@@ -441,6 +442,17 @@ export default function CashPositionCentre({ data }: Props) {
                     </div>
                 </header>
 
+                <section className="grid gap-4">
+                    <OfficeComparisonCards
+                        offices={data.officeRows}
+                        expandedOffice={expandedOffice}
+                        onSelect={setExpandedOffice}
+                        onViewOffice={viewOfficePosition}
+                        onViewReceipts={viewOfficeReceipts}
+                        onViewReceiptsBreakdown={(office) => openReceiptBreakdown(`${office.officeName} receipts`, office.receiptBreakdown)}
+                    />
+                </section>
+
                 <section className="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3">
                     {netKpis.map((kpi, index) => (
                         <KpiButton key={`${kpi.label}-${index}`} kpi={kpi} spotlight={spotlight} syncedAt={syncedAt} onClick={() => handleKpiClick(kpi.label)} />
@@ -467,14 +479,7 @@ export default function CashPositionCentre({ data }: Props) {
                         onSelectDate={(date) => router.push(actionUrl("/office/admin/cash-position", { endDate: date, period: "specificDay", startDate: date }))}
                         onViewReceipts={(card) => openReceiptBreakdown(`Receipts for ${dateLabel(card.date)}`, card.receiptBreakdown)}
                     />
-                    <OfficeComparisonCards
-                        offices={data.officeRows}
-                        expandedOffice={expandedOffice}
-                        onSelect={setExpandedOffice}
-                        onViewOffice={viewOfficePosition}
-                        onViewReceipts={viewOfficeReceipts}
-                        onViewReceiptsBreakdown={(office) => openReceiptBreakdown(`${office.officeName} receipts`, office.receiptBreakdown)}
-                    />
+                    <PremiumChart title="Office Period Cash Movement" icon={<Building2 size={18} />} points={data.charts.officeComparison} />
                 </section>
 
                 {receiptPanel ? <ReceiptBreakdownPanel panel={receiptPanel} onClose={() => setReceiptPanel(null)} /> : null}
@@ -482,7 +487,7 @@ export default function CashPositionCentre({ data }: Props) {
                 <section className="grid gap-4 xl:grid-cols-3">
                     <PremiumChart title="Banked vs Cash Held" icon={<Landmark size={18} />} points={[
                         { label: "Banked", value: data.totals.totalBanked },
-                        { label: "Office cash", value: Math.max(0, data.totals.cashHeldByOffices) },
+                        { label: "Current accumulated office cash", value: Math.max(0, data.totals.currentAccumulatedOfficeCash) },
                         { label: "Collector cash", value: data.totals.cashHeldByCollectors },
                         { label: "To bank", value: data.totals.cashWaitingToBeBanked },
                     ]} />
@@ -698,7 +703,7 @@ function OfficeComparisonCards({
 }) {
     return (
         <section className="rounded-[30px] border border-white/10 bg-white/[0.055] p-4 shadow-2xl shadow-black/25">
-            <PanelHeading icon={<Building2 size={18} />} title="Office Performance Comparison" subtitle="Finance cards ranked by live cash exposure, banking discipline and collection performance." />
+            <PanelHeading icon={<Building2 size={18} />} title="Office Performance Comparison" subtitle="Finance cards ranked by selected-period money at office after approved expenses, banking and Admin handovers." />
             <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-3">
                 {offices.map((office, index) => (
                     <article key={office.officeId} className={`group min-w-0 max-w-full overflow-hidden rounded-[24px] border p-4 text-left shadow-xl shadow-black/15 transition duration-300 hover:-translate-y-1 hover:shadow-cyan-950/25 motion-reduce:transform-none ${expandedOffice === office.officeId ? "border-cyan-200/60 bg-cyan-300/10" : "border-white/10 bg-slate-950/72 hover:border-cyan-200/35"}`}>
@@ -710,26 +715,27 @@ function OfficeComparisonCards({
                             <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-black uppercase ${statusBadge(office.status)}`}>{office.status}</span>
                         </div>
                         <div className={`mt-4 rounded-[24px] border p-4 ${office.dailyCashRemainingAtOffice < 0 ? "border-red-300/25 bg-red-400/12" : office.dailyCashRemainingAtOffice < 1_000_000 ? "border-amber-300/25 bg-amber-400/12" : "border-emerald-300/25 bg-emerald-400/12"}`}>
-                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">Cash remaining from selected day</p>
+                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">Money at office for selected period</p>
                             <p className="mt-2 break-words text-[clamp(1.3rem,2vw,2.1rem)] font-black leading-tight text-white">{money(office.dailyCashRemainingAtOffice)}</p>
-                            <p className="mt-1 text-xs font-bold text-slate-300">Selected-day collections minus approved expenses, banking and Admin handover for the same selected day.</p>
+                            <p className="mt-1 text-xs font-bold text-slate-300">Collections minus approved expenses, banking and Admin handover dated inside the selected period.</p>
                         </div>
-                        <div className={`mt-3 rounded-[24px] border p-4 ${office.cashAfterApprovedExpenses < 0 ? "border-red-300/25 bg-red-400/12" : "border-white/10 bg-slate-950/55"}`}>
-                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">Overall office cash position</p>
-                            <p className="mt-2 break-words text-[clamp(1.3rem,2vw,2.1rem)] font-black leading-tight text-white">{money(office.cashAfterApprovedExpenses)}</p>
-                            <p className="mt-1 text-xs font-bold text-slate-300">Accumulated live office cash across all dates after approved expense outflows.</p>
+                        <div className={`mt-3 rounded-[24px] border p-4 ${office.cashHeldInOffice < 0 ? "border-red-300/25 bg-red-400/12" : "border-white/10 bg-slate-950/55"}`}>
+                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">Current accumulated office cash</p>
+                            <p className="mt-2 break-words text-[clamp(1.3rem,2vw,2.1rem)] font-black leading-tight text-white">{money(office.cashHeldInOffice)}</p>
+                            <p className="mt-1 text-xs font-bold text-slate-300">Separate live ledger balance across all dates. It is not mixed into the selected-period card.</p>
                         </div>
                         <div className="mt-4 grid grid-cols-2 gap-2">
-                            <Mini label="Collected that day" value={money(office.dailyCollected)} />
-                            <Mini label="Approved expenses that day" value={money(office.dailyApprovedExpenses)} />
-                            <Mini label="Banked that day" value={money(office.dailyBanked)} />
-                            <Mini label="Handed to Admin that day" value={money(office.dailyHandedToAdmin)} />
-                            <Mini label="Cash remaining from that day" value={money(office.dailyCashRemainingAtOffice)} risky={office.dailyCashRemainingAtOffice < 0} />
+                            <Mini label="Collections for selected period" value={money(office.dailyCollected)} />
+                            <Mini label="Approved expenses for selected period" value={money(office.dailyApprovedExpenses)} />
+                            <Mini label="Banked for selected period" value={money(office.dailyBanked)} />
+                            <Mini label="Handed to Admin for selected period" value={money(office.dailyHandedToAdmin)} />
+                            <Mini label="Money at office for selected period" value={money(office.dailyCashRemainingAtOffice)} risky={office.dailyCashRemainingAtOffice < 0} />
+                            <Mini label="Expense count" value={office.expenseCount.toLocaleString()} />
                             <Mini label="Cash collected today" value={money(office.cashCollectedToday)} />
                             <Mini label="Cash before expenses" value={money(office.cashBeforeExpenses)} />
                             <Mini label="Approved expenses" value={money(office.approvedExpensesPeriod)} />
                             <Mini label="Pending expenses" value={money(office.pendingExpensesPeriod)} risky={office.pendingExpensesPeriod > office.cashHeldInOffice && office.pendingExpensesPeriod > 0} />
-                            <Mini label="Net cash after approved expenses" value={money(office.cashAfterApprovedExpenses)} risky={office.cashAfterApprovedExpenses < 0} />
+                            <Mini label="Current accumulated office cash" value={money(office.cashHeldInOffice)} risky={office.cashHeldInOffice < 0} />
                             <Mini label="Projected cash after pending expenses" value={money(office.projectedCashAfterPendingExpenses)} risky={office.projectedCashAfterPendingExpenses < 0} />
                             <Mini label="Cash banked" value={money(office.alreadyBanked)} />
                             <Mini label="Cash handed to Admin" value={money(office.givenToAdmin)} />
@@ -1005,11 +1011,12 @@ function OfficeExpansionPanel({ office, onViewReceiptsBreakdown }: { office: Cas
                 <span className={`rounded-full border px-3 py-1 text-xs font-black uppercase ${statusBadge(office.status)}`}>{office.status}</span>
             </div>
             <div className="mt-5 grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-3">
-                <Mini label="Collected that day" value={money(office.dailyCollected)} />
-                <Mini label="Approved expenses that day" value={money(office.dailyApprovedExpenses)} />
-                <Mini label="Banked that day" value={money(office.dailyBanked)} />
-                <Mini label="Handed to Admin that day" value={money(office.dailyHandedToAdmin)} />
-                <Mini label="Cash remaining from that day" value={money(office.dailyCashRemainingAtOffice)} risky={office.dailyCashRemainingAtOffice < 0} />
+                <Mini label="Collections for selected period" value={money(office.dailyCollected)} />
+                <Mini label="Approved expenses for selected period" value={money(office.dailyApprovedExpenses)} />
+                <Mini label="Banked for selected period" value={money(office.dailyBanked)} />
+                <Mini label="Handed to Admin for selected period" value={money(office.dailyHandedToAdmin)} />
+                <Mini label="Money at office for selected period" value={money(office.dailyCashRemainingAtOffice)} risky={office.dailyCashRemainingAtOffice < 0} />
+                <Mini label="Expense count" value={office.expenseCount.toLocaleString()} />
                 <Mini label="Collectors" value={office.collectorCount.toLocaleString()} />
                 <Mini label="Collector cash" value={money(office.cashHeldByCollectors)} />
                 <Mini label="Cash submitted" value={money(Math.max(0, office.todayPerformance - office.cashHeldByCollectors))} />
@@ -1017,9 +1024,9 @@ function OfficeExpansionPanel({ office, onViewReceiptsBreakdown }: { office: Cas
                 <Mini label="Receipts" value={office.numberOfReceipts.toLocaleString()} onClick={() => onViewReceiptsBreakdown(office)} />
                 <Mini label="Bank history" value={money(office.alreadyBanked)} />
                 <Mini label="Admin handovers" value={money(office.givenToAdmin)} />
-                <Mini label="Cash adjustments" value={money(office.cashHeldInOffice - office.todayPerformance)} />
+                <Mini label="Current accumulated office cash" value={money(office.cashHeldInOffice)} risky={office.cashHeldInOffice < 0} />
                 <Mini label="Collection efficiency" value={percent(office.bankingPercentage)} />
-                <Mini label="Outstanding cash" value={money(office.cashHeldInOffice)} risky={office.cashHeldInOffice < 0} />
+                <Mini label="Selected-period cash waiting" value={money(office.outstandingToBank)} risky={office.outstandingToBank > 1_000_000} />
                 <Mini label="Security deposits" value={money(office.securityDeposits)} />
                 <Mini label="Average payment" value={money(office.numberOfReceipts ? office.monthlyPerformance / office.numberOfReceipts : 0)} />
                 <Mini label="Largest payment" value={money(office.largestPayment)} />
