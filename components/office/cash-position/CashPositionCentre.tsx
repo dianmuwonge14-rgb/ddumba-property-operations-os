@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
+    Activity,
     AlertTriangle,
     ArrowDownRight,
     ArrowUpRight,
@@ -52,6 +53,7 @@ const periodOptions = [
     ["", "All Dates"],
     ["today", "Today"],
     ["yesterday", "Yesterday"],
+    ["week", "This Week"],
     ["last7", "Last 7 Days"],
     ["month", "This Month"],
     ["previousMonth", "Previous Month"],
@@ -166,7 +168,7 @@ function statusBadge(status: CashPositionOfficeRow["status"]) {
 
 export default function CashPositionCentre({ data }: Props) {
     const router = useRouter();
-    const [, startTransition] = useTransition();
+    const [isPending, startTransition] = useTransition();
     const [filters, setFilters] = useState({
         bankingStatus: data.filters.bankingStatus ?? "",
         collectorId: data.filters.collectorId ?? "",
@@ -268,7 +270,8 @@ export default function CashPositionCentre({ data }: Props) {
         for (const [key, value] of Object.entries(extra)) {
             if (value) params.set(key, value);
         }
-        return `${path}?${params.toString()}`;
+        const query = params.toString();
+        return query ? `${path}?${query}` : path;
     }
 
     function updateFilter(key: keyof typeof filters, value: string) {
@@ -284,7 +287,7 @@ export default function CashPositionCentre({ data }: Props) {
             next.endDate = "";
         }
         setFilters(next);
-        startTransition(() => router.push(cashPositionUrl(next)));
+        startTransition(() => router.replace(cashPositionUrl(next)));
     }
 
     function clearFilter(key: keyof typeof filters) {
@@ -295,11 +298,7 @@ export default function CashPositionCentre({ data }: Props) {
         }
         if (key === "startDate" || key === "endDate") next.period = "";
         setFilters(next);
-        startTransition(() => router.push(cashPositionUrl(next)));
-    }
-
-    function applyFilters() {
-        startTransition(() => router.push(cashPositionUrl()));
+        startTransition(() => router.replace(cashPositionUrl(next)));
     }
 
     function clearFilters() {
@@ -315,7 +314,18 @@ export default function CashPositionCentre({ data }: Props) {
             startDate: "",
         };
         setFilters(next);
-        startTransition(() => router.push("/office/admin/cash-position"));
+        startTransition(() => router.replace("/office/admin/cash-position"));
+    }
+
+    function selectLivePeriod(card: CashPositionData["livePeriodCards"][number]) {
+        const next = {
+            ...filters,
+            endDate: card.endDate ?? "",
+            period: card.period ?? "",
+            startDate: card.startDate ?? "",
+        };
+        setFilters(next);
+        startTransition(() => router.replace(cashPositionUrl(next)));
     }
 
     function downloadCsv(filename = "cash-position-centre.csv", content = csv, type = "text/csv;charset=utf-8") {
@@ -479,8 +489,8 @@ export default function CashPositionCentre({ data }: Props) {
                             <Select label="Banking Status" value={filters.bankingStatus} onChange={(value) => updateFilter("bankingStatus", value)} onClear={() => clearFilter("bankingStatus")} options={[["", "All status"], ["healthy", "Healthy"], ["attention", "Needs attention"], ["critical", "Critical"], ["waiting", "Unbanked"], ["banked", "Banked"]]} />
                             <Select label="Expense Status" value={filters.expenseStatus} onChange={(value) => updateFilter("expenseStatus", value)} onClear={() => clearFilter("expenseStatus")} options={[["", "All expenses"], ["approved", "Approved"], ["pending", "Pending"], ["pending_admin_approval", "Pending Admin Approval"], ["submitted", "Submitted"], ["rejected", "Rejected"], ["cancelled", "Cancelled"], ["reversed", "Reversed"]]} />
                         </div>
+                        {isPending ? <p className="mt-3 text-xs font-black uppercase tracking-[0.2em] text-cyan-100">Refreshing live data...</p> : null}
                         <div className="mt-4 flex flex-wrap gap-2">
-                        <PrimaryButton onClick={applyFilters} icon={<RefreshCw size={16} />}>Apply Filters</PrimaryButton>
                         <ActionButton onClick={() => router.refresh()} icon={<RefreshCw size={16} />}>Refresh Live Data</ActionButton>
                         <ActionButton onClick={clearFilters} icon={<X size={16} />}>Clear All Filters</ActionButton>
                         <ActionButton onClick={() => window.print()} icon={<Printer size={16} />}>Print</ActionButton>
@@ -494,7 +504,14 @@ export default function CashPositionCentre({ data }: Props) {
                     </div>
                 </header>
 
-                <section className="grid gap-4">
+                <LivePeriodStrip
+                    activePeriod={filters.period}
+                    cards={data.livePeriodCards}
+                    isRefreshing={isPending}
+                    onSelect={selectLivePeriod}
+                />
+
+                <section className={`grid gap-4 transition-opacity duration-200 ${isPending ? "opacity-80" : "opacity-100"}`}>
                     <OfficeComparisonCards
                         offices={data.officeRows}
                         expandedOffice={expandedOffice}
@@ -650,6 +667,51 @@ function KpiButton({ kpi, onClick, spotlight, syncedAt }: { kpi: CashPositionDat
             <p className="relative mt-2 min-w-0 max-w-full break-words text-xs font-bold leading-5 text-slate-300">{kpi.hint}</p>
             <p className="relative mt-3 text-[10px] font-black uppercase tracking-wide text-cyan-100">Updated {syncedAt}</p>
         </button>
+    );
+}
+
+function LivePeriodStrip({
+    activePeriod,
+    cards,
+    isRefreshing,
+    onSelect,
+}: {
+    activePeriod: string;
+    cards: CashPositionData["livePeriodCards"];
+    isRefreshing: boolean;
+    onSelect: (card: CashPositionData["livePeriodCards"][number]) => void;
+}) {
+    return (
+        <section className="rounded-[30px] border border-white/10 bg-white/[0.055] p-4 shadow-2xl shadow-black/25">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <PanelHeading icon={<Activity size={18} />} title="Live Company Cash Position" subtitle="Collections minus approved expenses, refreshed from live data whenever filters change." />
+                <Pill tone={isRefreshing ? "gold" : "green"}>{isRefreshing ? "Refreshing" : "Live"}</Pill>
+            </div>
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-3">
+                {cards.map((card) => {
+                    const isActive = card.period ? activePeriod === card.period : !activePeriod;
+                    return (
+                        <button
+                            key={card.key}
+                            type="button"
+                            onClick={() => onSelect(card)}
+                            className={`min-w-0 rounded-[24px] border p-4 text-left shadow-xl transition duration-200 hover:-translate-y-0.5 focus:outline-none focus:ring-4 focus:ring-cyan-300/15 motion-reduce:transform-none ${isActive ? "border-emerald-200/50 bg-emerald-300/16 text-emerald-50" : "border-white/10 bg-slate-950/52 text-white hover:bg-white/10"} ${isRefreshing ? "opacity-80" : "opacity-100"}`}
+                            title={`${card.label}: collections minus approved expenses`}
+                        >
+                            <div className="flex items-start justify-between gap-3">
+                                <p className="break-words text-[11px] font-black uppercase tracking-[0.2em] text-slate-300">{card.label}</p>
+                                <span className={`rounded-full border px-2 py-1 text-[10px] font-black uppercase ${isActive ? "border-emerald-100/40 bg-emerald-200/15 text-emerald-50" : "border-white/10 bg-white/10 text-cyan-100"}`}>{isActive ? "Selected" : "Apply"}</span>
+                            </div>
+                            <p className="mt-3 break-words text-[clamp(1.05rem,1.5vw,1.6rem)] font-black leading-tight text-white">{money(card.value)}</p>
+                            <div className="mt-3 grid grid-cols-2 gap-2">
+                                <Mini label="Collections" value={money(card.collections)} />
+                                <Mini label="Approved expenses" value={money(card.approvedExpenses)} />
+                            </div>
+                        </button>
+                    );
+                })}
+            </div>
+        </section>
     );
 }
 

@@ -17,6 +17,17 @@ export type CashPositionKpi = {
     tone: "green" | "blue" | "cyan" | "amber" | "red" | "violet";
 };
 
+export type CashPositionLivePeriodCard = {
+    approvedExpenses: number;
+    collections: number;
+    key: "overall" | "today" | "yesterday" | "week" | "month";
+    label: string;
+    period: string | null;
+    startDate: string | null;
+    endDate: string | null;
+    value: number;
+};
+
 export type CashPositionOfficeRow = {
     alreadyBanked: number;
     approvedExpensesPeriod: number;
@@ -162,6 +173,7 @@ export type CashPositionData = {
     generatedAt: string;
     insights: CashPositionInsight[];
     kpis: CashPositionKpi[];
+    livePeriodCards: CashPositionLivePeriodCard[];
     offices: Array<{ id: string; name: string }>;
     officeRows: CashPositionOfficeRow[];
     selectedPeriodLabel: string;

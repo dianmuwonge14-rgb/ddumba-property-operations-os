@@ -86,13 +86,13 @@ test("cash position centre includes requested executive KPIs and live office tab
   ]) {
     assert.match(dataSource + componentSource, new RegExp(label));
   }
-  for (const field of ["cashCollectedToday", "cashHeldInOffice", "cashHeldByCollectors", "alreadyBanked", "outstandingToBank", "bankingPercentage", "weeklyPerformance", "monthlyPerformance", "approvedExpensesPeriod", "pendingExpensesPeriod", "cashBeforeExpenses", "cashAfterApprovedExpenses", "companyCashPosition", "currentPhysicalOfficeCash", "projectedCashAfterPendingExpenses", "expenseCount", "currentAccumulatedOfficeCash", "rawCashAtOffice", "cashReconciliationDifference", "cashReconciliationCause"]) {
+  for (const field of ["cashCollectedToday", "cashHeldInOffice", "cashHeldByCollectors", "alreadyBanked", "outstandingToBank", "bankingPercentage", "weeklyPerformance", "monthlyPerformance", "approvedExpensesPeriod", "pendingExpensesPeriod", "cashBeforeExpenses", "cashAfterApprovedExpenses", "companyCashPosition", "currentPhysicalOfficeCash", "projectedCashAfterPendingExpenses", "expenseCount", "currentAccumulatedOfficeCash", "rawCashAtOffice", "cashReconciliationDifference", "cashReconciliationCause", "livePeriodCards"]) {
     assert.match(typesSource, new RegExp(field));
   }
 });
 
 test("cash position centre ships filters, AI insights, charts and exports", () => {
-  for (const label of ["All Dates", "Today", "Yesterday", "Last 7 Days", "This Month", "Previous Month", "This Year", "Custom Date", "Custom Date Range", "Specific Day of Month", "Collector", "Banking Status", "Expense Status"]) {
+  for (const label of ["All Dates", "Today", "Yesterday", "This Week", "Last 7 Days", "This Month", "Previous Month", "This Year", "Custom Date", "Custom Date Range", "Specific Day of Month", "Collector", "Banking Status", "Expense Status"]) {
     assert.match(componentSource, new RegExp(label));
   }
   assert.match(pageSource, /expenseStatus: scalar\(params\.expenseStatus\)/);
@@ -115,14 +115,35 @@ test("cash position centre ships filters, AI insights, charts and exports", () =
 test("cash position centre leads with net cash after approved expenses", () => {
   const header = componentSource.indexOf("Company Cash Position");
   const filters = componentSource.indexOf("Treasury Filter Bar");
+  const liveStrip = componentSource.indexOf("<LivePeriodStrip");
   const officeCards = componentSource.indexOf("<OfficeComparisonCards");
   const firstKpi = componentSource.indexOf("{netKpis.map");
   const gross = componentSource.indexOf("Gross Cash Movement and Control");
   assert.ok(header > 0, "top header should include the daily cash-after-expenses summary card");
   assert.ok(filters > header, "filters should sit inside the top header after the net summary");
-  assert.ok(officeCards > filters, "office period cash cards should follow the header filters first");
+  assert.ok(liveStrip > filters, "live period KPI strip should be visible before office cards");
+  assert.ok(officeCards > liveStrip, "office period cash cards should follow the live period strip first");
   assert.ok(firstKpi > officeCards, "net KPI row should follow the first office period cards");
   assert.ok(gross > firstKpi, "gross movement section should move below the net KPI row");
+});
+
+test("cash position centre behaves like a live dashboard without manual apply", () => {
+  assert.match(componentSource, /LivePeriodStrip/);
+  assert.match(componentSource, /Live Company Cash Position/);
+  assert.match(componentSource, /selectLivePeriod/);
+  assert.match(componentSource, /router\.replace\(cashPositionUrl\(next\)\)/);
+  assert.match(componentSource, /Refreshing live data/);
+  assert.match(dataSource, /const livePeriodCards = \[/);
+  assert.match(dataSource, /label: "Overall"/);
+  assert.match(dataSource, /label: "Today"/);
+  assert.match(dataSource, /label: "Yesterday"/);
+  assert.match(dataSource, /label: "This Week"/);
+  assert.match(dataSource, /label: "This Month"/);
+  assert.match(dataSource, /value: Math\.max\(0, collections - cardApprovedExpenses\)/);
+  assert.match(dataSource, /period === "week"/);
+  assert.match(dataSource, /weekStart\(today\)/);
+  assert.doesNotMatch(componentSource, /Apply Filters/);
+  assert.doesNotMatch(componentSource, /function applyFilters/);
 });
 
 test("cash position selected-period card excludes carried-forward office cash", () => {

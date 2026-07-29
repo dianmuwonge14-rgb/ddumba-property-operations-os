@@ -53,6 +53,14 @@ function yearStart(date: string) {
     return `${date.slice(0, 4)}-01-01`;
 }
 
+function weekStart(date: string) {
+    const base = new Date(`${date}T00:00:00+03:00`);
+    const day = base.getDay();
+    const daysSinceMonday = day === 0 ? 6 : day - 1;
+    base.setDate(base.getDate() - daysSinceMonday);
+    return kampalaDate(base);
+}
+
 function periodLabel(startDate: string | null, endDate: string | null) {
     if (!startDate && !endDate) return "All Dates";
     if (startDate && !endDate) return `From ${startDate}`;
@@ -81,6 +89,9 @@ function resolveFilters(input: CashPositionFilters = {}) {
         endDate = startDate;
     } else if (period === "last7") {
         startDate = addDays(today, -6);
+        endDate = today;
+    } else if (period === "week") {
+        startDate = weekStart(today);
         endDate = today;
     } else if (period === "month") {
         startDate = monthStart(today);
@@ -452,6 +463,8 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
     const todayCollections = allCollections.filter((row) => collectionDate(row) === today);
     const weekCollections = allCollections.filter((row) => inRange(collectionDate(row), addDays(today, -6), today));
     const monthCollections = allCollections.filter((row) => inRange(collectionDate(row), monthStart(today), today));
+    const yesterday = addDays(today, -1);
+    const currentWeekStart = weekStart(today);
     const previousComparableRange = shiftedRange(filters.startDate, filters.endDate, -7);
     const previousComparableCollections = previousComparableRange
         ? allCollections.filter((row) => inRange(collectionDate(row), previousComparableRange.startDate, previousComparableRange.endDate))
@@ -465,6 +478,22 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
     const periodPendingExpenses = pendingExpenses.filter((row) => inRange(expenseDate(row), filters.startDate, filters.endDate));
     const todayApprovedExpenses = approvedExpenses.filter((row) => expenseDate(row) === today);
     const monthApprovedExpenses = approvedExpenses.filter((row) => inRange(expenseDate(row), monthStart(today), today));
+    const livePeriodCards = [
+        { key: "overall" as const, label: "Overall", period: null, startDate: null, endDate: null },
+        { key: "today" as const, label: "Today", period: "today", startDate: today, endDate: today },
+        { key: "yesterday" as const, label: "Yesterday", period: "yesterday", startDate: yesterday, endDate: yesterday },
+        { key: "week" as const, label: "This Week", period: "week", startDate: currentWeekStart, endDate: today },
+        { key: "month" as const, label: "This Month", period: "month", startDate: monthStart(today), endDate: today },
+    ].map((card) => {
+        const collections = sum(allCollections.filter((row) => inRange(collectionDate(row), card.startDate, card.endDate)), collectionAmount);
+        const cardApprovedExpenses = sum(approvedExpenses.filter((row) => inRange(expenseDate(row), card.startDate, card.endDate)), expenseAmount);
+        return {
+            ...card,
+            approvedExpenses: cardApprovedExpenses,
+            collections,
+            value: Math.max(0, collections - cardApprovedExpenses),
+        };
+    });
 
     const cashAccounts = ((cashAccountsResult.data ?? []) as Row[]).filter((row) => !row.office_id || visibleOfficeIds.has(String(row.office_id)));
     const accountById = new Map(cashAccounts.map((row) => [String(row.id), row]));
@@ -864,6 +893,7 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         generatedAt: new Date().toISOString(),
         insights: [...receiptIntegrityAlerts, ...buildInsights({ collectors, offices: officeRows, securityShortfall, totals })],
         kpis,
+        livePeriodCards,
         offices,
         officeRows: officeRows.sort((a, b) => b.companyCashPosition - a.companyCashPosition),
         selectedPeriodLabel: periodLabel(filters.startDate, filters.endDate),
