@@ -66,8 +66,8 @@ from (
         d.company_id,
         d.office_id,
         d.id as account_id,
-        coalesce(d.remaining_amount, d.final_outstanding_balance, d.original_amount, 0)::numeric as outstanding_balance
+        coalesce(d.remaining_amount, d.original_amount, 0)::numeric as outstanding_balance
     from public.vacated_tenant_debts d
-    where coalesce(d.remaining_amount, d.final_outstanding_balance, d.original_amount, 0) > 0
+    where coalesce(d.remaining_amount, d.original_amount, 0) > 0
 ) live
 group by live.company_id, live.office_id;
