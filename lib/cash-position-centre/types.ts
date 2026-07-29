@@ -24,6 +24,11 @@ export type CashPositionOfficeRow = {
     cashAfterApprovedExpenses: number;
     cashBeforeExpenses: number;
     cashCollectedToday: number;
+    dailyApprovedExpenses: number;
+    dailyBanked: number;
+    dailyCashRemainingAtOffice: number;
+    dailyCollected: number;
+    dailyHandedToAdmin: number;
     cashHeldByCollectors: number;
     cashHeldInOffice: number;
     collectorCount: number;
@@ -85,6 +90,7 @@ export type CashPositionChartPoint = {
 };
 
 export type CashPositionDailyCard = {
+    approvedExpenses: number;
     amountBanked: number;
     amountHandedToAdmin: number;
     cashStillHeld: number;
@@ -147,10 +153,17 @@ export type CashPositionData = {
     kpis: CashPositionKpi[];
     offices: Array<{ id: string; name: string }>;
     officeRows: CashPositionOfficeRow[];
+    selectedPeriodLabel: string;
+    selectedPeriodMode: "single-day" | "range";
     totals: {
         approvedExpensesToday: number;
         approvedExpensesPeriod: number;
         approvedExpensesThisMonth: number;
+        dailyApprovedExpenses: number;
+        dailyBanked: number;
+        dailyCashRemainingAtOffice: number;
+        dailyCollected: number;
+        dailyHandedToAdmin: number;
         cashDifferenceAlerts: number;
         cashHeldByCollectors: number;
         cashHeldByOffices: number;

@@ -88,14 +88,29 @@ test("cash position centre ships filters, AI insights, charts and exports", () =
 });
 
 test("cash position centre leads with net cash after approved expenses", () => {
-  const header = componentSource.indexOf("Total Office Cash After Expenses");
+  const header = componentSource.indexOf("Today’s Cash at Office After Expenses");
   const filters = componentSource.indexOf("Treasury Filter Bar");
   const firstKpi = componentSource.indexOf("{netKpis.map");
   const gross = componentSource.indexOf("Gross Cash Movement and Control");
-  assert.ok(header > 0, "top header should include the net cash summary card");
+  assert.ok(header > 0, "top header should include the daily cash-after-expenses summary card");
   assert.ok(filters > header, "filters should sit inside the top header after the net summary");
   assert.ok(firstKpi > filters, "net KPI row should follow the header filters");
   assert.ok(gross > firstKpi, "gross movement section should move below the net KPI row");
+});
+
+test("cash position top daily card excludes carried-forward office cash", () => {
+  assert.match(typesSource, /dailyCollected/);
+  assert.match(typesSource, /dailyApprovedExpenses/);
+  assert.match(typesSource, /dailyBanked/);
+  assert.match(typesSource, /dailyHandedToAdmin/);
+  assert.match(typesSource, /dailyCashRemainingAtOffice/);
+  assert.match(dataSource, /dailyCollected - dailyApprovedExpenses - dailyBanked - dailyHandedToAdmin/);
+  assert.match(dataSource, /adminHandedToAdminOutflows/);
+  assert.match(dataSource, /\["admin_float", "office_to_admin_transfer"\]/);
+  assert.match(componentSource, /Cash Remaining at Office Today/);
+  assert.match(componentSource, /Net Cash Movement for Selected Period/);
+  assert.match(componentSource, /Overall office cash position/);
+  assert.match(componentSource, /Cash remaining from selected day/);
 });
 
 test("cash position centre cards are responsive and action buttons are wired", () => {
