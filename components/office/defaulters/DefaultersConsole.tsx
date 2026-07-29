@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
-import { AlertTriangle, Bot, CalendarClock, Download, FileText, MessageCircle, Phone, Printer, Search, Send, Sparkles, WalletCards } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { AlertTriangle, Bot, CalendarClock, Download, FileText, MessageCircle, Phone, Printer, RefreshCw, Search, Send, Sparkles, WalletCards, Wifi } from "lucide-react";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import type { DefaulterItem, DefaultersPageData } from "@/lib/defaulters/types";
 
 type Props = {
@@ -10,6 +12,7 @@ type Props = {
 };
 
 type PeriodFilter = "all" | "today" | "1_7" | "8_14" | "15_30" | "1_month" | "2_months" | "3_plus" | "custom_days" | "custom_months";
+type ListFilter = "active" | "vacated" | "cleared" | "high_risk" | "promises_due";
 type SortMode = "risk_high" | "days_high" | "balance_high" | "room_asc";
 const INITIAL_TABLE_LIMIT = 100;
 
@@ -40,9 +43,13 @@ function whatsappHref(value: string | null, tenant: string, room: string) {
 }
 
 export default function DefaultersConsole({ data }: Props) {
+    const router = useRouter();
     const [query, setQuery] = useState("");
     const [officeId, setOfficeId] = useState("");
     const [landlordId, setLandlordId] = useState("");
+    const [propertyName, setPropertyName] = useState("");
+    const [collector, setCollector] = useState("");
+    const [listFilter, setListFilter] = useState<ListFilter>("active");
     const [minRent, setMinRent] = useState("");
     const [maxRent, setMaxRent] = useState("");
     const [period, setPeriod] = useState<PeriodFilter>("all");
@@ -52,6 +59,43 @@ export default function DefaultersConsole({ data }: Props) {
     const [customMonthsMax, setCustomMonthsMax] = useState("");
     const [sort, setSort] = useState<SortMode>("risk_high");
     const [showPrintPreview, setShowPrintPreview] = useState(false);
+    const [liveStatus, setLiveStatus] = useState("Live");
+    const [isPending, startTransition] = useTransition();
+
+    useEffect(() => {
+        let mounted = true;
+        let refreshTimer: number | null = null;
+        const supabase = createSupabaseBrowserClient();
+        const refreshFromRealtime = () => {
+            if (!mounted || refreshTimer) return;
+            setLiveStatus("Updating");
+            refreshTimer = window.setTimeout(() => {
+                refreshTimer = null;
+                startTransition(() => router.refresh());
+                window.setTimeout(() => mounted && setLiveStatus("Live"), 1200);
+            }, 250);
+        };
+        const channel = supabase
+            .channel("ddumba-defaulters-live-balances")
+            .on("postgres_changes", { event: "*", schema: "public", table: "tenants" }, refreshFromRealtime)
+            .on("postgres_changes", { event: "*", schema: "public", table: "rooms" }, refreshFromRealtime)
+            .on("postgres_changes", { event: "*", schema: "public", table: "leases" }, refreshFromRealtime)
+            .on("postgres_changes", { event: "*", schema: "public", table: "collections" }, refreshFromRealtime)
+            .on("postgres_changes", { event: "*", schema: "public", table: "promises" }, refreshFromRealtime)
+            .on("postgres_changes", { event: "*", schema: "public", table: "collection_actions" }, refreshFromRealtime)
+            .on("postgres_changes", { event: "*", schema: "public", table: "vacated_tenant_debts" }, refreshFromRealtime)
+            .on("postgres_changes", { event: "*", schema: "public", table: "landlord_debt_deductions" }, refreshFromRealtime)
+            .subscribe((status) => {
+                if (!mounted) return;
+                setLiveStatus(status === "SUBSCRIBED" ? "Live" : "Connecting");
+            });
+
+        return () => {
+            mounted = false;
+            if (refreshTimer) window.clearTimeout(refreshTimer);
+            void supabase.removeChannel(channel);
+        };
+    }, [router]);
 
     const filteredDefaulters = useMemo(() => {
         const term = normalize(query);
@@ -63,13 +107,20 @@ export default function DefaultersConsole({ data }: Props) {
         const monthMax = Number(customMonthsMax || 0);
         return data.defaulters
             .filter((item) => {
-                const searchable = [item.roomNumber, item.tenantName, item.tenantPhone, item.landlordName, item.location, String(item.monthlyRent)].map(normalize).join(" ");
+                if (listFilter === "active" && (item.source === "recently_cleared" || item.outstandingBalance <= 0)) return false;
+                if (listFilter === "vacated" && item.source !== "vacated_debt") return false;
+                if (listFilter === "cleared" && item.source !== "recently_cleared") return false;
+                if (listFilter === "high_risk" && item.riskLevel !== "high") return false;
+                if (listFilter === "promises_due" && item.promiseStatus !== "Due today") return false;
+                const searchable = [item.roomNumber, item.tenantName, item.tenantPhone, item.landlordName, item.officeName, item.propertyName, item.location, String(item.monthlyRent)].map(normalize).join(" ");
                 if (term && !searchable.includes(term)) return false;
                 if (data.isAdmin && officeId && item.officeId !== officeId) return false;
                 if (landlordId && item.landlordId !== landlordId) return false;
+                if (propertyName && item.propertyName !== propertyName) return false;
+                if (collector && item.collectorAssigned !== collector) return false;
                 if (min > 0 && item.monthlyRent < min) return false;
                 if (max > 0 && item.monthlyRent > max) return false;
-                if (period === "today" && item.daysDefaulted !== 1) return false;
+                if (period === "today" && item.daysDefaulted > 1) return false;
                 if (period === "1_7" && (item.daysDefaulted < 1 || item.daysDefaulted > 7)) return false;
                 if (period === "8_14" && (item.daysDefaulted < 8 || item.daysDefaulted > 14)) return false;
                 if (period === "15_30" && (item.daysDefaulted < 15 || item.daysDefaulted > 30)) return false;
@@ -87,12 +138,15 @@ export default function DefaultersConsole({ data }: Props) {
                 return true;
             })
             .sort((a, b) => {
+                const exactRoomA = term && normalize(a.roomNumber) === term ? 1 : 0;
+                const exactRoomB = term && normalize(b.roomNumber) === term ? 1 : 0;
+                if (exactRoomA !== exactRoomB) return exactRoomB - exactRoomA;
                 if (sort === "days_high") return b.daysDefaulted - a.daysDefaulted || b.outstandingBalance - a.outstandingBalance;
                 if (sort === "balance_high") return b.outstandingBalance - a.outstandingBalance || b.daysDefaulted - a.daysDefaulted;
                 if (sort === "room_asc") return a.roomNumber.localeCompare(b.roomNumber);
                 return (b.daysDefaulted * b.outstandingBalance) - (a.daysDefaulted * a.outstandingBalance);
             });
-    }, [customDaysMax, customDaysMin, customMonthsMax, customMonthsMin, data.defaulters, data.isAdmin, landlordId, maxRent, minRent, officeId, period, query, sort]);
+    }, [collector, customDaysMax, customDaysMin, customMonthsMax, customMonthsMin, data.defaulters, data.isAdmin, landlordId, listFilter, maxRent, minRent, officeId, period, propertyName, query, sort]);
 
     const visibleKpis = useMemo(() => buildKpis(filteredDefaulters), [filteredDefaulters]);
     const visibleDefaulters = useMemo(() => filteredDefaulters.slice(0, INITIAL_TABLE_LIMIT), [filteredDefaulters]);
@@ -100,8 +154,9 @@ export default function DefaultersConsole({ data }: Props) {
     const promiseHref = data.isCollector ? "/office/collector/promises" : "/office/promises";
 
     function exportCsv() {
-        const header = ["Room", "Tenant", "Phone", "Office", "Landlord", "Property", "Location", "Monthly Rent", "Outstanding", "Due Date", "Days Defaulted", "Months Defaulted", "Last Payment Date", "Last Payment Amount"];
+        const header = ["Type", "Room", "Tenant", "Phone", "Office", "Landlord", "Property", "Location", "Monthly Rent", "Outstanding", "Oldest Unpaid Period", "Unpaid Periods", "Due Date", "Days Overdue", "Last Payment Date", "Last Payment Amount", "Promise Status", "Collector", "Risk", "Last Follow-up", "Next Action", "Recovery Status", "Landlord Deduction"];
         const csv = [header, ...filteredDefaulters.map((item) => [
+            item.source.replaceAll("_", " "),
             item.roomNumber,
             item.tenantName,
             item.tenantPhone ?? "",
@@ -111,11 +166,19 @@ export default function DefaultersConsole({ data }: Props) {
             item.location,
             String(item.monthlyRent),
             String(item.outstandingBalance),
+            item.oldestUnpaidPeriod,
+            String(item.unpaidPeriods),
             item.paymentDueDate,
             String(item.daysDefaulted),
-            String(item.monthsDefaulted),
             item.lastPaymentDate ?? "",
             String(item.lastPaymentAmount),
+            item.promiseStatus,
+            item.collectorAssigned,
+            item.riskLevel,
+            item.lastFollowUp ?? "",
+            item.nextRecommendedAction,
+            item.recoveryStatus ?? "",
+            item.landlordDeductionStatus ?? "",
         ])].map((row) => row.map((cell) => `"${String(cell).replaceAll("\"", "\"\"")}"`).join(",")).join("\n");
         const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
         const url = URL.createObjectURL(blob);
@@ -142,6 +205,14 @@ export default function DefaultersConsole({ data }: Props) {
                             </p>
                         </div>
                         <div className="flex flex-wrap gap-2">
+                            <span className="inline-flex h-11 items-center gap-2 rounded-2xl border border-emerald-300/20 bg-emerald-300/10 px-4 text-sm font-black text-emerald-100">
+                                {isPending ? <RefreshCw size={16} className="animate-spin" /> : <Wifi size={16} />}
+                                {liveStatus}
+                            </span>
+                            <button onClick={() => startTransition(() => router.refresh())} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-white/10 bg-white/10 px-4 text-sm font-black text-white">
+                                <RefreshCw size={16} />
+                                Refresh
+                            </button>
                             <button onClick={() => setShowPrintPreview(true)} className="inline-flex h-11 items-center gap-2 rounded-2xl bg-white px-4 text-sm font-black text-slate-950">
                                 <Printer size={16} />
                                 Print A4 Report
@@ -158,27 +229,41 @@ export default function DefaultersConsole({ data }: Props) {
                     </div>
                 </section>
 
-                <section className="mx-auto mt-5 grid max-w-7xl gap-3 md:grid-cols-2 xl:grid-cols-7">
-                    <RiskCard label="Total defaulters" value={visibleKpis.totalDefaulters.toLocaleString()} hint="Past due active tenants" tone="red" icon={<AlertTriangle size={18} />} />
-                    <RiskCard label="Outstanding from defaulters" value={money(visibleKpis.totalOutstanding)} hint="Live tenant balances" tone="red" icon={<WalletCards size={18} />} />
-                    <RiskCard label="Defaulted 1-7 days" value={visibleKpis.defaultedOneToSevenDays.toLocaleString()} hint="Early follow-up" tone="amber" icon={<CalendarClock size={18} />} />
-                    <RiskCard label="Defaulted 8-30 days" value={visibleKpis.defaultedEightToThirtyDays.toLocaleString()} hint="Collection priority" tone="amber" icon={<CalendarClock size={18} />} />
-                    <RiskCard label="Defaulted 1+ month" value={visibleKpis.defaultedOneMonthPlus.toLocaleString()} hint="High risk" tone="purple" icon={<AlertTriangle size={18} />} />
-                    <RiskCard label="Highest-risk office" value={visibleKpis.highestRiskOffice} hint="By outstanding balance" tone="slate" icon={<FileText size={18} />} />
-                    <RiskCard label="Highest outstanding tenant" value={visibleKpis.highestOutstandingTenant} hint="Largest balance" tone="slate" icon={<WalletCards size={18} />} />
+                {data.integrityAlerts.length ? (
+                    <section className="mx-auto mt-5 max-w-7xl rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-900">
+                        {data.integrityAlerts.map((alert) => <p key={alert}>{alert}</p>)}
+                    </section>
+                ) : null}
+
+                <section className="mx-auto mt-5 grid max-w-7xl gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <RiskCard label="Total Defaulters" value={data.kpis.totalDefaulters.toLocaleString()} hint="Live positive balances" tone="red" icon={<AlertTriangle size={18} />} onClick={() => setListFilter("active")} />
+                    <RiskCard label="Total Outstanding" value={money(data.kpis.totalOutstanding)} hint="Sum of live balances" tone="red" icon={<WalletCards size={18} />} onClick={() => setListFilter("active")} />
+                    <RiskCard label="Added Today" value={data.kpis.defaultersAddedToday.toLocaleString()} hint="New or due today" tone="amber" icon={<CalendarClock size={18} />} onClick={() => { setListFilter("active"); setPeriod("today"); }} />
+                    <RiskCard label="Cleared Today" value={data.kpis.clearedToday.toLocaleString()} hint="History only" tone="slate" icon={<FileText size={18} />} onClick={() => setListFilter("cleared")} />
+                    <RiskCard label="High Risk" value={data.kpis.highRiskDefaulters.toLocaleString()} hint="Visit or notice" tone="purple" icon={<AlertTriangle size={18} />} onClick={() => setListFilter("high_risk")} />
+                    <RiskCard label="Promises Due Today" value={data.kpis.promisesDueToday.toLocaleString()} hint="Collector follow-up" tone="amber" icon={<CalendarClock size={18} />} onClick={() => setListFilter("promises_due")} />
+                    <RiskCard label="Vacated With Debt" value={data.kpis.vacatedWithDebt.toLocaleString()} hint="Recovery register" tone="red" icon={<FileText size={18} />} onClick={() => setListFilter("vacated")} />
+                    <RiskCard label="Oldest Account" value={data.kpis.oldestOutstandingAccount} hint="Longest overdue" tone="slate" icon={<WalletCards size={18} />} onClick={() => setSort("days_high")} />
                 </section>
 
                 <AssistantPanel assistant={data.assistant} />
 
                 <section className="mx-auto mt-5 max-w-7xl rounded-[28px] border border-white/10 bg-slate-900 p-4 text-white shadow-xl shadow-black/20">
-                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1.8fr)_repeat(6,minmax(130px,1fr))]">
+                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1.8fr)_repeat(8,minmax(130px,1fr))]">
                         <label className="block">
-                            <span className="text-xs font-black uppercase tracking-wide text-slate-400">Search room, tenant, phone, landlord</span>
+                            <span className="text-xs font-black uppercase tracking-wide text-slate-400">Search room, tenant, phone, landlord, office, property</span>
                             <div className="mt-1 flex h-12 items-center rounded-2xl border border-white/10 bg-slate-950 px-3">
                                 <Search size={16} className="mr-2 text-slate-500" />
                                 <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="T149, Sarah, 0700..." className="w-full bg-transparent text-sm font-black text-white outline-none placeholder:text-slate-500" />
                             </div>
                         </label>
+                        <FilterSelect label="List" value={listFilter} onChange={(value) => setListFilter(value as ListFilter)} options={[
+                            { id: "active", name: "Active defaulters" },
+                            { id: "vacated", name: "Vacated with debt" },
+                            { id: "cleared", name: "Recently cleared" },
+                            { id: "high_risk", name: "High risk" },
+                            { id: "promises_due", name: "Promises due today" },
+                        ]} />
                         <FilterSelect label="Defaulting period" value={period} onChange={(value) => setPeriod(value as PeriodFilter)} options={[
                             { id: "all", name: "All defaulters" },
                             { id: "today", name: "Defaulted today" },
@@ -193,6 +278,8 @@ export default function DefaultersConsole({ data }: Props) {
                         ]} />
                         {data.isAdmin ? <FilterSelect label="Office" value={officeId} onChange={setOfficeId} options={[{ id: "", name: "All offices" }, ...data.offices]} /> : null}
                         <FilterSelect label="Landlord" value={landlordId} onChange={setLandlordId} options={[{ id: "", name: "All landlords" }, ...data.landlords]} />
+                        <FilterSelect label="Property" value={propertyName} onChange={setPropertyName} options={[{ id: "", name: "All properties" }, ...data.properties.map((property) => ({ id: property.name, name: property.name }))]} />
+                        <FilterSelect label="Collector" value={collector} onChange={setCollector} options={[{ id: "", name: "All collectors" }, ...data.collectors]} />
                         <FilterInput label="Min rent" value={minRent} onChange={setMinRent} />
                         <FilterInput label="Max rent" value={maxRent} onChange={setMaxRent} />
                         <FilterSelect label="Sort" value={sort} onChange={(value) => setSort(value as SortMode)} options={[
@@ -247,21 +334,29 @@ export default function DefaultersConsole({ data }: Props) {
 }
 
 function buildKpis(items: DefaulterItem[]) {
+    const activeItems = items.filter((item) => item.source !== "recently_cleared" && item.outstandingBalance > 0);
     const officeRisk = new Map<string, { count: number; outstanding: number }>();
-    for (const item of items) {
+    for (const item of activeItems) {
         const current = officeRisk.get(item.officeName) ?? { count: 0, outstanding: 0 };
         current.count += 1;
         current.outstanding += item.outstandingBalance;
         officeRisk.set(item.officeName, current);
     }
+    const oldestOutstandingAccount = [...activeItems].sort((a, b) => b.daysDefaulted - a.daysDefaulted || b.outstandingBalance - a.outstandingBalance)[0];
     return {
-        totalDefaulters: items.length,
-        totalOutstanding: items.reduce((total, item) => total + item.outstandingBalance, 0),
-        defaultedOneToSevenDays: items.filter((item) => item.daysDefaulted >= 1 && item.daysDefaulted <= 7).length,
-        defaultedEightToThirtyDays: items.filter((item) => item.daysDefaulted >= 8 && item.daysDefaulted <= 30).length,
-        defaultedOneMonthPlus: items.filter((item) => item.daysDefaulted >= 30).length,
+        totalDefaulters: activeItems.length,
+        totalOutstanding: activeItems.reduce((total, item) => total + item.outstandingBalance, 0),
+        defaultersAddedToday: activeItems.filter((item) => item.daysDefaulted <= 1).length,
+        clearedToday: items.filter((item) => item.source === "recently_cleared").length,
+        highRiskDefaulters: activeItems.filter((item) => item.riskLevel === "high").length,
+        promisesDueToday: activeItems.filter((item) => item.promiseStatus === "Due today").length,
+        vacatedWithDebt: activeItems.filter((item) => item.source === "vacated_debt").length,
+        oldestOutstandingAccount: oldestOutstandingAccount ? `${oldestOutstandingAccount.tenantName} (${oldestOutstandingAccount.daysDefaulted} days)` : "No defaulters",
+        defaultedOneToSevenDays: activeItems.filter((item) => item.daysDefaulted >= 1 && item.daysDefaulted <= 7).length,
+        defaultedEightToThirtyDays: activeItems.filter((item) => item.daysDefaulted >= 8 && item.daysDefaulted <= 30).length,
+        defaultedOneMonthPlus: activeItems.filter((item) => item.daysDefaulted >= 30).length,
         highestRiskOffice: [...officeRisk.entries()].sort((a, b) => b[1].outstanding - a[1].outstanding || b[1].count - a[1].count)[0]?.[0] ?? "No defaulters",
-        highestOutstandingTenant: [...items].sort((a, b) => b.outstandingBalance - a.outstandingBalance)[0]?.tenantName ?? "No defaulters",
+        highestOutstandingTenant: [...activeItems].sort((a, b) => b.outstandingBalance - a.outstandingBalance)[0]?.tenantName ?? "No defaulters",
     };
 }
 
@@ -269,7 +364,7 @@ function DefaultersTable({ defaulters, paymentHref, promiseHref }: { defaulters:
     return (
         <div className="overflow-hidden rounded-[26px] border border-white/70 bg-white shadow-2xl shadow-slate-950/15">
             <div className="max-h-[680px] overflow-auto">
-                <table className="w-full min-w-[1320px] text-left text-sm">
+                <table className="w-full min-w-[1780px] text-left text-sm">
                     <thead className="sticky top-0 bg-slate-950 text-xs uppercase text-slate-200">
                         <tr>
                             <th className="px-4 py-3">Room / Tenant</th>
@@ -278,10 +373,15 @@ function DefaultersTable({ defaulters, paymentHref, promiseHref }: { defaulters:
                             <th className="px-4 py-3">Location</th>
                             <th className="px-4 py-3 text-right">Monthly Rent</th>
                             <th className="px-4 py-3 text-right">Outstanding</th>
-                            <th className="px-4 py-3">Due Date</th>
-                            <th className="px-4 py-3">Defaulted</th>
+                            <th className="px-4 py-3">Oldest Period</th>
+                            <th className="px-4 py-3">Unpaid</th>
                             <th className="px-4 py-3">Last Payment</th>
-                            <th className="px-4 py-3">AI Action</th>
+                            <th className="px-4 py-3">Promise</th>
+                            <th className="px-4 py-3">Collector</th>
+                            <th className="px-4 py-3">Risk</th>
+                            <th className="px-4 py-3">Follow-up</th>
+                            <th className="px-4 py-3">Next Action</th>
+                            <th className="px-4 py-3">Recovery</th>
                             <th className="px-4 py-3">Actions</th>
                         </tr>
                     </thead>
@@ -299,13 +399,13 @@ function DefaultersTable({ defaulters, paymentHref, promiseHref }: { defaulters:
                                 <td className="px-4 py-3 text-right font-black text-slate-950">{money(item.monthlyRent)}</td>
                                 <td className="px-4 py-3 text-right font-black text-rose-700">{money(item.outstandingBalance)}</td>
                                 <td className="px-4 py-3 font-bold text-slate-600">
-                                    {item.paymentDueDate}
+                                    {item.oldestUnpaidPeriod}
                                     <br />
-                                    <span className="text-xs text-slate-400">{item.dueSource === "default_first" ? "Default due date: 1st monthly" : `Due day ${item.paymentDueDay}`}</span>
+                                    <span className="text-xs text-slate-400">{item.paymentDueDate} due</span>
                                 </td>
                                 <td className="px-4 py-3">
                                     <span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-black uppercase text-rose-700 ring-1 ring-rose-100">{item.daysDefaulted} days</span>
-                                    <p className="mt-1 text-xs font-bold text-slate-400">{item.monthsDefaulted} month(s)</p>
+                                    <p className="mt-1 text-xs font-bold text-slate-400">{item.unpaidPeriods} period(s)</p>
                                 </td>
                                 <td className="px-4 py-3 font-bold text-slate-600">
                                     {item.lastPaymentDate ?? "No payment"}
@@ -313,12 +413,29 @@ function DefaultersTable({ defaulters, paymentHref, promiseHref }: { defaulters:
                                     <span className="text-xs text-slate-400">{money(item.lastPaymentAmount)}</span>
                                     {item.isPartialPayer ? <span className="mt-1 inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-black uppercase text-blue-700">Partial paid {money(item.currentMonthPaid)}</span> : null}
                                 </td>
+                                <td className="px-4 py-3 font-bold text-slate-600">
+                                    {item.promiseStatus}
+                                    {item.openPromiseCount ? <p className="text-xs text-slate-400">{item.openPromiseCount} open</p> : null}
+                                </td>
+                                <td className="px-4 py-3 font-bold text-slate-600">{item.collectorAssigned}</td>
+                                <td className="px-4 py-3">
+                                    <span className={`rounded-full px-3 py-1 text-xs font-black uppercase ${item.riskLevel === "high" ? "bg-rose-50 text-rose-700 ring-1 ring-rose-100" : item.riskLevel === "medium" ? "bg-amber-50 text-amber-700 ring-1 ring-amber-100" : "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"}`}>{item.riskLevel}</span>
+                                </td>
+                                <td className="px-4 py-3 font-bold text-slate-600">{item.lastFollowUp ?? "No follow-up"}</td>
                                 <td className="px-4 py-3">
                                     <div className="flex max-w-[220px] flex-wrap gap-1">
-                                        {item.suggestedActions.map((action) => (
+                                        {[item.nextRecommendedAction, ...item.suggestedActions.filter((action) => action !== item.nextRecommendedAction)].slice(0, 4).map((action) => (
                                             <span key={`${item.id}:action:${action.toLowerCase().replaceAll(" ", "-")}:${item.paymentDueDate}`} className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-700">{action}</span>
                                         ))}
                                     </div>
+                                </td>
+                                <td className="px-4 py-3 font-bold text-slate-600">
+                                    {item.source === "vacated_debt" ? (
+                                        <>
+                                            <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-700">Vacated</span>
+                                            <p className="mt-1 text-xs text-slate-500">{item.recoveryStatus ?? "Pending"} · {item.landlordDeductionStatus ?? "No deduction"}</p>
+                                        </>
+                                    ) : item.clearedDate ? `Cleared ${item.clearedDate}` : "Active room"}
                                 </td>
                                 <td className="px-4 py-3">
                                     <div className="flex flex-wrap gap-1.5">
@@ -427,7 +544,7 @@ function FilterSelect({ label, onChange, options, value }: { label: string; onCh
     );
 }
 
-function RiskCard({ hint, icon, label, tone, value }: { hint: string; icon: React.ReactNode; label: string; tone: "red" | "amber" | "purple" | "slate"; value: string }) {
+function RiskCard({ hint, icon, label, onClick, tone, value }: { hint: string; icon: React.ReactNode; label: string; onClick?: () => void; tone: "red" | "amber" | "purple" | "slate"; value: string }) {
     const toneClass = {
         red: "border-rose-200 bg-rose-50 text-rose-800",
         amber: "border-amber-200 bg-amber-50 text-amber-800",
@@ -435,14 +552,14 @@ function RiskCard({ hint, icon, label, tone, value }: { hint: string; icon: Reac
         slate: "border-slate-200 bg-white text-slate-800",
     }[tone];
     return (
-        <div className={`rounded-[24px] border p-4 shadow-xl shadow-slate-950/10 ${toneClass}`}>
+        <button type="button" onClick={onClick} className={`min-h-[132px] rounded-[24px] border p-4 text-left shadow-xl shadow-slate-950/10 transition hover:-translate-y-0.5 hover:shadow-2xl ${toneClass}`}>
             <div className="flex items-center justify-between gap-3">
                 <p className="text-xs font-black uppercase tracking-wide opacity-75">{label}</p>
                 {icon}
             </div>
             <p className="mt-3 break-words text-xl font-black leading-tight">{value}</p>
             <p className="mt-1 text-xs font-bold opacity-70">{hint}</p>
-        </div>
+        </button>
     );
 }
 

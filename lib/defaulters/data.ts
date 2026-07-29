@@ -15,6 +15,42 @@ type PropertyRow = Database["public"]["Tables"]["properties"]["Row"];
 type LandlordRow = Database["public"]["Tables"]["landlords"]["Row"];
 type CollectionRow = Database["public"]["Tables"]["collections"]["Row"];
 type PromiseRow = Database["public"]["Tables"]["promises"]["Row"];
+type CollectionActionRow = Database["public"]["Tables"]["collection_actions"]["Row"];
+type CollectorAssignmentRow = Database["public"]["Tables"]["collector_assignments"]["Row"];
+type UserRow = Database["public"]["Tables"]["users"]["Row"];
+
+type VacatedTenantDebtRow = {
+    id: string;
+    company_id: string | null;
+    office_id: string | null;
+    property_id: string | null;
+    landlord_id: string | null;
+    tenant_id: string | null;
+    room_id: string | null;
+    tenant_name: string | null;
+    room_number: string | null;
+    tenant_phone: string | null;
+    original_amount: number | string | null;
+    recovered_amount: number | string | null;
+    remaining_amount: number | string | null;
+    final_outstanding_balance?: number | string | null;
+    recovery_status: string | null;
+    landlord_deduction_status?: string | null;
+    vacate_date: string | null;
+    created_at: string | null;
+    updated_at?: string | null;
+};
+
+type LandlordDebtDeductionRow = {
+    id: string;
+    vacated_tenant_debt_id: string | null;
+    tenant_id: string | null;
+    landlord_id: string | null;
+    status: string | null;
+    amount: number | string | null;
+    applied_amount: number | string | null;
+    created_at: string | null;
+};
 
 function amount(value: unknown) {
     const number = Number(value ?? 0);
@@ -27,6 +63,16 @@ function dateOnly(date = new Date()) {
 
 function firstOfCurrentMonth(now = new Date()) {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
+function addMonths(date: Date, months: number) {
+    const next = new Date(date);
+    next.setMonth(next.getMonth() + months);
+    return next;
+}
+
+function monthKey(date: Date) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function dayFromDate(value: string | null | undefined) {
@@ -52,6 +98,24 @@ function daysBetween(start: string, end = new Date()) {
     return Math.max(0, Math.floor((endDate.getTime() - startDate.getTime()) / 86_400_000));
 }
 
+function liveOutstanding(tenant: TenantRow, room: RoomRow | null | undefined) {
+    const tenantBalance = amount(tenant.balance);
+    if (tenantBalance > 0 || tenant.balance === 0) return Math.max(0, tenantBalance);
+    return Math.max(0, amount(room?.outstanding_balance));
+}
+
+function estimateUnpaidPeriods(outstandingBalance: number, monthlyRent: number) {
+    if (outstandingBalance <= 0) return 0;
+    if (monthlyRent <= 0) return 1;
+    return Math.max(1, Math.ceil(outstandingBalance / monthlyRent));
+}
+
+function oldestUnpaidPeriod(input: { paymentDueDate: string; unpaidPeriods: number }) {
+    const due = new Date(`${input.paymentDueDate}T00:00:00`);
+    if (Number.isNaN(due.getTime())) return input.paymentDueDate.slice(0, 7);
+    return monthKey(addMonths(due, 1 - Math.max(1, input.unpaidPeriods)));
+}
+
 function isActiveTenant(value: string | null | undefined) {
     const status = String(value ?? "").toLowerCase();
     return !status || status === "active" || status === "occupied" || status === "current";
@@ -66,6 +130,30 @@ function isActiveRoom(value: string | null | undefined) {
 function isClosedPromise(value: string | null | undefined) {
     const status = String(value ?? "").toLowerCase();
     return ["fulfilled", "paid", "closed", "cancelled", "canceled"].includes(status);
+}
+
+function isClearedPromise(value: string | null | undefined) {
+    const status = String(value ?? "").toLowerCase();
+    return ["fulfilled", "paid", "closed"].includes(status);
+}
+
+function promiseStatus(openCount: number, failedCount: number, dueTodayCount: number) {
+    if (failedCount > 0) return "Broken/overdue";
+    if (dueTodayCount > 0) return "Due today";
+    if (openCount > 0) return "Open";
+    return "No promise";
+}
+
+function riskLevel(input: { daysDefaulted: number; failedPromiseCount: number; outstandingBalance: number; monthlyRent: number; source?: DefaulterItem["source"] }): DefaulterItem["riskLevel"] {
+    if (input.source === "vacated_debt") return "high";
+    if (input.failedPromiseCount > 0 || input.daysDefaulted >= 30 || input.outstandingBalance >= Math.max(500_000, input.monthlyRent * 2)) return "high";
+    if (input.daysDefaulted >= 8 || input.outstandingBalance >= Math.max(250_000, input.monthlyRent)) return "medium";
+    return "low";
+}
+
+function latestAction(a: CollectionActionRow | undefined, b: CollectionActionRow) {
+    if (!a) return b;
+    return String(b.created_at ?? "") > String(a.created_at ?? "") ? b : a;
 }
 
 function isCollectorContext(context: Awaited<ReturnType<typeof requireAuth>>) {
@@ -142,6 +230,29 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
         .select("*")
         .eq("company_id", companyId)
         .limit(10000);
+    let actionQuery = supabase
+        .from("collection_actions")
+        .select("*")
+        .eq("company_id", companyId)
+        .order("created_at", { ascending: false, nullsFirst: false })
+        .limit(10000);
+    let assignmentQuery = supabase
+        .from("collector_assignments")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("active", true)
+        .limit(10000);
+    let debtQuery = db
+        .from("vacated_tenant_debts")
+        .select("*")
+        .eq("company_id", companyId)
+        .gt("remaining_amount", 0)
+        .limit(10000);
+    let deductionQuery = db
+        .from("landlord_debt_deductions")
+        .select("*")
+        .eq("company_id", companyId)
+        .limit(10000);
 
     if (!isAdmin && isCollector) {
         tenantQuery = tenantQuery.in("office_id", collectorOfficeIds);
@@ -149,12 +260,20 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
         leaseQuery = leaseQuery.in("office_id", collectorOfficeIds);
         collectionQuery = collectionQuery.in("office_id", collectorOfficeIds);
         promiseQuery = promiseQuery.in("office_id", collectorOfficeIds);
+        actionQuery = actionQuery.in("office_id", collectorOfficeIds);
+        assignmentQuery = assignmentQuery.in("office_id", collectorOfficeIds);
+        debtQuery = debtQuery.in("office_id", collectorOfficeIds);
+        deductionQuery = deductionQuery.in("office_id", collectorOfficeIds);
     } else if (!isAdmin && activeOfficeId) {
         tenantQuery = tenantQuery.eq("office_id", activeOfficeId);
         roomQuery = roomQuery.eq("office_id", activeOfficeId);
         leaseQuery = leaseQuery.eq("office_id", activeOfficeId);
         collectionQuery = collectionQuery.eq("office_id", activeOfficeId);
         promiseQuery = promiseQuery.eq("office_id", activeOfficeId);
+        actionQuery = actionQuery.eq("office_id", activeOfficeId);
+        assignmentQuery = assignmentQuery.eq("office_id", activeOfficeId);
+        debtQuery = debtQuery.eq("office_id", activeOfficeId);
+        deductionQuery = deductionQuery.eq("office_id", activeOfficeId);
     }
 
     let allocationQuery = db
@@ -168,7 +287,7 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
         allocationQuery = allocationQuery.eq("office_id", activeOfficeId);
     }
 
-    const [tenantsResult, roomsResult, leasesResult, officesResult, propertiesResult, landlordsResult, collectionsResult, promisesResult, allocationRows] = await Promise.all([
+    const [tenantsResult, roomsResult, leasesResult, officesResult, propertiesResult, landlordsResult, collectionsResult, promisesResult, actionsResult, assignmentsResult, usersResult, debtRows, deductionRows, allocationRows] = await Promise.all([
         tenantQuery,
         roomQuery,
         leaseQuery,
@@ -177,10 +296,15 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
         supabase.from("landlords").select("*").eq("company_id", companyId),
         collectionQuery,
         promiseQuery,
+        actionQuery,
+        assignmentQuery,
+        supabase.from("users").select("id, full_name, account_type, default_office_id").eq("company_id", companyId),
+        safeRows(debtQuery),
+        safeRows(deductionQuery),
         safeRows(allocationQuery),
     ]);
 
-    for (const result of [tenantsResult, roomsResult, leasesResult, officesResult, propertiesResult, landlordsResult, collectionsResult, promisesResult]) {
+    for (const result of [tenantsResult, roomsResult, leasesResult, officesResult, propertiesResult, landlordsResult, collectionsResult, promisesResult, actionsResult, assignmentsResult, usersResult]) {
         if (result.error) throw new Error(result.error.message);
     }
 
@@ -192,14 +316,15 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
     const landlords = (landlordsResult.data ?? []) as LandlordRow[];
     const collections = (collectionsResult.data ?? []) as CollectionRow[];
     const promises = (promisesResult.data ?? []) as PromiseRow[];
-    const advanceAllocationByTenant = new Map<string, number>();
+    const actions = (actionsResult.data ?? []) as CollectionActionRow[];
+    const assignments = (assignmentsResult.data ?? []) as CollectorAssignmentRow[];
+    const users = (usersResult.data ?? []) as Pick<UserRow, "id" | "full_name" | "account_type" | "default_office_id">[];
+    const vacatedDebts = debtRows as VacatedTenantDebtRow[];
+    const deductions = deductionRows as LandlordDebtDeductionRow[];
     const currentAllocationByTenant = new Map<string, number>();
     for (const allocation of allocationRows as Array<Record<string, unknown>>) {
         const tenantId = String(allocation.tenant_id ?? "");
         if (!tenantId) continue;
-        if (String(allocation.allocation_type) === "advance_month") {
-            advanceAllocationByTenant.set(tenantId, (advanceAllocationByTenant.get(tenantId) ?? 0) + amount(allocation.amount_allocated));
-        }
         if (String(allocation.allocation_type) === "current_month") {
             currentAllocationByTenant.set(tenantId, (currentAllocationByTenant.get(tenantId) ?? 0) + amount(allocation.amount_allocated));
         }
@@ -209,6 +334,7 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
     const officeById = new Map(offices.map((office) => [office.id, office]));
     const propertyById = new Map(properties.map((property) => [property.id, property]));
     const landlordById = new Map(landlords.map((landlord) => [landlord.id, landlord]));
+    const userById = new Map(users.map((user) => [user.id, user]));
     const activeLeaseByTenant = new Map<string, LeaseRow>();
     const activeLeaseByRoom = new Map<string, LeaseRow>();
 
@@ -230,6 +356,8 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
 
     const openPromiseCountByTenant = new Map<string, number>();
     const failedPromiseCountByTenant = new Map<string, number>();
+    const promisesDueTodayByTenant = new Map<string, number>();
+    const collectorByTenant = new Map<string, string>();
     for (const promise of promises) {
         if (!promise.tenant_id) continue;
         const status = String(promise.status ?? "").toLowerCase();
@@ -240,6 +368,39 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
         if (promisedDate && promisedDate < dateOnly(now) && !isClosedPromise(status)) {
             failedPromiseCountByTenant.set(promise.tenant_id, (failedPromiseCountByTenant.get(promise.tenant_id) ?? 0) + 1);
         }
+        if (promisedDate === dateOnly(now) && !isClearedPromise(status)) {
+            promisesDueTodayByTenant.set(promise.tenant_id, (promisesDueTodayByTenant.get(promise.tenant_id) ?? 0) + 1);
+        }
+        if (promise.assigned_staff && !collectorByTenant.has(promise.tenant_id)) {
+            collectorByTenant.set(promise.tenant_id, userById.get(promise.assigned_staff)?.full_name ?? promise.entered_by_name ?? "Assigned collector");
+        }
+    }
+
+    for (const assignment of assignments) {
+        if (!assignment.tenant_id) continue;
+        if (!collectorByTenant.has(assignment.tenant_id)) {
+            collectorByTenant.set(assignment.tenant_id, userById.get(assignment.collector_user_id)?.full_name ?? "Assigned collector");
+        }
+    }
+
+    for (const collection of collections) {
+        if (!collection.tenant_id || collectorByTenant.has(collection.tenant_id)) continue;
+        if (collection.collector_id) collectorByTenant.set(collection.tenant_id, userById.get(collection.collector_id)?.full_name ?? collection.entered_by_name ?? "Collector recorded payment");
+    }
+
+    const lastActionByTenant = new Map<string, CollectionActionRow>();
+    for (const action of actions) {
+        if (!action.tenant_id) continue;
+        lastActionByTenant.set(action.tenant_id, latestAction(lastActionByTenant.get(action.tenant_id), action));
+    }
+
+    const deductionStatusByDebt = new Map<string, string>();
+    const deductionStatusByTenant = new Map<string, string>();
+    for (const deduction of deductions) {
+        const remaining = Math.max(0, amount(deduction.amount) - amount(deduction.applied_amount));
+        const status = `${String(deduction.status ?? "pending").replaceAll("_", " ")}${remaining > 0 ? ` (${Math.round(remaining).toLocaleString()} remaining)` : ""}`;
+        if (deduction.vacated_tenant_debt_id) deductionStatusByDebt.set(deduction.vacated_tenant_debt_id, status);
+        if (deduction.tenant_id && !deductionStatusByTenant.has(deduction.tenant_id)) deductionStatusByTenant.set(deduction.tenant_id, status);
     }
 
     const defaulters: DefaulterItem[] = [];
@@ -250,19 +411,14 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
         if (!room || !isActiveRoom(room.status)) continue;
 
         const monthlyRent = amount(lease?.monthly_rent ?? tenant.monthly_rent ?? room.monthly_rent);
-        const prepaidForCurrentMonth = advanceAllocationByTenant.get(tenant.id) ?? 0;
-        const outstandingBalance = Math.max(0, amount(tenant.balance ?? room.outstanding_balance) - prepaidForCurrentMonth);
+        const outstandingBalance = liveOutstanding(tenant, room);
         const currentMonthPaid = currentAllocationByTenant.get(tenant.id) ?? Math.min(currentMonthPaidByTenant.get(tenant.id) ?? 0, monthlyRent);
         if (outstandingBalance <= 0) continue;
 
-        const billingDay = amount(lease?.billing_day);
+        const billingDay = amount(lease?.billing_day ?? tenant.billing_day);
         const dueSource: DefaulterItem["dueSource"] = billingDay > 0 ? "billing_day" : lease?.start_date ? "move_in_date" : "default_first";
         const paymentDueDay = billingDay > 0 ? billingDay : lease?.start_date ? dayFromDate(lease.start_date) : 1;
         const paymentDueDate = dueDateForDay(paymentDueDay, now);
-        if (dateOnly(now) <= paymentDueDate) continue;
-
-        const isCurrentMonthUnpaidOrPartial = currentMonthPaid < monthlyRent || outstandingBalance > 0;
-        if (!isCurrentMonthUnpaidOrPartial) continue;
 
         const office = (room.office_id ? officeById.get(room.office_id) : null) ?? (tenant.office_id ? officeById.get(tenant.office_id) : null) ?? null;
         const property = (room.property_id ? propertyById.get(room.property_id) : null) ?? (tenant.property_id ? propertyById.get(tenant.property_id) : null) ?? null;
@@ -270,6 +426,10 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
         const lastPayment = latestPaymentByTenant.get(tenant.id);
         const daysDefaulted = daysBetween(paymentDueDate, now);
         const failedPromiseCount = failedPromiseCountByTenant.get(tenant.id) ?? 0;
+        const openPromiseCount = openPromiseCountByTenant.get(tenant.id) ?? 0;
+        const dueTodayCount = promisesDueTodayByTenant.get(tenant.id) ?? 0;
+        const unpaidPeriods = estimateUnpaidPeriods(outstandingBalance, monthlyRent);
+        const lastAction = lastActionByTenant.get(tenant.id);
         const suggestedActions = suggestActions({
             daysDefaulted,
             failedPromiseCount,
@@ -277,9 +437,11 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
             monthlyRent,
             currentMonthPaid,
         });
+        const nextRecommendedAction = suggestedActions[0] ?? "Review account";
 
         defaulters.push({
             id: `${tenant.id}-${room.id}`,
+            source: "active_tenant",
             tenantId: tenant.id,
             roomId: room.id,
             roomNumber: room.room_number ?? "Unnumbered",
@@ -293,6 +455,8 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
             location: propertyLocation(property),
             monthlyRent,
             outstandingBalance,
+            oldestUnpaidPeriod: oldestUnpaidPeriod({ paymentDueDate, unpaidPeriods }),
+            unpaidPeriods,
             paymentDueDay,
             paymentDueDate,
             dueSource,
@@ -300,22 +464,159 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
             monthsDefaulted: Math.floor(daysDefaulted / 30),
             lastPaymentDate: lastPayment?.payment_date ?? lastPayment?.paid_at?.slice(0, 10) ?? null,
             lastPaymentAmount: amount(lastPayment?.amount_paid ?? lastPayment?.amount),
-            openPromiseCount: openPromiseCountByTenant.get(tenant.id) ?? 0,
+            promiseStatus: promiseStatus(openPromiseCount, failedPromiseCount, dueTodayCount),
+            openPromiseCount,
             failedPromiseCount,
             currentMonthPaid,
             isPartialPayer: currentMonthPaid > 0 && outstandingBalance > 0,
+            collectorAssigned: collectorByTenant.get(tenant.id) ?? "Unassigned",
+            riskLevel: riskLevel({ daysDefaulted, failedPromiseCount, outstandingBalance, monthlyRent }),
+            lastFollowUp: lastAction?.created_at?.slice(0, 10) ?? null,
+            nextRecommendedAction,
+            clearedDate: null,
+            recoveryStatus: null,
+            landlordDeductionStatus: null,
             suggestedActions,
         });
     }
 
+    for (const debt of vacatedDebts) {
+        const rawRemaining = debt.remaining_amount == null ? amount(debt.final_outstanding_balance ?? debt.original_amount) - amount(debt.recovered_amount) : amount(debt.remaining_amount);
+        const outstandingBalance = Math.max(0, rawRemaining);
+        if (outstandingBalance <= 0) continue;
+        const room = debt.room_id ? roomById.get(debt.room_id) : null;
+        const tenant = debt.tenant_id ? tenants.find((row) => row.id === debt.tenant_id) ?? null : null;
+        const office = (debt.office_id ? officeById.get(debt.office_id) : null) ?? (room?.office_id ? officeById.get(room.office_id) : null) ?? null;
+        const property = (debt.property_id ? propertyById.get(debt.property_id) : null) ?? (room?.property_id ? propertyById.get(room.property_id) : null) ?? null;
+        const landlordId = debt.landlord_id ?? room?.landlord_id ?? null;
+        const landlord = landlordId ? landlordById.get(landlordId) ?? null : null;
+        const monthlyRent = amount(room?.monthly_rent ?? tenant?.monthly_rent);
+        const paymentDueDate = debt.vacate_date ?? debt.created_at?.slice(0, 10) ?? firstOfCurrentMonth(now);
+        const daysDefaulted = daysBetween(paymentDueDate, now);
+        const unpaidPeriods = estimateUnpaidPeriods(outstandingBalance, monthlyRent);
+        const lastPayment = debt.tenant_id ? latestPaymentByTenant.get(debt.tenant_id) : undefined;
+        const failedPromiseCount = debt.tenant_id ? failedPromiseCountByTenant.get(debt.tenant_id) ?? 0 : 0;
+        const openPromiseCount = debt.tenant_id ? openPromiseCountByTenant.get(debt.tenant_id) ?? 0 : 0;
+        const dueTodayCount = debt.tenant_id ? promisesDueTodayByTenant.get(debt.tenant_id) ?? 0 : 0;
+        const lastAction = debt.tenant_id ? lastActionByTenant.get(debt.tenant_id) : undefined;
+        const suggestedActions = ["Recover vacated debt", "Review landlord deduction", "Escalate to Admin"];
+
+        defaulters.push({
+            id: `vacated-${debt.id}`,
+            source: "vacated_debt",
+            tenantId: debt.tenant_id ?? debt.id,
+            roomId: debt.room_id,
+            roomNumber: debt.room_number ?? room?.room_number ?? "Former room",
+            tenantName: debt.tenant_name ?? tenant?.full_name ?? "Vacated tenant",
+            tenantPhone: debt.tenant_phone ?? tenant?.phone ?? tenant?.alternative_phone ?? null,
+            officeId: debt.office_id ?? room?.office_id ?? tenant?.office_id ?? null,
+            officeName: officeName(office),
+            landlordId,
+            landlordName: landlord?.full_name ?? "No landlord",
+            propertyName: propertyName(property),
+            location: propertyLocation(property),
+            monthlyRent,
+            outstandingBalance,
+            oldestUnpaidPeriod: oldestUnpaidPeriod({ paymentDueDate, unpaidPeriods }),
+            unpaidPeriods,
+            paymentDueDay: dayFromDate(paymentDueDate),
+            paymentDueDate,
+            dueSource: "move_in_date",
+            daysDefaulted,
+            monthsDefaulted: Math.floor(daysDefaulted / 30),
+            lastPaymentDate: lastPayment?.payment_date ?? lastPayment?.paid_at?.slice(0, 10) ?? null,
+            lastPaymentAmount: amount(lastPayment?.amount_paid ?? lastPayment?.amount),
+            promiseStatus: promiseStatus(openPromiseCount, failedPromiseCount, dueTodayCount),
+            openPromiseCount,
+            failedPromiseCount,
+            currentMonthPaid: 0,
+            isPartialPayer: false,
+            collectorAssigned: debt.tenant_id ? collectorByTenant.get(debt.tenant_id) ?? "Unassigned" : "Unassigned",
+            riskLevel: "high",
+            lastFollowUp: lastAction?.created_at?.slice(0, 10) ?? null,
+            nextRecommendedAction: suggestedActions[0],
+            clearedDate: null,
+            recoveryStatus: debt.recovery_status ?? "pending",
+            landlordDeductionStatus: debt.landlord_deduction_status ?? deductionStatusByDebt.get(debt.id) ?? (debt.tenant_id ? deductionStatusByTenant.get(debt.tenant_id) : null) ?? "Pending review",
+            suggestedActions,
+        });
+    }
+
+    for (const tenant of tenants) {
+        const room = tenant.room_id ? roomById.get(tenant.room_id) : null;
+        if (!isActiveTenant(tenant.status) || liveOutstanding(tenant, room) > 0) continue;
+        const lastPayment = latestPaymentByTenant.get(tenant.id);
+        const clearedDate = lastPayment?.payment_date ?? tenant.updated_at?.slice(0, 10) ?? null;
+        if (clearedDate !== dateOnly(now)) continue;
+        const lease = activeLeaseByTenant.get(tenant.id);
+        const actualRoom = (lease?.room_id ? roomById.get(lease.room_id) : null) ?? room ?? null;
+        const office = (actualRoom?.office_id ? officeById.get(actualRoom.office_id) : null) ?? (tenant.office_id ? officeById.get(tenant.office_id) : null) ?? null;
+        const property = (actualRoom?.property_id ? propertyById.get(actualRoom.property_id) : null) ?? (tenant.property_id ? propertyById.get(tenant.property_id) : null) ?? null;
+        const landlord = actualRoom?.landlord_id ? landlordById.get(actualRoom.landlord_id) ?? null : null;
+        const monthlyRent = amount(lease?.monthly_rent ?? tenant.monthly_rent ?? actualRoom?.monthly_rent);
+        const paymentDueDate = dueDateForDay(amount(lease?.billing_day ?? tenant.billing_day) || 1, now);
+
+        defaulters.push({
+            id: `cleared-${tenant.id}`,
+            source: "recently_cleared",
+            tenantId: tenant.id,
+            roomId: actualRoom?.id ?? null,
+            roomNumber: actualRoom?.room_number ?? "Unnumbered",
+            tenantName: tenant.full_name ?? "Unknown tenant",
+            tenantPhone: tenant.phone ?? tenant.alternative_phone,
+            officeId: actualRoom?.office_id ?? tenant.office_id,
+            officeName: officeName(office),
+            landlordId: actualRoom?.landlord_id ?? null,
+            landlordName: landlord?.full_name ?? "No landlord",
+            propertyName: propertyName(property),
+            location: propertyLocation(property),
+            monthlyRent,
+            outstandingBalance: 0,
+            oldestUnpaidPeriod: paymentDueDate.slice(0, 7),
+            unpaidPeriods: 0,
+            paymentDueDay: dayFromDate(paymentDueDate),
+            paymentDueDate,
+            dueSource: "default_first",
+            daysDefaulted: 0,
+            monthsDefaulted: 0,
+            lastPaymentDate: lastPayment?.payment_date ?? lastPayment?.paid_at?.slice(0, 10) ?? null,
+            lastPaymentAmount: amount(lastPayment?.amount_paid ?? lastPayment?.amount),
+            promiseStatus: "Cleared",
+            openPromiseCount: 0,
+            failedPromiseCount: 0,
+            currentMonthPaid: currentAllocationByTenant.get(tenant.id) ?? 0,
+            isPartialPayer: false,
+            collectorAssigned: collectorByTenant.get(tenant.id) ?? "Unassigned",
+            riskLevel: "low",
+            lastFollowUp: lastActionByTenant.get(tenant.id)?.created_at?.slice(0, 10) ?? null,
+            nextRecommendedAction: "Keep in history",
+            clearedDate,
+            recoveryStatus: null,
+            landlordDeductionStatus: null,
+            suggestedActions: ["Keep in history"],
+        });
+    }
+
     defaulters.sort((a, b) => b.daysDefaulted - a.daysDefaulted || b.outstandingBalance - a.outstandingBalance);
-    const assistant = buildAssistant(defaulters);
+    const qualifyingCount = tenants.filter((tenant) => {
+        if (!isActiveTenant(tenant.status)) return false;
+        const lease = activeLeaseByTenant.get(tenant.id);
+        const room = (lease?.room_id ? roomById.get(lease.room_id) : null) ?? (tenant.room_id ? roomById.get(tenant.room_id) : null);
+        return Boolean(room && isActiveRoom(room.status) && liveOutstanding(tenant, room) > 0);
+    }).length + vacatedDebts.filter((debt) => {
+        const rawRemaining = debt.remaining_amount == null ? amount(debt.final_outstanding_balance ?? debt.original_amount) - amount(debt.recovered_amount) : amount(debt.remaining_amount);
+        return Math.max(0, rawRemaining) > 0;
+    }).length;
+    const displayedCount = defaulters.filter((item) => item.source !== "recently_cleared" && item.outstandingBalance > 0).length;
+    const integrityAlerts = qualifyingCount === displayedCount ? [] : [`Data integrity alert: ${qualifyingCount.toLocaleString()} live positive-balance accounts qualify, but ${displayedCount.toLocaleString()} are displayed. Refresh or run defaulter reconciliation before collections.`];
+    const activeDefaulters = defaulters.filter((item) => item.source !== "recently_cleared" && item.outstandingBalance > 0);
+    const assistant = buildAssistant(activeDefaulters);
 
     void syncDefaulterNotifications({
         companyId,
         currentDate: dateOnly(now),
         db,
-        defaulters,
+        defaulters: activeDefaulters,
     }).catch((error) => {
         console.warn("Defaulter notifications could not sync:", error instanceof Error ? error.message : error);
     });
@@ -327,7 +628,10 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
         isCollector,
         offices: offices.map((office) => ({ id: office.id, name: officeName(office) })).sort((a, b) => a.name.localeCompare(b.name)),
         landlords: landlords.map((landlord) => ({ id: landlord.id, name: landlord.full_name ?? "No landlord" })).sort((a, b) => a.name.localeCompare(b.name)),
+        properties: properties.map((property) => ({ id: property.id, name: propertyName(property) })).sort((a, b) => a.name.localeCompare(b.name)),
+        collectors: [...new Map([...collectorByTenant.values()].map((name) => [name, { id: name, name }])).values()].sort((a, b) => a.name.localeCompare(b.name)),
         defaulters,
+        integrityAlerts,
         assistant,
         kpis: buildKpis(defaulters),
         generatedAt: new Date().toISOString(),
@@ -336,21 +640,29 @@ export async function getDefaultersPageData(options: { admin?: boolean } = {}): 
 }
 
 function buildKpis(items: DefaulterItem[]): DefaultersKpis {
+    const activeItems = items.filter((item) => item.source !== "recently_cleared" && item.outstandingBalance > 0);
     const officeRisk = new Map<string, { count: number; outstanding: number }>();
-    for (const item of items) {
+    for (const item of activeItems) {
         const current = officeRisk.get(item.officeName) ?? { count: 0, outstanding: 0 };
         current.count += 1;
         current.outstanding += item.outstandingBalance;
         officeRisk.set(item.officeName, current);
     }
     const highestRiskOffice = [...officeRisk.entries()].sort((a, b) => b[1].outstanding - a[1].outstanding || b[1].count - a[1].count)[0]?.[0] ?? "No defaulters";
-    const highestOutstandingTenant = [...items].sort((a, b) => b.outstandingBalance - a.outstandingBalance)[0]?.tenantName ?? "No defaulters";
+    const highestOutstandingTenant = [...activeItems].sort((a, b) => b.outstandingBalance - a.outstandingBalance)[0]?.tenantName ?? "No defaulters";
+    const oldestOutstandingAccount = [...activeItems].sort((a, b) => b.daysDefaulted - a.daysDefaulted || b.outstandingBalance - a.outstandingBalance)[0];
     return {
-        totalDefaulters: items.length,
-        totalOutstanding: items.reduce((total, item) => total + item.outstandingBalance, 0),
-        defaultedOneToSevenDays: items.filter((item) => item.daysDefaulted >= 1 && item.daysDefaulted <= 7).length,
-        defaultedEightToThirtyDays: items.filter((item) => item.daysDefaulted >= 8 && item.daysDefaulted <= 30).length,
-        defaultedOneMonthPlus: items.filter((item) => item.daysDefaulted >= 30).length,
+        totalDefaulters: activeItems.length,
+        totalOutstanding: activeItems.reduce((total, item) => total + item.outstandingBalance, 0),
+        defaultersAddedToday: activeItems.filter((item) => item.daysDefaulted <= 1).length,
+        clearedToday: items.filter((item) => item.source === "recently_cleared" && item.clearedDate === dateOnly()).length,
+        highRiskDefaulters: activeItems.filter((item) => item.riskLevel === "high").length,
+        promisesDueToday: activeItems.filter((item) => item.promiseStatus === "Due today").length,
+        vacatedWithDebt: activeItems.filter((item) => item.source === "vacated_debt").length,
+        oldestOutstandingAccount: oldestOutstandingAccount ? `${oldestOutstandingAccount.tenantName} (${oldestOutstandingAccount.daysDefaulted} days)` : "No defaulters",
+        defaultedOneToSevenDays: activeItems.filter((item) => item.daysDefaulted >= 1 && item.daysDefaulted <= 7).length,
+        defaultedEightToThirtyDays: activeItems.filter((item) => item.daysDefaulted >= 8 && item.daysDefaulted <= 30).length,
+        defaultedOneMonthPlus: activeItems.filter((item) => item.daysDefaulted >= 30).length,
         highestRiskOffice,
         highestOutstandingTenant,
     };
@@ -539,7 +851,10 @@ function emptyData(isAdmin: boolean, isCollector: boolean, currentDate: string):
         isCollector,
         offices: [],
         landlords: [],
+        properties: [],
+        collectors: [],
         defaulters: [],
+        integrityAlerts: [],
         assistant: buildAssistant([]),
         kpis: buildKpis([]),
         generatedAt: new Date().toISOString(),
