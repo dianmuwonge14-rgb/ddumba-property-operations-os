@@ -836,6 +836,20 @@ export async function searchFastPaymentTenants(query: string, paymentDate?: stri
 
     const paymentMonth = selectedMonthStart(paymentDate);
     const rpcClient = supabase as unknown as DynamicDb;
+    const lightSearch = rpcClient.rpc
+        ? await rpcClient.rpc("search_payment_rooms_lightweight", {
+            p_company_id: companyId,
+            p_limit: canSearchAllOffices ? 20 : 10,
+            p_office_id: searchOfficeId,
+            p_query: term,
+            p_search_all: canSearchAllOffices,
+        })
+        : { data: null, error: { message: "RPC client unavailable." } };
+
+    if (!lightSearch.error && lightSearch.data) {
+        return lightSearch.data.map((row) => compactPaymentSearchRowToTenantResult(row, paymentMonth));
+    }
+
     const fastSearch = rpcClient.rpc
         ? await rpcClient.rpc("search_payment_tenants_fast", {
             p_company_id: companyId,

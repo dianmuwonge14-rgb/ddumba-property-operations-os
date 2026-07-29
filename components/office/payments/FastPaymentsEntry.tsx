@@ -337,7 +337,7 @@ export default function FastPaymentsEntry({
                     if (requestSeqRef.current === requestSeq && !controller.signal.aborted) setSearching(false);
                 }
             })();
-        }, 250);
+        }, 200);
 
         return () => clearTimeout(timer);
     }, [adminSearchOfficeId, isAdmin, paymentDate, roomQuery]);
@@ -1043,13 +1043,22 @@ export default function FastPaymentsEntry({
 		                                <input
 		                                    ref={roomInputRef}
 		                                    value={roomQuery}
-		                                    onChange={(event) => {
+	                                    onChange={(event) => {
                                                     requestSeqRef.current += 1;
                                                     abortRef.current?.abort();
 		                                        setRoomQuery(event.target.value);
 		                                        setSelectedTenant(null);
 		                                        setRoomMatchesOpen(true);
 	                                    }}
+                                        onKeyDown={(event) => {
+                                            if (event.key === "Enter") {
+                                                const exactLookup = roomQuery.trim();
+                                                if (exactLookup.length >= 2) {
+                                                    event.preventDefault();
+                                                    void reloadRoomDetails(exactLookup);
+                                                }
+                                            }
+                                        }}
 	                                    placeholder="Type room, tenant name, or phone"
 	                                    className="h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-12 pr-4 text-2xl font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
 	                                />
