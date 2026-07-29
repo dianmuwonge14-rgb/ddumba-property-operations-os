@@ -442,16 +442,16 @@ export default function CashPositionCentre({ data }: Props) {
                 </header>
 
                 <section className="grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3">
-                    {netKpis.map((kpi) => (
-                        <KpiButton key={kpi.label} kpi={kpi} spotlight={spotlight} syncedAt={syncedAt} onClick={() => handleKpiClick(kpi.label)} />
+                    {netKpis.map((kpi, index) => (
+                        <KpiButton key={`${kpi.label}-${index}`} kpi={kpi} spotlight={spotlight} syncedAt={syncedAt} onClick={() => handleKpiClick(kpi.label)} />
                     ))}
                 </section>
 
                 <section className="rounded-[30px] border border-white/10 bg-white/[0.055] p-4 shadow-2xl shadow-black/25">
                     <PanelHeading icon={<LineChart size={18} />} title="Gross Cash Movement and Control" subtitle="Gross cash cards remain available after the net cash position." />
                     <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-3">
-                        {grossKpis.map((kpi) => (
-                            <KpiButton key={kpi.label} kpi={kpi} spotlight={spotlight} syncedAt={syncedAt} onClick={() => handleKpiClick(kpi.label)} />
+                        {grossKpis.map((kpi, index) => (
+                            <KpiButton key={`${kpi.label}-${index}`} kpi={kpi} spotlight={spotlight} syncedAt={syncedAt} onClick={() => handleKpiClick(kpi.label)} />
                         ))}
                     </div>
                 </section>
@@ -908,8 +908,8 @@ function PremiumChart({ icon, mode = "bars", points, title }: { icon: ReactNode;
         <section className="rounded-[30px] border border-white/10 bg-white/[0.055] p-4 shadow-2xl shadow-black/25">
             <PanelHeading icon={icon} title={title} subtitle="Hover-ready executive chart with compact legends and UGX formatting." />
             <div className={mode === "tiles" ? "mt-4 grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-3" : "mt-4 grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-3"}>
-                {points.map((point) => (
-                    <article key={point.label} title={`${point.label}: ${money(point.value)}`} className="group min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-slate-950/72 p-3 transition hover:-translate-y-0.5 hover:border-cyan-200/35 motion-reduce:transform-none">
+                {points.map((point, index) => (
+                    <article key={`${point.label}-${index}`} title={`${point.label}: ${money(point.value)}`} className="group min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-slate-950/72 p-3 transition hover:-translate-y-0.5 hover:border-cyan-200/35 motion-reduce:transform-none">
                         <div className="flex items-center justify-between gap-2">
                             <p className="min-w-0 break-words text-xs font-black text-slate-300">{point.label}</p>
                             <p className="min-w-0 break-words text-right text-xs font-black text-white">{money(point.value)}</p>

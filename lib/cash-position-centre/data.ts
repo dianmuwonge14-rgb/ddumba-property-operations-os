@@ -197,6 +197,58 @@ function chartTop(rows: CashPositionChartPoint[], limit = 8) {
     return [...rows].sort((a, b) => b.value - a.value).slice(0, limit);
 }
 
+function logCashPositionQueryError(input: {
+    details?: string | null;
+    endDate: string;
+    hint?: string | null;
+    message?: string | null;
+    name: string;
+    period: string | null;
+    startDate: string;
+    code?: string | null;
+}) {
+    console.error("Cash Position Centre query failed", {
+        code: input.code ?? null,
+        dateFrom: `${input.startDate}T00:00:00+03:00`,
+        dateTo: `${input.endDate}T23:59:59.999+03:00`,
+        details: input.details ?? null,
+        hint: input.hint ?? null,
+        message: input.message ?? null,
+        period: input.period,
+        query: input.name,
+    });
+}
+
+function assertRequiredQuery(name: string, result: { error?: any }, filters: ReturnType<typeof resolveFilters>) {
+    if (!result.error) return;
+    logCashPositionQueryError({
+        code: result.error.code,
+        details: result.error.details,
+        endDate: filters.endDate,
+        hint: result.error.hint,
+        message: result.error.message,
+        name,
+        period: filters.period,
+        startDate: filters.startDate,
+    });
+    throw new Error(`Cash Position required query failed: ${name}`);
+}
+
+function optionalRows(name: string, result: { data?: unknown[] | null; error?: any }, filters: ReturnType<typeof resolveFilters>): Row[] {
+    if (!result.error) return (result.data ?? []) as Row[];
+    logCashPositionQueryError({
+        code: result.error.code,
+        details: result.error.details,
+        endDate: filters.endDate,
+        hint: result.error.hint,
+        message: result.error.message,
+        name,
+        period: filters.period,
+        startDate: filters.startDate,
+    });
+    return [];
+}
+
 function buildInsights(input: {
     collectors: CashPositionCollectorRow[];
     offices: CashPositionOfficeRow[];
@@ -329,9 +381,14 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         db.from("security_deposit_register").select("id, office_id, liability_balance, cash_available, amount_used_by_company, amount_restored_by_company, company_shortfall, status").eq("company_id", companyId).limit(10000),
     ]);
 
-    for (const result of [officesResult, collectionsResult, expensesResult, cashAccountsResult, cashTransactionsResult, collectorProfilesResult, usersResult, securityResult]) {
-        if (result.error) throw new Error(result.error.message);
-    }
+    assertRequiredQuery("officeRowsResult", officesResult, filters);
+    assertRequiredQuery("collectionRowsResult", collectionsResult, filters);
+    assertRequiredQuery("expenseRowsResult", expensesResult, filters);
+    assertRequiredQuery("cashAccountRowsResult", cashAccountsResult, filters);
+    assertRequiredQuery("bankingAndHandoverRowsResult", cashTransactionsResult, filters);
+    assertRequiredQuery("collectorRowsResult", collectorProfilesResult, filters);
+    assertRequiredQuery("userRowsResult", usersResult, filters);
+    assertRequiredQuery("securityRowsResult", securityResult, filters);
 
     const offices = ((officesResult.data ?? []) as Row[])
         .filter((office) => !filters.officeId || office.id === filters.officeId)
@@ -441,24 +498,24 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         collectorCashByOffice.set(collector.officeId, (collectorCashByOffice.get(collector.officeId) ?? 0) + collector.cashInHand);
     }
 
-    const paymentIds = [...new Set(allCollections.map((row) => String(row.id ?? "")).filter(Boolean))];
-    const roomIds = [...new Set(allCollections.map((row) => String(row.room_id ?? "")).filter(Boolean))];
-    const tenantIds = [...new Set(allCollections.map((row) => String(row.tenant_id ?? "")).filter(Boolean))];
+    const enrichmentStartDate = filters.startDate < addDays(today, -6) ? filters.startDate : addDays(today, -6);
+    const enrichmentEndDate = filters.endDate > today ? filters.endDate : today;
+    const enrichmentCollections = allCollections.filter((row) => inRange(collectionDate(row), enrichmentStartDate, enrichmentEndDate));
+    const paymentIds = [...new Set(enrichmentCollections.map((row) => String(row.id ?? "")).filter(Boolean))];
+    const roomIds = [...new Set(enrichmentCollections.map((row) => String(row.room_id ?? "")).filter(Boolean))];
+    const tenantIds = [...new Set(enrichmentCollections.map((row) => String(row.tenant_id ?? "")).filter(Boolean))];
     const [receiptRowsResult, roomRowsResult, tenantRowsResult] = paymentIds.length
         ? await Promise.all([
             db.from("payment_receipts").select("id, company_id, office_id, payment_id, payment_type, receipt_number, status, issued_at, created_at").eq("company_id", companyId).eq("payment_type", "tenant_collection").in("payment_id", paymentIds).limit(10000),
-            roomIds.length ? db.from("rooms").select("id, room_number, room_label, unit_number, office_id").eq("company_id", companyId).in("id", roomIds).limit(10000) : Promise.resolve({ data: [], error: null }),
-            tenantIds.length ? db.from("tenants").select("id, full_name, name, first_name, last_name, phone, office_id").eq("company_id", companyId).in("id", tenantIds).limit(10000) : Promise.resolve({ data: [], error: null }),
+            roomIds.length ? db.from("rooms").select("id, room_number, office_id").eq("company_id", companyId).in("id", roomIds).limit(10000) : Promise.resolve({ data: [], error: null }),
+            tenantIds.length ? db.from("tenants").select("id, full_name, phone, office_id").eq("company_id", companyId).in("id", tenantIds).limit(10000) : Promise.resolve({ data: [], error: null }),
         ])
         : [
             { data: [], error: null },
             { data: [], error: null },
             { data: [], error: null },
         ];
-    for (const result of [receiptRowsResult, roomRowsResult, tenantRowsResult]) {
-        if (result.error) throw new Error(result.error.message);
-    }
-    const receiptRows = (receiptRowsResult.data ?? []) as Row[];
+    const receiptRows = optionalRows("receiptRowsResult", receiptRowsResult, filters);
     const receiptsByPayment = new Map<string, Row[]>();
     for (const receipt of receiptRows) {
         const paymentId = String(receipt.payment_id ?? "");
@@ -473,8 +530,8 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         if (activeRows.length > 1) receiptWarningsByPayment.set(paymentId, "More than one active receipt exists for this payment.");
         if (activeRows[0]) canonicalReceiptByPayment.set(paymentId, activeRows[0]);
     }
-    const roomById = new Map(((roomRowsResult.data ?? []) as Row[]).map((row) => [String(row.id), row]));
-    const tenantById = new Map(((tenantRowsResult.data ?? []) as Row[]).map((row) => [String(row.id), row]));
+    const roomById = new Map(optionalRows("roomRowsResult", roomRowsResult, filters).map((row) => [String(row.id), row]));
+    const tenantById = new Map(optionalRows("tenantRowsResult", tenantRowsResult, filters).map((row) => [String(row.id), row]));
 
     const buildReceiptBreakdown = (rows: Row[]): CashPositionReceiptBreakdownItem[] => distinctById(rows).map((row) => {
         const paymentId = String(row.id);
@@ -501,9 +558,9 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
             paymentMethod: String(row.payment_method ?? "unknown"),
             receiptId: receipt?.id ? String(receipt.id) : null,
             receiptNumber: receipt?.receipt_number ? String(receipt.receipt_number) : null,
-            roomNumber: String(room.room_number ?? room.room_label ?? room.unit_number ?? "Unassigned"),
+            roomNumber: String(room.room_number ?? "Unassigned"),
             status: String(row.status ?? "paid"),
-            tenantName: String(tenant.full_name ?? tenant.name ?? [tenant.first_name, tenant.last_name].filter(Boolean).join(" ") ?? "Unnamed Tenant"),
+            tenantName: String(tenant.full_name ?? "Unnamed Tenant"),
             viewReceiptHref: receipt?.id ? `/receipt-print/${encodeURIComponent(String(receipt.id))}` : null,
             warning,
         };

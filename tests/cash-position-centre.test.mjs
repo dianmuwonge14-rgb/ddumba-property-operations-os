@@ -6,6 +6,7 @@ const pageSource = readFileSync(new URL("../app/office/admin/cash-position/page.
 const dataSource = readFileSync(new URL("../lib/cash-position-centre/data.ts", import.meta.url), "utf8");
 const typesSource = readFileSync(new URL("../lib/cash-position-centre/types.ts", import.meta.url), "utf8");
 const componentSource = readFileSync(new URL("../components/office/cash-position/CashPositionCentre.tsx", import.meta.url), "utf8");
+const errorBoundarySource = readFileSync(new URL("../app/office/admin/cash-position/error.tsx", import.meta.url), "utf8");
 const expensesActionSource = readFileSync(new URL("../app/actions/expenses.ts", import.meta.url), "utf8");
 const expensesDataSource = readFileSync(new URL("../lib/expenses/data.ts", import.meta.url), "utf8");
 const expensesComponentSource = readFileSync(new URL("../components/office/expenses/ExpensesConsole.tsx", import.meta.url), "utf8");
@@ -111,6 +112,32 @@ test("cash position top daily card excludes carried-forward office cash", () => 
   assert.match(componentSource, /Net Cash Movement for Selected Period/);
   assert.match(componentSource, /Overall office cash position/);
   assert.match(componentSource, /Cash remaining from selected day/);
+});
+
+test("cash position data loader names query failures and uses production-safe enrichment columns", () => {
+  assert.match(dataSource, /logCashPositionQueryError/);
+  assert.match(dataSource, /assertRequiredQuery\("collectionRowsResult"/);
+  assert.match(dataSource, /assertRequiredQuery\("bankingAndHandoverRowsResult"/);
+  assert.match(dataSource, /optionalRows\("receiptRowsResult"/);
+  assert.match(dataSource, /optionalRows\("roomRowsResult"/);
+  assert.match(dataSource, /optionalRows\("tenantRowsResult"/);
+  assert.match(dataSource, /dateFrom/);
+  assert.match(dataSource, /dateTo/);
+  assert.match(dataSource, /select\("id, room_number, office_id"\)/);
+  assert.match(dataSource, /select\("id, full_name, phone, office_id"\)/);
+  assert.doesNotMatch(dataSource, /room_label/);
+  assert.doesNotMatch(dataSource, /unit_number/);
+  assert.doesNotMatch(dataSource, /first_name/);
+  assert.doesNotMatch(dataSource, /last_name/);
+  assert.match(dataSource, /enrichmentCollections/);
+});
+
+test("cash position route has a safe retryable error boundary", () => {
+  assert.match(errorBoundarySource, /Cash Position data could not be loaded/);
+  assert.match(errorBoundarySource, /Error reference ID/);
+  assert.match(errorBoundarySource, /Retry/);
+  assert.match(errorBoundarySource, /Return to Dashboard/);
+  assert.doesNotMatch(errorBoundarySource, /error\.message/);
 });
 
 test("cash position centre cards are responsive and action buttons are wired", () => {
