@@ -10,6 +10,7 @@ import type {
     ExpenseCategoryRow,
     ExpenseItem,
     ExpenseKpis,
+    ExpenseReportCollectionItem,
     ExpenseRow,
     ExpensesPageData,
     LandlordExpenseEditRequestItem,
@@ -32,10 +33,6 @@ function monthRange() {
     const start = new Date(now.getFullYear(), now.getMonth(), 1);
     const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
     return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
-}
-
-function dateOnly(value: string | null | undefined) {
-    return value?.slice(0, 10) || "";
 }
 
 function expenseStatus(expense: Record<string, unknown>) {
@@ -317,6 +314,7 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
             officeName: "No office",
             totals: { totalCollections: 0, totalExpenses: 0, remainingBalance: 0, expenseRows: 0, paymentRows: 0 },
             expenses: [],
+            collections: [],
         };
     }
 
@@ -365,6 +363,7 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
     const totalCollections = collections.reduce((total, collection) => total + Number(collection.amount_paid ?? collection.amount ?? 0), 0);
     const approvedExpenses = expenses.filter(isApprovedExpense);
     const totalExpenses = sumExpenses(approvedExpenses);
+    const collectionItems = hydrateCollectionItems(collections, usersResult.data ?? [], officeById);
 
     return {
         filters: resolved,
@@ -383,6 +382,7 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
             ...expense,
             officeName: expense.office_id ? officeById.get(expense.office_id) ?? null : null,
         }) as ExpenseItem),
+        collections: collectionItems,
     };
 }
 
@@ -471,6 +471,36 @@ function calculateKpis(
 
 function sumExpenses(expenses: ExpenseRow[]) {
     return expenses.reduce((total, expense) => total + Number(expense.amount ?? 0), 0);
+}
+
+function hydrateCollectionItems(
+    collections: CollectionRow[],
+    users: UserRow[],
+    officeById: Map<string, string>,
+): ExpenseReportCollectionItem[] {
+    const userById = new Map(users.map((user) => [user.id, user.full_name ?? user.email ?? "User"]));
+    return collections.map((collection) => {
+        const raw = collection as CollectionRow & Record<string, unknown>;
+        const officeId = typeof raw.office_id === "string" ? raw.office_id : null;
+        const recordedBy = typeof raw.recorded_by === "string"
+            ? raw.recorded_by
+            : typeof raw.submitted_by === "string"
+                ? raw.submitted_by
+                : typeof raw.created_by === "string"
+                    ? raw.created_by
+                    : "";
+        return {
+            ...collection,
+            amountValue: Number(raw.amount_paid ?? raw.amount ?? 0),
+            officeName: officeId ? officeById.get(officeId) ?? "Office" : null,
+            paymentDate: typeof raw.payment_date === "string" ? raw.payment_date : typeof raw.paid_at === "string" ? raw.paid_at.slice(0, 10) : typeof raw.created_at === "string" ? raw.created_at.slice(0, 10) : null,
+            paymentMethod: typeof raw.payment_method === "string" ? raw.payment_method : null,
+            receiptNumber: typeof raw.receipt_number === "string" ? raw.receipt_number : typeof raw.receipt_no === "string" ? raw.receipt_no : null,
+            recordedByName: userById.get(recordedBy) ?? null,
+            roomLabel: typeof raw.room_number === "string" ? raw.room_number : typeof raw.room_label === "string" ? raw.room_label : null,
+            tenantName: typeof raw.tenant_name === "string" ? raw.tenant_name : null,
+        };
+    });
 }
 
 function emptyData(): ExpensesPageData {

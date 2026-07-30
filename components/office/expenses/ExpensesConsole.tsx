@@ -73,6 +73,15 @@ type LandlordPaymentPreview = Awaited<ReturnType<typeof previewLandlordPaymentEx
 type ExpenseEntryMode = "landlord_payment" | "authorised" | "unauthorised";
 type AuthorisedExpenseType = "employee_lunch" | "airtime" | "internet" | "transport_kampala";
 type ExpenseModalMode = "view" | "edit" | "date" | "employee" | "history";
+type SummaryDrilldownKind = "collections" | "expenses";
+type RecordDatePreset = "today" | "yesterday" | "week" | "month" | "custom_date" | "custom_range" | "all_dates";
+type RecordTableFilters = {
+    datePreset: RecordDatePreset;
+    customDate: string;
+    startDate: string;
+    endDate: string;
+    officeId: string;
+};
 type LandlordEditModalState = {
     requestType: LandlordExpenseEditRequestType;
     landlord: LandlordEntryDetail;
@@ -122,6 +131,54 @@ const AUTHORISED_EXPENSES: Array<{ value: AuthorisedExpenseType; label: string; 
     { value: "internet", label: "Internet", amount: 110000 },
     { value: "transport_kampala", label: "Transport to Kampala", amount: 200000 },
 ];
+
+function defaultRecordTableFilters(): RecordTableFilters {
+    const value = today();
+    return {
+        customDate: value,
+        datePreset: "all_dates",
+        endDate: value,
+        officeId: "",
+        startDate: value,
+    };
+}
+
+function resolveRecordFilterRange(filters: RecordTableFilters) {
+    const todayValue = today();
+    if (filters.datePreset === "all_dates") return { label: "All Dates", start: null, end: null };
+    if (filters.datePreset === "today") return { label: "Today", start: todayValue, end: todayValue };
+    if (filters.datePreset === "yesterday") {
+        const value = addDays(todayValue, -1);
+        return { label: "Yesterday", start: value, end: value };
+    }
+    if (filters.datePreset === "week") return { label: "This Week", start: startOfWeek(todayValue), end: todayValue };
+    if (filters.datePreset === "month") {
+        const month = thisMonth();
+        const [year, monthNumber] = month.split("-").map(Number);
+        const end = new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10);
+        return { label: "This Month", start: `${month}-01`, end };
+    }
+    if (filters.datePreset === "custom_date") {
+        const value = filters.customDate || todayValue;
+        return { label: value, start: value, end: value };
+    }
+    const start = filters.startDate || todayValue;
+    const end = filters.endDate || start;
+    return start <= end
+        ? { label: `${start} to ${end}`, start, end }
+        : { label: `${end} to ${start}`, start: end, end: start };
+}
+
+function isDateInRange(value: string | null | undefined, range: { start: string | null; end: string | null }) {
+    if (!range.start || !range.end) return true;
+    const date = String(value ?? "").slice(0, 10);
+    if (!date) return false;
+    return date >= range.start && date <= range.end;
+}
+
+function normalizeStatus(status: string | null | undefined) {
+    return String(status ?? "").toLowerCase();
+}
 
 function expenseField(expense: ExpenseItem, key: keyof ExpenseChangePayload) {
     const row = expense as ExpenseItem & {
@@ -201,6 +258,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
     const [selectedExpenseIds, setSelectedExpenseIds] = useState<string[]>([]);
     const [expenseModal, setExpenseModal] = useState<null | { expense: ExpenseItem; mode: ExpenseModalMode }>(null);
     const [landlordEditModal, setLandlordEditModal] = useState<LandlordEditModalState | null>(null);
+    const [summaryDrilldown, setSummaryDrilldown] = useState<SummaryDrilldownKind | null>(null);
     const [actionMessage, setActionMessage] = useState<string | null>(null);
     const [deleteReason, setDeleteReason] = useState("Admin safe delete");
     const [isPending, startTransition] = useTransition();
@@ -816,8 +874,24 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                 </section>
 
                 <section className="mx-auto mt-5 max-w-6xl grid gap-3 md:grid-cols-5">
-                    <BalanceCard label="Total Collections" value={money(totals.totalCollections)} hint={`${totals.paymentRows} payment rows`} tone="green" icon={<Banknote size={18} />} />
-                    <BalanceCard label="Total Expenses" value={money(totals.totalExpenses)} hint={`${totals.expenseRows} expense rows`} tone="red" icon={<ReceiptText size={18} />} />
+                    <BalanceCard
+                        interactive
+                        label="Total Collections"
+                        value={money(totals.totalCollections)}
+                        hint={`${totals.paymentRows} payment rows · Open records`}
+                        tone="green"
+                        icon={<Banknote size={18} />}
+                        onClick={() => setSummaryDrilldown("collections")}
+                    />
+                    <BalanceCard
+                        interactive
+                        label="Total Expenses"
+                        value={money(totals.totalExpenses)}
+                        hint={`${totals.expenseRows} approved expense rows · Open records`}
+                        tone="red"
+                        icon={<ReceiptText size={18} />}
+                        onClick={() => setSummaryDrilldown("expenses")}
+                    />
                     <BalanceCard label="Remaining Office Balance" value={money(totals.remainingBalance)} hint="Collections minus expenses" tone={totals.remainingBalance >= 0 ? "blue" : "red"} icon={<WalletCards size={18} />} />
                     <BalanceCard label="Number of expense rows" value={totals.expenseRows.toLocaleString()} hint={periodLabel} tone="slate" icon={<CheckCircle2 size={18} />} />
                     <BalanceCard label="Number of payment rows" value={totals.paymentRows.toLocaleString()} hint={report?.officeName ?? "Selected scope"} tone="slate" icon={<FileText size={18} />} />
@@ -1081,7 +1155,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                     </div>
                 </section>
 
-                <LandlordPaymentRequestLedger requests={data.landlordPaymentRequests} />
+                <LandlordPaymentRequestLedger activeOfficeName={activeOfficeName} isAdmin={isAdmin} offices={data.offices} requests={data.landlordPaymentRequests} />
                 <GenericExpenseApprovalQueue
                     isAdmin={isAdmin}
                     requests={data.expenses.filter((expense) => (expense.status ?? expense.approvalState) === "pending")}
@@ -1089,7 +1163,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                 />
                 <EmployeeExpenseRequestLedger isAdmin={isAdmin} requests={data.employeeExpenseRequests} />
                 <LandlordEditRequestLedger isAdmin={isAdmin} requests={data.landlordExpenseEditRequests} onReviewed={() => setRefreshToken((token) => token + 1)} />
-                <ExpenseChangeRequestLedger isAdmin={isAdmin} requests={data.expenseChangeRequests} onReviewed={() => setRefreshToken((token) => token + 1)} />
+                <ExpenseChangeRequestLedger activeOfficeName={activeOfficeName} isAdmin={isAdmin} offices={data.offices} requests={data.expenseChangeRequests} onReviewed={() => setRefreshToken((token) => token + 1)} />
 
                 <section className="mx-auto mt-5 max-w-6xl space-y-4">
                     <div className="overflow-hidden rounded-[26px] border border-white/70 bg-white shadow-2xl shadow-slate-950/15">
@@ -1237,6 +1311,13 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                     }}
                 />
             ) : null}
+            {summaryDrilldown ? (
+                <SummaryDrilldownModal
+                    kind={summaryDrilldown}
+                    onClose={() => setSummaryDrilldown(null)}
+                    report={report}
+                />
+            ) : null}
             {landlordEditModal ? (
                 <LandlordEditModal
                     expenseDate={expenseDate}
@@ -1270,21 +1351,144 @@ function DateField({ label, onChange, type, value, visible }: { label: string; o
     );
 }
 
-function BalanceCard({ hint, icon, label, tone, value }: { hint: string; icon: ReactNode; label: string; tone: "blue" | "green" | "red" | "slate"; value: string }) {
+function BalanceCard({ hint, icon, interactive = false, label, onClick, tone, value }: { hint: string; icon: ReactNode; interactive?: boolean; label: string; onClick?: () => void; tone: "blue" | "green" | "red" | "slate"; value: string }) {
     const toneClass = {
         blue: "border-blue-200 bg-blue-50 text-blue-800",
         green: "border-emerald-200 bg-emerald-50 text-emerald-800",
         red: "border-rose-200 bg-rose-50 text-rose-800",
         slate: "border-slate-200 bg-white text-slate-800",
     }[tone];
-    return (
-        <div className={`rounded-[24px] border p-4 shadow-xl shadow-slate-950/10 ${toneClass}`}>
+    const className = `rounded-[24px] border p-4 text-left shadow-xl shadow-slate-950/10 transition ${toneClass} ${interactive ? "cursor-pointer hover:-translate-y-0.5 hover:shadow-2xl focus:outline-none focus:ring-4 focus:ring-cyan-200 active:scale-[0.99]" : ""}`;
+    const content = (
+        <>
             <div className="flex items-center justify-between gap-3">
                 <p className="text-xs font-black uppercase tracking-wide opacity-75">{label}</p>
                 {icon}
             </div>
             <p className="mt-3 break-words text-2xl font-black leading-tight">{value}</p>
             <p className="mt-1 text-xs font-bold opacity-70">{hint}</p>
+        </>
+    );
+    if (interactive && onClick) {
+        return (
+            <button type="button" onClick={onClick} className={className} aria-label={`Open ${label} records`}>
+                {content}
+            </button>
+        );
+    }
+    return (
+        <div className={className}>
+            {content}
+        </div>
+    );
+}
+
+function SummaryDrilldownModal({ kind, onClose, report }: { kind: SummaryDrilldownKind; onClose: () => void; report: ExpenseBalanceReport | null }) {
+    const isCollections = kind === "collections";
+    const expenses = useMemo(() => (report?.expenses ?? []).filter((expense) => normalizeStatus(expense.status ?? expense.approvalState) === "approved"), [report?.expenses]);
+    const collections = report?.collections ?? [];
+    const total = isCollections
+        ? collections.reduce((sum, collection) => sum + Number(collection.amountValue ?? 0), 0)
+        : expenses.reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
+    const count = isCollections ? collections.length : expenses.length;
+    const title = isCollections ? "Total Collections Records" : "Total Expenses Records";
+    const officeLabel = report?.officeName ?? "Selected scope";
+    const period = report ? `${report.filters.startDate} to ${report.filters.endDate}` : "Current filter";
+    const collectionUrl = report
+        ? `/office/collections?startDate=${encodeURIComponent(report.filters.startDate)}&endDate=${encodeURIComponent(report.filters.endDate)}${report.filters.officeId ? `&officeId=${encodeURIComponent(report.filters.officeId)}` : ""}`
+        : "/office/collections";
+
+    return (
+        <div className="fixed inset-0 z-[130] overflow-auto bg-slate-950/70 p-4 backdrop-blur-sm">
+            <div className="mx-auto my-8 max-w-6xl overflow-hidden rounded-[30px] bg-white shadow-2xl shadow-slate-950/30">
+                <div className="bg-slate-950 p-5 text-white">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                            <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200">Filtered drill-down</p>
+                            <h2 className="mt-2 text-2xl font-black">{title}</h2>
+                            <p className="mt-1 text-sm font-bold text-slate-300">{period} · {officeLabel}</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            {isCollections ? (
+                                <a href={collectionUrl} className="inline-flex min-h-10 items-center rounded-xl bg-cyan-300 px-4 text-sm font-black text-slate-950 hover:bg-cyan-200">
+                                    Open Collections
+                                </a>
+                            ) : null}
+                            <button type="button" onClick={onClose} className="inline-flex min-h-10 items-center rounded-xl bg-white/10 px-4 text-sm font-black text-white hover:bg-white/15">Close</button>
+                        </div>
+                    </div>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                        <MiniDrilldownCard label="Matching Records" value={count.toLocaleString()} />
+                        <MiniDrilldownCard label="Visible Total" value={money(total)} />
+                        <MiniDrilldownCard label="Scope" value={officeLabel} />
+                    </div>
+                </div>
+                <div className="overflow-auto">
+                    {isCollections ? (
+                        <table className="w-full min-w-[980px] text-left text-sm">
+                            <thead className="bg-slate-100 text-xs uppercase text-slate-500">
+                                <tr>
+                                    <th className="px-4 py-3">Payment Date</th>
+                                    <th className="px-4 py-3">Receipt</th>
+                                    <th className="px-4 py-3">Tenant / Room</th>
+                                    <th className="px-4 py-3">Office</th>
+                                    <th className="px-4 py-3">Method</th>
+                                    <th className="px-4 py-3">Recorded By</th>
+                                    <th className="px-4 py-3 text-right">Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {collections.map((collection) => (
+                                    <tr key={`summary-collection:${collection.id}`} className="border-b border-slate-100 hover:bg-emerald-50/60">
+                                        <td className="px-4 py-3 font-bold text-slate-500">{collection.paymentDate ?? "--"}</td>
+                                        <td className="px-4 py-3 font-black text-slate-950">{collection.receiptNumber ?? collection.id}</td>
+                                        <td className="px-4 py-3 font-bold text-slate-700">{collection.tenantName ?? "Tenant"}{collection.roomLabel ? ` · ${collection.roomLabel}` : ""}</td>
+                                        <td className="px-4 py-3 font-bold text-slate-500">{collection.officeName ?? officeLabel}</td>
+                                        <td className="px-4 py-3 font-bold capitalize text-slate-500">{collection.paymentMethod?.replaceAll("_", " ") ?? "--"}</td>
+                                        <td className="px-4 py-3 font-bold text-slate-500">{collection.recordedByName ?? "System"}</td>
+                                        <td className="px-4 py-3 text-right font-black text-emerald-700">{money(collection.amountValue)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    ) : (
+                        <table className="w-full min-w-[980px] text-left text-sm">
+                            <thead className="bg-slate-100 text-xs uppercase text-slate-500">
+                                <tr>
+                                    <th className="px-4 py-3">Expense Date</th>
+                                    <th className="px-4 py-3">Expense</th>
+                                    <th className="px-4 py-3">Office</th>
+                                    <th className="px-4 py-3">Recorded By</th>
+                                    <th className="px-4 py-3">Status</th>
+                                    <th className="px-4 py-3 text-right">Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {expenses.map((expense) => (
+                                    <tr key={`summary-expense:${expense.id}`} className="border-b border-slate-100 hover:bg-rose-50/60">
+                                        <td className="px-4 py-3 font-bold text-slate-500">{expense.expense_date ?? "--"}</td>
+                                        <td className="px-4 py-3 font-black text-slate-950">{expense.item ?? expense.expense_number ?? "Expense"}</td>
+                                        <td className="px-4 py-3 font-bold text-slate-500">{expense.officeName ?? officeLabel}</td>
+                                        <td className="px-4 py-3 font-bold text-slate-500">{expense.submittedByName ?? "System"}</td>
+                                        <td className="px-4 py-3"><StatusBadge status={expense.status ?? expense.approvalState} /></td>
+                                        <td className="px-4 py-3 text-right font-black text-rose-700">{money(expense.amount)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+                {!count ? <p className="p-5 text-sm font-bold text-slate-500">No matching records were found for the selected filters.</p> : null}
+            </div>
+        </div>
+    );
+}
+
+function MiniDrilldownCard({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
+            <p className="text-xs font-black uppercase tracking-wide text-cyan-100">{label}</p>
+            <p className="mt-1 break-words text-lg font-black text-white">{value}</p>
         </div>
     );
 }
@@ -1729,13 +1933,31 @@ function AgreementField({ children, label }: { children: ReactNode; label: strin
     );
 }
 
-function LandlordPaymentRequestLedger({ requests }: { requests: ExpensesPageData["landlordPaymentRequests"] }) {
+function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requests }: { activeOfficeName: string; isAdmin: boolean; offices: ExpensesPageData["offices"]; requests: ExpensesPageData["landlordPaymentRequests"] }) {
+    const [filters, setFilters] = useState<RecordTableFilters>(() => defaultRecordTableFilters());
+    const [selected, setSelected] = useState<ExpensesPageData["landlordPaymentRequests"][number] | null>(null);
+    const range = useMemo(() => resolveRecordFilterRange(filters), [filters]);
+    const visibleRequests = useMemo(() => requests.filter((request) => {
+        if (isAdmin && filters.officeId && request.officeId !== filters.officeId) return false;
+        return isDateInRange(request.paymentDate, range);
+    }), [filters.officeId, isAdmin, range, requests]);
+    const total = useMemo(() => visibleRequests.reduce((sum, request) => sum + Number(request.amount ?? 0), 0), [visibleRequests]);
+    const officeLabel = isAdmin && filters.officeId ? offices.find((office) => office.id === filters.officeId)?.name ?? "Selected office" : isAdmin ? "All Offices" : activeOfficeName;
     if (!requests.length) return null;
     return (
         <section className="mx-auto mt-5 max-w-6xl overflow-hidden rounded-[26px] border border-white/70 bg-white shadow-2xl shadow-slate-950/15">
             <div className="border-b border-slate-200 px-4 py-3">
                 <p className="text-xs font-black uppercase tracking-wide text-amber-600">Landlord payment approval queue</p>
                 <h2 className="text-lg font-black text-slate-950">Expense-routed Landlord Payments</h2>
+                <RecordTableFilterBar
+                    activeOfficeName={activeOfficeName}
+                    filters={filters}
+                    isAdmin={isAdmin}
+                    label="Expense Routed Landlord Payments"
+                    offices={offices}
+                    onChange={setFilters}
+                />
+                <RecordTableSummary count={visibleRequests.length} dateLabel={range.label} officeLabel={officeLabel} total={total} />
             </div>
             <div className="overflow-auto">
                 <table className="w-full min-w-[900px] text-left text-sm">
@@ -1751,11 +1973,12 @@ function LandlordPaymentRequestLedger({ requests }: { requests: ExpensesPageData
                             <th className="px-4 py-3">Method</th>
                             <th className="px-4 py-3">Status</th>
                             <th className="px-4 py-3">Admin comment</th>
+                            <th className="px-4 py-3">Action</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {requests.map((request) => (
-                            <tr key={`landlord-payment-expense-request:${request.id}`} className="border-b border-slate-100">
+                        {visibleRequests.map((request) => (
+                            <tr key={`landlord-payment-expense-request:${request.id}`} onClick={() => setSelected(request)} className="cursor-pointer border-b border-slate-100 hover:bg-amber-50/70">
                                 <td className="px-4 py-3 font-bold text-slate-500">{request.paymentDate}</td>
                                 <td className="px-4 py-3 font-black text-slate-950">{request.landlordName}</td>
                                 <td className="px-4 py-3 font-bold text-slate-500">{request.officeName}</td>
@@ -1766,12 +1989,178 @@ function LandlordPaymentRequestLedger({ requests }: { requests: ExpensesPageData
                                 <td className="px-4 py-3 font-bold capitalize text-slate-500">{request.paymentMethod.replaceAll("_", " ")}</td>
                                 <td className="px-4 py-3"><StatusBadge status={request.status} /></td>
                                 <td className="px-4 py-3 font-bold text-slate-500">{request.adminComment ?? request.notes ?? "No comment"}</td>
+                                <td className="px-4 py-3">
+                                    <button type="button" onClick={(event) => { event.stopPropagation(); setSelected(request); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-amber-100">
+                                        View
+                                    </button>
+                                </td>
                             </tr>
                         ))}
                     </tbody>
                 </table>
             </div>
+            {!visibleRequests.length ? <p className="p-5 text-sm font-bold text-slate-500">No landlord payment records match the selected filters.</p> : null}
+            {selected ? (
+                <RecordDetailsModal
+                    onClose={() => setSelected(null)}
+                    rows={[
+                        ["Date", selected.paymentDate],
+                        ["Landlord", selected.landlordName],
+                        ["Office", selected.officeName],
+                        ["Amount", money(selected.amount)],
+                        ["Cash Payment", money(selected.cashPaymentAmount)],
+                        ["Advance Recovery", money(selected.advanceRecoveryAmount)],
+                        ["New Advance", money(selected.advanceAmount)],
+                        ["Method", selected.paymentMethod.replaceAll("_", " ")],
+                        ["Status", selected.status],
+                        ["Admin Comment", selected.adminComment ?? selected.notes ?? "No comment"],
+                    ]}
+                    title="Landlord Payment Record"
+                />
+            ) : null}
         </section>
+    );
+}
+
+function RecordTableFilterBar({
+    activeOfficeName,
+    filters,
+    isAdmin,
+    label,
+    offices,
+    onChange,
+}: {
+    activeOfficeName: string;
+    filters: RecordTableFilters;
+    isAdmin: boolean;
+    label: string;
+    offices: ExpensesPageData["offices"];
+    onChange: (filters: RecordTableFilters) => void;
+}) {
+    const range = resolveRecordFilterRange(filters);
+    const officeName = isAdmin && filters.officeId ? offices.find((office) => office.id === filters.officeId)?.name ?? "Selected office" : null;
+    const update = <Key extends keyof RecordTableFilters>(key: Key, value: RecordTableFilters[Key]) => onChange({ ...filters, [key]: value });
+    const clearDate = () => onChange({ ...filters, datePreset: "all_dates" });
+    const clearOffice = () => onChange({ ...filters, officeId: "" });
+    const clearAll = () => onChange(defaultRecordTableFilters());
+
+    return (
+        <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-3">
+            <div className="grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)_minmax(0,1fr)_180px]">
+                <label className="block">
+                    <span className="text-xs font-black uppercase tracking-wide text-slate-500">Date filter</span>
+                    <div className="mt-1 flex h-11 items-center rounded-2xl border border-slate-200 bg-white px-2">
+                        <select value={filters.datePreset} onChange={(event) => update("datePreset", event.target.value as RecordDatePreset)} className="min-w-0 flex-1 bg-transparent text-sm font-black text-slate-900 outline-none">
+                            <option value="today">Today</option>
+                            <option value="yesterday">Yesterday</option>
+                            <option value="week">This Week</option>
+                            <option value="month">This Month</option>
+                            <option value="custom_date">Custom Date</option>
+                            <option value="custom_range">Custom Date Range</option>
+                            <option value="all_dates">All Dates</option>
+                        </select>
+                        <button type="button" onClick={clearDate} className="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label={`Clear ${label} date filter`}>
+                            <X size={15} />
+                        </button>
+                    </div>
+                </label>
+                {filters.datePreset === "custom_date" ? (
+                    <label className="block">
+                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Custom date</span>
+                        <input type="date" value={filters.customDate} onChange={(event) => update("customDate", event.target.value)} className="mt-1 h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-black text-slate-900 outline-none" />
+                    </label>
+                ) : null}
+                {filters.datePreset === "custom_range" ? (
+                    <>
+                        <label className="block">
+                            <span className="text-xs font-black uppercase tracking-wide text-slate-500">Start date</span>
+                            <input type="date" value={filters.startDate} onChange={(event) => update("startDate", event.target.value)} className="mt-1 h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-black text-slate-900 outline-none" />
+                        </label>
+                        <label className="block">
+                            <span className="text-xs font-black uppercase tracking-wide text-slate-500">End date</span>
+                            <input type="date" value={filters.endDate} onChange={(event) => update("endDate", event.target.value)} className="mt-1 h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-black text-slate-900 outline-none" />
+                        </label>
+                    </>
+                ) : (
+                    <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2">
+                        <p className="text-xs font-black uppercase tracking-wide text-slate-500">Selected date range</p>
+                        <p className="mt-1 text-sm font-black text-slate-900">{range.label}</p>
+                    </div>
+                )}
+                {isAdmin ? (
+                    <label className="block">
+                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Office filter</span>
+                        <div className="mt-1 flex h-11 items-center rounded-2xl border border-slate-200 bg-white px-2">
+                            <select value={filters.officeId} onChange={(event) => update("officeId", event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm font-black text-slate-900 outline-none">
+                                <option value="">All Offices</option>
+                                {offices.map((office) => <option key={`${label}:office-filter:${office.id}`} value={office.id}>{office.name}</option>)}
+                            </select>
+                            <button type="button" onClick={clearOffice} className="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label={`Clear ${label} office filter`}>
+                                <X size={15} />
+                            </button>
+                        </div>
+                    </label>
+                ) : (
+                    <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2">
+                        <p className="text-xs font-black uppercase tracking-wide text-slate-500">Office</p>
+                        <p className="mt-1 text-sm font-black text-slate-900">{activeOfficeName}</p>
+                    </div>
+                )}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Showing results for:</span>
+                {filters.datePreset === "all_dates" && !filters.officeId ? <span className="text-xs font-bold text-slate-500">All authorised records</span> : null}
+                {filters.datePreset !== "all_dates" ? <FilterChip label={`Date: ${range.label}`} onClear={clearDate} /> : null}
+                {officeName ? <FilterChip label={`Office: ${officeName}`} onClear={clearOffice} /> : null}
+                <button type="button" onClick={clearAll} className="ml-auto rounded-xl bg-slate-950 px-3 py-2 text-xs font-black uppercase tracking-wide text-white hover:bg-slate-800">
+                    Clear All Filters
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function FilterChip({ label, onClear }: { label: string; onClear: () => void }) {
+    return (
+        <button type="button" onClick={onClear} className="inline-flex min-h-8 items-center gap-2 rounded-full border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 shadow-sm hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-slate-100">
+            {label}
+            <X size={13} />
+        </button>
+    );
+}
+
+function RecordTableSummary({ count, dateLabel, officeLabel, total }: { count: number; dateLabel: string; officeLabel: string; total: number }) {
+    return (
+        <div className="mt-3 grid gap-2 sm:grid-cols-4">
+            <MiniFinance label="Matching records" value={count.toLocaleString()} tone="slate" />
+            <MiniFinance label="Visible total" value={money(total)} tone="green" />
+            <MiniFinance label="Selected date" value={dateLabel} tone="slate" />
+            <MiniFinance label="Selected office" value={officeLabel} tone="slate" />
+        </div>
+    );
+}
+
+function RecordDetailsModal({ onClose, rows, title }: { onClose: () => void; rows: Array<[string, string]>; title: string }) {
+    return (
+        <div className="fixed inset-0 z-[120] overflow-auto bg-slate-950/70 p-4 backdrop-blur-sm">
+            <div className="mx-auto my-8 max-w-2xl overflow-hidden rounded-[28px] bg-white shadow-2xl shadow-slate-950/30">
+                <div className="flex items-start justify-between gap-3 bg-slate-950 p-5 text-white">
+                    <div>
+                        <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200">Record details</p>
+                        <h2 className="mt-2 text-2xl font-black">{title}</h2>
+                    </div>
+                    <button type="button" onClick={onClose} className="rounded-xl bg-white/10 px-4 py-2 text-sm font-black hover:bg-white/15">Close</button>
+                </div>
+                <div className="grid gap-3 p-5 sm:grid-cols-2">
+                    {rows.map(([label, value]) => (
+                        <div key={`${title}:${label}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                            <p className="text-xs font-black uppercase tracking-wide text-slate-500">{label}</p>
+                            <p className="mt-1 break-words text-sm font-black text-slate-950">{value}</p>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
     );
 }
 
@@ -2127,15 +2516,24 @@ function formatRequestValue(value: unknown) {
     return String(value ?? "--");
 }
 
-function ExpenseChangeRequestLedger({ isAdmin, onReviewed, requests }: { isAdmin: boolean; onReviewed: () => void; requests: ExpensesPageData["expenseChangeRequests"] }) {
+function ExpenseChangeRequestLedger({ activeOfficeName, isAdmin, offices, onReviewed, requests }: { activeOfficeName: string; isAdmin: boolean; offices: ExpensesPageData["offices"]; onReviewed: () => void; requests: ExpensesPageData["expenseChangeRequests"] }) {
     const [comments, setComments] = useState<Record<string, string>>({});
     const [message, setMessage] = useState<string | null>(null);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [bulkModal, setBulkModal] = useState<null | { decision: "approved" | "rejected"; ids: string[] }>(null);
     const [bulkComment, setBulkComment] = useState("");
+    const [filters, setFilters] = useState<RecordTableFilters>(() => defaultRecordTableFilters());
+    const [selected, setSelected] = useState<ExpensesPageData["expenseChangeRequests"][number] | null>(null);
     const [isPending, startTransition] = useTransition();
     if (!requests.length) return null;
-    const pendingRequests = requests.filter((request) => request.status === "pending");
+    const range = resolveRecordFilterRange(filters);
+    const visibleRequests = requests.filter((request) => {
+        if (isAdmin && filters.officeId && request.officeId !== filters.officeId) return false;
+        return isDateInRange(request.createdAt, range);
+    });
+    const pendingRequests = visibleRequests.filter((request) => request.status === "pending");
+    const total = visibleRequests.reduce((sum, request) => sum + Number(request.amount ?? 0), 0);
+    const officeLabel = isAdmin && filters.officeId ? offices.find((office) => office.id === filters.officeId)?.name ?? "Selected office" : isAdmin ? "All Offices" : activeOfficeName;
 
     function decide(requestId: string, decision: "approved" | "rejected", comment = comments[requestId] ?? "") {
         setMessage(null);
@@ -2187,6 +2585,15 @@ function ExpenseChangeRequestLedger({ isAdmin, onReviewed, requests }: { isAdmin
                 <p className="text-xs font-black uppercase tracking-wide text-purple-600">Expense correction approval queue</p>
                 <h2 className="text-lg font-black text-slate-950">Expense Change Requests</h2>
                 {message ? <p className="mt-2 text-sm font-bold text-slate-600">{message}</p> : null}
+                <RecordTableFilterBar
+                    activeOfficeName={activeOfficeName}
+                    filters={filters}
+                    isAdmin={isAdmin}
+                    label="Expense Change Requests"
+                    offices={offices}
+                    onChange={setFilters}
+                />
+                <RecordTableSummary count={visibleRequests.length} dateLabel={range.label} officeLabel={officeLabel} total={total} />
                 {isAdmin && pendingRequests.length ? (
                     <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
                         <label className="inline-flex items-center gap-2 text-xs font-black text-slate-700">
@@ -2203,14 +2610,16 @@ function ExpenseChangeRequestLedger({ isAdmin, onReviewed, requests }: { isAdmin
                 ) : null}
             </div>
             <div className="overflow-auto">
-                <table className="w-full min-w-[1120px] text-left text-sm">
+                <table className="w-full min-w-[1280px] text-left text-sm">
                     <thead className="bg-slate-950 text-xs uppercase text-slate-200">
                         <tr>
                             {isAdmin ? <th className="px-4 py-3">Select</th> : null}
-                            <th className="px-4 py-3">Submitted</th>
+                            <th className="px-4 py-3">Submitted Date</th>
                             <th className="px-4 py-3">Expense</th>
                             <th className="px-4 py-3">Office</th>
-                            <th className="px-4 py-3">Change</th>
+                            <th className="px-4 py-3">Change Type</th>
+                            <th className="px-4 py-3">Old Value</th>
+                            <th className="px-4 py-3">Requested New Value</th>
                             <th className="px-4 py-3">Reason</th>
                             <th className="px-4 py-3">Requested By</th>
                             <th className="px-4 py-3">Status</th>
@@ -2218,10 +2627,10 @@ function ExpenseChangeRequestLedger({ isAdmin, onReviewed, requests }: { isAdmin
                         </tr>
                     </thead>
                     <tbody>
-                        {requests.map((request) => (
-                            <tr key={`expense-change:${request.id}`} className="border-b border-slate-100 align-top">
+                        {visibleRequests.map((request) => (
+                            <tr key={`expense-change:${request.id}`} onClick={() => setSelected(request)} className="cursor-pointer border-b border-slate-100 align-top hover:bg-purple-50/70">
                                 {isAdmin ? (
-                                    <td className="px-4 py-3">
+                                    <td className="px-4 py-3" onClick={(event) => event.stopPropagation()}>
                                         {request.status === "pending" ? (
                                             <input checked={selectedIds.includes(request.id)} disabled={isPending} type="checkbox" onChange={() => setSelectedIds((current) => current.includes(request.id) ? current.filter((id) => id !== request.id) : [...current, request.id])} className="h-4 w-4 rounded border-slate-300 text-purple-700" />
                                         ) : null}
@@ -2231,11 +2640,13 @@ function ExpenseChangeRequestLedger({ isAdmin, onReviewed, requests }: { isAdmin
                                 <td className="px-4 py-3 font-black text-slate-950">{request.itemName}</td>
                                 <td className="px-4 py-3 font-bold text-slate-500">{request.officeName}</td>
                                 <td className="px-4 py-3 font-bold text-slate-700">{request.changeType.replaceAll("_", " ")}</td>
+                                <td className="px-4 py-3 font-bold text-slate-500">{formatRequestValue(request.originalValue.value ?? request.originalValue.amount ?? request.originalValue.status ?? request.originalValue.expenseDate)}</td>
+                                <td className="px-4 py-3 font-black text-slate-950">{formatRequestValue(request.requestedValue.value ?? request.requestedValue.amount ?? request.requestedValue.status ?? request.requestedValue.expenseDate)}</td>
                                 <td className="max-w-xs px-4 py-3 font-semibold text-slate-600">{request.reason}</td>
                                 <td className="px-4 py-3 font-bold text-slate-500">{request.requestedByName}</td>
                                 <td className="px-4 py-3"><StatusBadge status={request.status} /></td>
                                 {isAdmin ? (
-                                    <td className="px-4 py-3">
+                                    <td className="px-4 py-3" onClick={(event) => event.stopPropagation()}>
                                         {request.status === "pending" ? (
                                             <div className="flex min-w-[280px] flex-col gap-2">
                                                 <input value={comments[request.id] ?? ""} onChange={(event) => setComments((current) => ({ ...current, [request.id]: event.target.value }))} placeholder="Admin comment..." className="h-9 rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs font-bold text-slate-900 outline-none" />
@@ -2254,6 +2665,25 @@ function ExpenseChangeRequestLedger({ isAdmin, onReviewed, requests }: { isAdmin
                     </tbody>
                 </table>
             </div>
+            {!visibleRequests.length ? <p className="p-5 text-sm font-bold text-slate-500">No expense change requests match the selected filters.</p> : null}
+            {selected ? (
+                <RecordDetailsModal
+                    onClose={() => setSelected(null)}
+                    rows={[
+                        ["Submitted Date", selected.createdAt ? new Date(selected.createdAt).toLocaleString() : "--"],
+                        ["Expense", selected.itemName],
+                        ["Office", selected.officeName],
+                        ["Change Type", selected.changeType.replaceAll("_", " ")],
+                        ["Old Value", formatRequestValue(selected.originalValue.value ?? selected.originalValue.amount ?? selected.originalValue.status ?? selected.originalValue.expenseDate)],
+                        ["Requested New Value", formatRequestValue(selected.requestedValue.value ?? selected.requestedValue.amount ?? selected.requestedValue.status ?? selected.requestedValue.expenseDate)],
+                        ["Reason", selected.reason],
+                        ["Requested By", selected.requestedByName],
+                        ["Status", selected.status],
+                        ["Admin Comment", selected.adminComment ?? "No comment"],
+                    ]}
+                    title="Expense Change Request"
+                />
+            ) : null}
             {bulkModal ? (
                 <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/60 p-4">
                     <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">

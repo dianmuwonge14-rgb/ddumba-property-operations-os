@@ -110,9 +110,25 @@ test("recorded expense list filters by business expense date and supports all da
 });
 
 test("expense page keeps the existing queues and recorded expenses ledger below entry", () => {
-  assert.match(expensesConsole, /<LandlordPaymentRequestLedger requests=\{data\.landlordPaymentRequests\}/);
+  assert.match(expensesConsole, /<LandlordPaymentRequestLedger activeOfficeName=\{activeOfficeName\} isAdmin=\{isAdmin\} offices=\{data\.offices\} requests=\{data\.landlordPaymentRequests\}/);
   assert.match(expensesConsole, /<GenericExpenseApprovalQueue/);
   assert.match(expensesConsole, /<EmployeeExpenseRequestLedger/);
   assert.match(expensesConsole, /<ExpenseChangeRequestLedger/);
   assert.match(expensesConsole, /Recorded Expenses/);
+});
+
+test("expense summary cards and request ledgers are interactive and filterable", () => {
+  assert.match(expensesConsole, /interactive\s+label="Total Collections"/);
+  assert.match(expensesConsole, /interactive\s+label="Total Expenses"/);
+  assert.match(expensesConsole, /function SummaryDrilldownModal/);
+  assert.match(expensesConsole, /Total Collections Records/);
+  assert.match(expensesConsole, /Total Expenses Records/);
+  assert.match(expensesConsole, /function RecordTableFilterBar/);
+  assert.match(expensesConsole, /Clear All Filters/);
+  assert.match(expensesConsole, /Date filter/);
+  assert.match(expensesConsole, /Office filter/);
+  assert.match(expensesConsole, /Matching records/);
+  assert.match(expensesConsole, /Visible total/);
+  assert.match(expenseTypes, /ExpenseReportCollectionItem/);
+  assert.match(expenseData, /collections: collectionItems/);
 });

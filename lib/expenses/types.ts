@@ -173,6 +173,17 @@ export type ExpenseBalanceTotals = {
     paymentRows: number;
 };
 
+export type ExpenseReportCollectionItem = CollectionRow & {
+    amountValue: number;
+    officeName: string | null;
+    paymentDate: string | null;
+    paymentMethod: string | null;
+    receiptNumber: string | null;
+    recordedByName: string | null;
+    roomLabel: string | null;
+    tenantName: string | null;
+};
+
 export type ExpenseBalanceReport = {
     filters: Required<Pick<ExpenseBalanceFilters, "mode" | "singleDate" | "startDate" | "endDate" | "singleMonth" | "startMonth" | "endMonth">> & Pick<ExpenseBalanceFilters, "officeId">;
     officeName: string;
@@ -181,6 +192,7 @@ export type ExpenseBalanceReport = {
     generatedBy: string;
     totals: ExpenseBalanceTotals;
     expenses: ExpenseItem[];
+    collections: ExpenseReportCollectionItem[];
 };
 
 export type CreateExpenseInput = {
