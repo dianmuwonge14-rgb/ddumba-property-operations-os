@@ -83,11 +83,11 @@ function logLoginFailure(input: {
     });
 }
 
-async function withLoginTimeout<T>(stage: string, timeoutMs: number, operation: Promise<T>) {
+async function withLoginTimeout<T>(stage: string, timeoutMs: number, operation: PromiseLike<T>) {
     let timeout: ReturnType<typeof setTimeout> | null = null;
     try {
         return await Promise.race([
-            operation.catch((error) => {
+            Promise.resolve(operation).catch((error) => {
                 throw new LoginServiceUnavailableError(
                     safeLoginError(error instanceof Error ? error.message : String(error)),
                     stage,
