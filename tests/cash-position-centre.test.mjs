@@ -335,7 +335,8 @@ test("non-admin office expenses require admin approval before cash impact", () =
   assert.match(expensesActionSource, /requireCompanyAdminMode\(\)/);
   assert.match(expensesActionSource, /\.eq\("status", "pending"\)/);
   assert.match(expensesActionSource, /sourceType: "expense"/);
-  assert.match(expensesActionSource, /Expense is already approved/);
+  assert.match(expensesActionSource, /ddumba_approve_pending_expense/);
+  assert.match(expensesActionSource, /existingStatus === "approved"\) return existing/);
   assert.match(expensesActionSource, /Rejection reason is required/);
   assert.match(expensesDataSource, /const approvedExpenses = expenses\.filter\(isApprovedExpense\)/);
   assert.match(expensesComponentSource, /GenericExpenseApprovalQueue/);

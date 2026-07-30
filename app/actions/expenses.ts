@@ -226,6 +226,19 @@ async function postOfficeCashOutflow(input: {
     }
     if (!accountResult.data?.id) return;
 
+    const existingTransaction = await input.db
+        .from("cash_transactions")
+        .select("id")
+        .eq("company_id", input.companyId)
+        .eq("source_type", input.sourceType)
+        .eq("source_id", input.sourceId)
+        .eq("transaction_type", "outflow")
+        .limit(1);
+    if (existingTransaction.error && !isMissingSchemaError(existingTransaction.error)) {
+        throw new Error(`Office cash duplicate check failed: ${existingTransaction.error.message}`);
+    }
+    if ((existingTransaction.data ?? []).length) return;
+
     const { error } = await input.db.from("cash_transactions").insert({
         amount: input.amount,
         cash_account_id: accountResult.data.id,
@@ -2434,57 +2447,39 @@ export async function approveExpense(input: ExpenseDecisionInput) {
     const context = await requireCompanyAdminMode();
     const supabase = await createSupabaseServerClient();
     const db = supabase as unknown as { from: (table: string) => any };
-    const adminDb = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
+    const adminDb = createSupabaseAdminClient() as unknown as { from: (table: string) => any; rpc: (name: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }> };
     const companyId = context.activeCompany?.id;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    const expenseActorId = await resolveExpenseEmployeeActorId(context);
     if (!companyId) throw new Error("Active company is required.");
     const existing = await loadExpenseForCompany(db, { companyId, expenseId: input.expenseId });
     const existingStatus = String(existing.status ?? (existing.approved_at ? "approved" : "pending")).toLowerCase();
-    if (existingStatus === "approved") throw new Error("Expense is already approved.");
+    if (existingStatus === "approved") return existing;
     if (existingStatus !== "pending") throw new Error(`Only pending expenses can be approved. Current status: ${existingStatus}.`);
-    const approvedAt = new Date().toISOString();
 
-    const { data, error } = await db
-        .from("expenses")
-        .update({
-            approved_at: approvedAt,
-            approved_by: actorId,
-            description: input.notes ? `${String(existing.description ?? "")}\n[approved] ${input.notes}`.trim() : String(existing.description ?? ""),
-            status: "approved",
-        })
-        .eq("id", input.expenseId)
-        .eq("company_id", companyId)
-        .eq("status", "pending")
-        .select("*")
-        .single();
-
-    if (error) throw new Error(error.message);
-    if (!data) throw new Error("Expense approval failed. No changes were applied.");
-
-    await postOfficeCashOutflow({
-        amount: amount(data.amount),
-        companyId,
-        db: adminDb,
-        description: `Approved office expense: ${String(data.item ?? data.category ?? "Expense")}`,
-        officeId: String(data.office_id),
-        recordedBy: actorId,
-        sourceId: data.id,
-        sourceType: "expense",
-        transactionDate: String(data.expense_date ?? approvedAt.slice(0, 10)),
+    const { data, error } = await adminDb.rpc("ddumba_approve_pending_expense", {
+        p_actor_employee_id: expenseActorId,
+        p_actor_user_id: actorId,
+        p_admin_note: input.notes ?? null,
+        p_company_id: companyId,
+        p_expense_id: input.expenseId,
     });
+    if (error) throw new Error(`Expense approval failed: ${error.message}`);
+    if (!data) throw new Error("Expense approval failed. No changes were applied.");
+    const approvedExpense = data as Record<string, unknown>;
 
-    if (data.submitted_by) {
+    if (approvedExpense.submitted_by) {
         await createNotificationWithEmail(adminDb, {
             action_url: "/office/expenses",
             channel: "in_app",
             company_id: companyId,
             delivery_status: "pending",
-            entity_id: data.id,
+            entity_id: String(approvedExpense.id),
             entity_type: "expense",
             is_read: false,
-            message: `Your expense request for UGX ${Math.round(amount(data.amount)).toLocaleString()} was approved by Admin.`,
-            office_id: data.office_id ?? undefined,
-            recipient_id: data.submitted_by,
+            message: `Your expense request for UGX ${Math.round(amount(approvedExpense.amount)).toLocaleString()} was approved by Admin.`,
+            office_id: typeof approvedExpense.office_id === "string" ? approvedExpense.office_id : undefined,
+            recipient_id: String(approvedExpense.submitted_by),
             recipient_type: "user",
             severity: "success",
             title: "Expense approved",
@@ -2494,15 +2489,15 @@ export async function approveExpense(input: ExpenseDecisionInput) {
     await logUserAction({
         action: "expense_approved",
         entityType: "expense",
-        entityId: data.id,
+        entityId: String(approvedExpense.id),
         beforeData: existing as any,
-        afterData: data as any,
+        afterData: approvedExpense as any,
         companyId,
-        officeId: String(data.office_id ?? existing.office_id ?? ""),
+        officeId: String(approvedExpense.office_id ?? existing.office_id ?? ""),
     });
 
     revalidateExpenseSurfaces();
-    return data;
+    return approvedExpense;
 }
 
 export async function rejectExpense(input: ExpenseDecisionInput) {

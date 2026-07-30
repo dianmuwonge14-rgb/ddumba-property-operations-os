@@ -183,6 +183,24 @@ export type NotificationLandlordBulkRoomRequest = {
     updated_at: string | null;
 };
 
+export type NotificationExpenseApprovalRequest = {
+    id: string;
+    company_id: string | null;
+    office_id: string | null;
+    amount: number | string | null;
+    category: string | null;
+    item: string | null;
+    description: string | null;
+    expense_date: string | null;
+    expense_number: string | null;
+    payment_method?: string | null;
+    submitted_by: string | null;
+    approved_by: string | null;
+    approved_at: string | null;
+    status: "pending" | "approved" | "rejected" | string;
+    created_at: string | null;
+};
+
 export type NotificationFeedRow = {
     id: string;
     company_id: string | null;
@@ -232,6 +250,7 @@ export type NotificationsCentreData = {
     landlordPaymentRequests: NotificationLandlordPaymentRequest[];
     landlordPaymentDetailRequests: NotificationLandlordPaymentDetailRequest[];
     landlordBulkRoomRequests: NotificationLandlordBulkRoomRequest[];
+    expenseApprovalRequests: NotificationExpenseApprovalRequest[];
     notifications: NotificationFeedRow[];
     lookups: {
         rooms: NotificationLookupRow[];
@@ -254,7 +273,7 @@ export async function getNotificationBadgeCount(context?: AuthContext) {
     const db = await createSupabaseServerClient() as unknown as Db;
 
     if (auth.isCompanyAdmin && !auth.isOfficeMode) {
-        const [rentRequests, paymentDateRequests, tenantBalanceAdjustmentRequests, promiseChangeRequests, landlordPaymentRequests, landlordPaymentDetailRequests, landlordBulkRoomRequests, advanceRequests, offDayRequests] = await Promise.all([
+        const [rentRequests, paymentDateRequests, tenantBalanceAdjustmentRequests, promiseChangeRequests, landlordPaymentRequests, landlordPaymentDetailRequests, landlordBulkRoomRequests, expenseApprovalRequests, advanceRequests, offDayRequests] = await Promise.all([
             db.from("room_rent_change_requests").select("id", { count: "exact", head: true }).eq("company_id", auth.activeCompany.id).eq("status", "pending"),
             db.from("payment_correction_requests").select("id", { count: "exact", head: true }).eq("company_id", auth.activeCompany.id).eq("status", "pending"),
             safeCount(db, "tenant_balance_adjustments", auth.activeCompany.id),
@@ -262,10 +281,11 @@ export async function getNotificationBadgeCount(context?: AuthContext) {
             safeCount(db, "landlord_payment_expense_requests", auth.activeCompany.id),
             safeCount(db, "landlord_payment_details", auth.activeCompany.id),
             safeCount(db, "landlord_bulk_room_requests", auth.activeCompany.id),
+            safeCount(db, "expenses", auth.activeCompany.id),
             db.from("employee_advance_requests").select("id", { count: "exact", head: true }).eq("company_id", auth.activeCompany.id).eq("status", "pending").eq("active", true),
             db.from("employee_off_day_requests").select("id", { count: "exact", head: true }).eq("company_id", auth.activeCompany.id).eq("status", "pending").eq("active", true),
         ]);
-        return (rentRequests.count ?? 0) + (paymentDateRequests.count ?? 0) + (tenantBalanceAdjustmentRequests.count ?? 0) + (promiseChangeRequests.count ?? 0) + (landlordPaymentRequests.count ?? 0) + (landlordPaymentDetailRequests.count ?? 0) + (landlordBulkRoomRequests.count ?? 0) + (advanceRequests.count ?? 0) + (offDayRequests.count ?? 0);
+        return (rentRequests.count ?? 0) + (paymentDateRequests.count ?? 0) + (tenantBalanceAdjustmentRequests.count ?? 0) + (promiseChangeRequests.count ?? 0) + (landlordPaymentRequests.count ?? 0) + (landlordPaymentDetailRequests.count ?? 0) + (landlordBulkRoomRequests.count ?? 0) + (expenseApprovalRequests.count ?? 0) + (advanceRequests.count ?? 0) + (offDayRequests.count ?? 0);
     }
 
     if (!auth.activeOffice?.id) return 0;
@@ -387,6 +407,17 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
         landlordBulkRoomRequestQuery = landlordBulkRoomRequestQuery.eq("office_id", context.activeOffice?.id);
     }
 
+    let expenseApprovalRequestQuery = db
+        .from("expenses")
+        .select("id,company_id,office_id,amount,category,item,description,expense_date,expense_number,payment_method,submitted_by,approved_by,approved_at,status,created_at")
+        .eq("company_id", context.activeCompany.id)
+        .order("created_at", { ascending: false })
+        .limit(INITIAL_APPROVAL_LIMIT);
+
+    if (!isAdmin) {
+        expenseApprovalRequestQuery = expenseApprovalRequestQuery.eq("office_id", context.activeOffice?.id);
+    }
+
     let notificationQuery = db
         .from("notifications")
         .select("id,company_id,office_id,title,message,recipient_type,delivery_status,is_read,created_at,action_url")
@@ -402,7 +433,7 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
             .eq("office_id", context.activeOffice?.id);
     }
 
-    const [requestResult, paymentDateRequestResult, tenantBalanceAdjustmentResult, promiseChangeRequestResult, landlordPaymentRequestResult, landlordPaymentDetailRequestResult, landlordBulkRoomRequestResult, notificationResult] = await Promise.all([
+    const [requestResult, paymentDateRequestResult, tenantBalanceAdjustmentResult, promiseChangeRequestResult, landlordPaymentRequestResult, landlordPaymentDetailRequestResult, landlordBulkRoomRequestResult, expenseApprovalRequestResult, notificationResult] = await Promise.all([
         safeRows(requestQuery),
         safeRows(paymentDateRequestQuery),
         safeRows(tenantBalanceAdjustmentQuery),
@@ -410,6 +441,7 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
         safeRows(landlordPaymentRequestQuery),
         safeRows(landlordPaymentDetailRequestQuery),
         safeRows(landlordBulkRoomRequestQuery),
+        safeRows(expenseApprovalRequestQuery),
         safeRows(notificationQuery),
     ]);
     if (requestResult.error) throw new Error(requestResult.error.message);
@@ -424,6 +456,7 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
     const landlordPaymentRequests = (landlordPaymentRequestResult.data ?? []) as NotificationLandlordPaymentRequest[];
     const landlordPaymentDetailRequests = (landlordPaymentDetailRequestResult.data ?? []) as NotificationLandlordPaymentDetailRequest[];
     const landlordBulkRoomRequests = (landlordBulkRoomRequestResult.data ?? []) as NotificationLandlordBulkRoomRequest[];
+    const expenseApprovalRequests = (expenseApprovalRequestResult.data ?? []) as NotificationExpenseApprovalRequest[];
     const notifications = (notificationResult.data ?? []) as NotificationFeedRow[];
     const requestIds = requests.map((request) => request.id);
     const paymentDateRequestIds = paymentDateRequests.map((request) => request.id);
@@ -530,7 +563,8 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
         + promiseChangeRequests.filter((request) => request.status === "pending").length
         + landlordPaymentRequests.filter((request) => request.status === "pending").length
         + landlordPaymentDetailRequests.filter((request) => request.status === "pending").length
-        + landlordBulkRoomRequests.filter((request) => request.status === "pending").length;
+        + landlordBulkRoomRequests.filter((request) => request.status === "pending").length
+        + expenseApprovalRequests.filter((request) => request.status === "pending").length;
     const unreadNotificationCount = notifications.filter((notification) => notification.is_read === false).length;
 
     return {
@@ -545,6 +579,7 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
             landlordPaymentRequests: liveLandlordPaymentRequests,
             landlordPaymentDetailRequests,
             landlordBulkRoomRequests,
+            expenseApprovalRequests,
         notifications,
         lookups: {
             rooms: ((rooms.data ?? []) as Array<Record<string, unknown>>).map((room) => ({

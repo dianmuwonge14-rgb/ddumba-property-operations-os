@@ -2,14 +2,15 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { BellRing, CheckCircle2, Clock3, History, XCircle } from "lucide-react";
+import { BellRing, CheckCircle2, History, XCircle } from "lucide-react";
 import { decidePaymentCorrection, decideTenantOutstandingBalanceAdjustment } from "@/app/actions/collections";
+import { approveExpense, rejectExpense } from "@/app/actions/expenses";
 import { decideLandlordPaymentDetails } from "@/app/actions/landlords";
 import { decidePromiseChangeRequest } from "@/app/actions/promises";
 import { reviewLandlordBulkRoomRequest } from "@/app/actions/properties";
 import { decideRoomRentChange } from "@/app/actions/room-rent";
 import { PageHero, StatusChip } from "@/components/office/shared/EnterpriseUI";
-import type { NotificationAuditRow, NotificationLandlordBulkRoomRequest, NotificationLandlordPaymentDetailRequest, NotificationLandlordPaymentRequest, NotificationPaymentDateRequest, NotificationPromiseChangeRequest, NotificationRentRequest, NotificationTenantBalanceAdjustmentRequest, NotificationsCentreData } from "@/lib/notifications/data";
+import type { NotificationAuditRow, NotificationExpenseApprovalRequest, NotificationLandlordBulkRoomRequest, NotificationLandlordPaymentDetailRequest, NotificationLandlordPaymentRequest, NotificationPaymentDateRequest, NotificationPromiseChangeRequest, NotificationRentRequest, NotificationTenantBalanceAdjustmentRequest, NotificationsCentreData } from "@/lib/notifications/data";
 
 type Props = {
     data: NotificationsCentreData;
@@ -24,7 +25,8 @@ type ApprovalQueue =
     | "promise"
     | "landlordPayment"
     | "landlordPaymentDetail"
-    | "landlordBulkRoom";
+    | "landlordBulkRoom"
+    | "expense";
 type BulkModalState = {
     decision: "approved" | "rejected";
     ids: string[];
@@ -185,6 +187,7 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
     const [selectedLandlordPaymentRequestIds, setSelectedLandlordPaymentRequestIds] = useState<string[]>([]);
     const [selectedLandlordPaymentDetailRequestIds, setSelectedLandlordPaymentDetailRequestIds] = useState<string[]>([]);
     const [selectedLandlordBulkRoomRequestIds, setSelectedLandlordBulkRoomRequestIds] = useState<string[]>([]);
+    const [selectedExpenseRequestIds, setSelectedExpenseRequestIds] = useState<string[]>([]);
     const [localLandlordPaymentStatuses, setLocalLandlordPaymentStatuses] = useState<Record<string, "approved" | "rejected">>({});
     const [isPending, startTransition] = useTransition();
 
@@ -206,6 +209,7 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
         landlordPaymentRequests: data.landlordPaymentRequests ?? [],
         landlordPaymentDetailRequests: data.landlordPaymentDetailRequests ?? [],
         landlordBulkRoomRequests: data.landlordBulkRoomRequests ?? [],
+        expenseApprovalRequests: data.expenseApprovalRequests ?? [],
         requests: data.requests ?? [],
     };
 
@@ -267,6 +271,14 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
         : filter === "approved"
             ? approvedLandlordBulkRoomRequests
             : rejectedLandlordBulkRoomRequests;
+    const pendingExpenseRequests = safeData.expenseApprovalRequests.filter((request) => request.status === "pending");
+    const approvedExpenseRequests = safeData.expenseApprovalRequests.filter((request) => request.status === "approved");
+    const rejectedExpenseRequests = safeData.expenseApprovalRequests.filter((request) => request.status === "rejected");
+    const visibleExpenseRequests = filter === "pending"
+        ? pendingExpenseRequests
+        : filter === "approved"
+            ? approvedExpenseRequests
+            : rejectedExpenseRequests;
     const feed = safeData.notifications.slice(0, 12);
     const hasRentQueue = visibleRequests.length > 0 || requests.length > 0;
     const hasPaymentQueue = visiblePaymentDateRequests.length > 0 || paymentDateRequests.length > 0;
@@ -275,6 +287,7 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
     const hasLandlordPaymentQueue = visibleLandlordPaymentRequests.length > 0 || landlordPaymentRequests.length > 0;
     const hasLandlordBulkRoomQueue = visibleLandlordBulkRoomRequests.length > 0 || safeData.landlordBulkRoomRequests.length > 0;
     const hasLandlordPaymentDetailQueue = visibleLandlordPaymentDetailRequests.length > 0 || safeData.landlordPaymentDetailRequests.length > 0;
+    const hasExpenseQueue = visibleExpenseRequests.length > 0 || safeData.expenseApprovalRequests.length > 0;
     const hasAnyVisibleAdminQueue =
         hasRentQueue ||
         hasPaymentQueue ||
@@ -282,7 +295,8 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
         hasPromiseQueue ||
         hasLandlordPaymentQueue ||
         hasLandlordBulkRoomQueue ||
-        hasLandlordPaymentDetailQueue;
+        hasLandlordPaymentDetailQueue ||
+        hasExpenseQueue;
     const auditEventsByRequest = (() => {
         const grouped = new Map<string, NotificationAuditRow[]>();
         for (const event of safeData.auditEvents) {
@@ -563,6 +577,7 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
         if (queue === "landlordPayment") setSelectedLandlordPaymentRequestIds([]);
         if (queue === "landlordPaymentDetail") setSelectedLandlordPaymentDetailRequestIds([]);
         if (queue === "landlordBulkRoom") setSelectedLandlordBulkRoomRequestIds([]);
+        if (queue === "expense") setSelectedExpenseRequestIds([]);
     }
 
     function runBulkDecision() {
@@ -602,6 +617,12 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
                 }
                 if (bulkModal.queue === "landlordBulkRoom") {
                     for (const id of bulkModal.ids) await reviewLandlordBulkRoomRequest({ requestId: id, decision: bulkModal.decision, adminComment: comment });
+                }
+                if (bulkModal.queue === "expense") {
+                    for (const id of bulkModal.ids) {
+                        if (bulkModal.decision === "approved") await approveExpense({ expenseId: id, notes: comment || undefined });
+                        else await rejectExpense({ expenseId: id, notes: comment });
+                    }
                 }
                 setMessage(`${bulkModal.ids.length} ${bulkModal.queueLabel.toLowerCase()} ${bulkModal.decision === "approved" ? "approved" : "rejected"}.`);
                 clearBulkSelection(bulkModal.queue);
@@ -646,9 +667,9 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
                                 <p className="text-sm font-semibold text-slate-500">Room rent and payment date change requests are approved here. Audit Centre remains history-only.</p>
                                 </div>
                                 <div className="flex flex-wrap gap-2">
-                                    <FilterButton active={filter === "pending"} label={`Pending (${pendingRequests.length + pendingPaymentDateRequests.length + pendingBalanceAdjustmentRequests.length + pendingPromiseChangeRequests.length + pendingLandlordPaymentRequests.length + pendingLandlordPaymentDetailRequests.length + pendingLandlordBulkRoomRequests.length})`} onClick={() => setFilter("pending")} />
-                                    <FilterButton active={filter === "approved"} label={`Approved (${approvedRequests.length + approvedPaymentDateRequests.length + approvedBalanceAdjustmentRequests.length + approvedPromiseChangeRequests.length + approvedLandlordPaymentRequests.length + approvedLandlordPaymentDetailRequests.length + approvedLandlordBulkRoomRequests.length})`} onClick={() => setFilter("approved")} />
-                                    <FilterButton active={filter === "rejected"} label={`Rejected (${rejectedRequests.length + rejectedPaymentDateRequests.length + rejectedBalanceAdjustmentRequests.length + rejectedPromiseChangeRequests.length + rejectedLandlordPaymentRequests.length + rejectedLandlordPaymentDetailRequests.length + rejectedLandlordBulkRoomRequests.length})`} onClick={() => setFilter("rejected")} />
+                                    <FilterButton active={filter === "pending"} label={`Pending (${pendingRequests.length + pendingPaymentDateRequests.length + pendingBalanceAdjustmentRequests.length + pendingPromiseChangeRequests.length + pendingLandlordPaymentRequests.length + pendingLandlordPaymentDetailRequests.length + pendingLandlordBulkRoomRequests.length + pendingExpenseRequests.length})`} onClick={() => setFilter("pending")} />
+                                    <FilterButton active={filter === "approved"} label={`Approved (${approvedRequests.length + approvedPaymentDateRequests.length + approvedBalanceAdjustmentRequests.length + approvedPromiseChangeRequests.length + approvedLandlordPaymentRequests.length + approvedLandlordPaymentDetailRequests.length + approvedLandlordBulkRoomRequests.length + approvedExpenseRequests.length})`} onClick={() => setFilter("approved")} />
+                                    <FilterButton active={filter === "rejected"} label={`Rejected (${rejectedRequests.length + rejectedPaymentDateRequests.length + rejectedBalanceAdjustmentRequests.length + rejectedPromiseChangeRequests.length + rejectedLandlordPaymentRequests.length + rejectedLandlordPaymentDetailRequests.length + rejectedLandlordBulkRoomRequests.length + rejectedExpenseRequests.length})`} onClick={() => setFilter("rejected")} />
                                 </div>
                             </div>
                             {message ? <p className="mt-4 rounded-2xl bg-blue-50 px-4 py-3 text-sm font-black text-blue-800">{message}</p> : null}
@@ -819,6 +840,53 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
                             onReject={(request) => openLandlordPaymentDetailRejectModal(request)}
                             onReason={(request) => setLandlordPaymentDetailModal({ type: "reason", request })}
                             onHistory={(request) => setLandlordPaymentDetailModal({ type: "history", request })}
+                        />
+                    </section> : null}
+                    {hasExpenseQueue ? <section className="enterprise-panel mt-6 overflow-hidden">
+                        <div className="border-b border-slate-200 p-5">
+                            <h2 className="text-xl font-black text-slate-950">Office Expense Approval Queue</h2>
+                            <p className="text-sm font-semibold text-slate-500">Unauthorised and office-submitted expenses are approved here before they affect cash.</p>
+                        </div>
+                        <BulkApprovalControls
+                            disabled={isPending}
+                            label="Office expense requests"
+                            pendingIds={pendingExpenseRequests.map((request) => request.id)}
+                            selectedIds={selectedExpenseRequestIds}
+                            onChangeSelected={setSelectedExpenseRequestIds}
+                            onBulk={(decision, ids) => openBulkDecision("expense", "Office expense requests", decision, ids)}
+                        />
+                        <ExpenseApprovalTable
+                            data={safeData}
+                            isPending={isPending}
+                            requests={visibleExpenseRequests}
+                            selectedIds={selectedExpenseRequestIds}
+                            onToggleSelected={(id) => toggleSelectedId(selectedExpenseRequestIds, setSelectedExpenseRequestIds, id)}
+                            onApprove={(request) => {
+                                startTransition(async () => {
+                                    try {
+                                        setMessage(null);
+                                        await approveExpense({ expenseId: request.id, notes: "Approved from Notifications" });
+                                        setMessage("Expense approved. Cash outflow posted once.");
+                                        router.refresh();
+                                    } catch (error) {
+                                        setMessage(error instanceof Error ? error.message : "Expense approval failed.");
+                                    }
+                                });
+                            }}
+                            onReject={(request) => {
+                                const reason = window.prompt("Enter rejection reason");
+                                if (!reason?.trim()) return;
+                                startTransition(async () => {
+                                    try {
+                                        setMessage(null);
+                                        await rejectExpense({ expenseId: request.id, notes: reason.trim() });
+                                        setMessage("Expense rejected.");
+                                        router.refresh();
+                                    } catch (error) {
+                                        setMessage(error instanceof Error ? error.message : "Expense rejection failed.");
+                                    }
+                                });
+                            }}
                         />
                     </section> : null}
                     {!hasAnyVisibleAdminQueue ? (
@@ -1064,6 +1132,83 @@ function BulkDecisionModal({
                     </button>
                 </div>
             </div>
+        </div>
+    );
+}
+
+function ExpenseApprovalTable({
+    data,
+    isPending,
+    onApprove,
+    onReject,
+    onToggleSelected,
+    requests,
+    selectedIds,
+}: {
+    data: NotificationsCentreData;
+    isPending: boolean;
+    onApprove: (request: NotificationExpenseApprovalRequest) => void;
+    onReject: (request: NotificationExpenseApprovalRequest) => void;
+    onToggleSelected: (id: string) => void;
+    requests: NotificationExpenseApprovalRequest[];
+    selectedIds: string[];
+}) {
+    const officeName = (officeId: string | null | undefined) => data.lookups.offices.find((office) => office.id === officeId)?.name ?? "Office";
+    const userName = (userId: string | null | undefined) => data.lookups.users.find((user) => user.id === userId)?.name ?? "Office account";
+    return (
+        <div className="overflow-auto">
+            <table className="w-full min-w-[1120px] text-left text-sm">
+                <thead className="bg-slate-950 text-xs uppercase text-slate-200">
+                    <tr>
+                        <th className="px-4 py-3">Select</th>
+                        <th className="px-4 py-3">Expense Date</th>
+                        <th className="px-4 py-3">Expense Name</th>
+                        <th className="px-4 py-3">Office</th>
+                        <th className="px-4 py-3 text-right">Amount</th>
+                        <th className="px-4 py-3">Category</th>
+                        <th className="px-4 py-3">Reason</th>
+                        <th className="px-4 py-3">Submitted By</th>
+                        <th className="px-4 py-3">Payment Method</th>
+                        <th className="px-4 py-3">Status</th>
+                        <th className="px-4 py-3">Open Request</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {requests.length ? requests.map((request) => (
+                        <tr key={`expense-approval:${request.id}`} className="border-b border-slate-100">
+                            <td className="px-4 py-3">
+                                {request.status === "pending" ? (
+                                    <input checked={selectedIds.includes(request.id)} type="checkbox" onChange={() => onToggleSelected(request.id)} className="h-4 w-4 rounded border-slate-300 text-blue-700" />
+                                ) : null}
+                            </td>
+                            <td className="px-4 py-3 font-bold text-slate-500">{request.expense_date ?? request.created_at?.slice(0, 10) ?? "--"}</td>
+                            <td className="px-4 py-3 font-black text-slate-950">{request.item ?? request.expense_number ?? "Expense"}</td>
+                            <td className="px-4 py-3 font-bold text-slate-500">{officeName(request.office_id)}</td>
+                            <td className="px-4 py-3 text-right font-black text-slate-950">{money(request.amount)}</td>
+                            <td className="px-4 py-3 font-bold text-slate-500">{request.category ?? "Expense"}</td>
+                            <td className="max-w-[260px] truncate px-4 py-3 font-bold text-slate-500" title={request.description ?? ""}>{request.description ?? "--"}</td>
+                            <td className="px-4 py-3 font-bold text-slate-500">{userName(request.submitted_by)}</td>
+                            <td className="px-4 py-3 font-bold capitalize text-slate-500">{(request.payment_method ?? "Not set").replaceAll("_", " ")}</td>
+                            <td className="px-4 py-3"><StatusChip label={request.status} tone={request.status === "approved" ? "green" : request.status === "rejected" ? "red" : "orange"} /></td>
+                            <td className="px-4 py-3">
+                                <div className="flex min-w-[220px] flex-wrap gap-2">
+                                    {request.status === "pending" ? (
+                                        <>
+                                            <button disabled={isPending} onClick={() => onApprove(request)} className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-black text-white disabled:opacity-40">Approve</button>
+                                            <button disabled={isPending} onClick={() => onReject(request)} className="rounded-xl bg-rose-700 px-3 py-2 text-xs font-black text-white disabled:opacity-40">Reject</button>
+                                        </>
+                                    ) : null}
+                                    <a href={`/office/expenses?expense=${encodeURIComponent(request.id)}`} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Open Request</a>
+                                </div>
+                            </td>
+                        </tr>
+                    )) : (
+                        <tr>
+                            <td colSpan={11} className="px-4 py-8 text-center font-bold text-slate-500">No office expense requests match this filter.</td>
+                        </tr>
+                    )}
+                </tbody>
+            </table>
         </div>
     );
 }
