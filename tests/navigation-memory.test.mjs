@@ -4,6 +4,7 @@ import { test } from "node:test";
 
 const providerSource = readFileSync(new URL("../components/navigation/NavigationMemoryProvider.tsx", import.meta.url), "utf8");
 const officeLayoutSource = readFileSync(new URL("../components/office/shared/OfficeLayout.tsx", import.meta.url), "utf8");
+const sidebarSource = readFileSync(new URL("../components/office/shared/OfficeSidebar.tsx", import.meta.url), "utf8");
 
 test("navigation memory provider is installed globally in the office shell", () => {
   assert.match(officeLayoutSource, /NavigationMemoryProvider/);
@@ -59,4 +60,9 @@ test("shared hooks and smart back controls are available for explicit workflow a
   assert.match(providerSource, /export function UnsavedChangesGuard/);
   assert.match(providerSource, /export function SmartBackButton/);
   assert.match(providerSource, /export function SmartBackLink/);
+});
+
+test("office shell navigation does not prefetch heavy live server pages", () => {
+  assert.match(sidebarSource, /<Link prefetch=\{false\} href=\{logoHref\}/);
+  assert.match(sidebarSource, /<Link prefetch=\{false\} key=\{item\.href\}/);
 });
