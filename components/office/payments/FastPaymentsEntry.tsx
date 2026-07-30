@@ -113,6 +113,10 @@ function normalize(value: string | null | undefined) {
     return String(value ?? "").trim().toLowerCase();
 }
 
+function isSearchPreviewTenant(tenant: CollectionTenantResult | null): tenant is FastPaymentTenantSearchResult {
+    return Boolean((tenant as FastPaymentTenantSearchResult | null)?.searchPreviewOnly);
+}
+
 function runAfterInitialPaint(callback: () => void) {
     if (typeof window === "undefined") return () => undefined;
     let idleId: number | null = null;
@@ -190,6 +194,8 @@ export default function FastPaymentsEntry({
     const [assistantItems, setAssistantItems] = useState<AdvanceRentAssistantItem[]>([]);
     const [assistantLoading, setAssistantLoading] = useState(false);
     const [loadingRecent, setLoadingRecent] = useState(false);
+    const [loadingTenantDetails, setLoadingTenantDetails] = useState(false);
+    const [tenantDetailsError, setTenantDetailsError] = useState<string | null>(null);
     const [message, setMessage] = useState<string | null>(null);
     const [allocationMessage, setAllocationMessage] = useState<string | null>(null);
     const [searching, setSearching] = useState(false);
@@ -259,11 +265,13 @@ export default function FastPaymentsEntry({
     const [receiptModal, setReceiptModal] = useState<ReceiptModalState | null>(null);
     const [isPending, startTransition] = useTransition();
     const abortRef = useRef<AbortController | null>(null);
+    const tenantDetailsAbortRef = useRef<AbortController | null>(null);
     const roomInputRef = useRef<HTMLInputElement | null>(null);
     const amountInputRef = useRef<HTMLInputElement | null>(null);
     const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const requestSeqRef = useRef(0);
     const prefillAppliedRef = useRef(false);
+    const suppressNextSearchRef = useRef(false);
 
     const duplicateCount = selectedTenant
         ? recentPayments.filter((payment) => normalize(payment.roomNumber) === normalize(selectedTenant.room?.room_number)).length
@@ -302,7 +310,11 @@ export default function FastPaymentsEntry({
     useEffect(() => {
         const lookup = roomQuery.trim();
         setDuplicateWarning(null);
-        if (lookup.length < 2) {
+        if (suppressNextSearchRef.current) {
+            suppressNextSearchRef.current = false;
+            return;
+        }
+        if (lookup.length < 1) {
             abortRef.current?.abort();
             setResults([]);
             setSelectedTenant(null);
@@ -366,7 +378,7 @@ export default function FastPaymentsEntry({
                     if (requestSeqRef.current === requestSeq && !controller.signal.aborted) setSearching(false);
                 }
             })();
-        }, 200);
+        }, 150);
 
         return () => clearTimeout(timer);
     }, [adminSearchOfficeId, isAdmin, paymentDate, roomQuery]);
@@ -374,6 +386,7 @@ export default function FastPaymentsEntry({
     useEffect(() => {
         return () => {
             abortRef.current?.abort();
+            tenantDetailsAbortRef.current?.abort();
             if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
         };
     }, []);
@@ -387,27 +400,48 @@ export default function FastPaymentsEntry({
     async function selectRoomMatch(result: FastPaymentTenantSearchResult, requestSeq = requestSeqRef.current) {
         requestSeqRef.current = Math.max(requestSeqRef.current, requestSeq);
         abortRef.current?.abort();
-        setSearching(true);
+        tenantDetailsAbortRef.current?.abort();
+        const controller = new AbortController();
+        tenantDetailsAbortRef.current = controller;
+        setSelectedTenant(result);
+        setTenantDetailsError(null);
+        setLoadingTenantDetails(true);
+        setSearching(false);
         setRoomMatchesOpen(false);
-        setMessage("Loading live tenant balance...");
+        setResults([]);
+        suppressNextSearchRef.current = true;
+        setRoomQuery(result.room?.room_number ?? roomQuery);
+        setMessage("Room selected. Loading live tenant balance...");
         try {
-            const response = await fetch(`/api/collections/tenant?id=${encodeURIComponent(result.tenant.id)}`, { cache: "no-store" });
+            const detailStartedAt = performance.now();
+            const response = await fetch(`/api/collections/tenant?id=${encodeURIComponent(result.tenant.id)}&paymentDate=${encodeURIComponent(paymentDate)}`, {
+                cache: "no-store",
+                signal: controller.signal,
+            });
             const payload = await response.json();
-            if (requestSeqRef.current !== requestSeq) return;
+            if (controller.signal.aborted || requestSeqRef.current !== requestSeq) return;
             if (!response.ok) throw new Error(payload.error ?? "Tenant details could not load.");
             const hydrated = payload.result as CollectionTenantResult;
             setSelectedTenant(hydrated);
-            setResults([]);
+            suppressNextSearchRef.current = true;
             setRoomQuery(hydrated.room?.room_number ?? result.room?.room_number ?? roomQuery);
             setMessage(null);
+            console.info("payments_entry_tenant_detail_performance", {
+                roomNumber: hydrated.room?.room_number ?? result.room?.room_number ?? null,
+                serverTiming: response.headers.get("server-timing"),
+                visibleMs: Math.round(performance.now() - detailStartedAt),
+            });
             requestAnimationFrame(() => amountInputRef.current?.focus());
         } catch (error) {
+            if (controller.signal.aborted) return;
             if (requestSeqRef.current !== requestSeq) return;
-            setSelectedTenant(null);
-            setRoomMatchesOpen(true);
-            setMessage(error instanceof Error ? error.message : "Tenant details could not load.");
+            const errorMessage = error instanceof Error ? error.message : "Tenant details could not load.";
+            setTenantDetailsError(errorMessage);
+            setMessage(errorMessage);
         } finally {
-            if (requestSeqRef.current === requestSeq) setSearching(false);
+            if (requestSeqRef.current === requestSeq && !controller.signal.aborted) {
+                setLoadingTenantDetails(false);
+            }
         }
     }
 
@@ -478,6 +512,8 @@ export default function FastPaymentsEntry({
         setSelectedTenant(nextTenant);
         setRoomQuery(nextTenant?.room?.room_number ?? roomNumber);
         setRoomMatchesOpen(nextResults.length > 1 && !nextTenant);
+        setTenantDetailsError(null);
+        setLoadingTenantDetails(false);
     }
 
     function clearForNextPayment() {
@@ -841,6 +877,10 @@ export default function FastPaymentsEntry({
             setMessage("Enter a valid room number first.");
             return;
         }
+        if (loadingTenantDetails || isSearchPreviewTenant(selectedTenant)) {
+            setMessage("Live tenant balance is still loading. Please wait a moment before recording payment.");
+            return;
+        }
         if (!isDateOnly(paymentDate)) {
             setMessage("Select a valid payment date before recording.");
             return;
@@ -1080,14 +1120,17 @@ export default function FastPaymentsEntry({
 	                                    onChange={(event) => {
                                                     requestSeqRef.current += 1;
                                                     abortRef.current?.abort();
+                                                    tenantDetailsAbortRef.current?.abort();
 		                                        setRoomQuery(event.target.value);
 		                                        setSelectedTenant(null);
+                                                setLoadingTenantDetails(false);
+                                                setTenantDetailsError(null);
 		                                        setRoomMatchesOpen(true);
 	                                    }}
                                         onKeyDown={(event) => {
                                             if (event.key === "Enter") {
                                                 const exactLookup = roomQuery.trim();
-                                                if (exactLookup.length >= 2) {
+                                                if (exactLookup.length >= 1) {
                                                     event.preventDefault();
                                                     void reloadRoomDetails(exactLookup);
                                                 }
@@ -1108,10 +1151,13 @@ export default function FastPaymentsEntry({
                                     onChange={(event) => {
                                         requestSeqRef.current += 1;
                                         abortRef.current?.abort();
+                                        tenantDetailsAbortRef.current?.abort();
                                         setAdminSearchOfficeId(event.target.value);
                                         setResults([]);
                                         setSelectedTenant(null);
-                                        setRoomMatchesOpen(Boolean(roomQuery.trim().length >= 2));
+                                        setLoadingTenantDetails(false);
+                                        setTenantDetailsError(null);
+                                        setRoomMatchesOpen(Boolean(roomQuery.trim().length >= 1));
                                     }}
                                     className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
                                 >
@@ -1162,7 +1208,7 @@ export default function FastPaymentsEntry({
 	                                        <span className="mt-1 block text-slate-700">{result.tenant.full_name ?? "Unnamed tenant"}</span>
                                             <span className="mt-0.5 block text-xs text-slate-500">{result.tenant.phone ?? "No phone recorded"}</span>
 	                                        <span className="mt-1 block text-xs text-slate-500">
-	                                            {result.landlord?.full_name ?? "No landlord"} · Balance {money(liveOutstandingBalance(result))}
+	                                            {result.landlord?.full_name ?? "No landlord"}{isSearchPreviewTenant(result) ? "" : ` · Balance ${money(liveOutstandingBalance(result))}`}
 	                                            {isAdmin ? ` · ${result.office?.office_name ?? result.office?.name ?? "No office"}` : ""}
 	                                        </span>
 	                                    </button>
@@ -1171,9 +1217,25 @@ export default function FastPaymentsEntry({
 	                        </div>
 	                    ) : null}
 
-                    <TenantBalance isAdmin={isAdmin} onEditOutstanding={openBalanceAdjustmentModal} tenant={selectedTenant} />
+                    <TenantBalance isAdmin={isAdmin} loadingDetails={loadingTenantDetails || isSearchPreviewTenant(selectedTenant)} onEditOutstanding={openBalanceAdjustmentModal} tenant={selectedTenant} />
+                    {tenantDetailsError && selectedTenant ? (
+                        <div className="mt-3 flex flex-col gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-800 sm:flex-row sm:items-center sm:justify-between">
+                            <span>{tenantDetailsError}</span>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (selectedTenant && isSearchPreviewTenant(selectedTenant)) {
+                                        void selectRoomMatch(selectedTenant, requestSeqRef.current + 1);
+                                    }
+                                }}
+                                className="inline-flex h-9 items-center justify-center rounded-xl bg-white px-3 text-xs font-black text-rose-700 shadow-sm"
+                            >
+                                Retry
+                            </button>
+                        </div>
+                    ) : null}
 
-                    {selectedTenant ? (
+                    {selectedTenant && !isSearchPreviewTenant(selectedTenant) ? (
                         <div className="mt-4">
                             <TenantBillingDateControl
                                 billingDay={selectedTenant.billingAnniversaryDay}
@@ -1195,7 +1257,7 @@ export default function FastPaymentsEntry({
                         </div>
                     ) : null}
 
-                    {selectedTenant ? (
+                    {selectedTenant && !isSearchPreviewTenant(selectedTenant) ? (
                         <div className="mt-4">
                             <TenantContactCard
                                 landlordName={selectedTenant.landlord?.full_name}
@@ -1209,7 +1271,7 @@ export default function FastPaymentsEntry({
                         </div>
                     ) : null}
 
-                    {selectedTenant ? (
+                    {selectedTenant && !isSearchPreviewTenant(selectedTenant) ? (
                         <section className="mt-4 rounded-3xl border border-emerald-200 bg-emerald-50 p-4">
                             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                 <div>
@@ -1269,7 +1331,7 @@ export default function FastPaymentsEntry({
                         </section>
                     ) : null}
 
-                    {selectedTenant ? (
+                    {selectedTenant && !isSearchPreviewTenant(selectedTenant) ? (
                         <div className="mt-4 flex flex-col gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                             <div>
                                 <p className="text-sm font-black text-slate-950">Tenant actions</p>
@@ -1326,7 +1388,7 @@ export default function FastPaymentsEntry({
                         <button
                             type="button"
                             onClick={() => savePayment(false)}
-                            disabled={!canPostPayments || !selectedTenant || selectedOfficeMismatch || isPending}
+                            disabled={!canPostPayments || !selectedTenant || isSearchPreviewTenant(selectedTenant) || loadingTenantDetails || selectedOfficeMismatch || isPending}
                             className="inline-flex h-13 items-center gap-2 rounded-2xl bg-emerald-600 px-7 text-base font-black text-white shadow-lg shadow-emerald-100 transition hover:-translate-y-0.5 disabled:opacity-40"
                         >
                             {isPending ? <Loader2 className="animate-spin" size={18} /> : <ReceiptText size={18} />}
@@ -2104,7 +2166,7 @@ function MiniStat({ label, tone = "text-slate-950", value }: { label: string; to
     );
 }
 
-function TenantBalance({ isAdmin, onEditOutstanding, tenant }: { isAdmin: boolean; onEditOutstanding: () => void; tenant: CollectionTenantResult | null }) {
+function TenantBalance({ isAdmin, loadingDetails, onEditOutstanding, tenant }: { isAdmin: boolean; loadingDetails: boolean; onEditOutstanding: () => void; tenant: CollectionTenantResult | null }) {
     if (!tenant) {
         return (
             <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center">
@@ -2112,6 +2174,7 @@ function TenantBalance({ isAdmin, onEditOutstanding, tenant }: { isAdmin: boolea
             </div>
         );
     }
+    const liveValue = (value: string) => loadingDetails ? "Loading..." : value;
 
     return (
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -2120,16 +2183,17 @@ function TenantBalance({ isAdmin, onEditOutstanding, tenant }: { isAdmin: boolea
                     <p className="text-xs font-black uppercase text-rose-400">Outstanding Balance</p>
                     <button
                         type="button"
+                        disabled={loadingDetails}
                         onClick={onEditOutstanding}
-                        className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-white px-2.5 py-1 text-[10px] font-black uppercase text-rose-700 shadow-sm hover:border-rose-300"
+                        className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-white px-2.5 py-1 text-[10px] font-black uppercase text-rose-700 shadow-sm hover:border-rose-300 disabled:opacity-40"
                     >
                         <Pencil size={12} />
                         Edit
                     </button>
                 </div>
-                <p className="mt-1 text-2xl font-black text-rose-700">{money(liveOutstandingBalance(tenant))}</p>
+                <p className="mt-1 text-2xl font-black text-rose-700">{liveValue(money(liveOutstandingBalance(tenant)))}</p>
                 <p className="mt-1 text-[11px] font-bold text-rose-500">
-                    {isAdmin ? "Admin changes apply instantly." : "Office changes require Admin approval."}
+                    {loadingDetails ? "Fetching live balance..." : isAdmin ? "Admin changes apply instantly." : "Office changes require Admin approval."}
                 </p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -2138,8 +2202,8 @@ function TenantBalance({ isAdmin, onEditOutstanding, tenant }: { isAdmin: boolea
             </div>
             <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
                 <p className="text-xs font-black uppercase text-blue-500">Current Month Rent</p>
-                <p className="mt-1 text-2xl font-black text-blue-700">{money(tenant.monthlyRent)}</p>
-                {tenant.currentRentPeriod ? (
+                <p className="mt-1 text-2xl font-black text-blue-700">{liveValue(money(tenant.monthlyRent))}</p>
+                {!loadingDetails && tenant.currentRentPeriod ? (
                     <p className="mt-1 text-[11px] font-black text-blue-500">
                         Period: {compactDate(tenant.currentRentPeriod.start)} - {compactDate(tenant.currentRentPeriod.end)}
                     </p>
@@ -2147,28 +2211,28 @@ function TenantBalance({ isAdmin, onEditOutstanding, tenant }: { isAdmin: boolea
             </div>
             <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
                 <p className="text-xs font-black uppercase text-amber-500">Outstanding Before Last Payment</p>
-                <p className="mt-1 text-2xl font-black text-amber-700">{money(tenant.previousOutstandingBeforeLastPayment)}</p>
+                <p className="mt-1 text-2xl font-black text-amber-700">{liveValue(money(tenant.previousOutstandingBeforeLastPayment))}</p>
             </div>
             <div className="rounded-2xl border border-cyan-100 bg-cyan-50 p-4">
                 <p className="text-xs font-black uppercase text-cyan-500">Current Month Paid</p>
-                <p className="mt-1 text-2xl font-black text-cyan-700">{money(tenant.currentMonthPaid)}</p>
+                <p className="mt-1 text-2xl font-black text-cyan-700">{liveValue(money(tenant.currentMonthPaid))}</p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
                 <p className="text-xs font-black uppercase text-slate-500">Last Amount Paid</p>
-                <p className="mt-1 text-2xl font-black text-slate-950">{money(tenant.lastAmountPaid)}</p>
+                <p className="mt-1 text-2xl font-black text-slate-950">{liveValue(money(tenant.lastAmountPaid))}</p>
             </div>
             <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
                 <p className="text-xs font-black uppercase text-indigo-500">Used to Clear Outstanding</p>
-                <p className="mt-1 text-2xl font-black text-indigo-700">{money(tenant.amountUsedToClearOutstanding)}</p>
+                <p className="mt-1 text-2xl font-black text-indigo-700">{liveValue(money(tenant.amountUsedToClearOutstanding))}</p>
             </div>
             <div className="rounded-2xl border border-teal-100 bg-teal-50 p-4">
                 <p className="text-xs font-black uppercase text-teal-500">Allocated to Next Month</p>
-                <p className="mt-1 text-2xl font-black text-teal-700">{money(tenant.amountAllocatedToNextMonth)}</p>
+                <p className="mt-1 text-2xl font-black text-teal-700">{liveValue(money(tenant.amountAllocatedToNextMonth))}</p>
             </div>
             <div className="rounded-2xl border border-violet-100 bg-violet-50 p-4">
                 <p className="text-xs font-black uppercase text-violet-500">Advance Rent Balance</p>
-                <p className="mt-1 text-2xl font-black text-violet-700">{money(tenant.advanceRentBalance)}</p>
-                {tenant.advanceRentMonths.length ? (
+                <p className="mt-1 text-2xl font-black text-violet-700">{liveValue(money(tenant.advanceRentBalance))}</p>
+                {!loadingDetails && tenant.advanceRentMonths.length ? (
                     <div className="mt-2 space-y-1">
                         <p className="text-xs font-black uppercase text-violet-500">Advance Month Paid</p>
                         {tenant.advanceRentMonths.map((advanceMonth) => (
@@ -2177,36 +2241,36 @@ function TenantBalance({ isAdmin, onEditOutstanding, tenant }: { isAdmin: boolea
                             </p>
                         ))}
                     </div>
-                ) : (
+                ) : !loadingDetails ? (
                     <p className="mt-1 text-xs font-black text-violet-500">Advance Month Paid: None</p>
-                )}
+                ) : null}
             </div>
             <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
                 <p className="text-xs font-black uppercase text-emerald-500">Amount to Collect Now</p>
-                <p className="mt-1 text-2xl font-black text-emerald-700">{money(amountToCollect(tenant))}</p>
+                <p className="mt-1 text-2xl font-black text-emerald-700">{liveValue(money(amountToCollect(tenant)))}</p>
             </div>
             <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4">
                 <p className="text-xs font-black uppercase text-sky-500">Billing Anniversary</p>
                 <p className="mt-1 text-2xl font-black text-sky-700">
-                    {tenant.billingAnniversaryDay ? `${tenant.billingAnniversaryDay}${tenant.billingAnniversaryDay === 1 ? "st" : tenant.billingAnniversaryDay === 2 ? "nd" : tenant.billingAnniversaryDay === 3 ? "rd" : "th"}` : "Not set"}
+                    {loadingDetails ? "Loading..." : tenant.billingAnniversaryDay ? `${tenant.billingAnniversaryDay}${tenant.billingAnniversaryDay === 1 ? "st" : tenant.billingAnniversaryDay === 2 ? "nd" : tenant.billingAnniversaryDay === 3 ? "rd" : "th"}` : "Not set"}
                 </p>
-                <p className="mt-1 text-[11px] font-black text-sky-500">Next charge: {compactDate(tenant.nextRentChargeDate)}</p>
+                {!loadingDetails ? <p className="mt-1 text-[11px] font-black text-sky-500">Next charge: {compactDate(tenant.nextRentChargeDate)}</p> : null}
             </div>
-            {tenant.nextMonthCoveredAmount > 0 ? (
+            {!loadingDetails && tenant.nextMonthCoveredAmount > 0 ? (
                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 xl:col-span-4">
                     <p className="text-sm font-black text-emerald-800">
                         Tenant has {money(tenant.nextMonthCoveredAmount)} already paid toward next month.
                         {tenant.nextAdvanceRentMonth ? ` Advance month: ${tenant.nextAdvanceRentMonth}.` : ""}
                     </p>
                 </div>
-            ) : tenant.advanceRentBalance > 0 ? (
+            ) : !loadingDetails && tenant.advanceRentBalance > 0 ? (
                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 xl:col-span-4">
                     <p className="text-sm font-black text-emerald-800">
                         Tenant has {money(tenant.advanceRentBalance)} saved as advance rent for future months.
                     </p>
                 </div>
             ) : null}
-            {tenant.rentMonthAllocations.length ? (
+            {!loadingDetails && tenant.rentMonthAllocations.length ? (
                 <div className="rounded-2xl border border-slate-200 bg-white p-4 xl:col-span-4">
                     <p className="text-xs font-black uppercase text-slate-500">Month-by-month payment allocation</p>
                     <div className="mt-3 grid gap-2 md:grid-cols-2">

@@ -816,7 +816,7 @@ export async function searchCollectionTenants(query: string): Promise<Collection
 
 export async function searchFastPaymentTenants(query: string, paymentDate?: string | null, options: { allOffices?: boolean; officeId?: string } = {}): Promise<FastPaymentTenantSearchResult[]> {
     const term = query.trim();
-    if (term.length < 2) return [];
+    if (term.length < 1) return [];
 
     const context = await requirePermission("collections.read");
     const { supabase } = await getScopedSupabase();
@@ -871,7 +871,7 @@ export async function searchFastPaymentTenants(query: string, paymentDate?: stri
 
 export async function lookupPaymentRoom(roomNumber: string, paymentDate?: string | null, options: { allOffices?: boolean; officeId?: string } = {}): Promise<CollectionTenantResult[]> {
     const term = roomNumber.trim();
-    if (term.length < 2) return [];
+    if (term.length < 1) return [];
 
     const context = await requirePermission("collections.read");
     const { supabase } = await getScopedSupabase();
@@ -1557,7 +1557,7 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
     });
 }
 
-export async function getTenantCollectionContext(tenantId: string) {
+export async function getTenantCollectionContext(tenantId: string, paymentDate?: string | null) {
     const context = await requirePermission("collections.read");
     const { supabase } = await getScopedSupabase();
     const companyId = context.activeCompany?.id;
@@ -1582,7 +1582,7 @@ export async function getTenantCollectionContext(tenantId: string) {
         throw new Error("Tenant not found.");
     }
 
-    const [result] = await hydrateTenantResults([tenant], companyId, officeId);
+    const [result] = await hydrateTenantResults([tenant], companyId, officeId, paymentDate);
     const resolvedOfficeId = result?.lease?.office_id ?? result?.room?.office_id ?? result?.tenant.office_id ?? null;
     const canUseResolvedOffice = context.canAccessAllOffices || context.isCompanyAdmin || resolvedOfficeId === officeId;
 
@@ -1690,6 +1690,7 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
                 .eq("company_id", companyId)
                 .in("tenant_id", tenantIds)
                 .order("paid_at", { ascending: false, nullsFirst: false })
+                .limit(120)
             : { data: [] },
         tenantIds.length
             ? supabase
@@ -1699,6 +1700,7 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
                 .in("tenant_id", tenantIds)
                 .neq("status", "fulfilled")
                 .order("promised_date", { ascending: true })
+                .limit(20)
             : { data: [] as PromiseRow[] },
         tenantIds.length
             ? supabase
@@ -1707,7 +1709,7 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
                 .eq("company_id", companyId)
                 .in("tenant_id", tenantIds)
                 .order("created_at", { ascending: false })
-                .limit(100)
+                .limit(20)
             : { data: [] as TenantLedgerRow[] },
         tenantIds.length
             ? supabase
@@ -1716,7 +1718,7 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
                 .eq("company_id", companyId)
                 .in("tenant_id", tenantIds)
                 .order("created_at", { ascending: false })
-                .limit(100)
+                .limit(20)
             : { data: [] as CollectionActionRow[] },
         tenantIds.length
             ? (supabase as unknown as DynamicDb)
@@ -1739,7 +1741,8 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
                 .select("tenant_id, due_date, coverage_start, created_at, source")
                 .eq("company_id", companyId)
                 .in("tenant_id", tenantIds)
-                .order("due_date", { ascending: false }))
+                .order("due_date", { ascending: false })
+                .limit(12))
             : [],
     ]);
 

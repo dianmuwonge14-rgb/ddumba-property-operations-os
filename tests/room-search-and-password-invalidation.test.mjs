@@ -12,13 +12,13 @@ const loginRoute = readFileSync(new URL("../app/api/auth/office-login/route.ts",
 const loginForm = readFileSync(new URL("../components/auth/PinLoginForm.tsx", import.meta.url), "utf8");
 
 test("room-number search keeps exact and prefix matches authoritative and fast", () => {
-  assert.match(paymentsEntry, /lookup\.length < 2/);
+  assert.match(paymentsEntry, /lookup\.length < 1/);
   assert.match(paymentsEntry, /setTimeout\(\(\) => \{/);
-  assert.match(paymentsEntry, /}, 200\)/);
+  assert.match(paymentsEntry, /}, 150\)/);
   assert.match(paymentsEntry, /AbortController/);
   assert.match(paymentsEntry, /requestSeqRef/);
   assert.match(paymentsEntry, /params\.set\("allOffices", "1"\)/);
-  assert.match(paymentsEntry, /event\.key === "Enter"[\s\S]+reloadRoomDetails\(exactLookup\)/);
+  assert.match(paymentsEntry, /exactLookup\.length >= 1[\s\S]+reloadRoomDetails\(exactLookup\)/);
   assert.match(collectionsData, /normalizeRoomSearchValue/);
   assert.match(collectionsData, /if \(roomNumber === lookup\) return 0/);
   assert.match(collectionsData, /if \(roomNumber\.startsWith\(lookup\)\) return 1/);
@@ -55,6 +55,15 @@ test("login and payments entry avoid duplicate startup work", () => {
   assert.match(paymentsEntry, /requestIdleCallback/);
   assert.match(paymentsEntry, /void loadRecentPayments/);
   assert.match(paymentsEntry, /void loadAdvanceRentAssistant/);
+});
+
+test("payments entry shows lightweight room selection before live financial hydration", () => {
+  assert.match(paymentsEntry, /setSelectedTenant\(result\)/);
+  assert.match(paymentsEntry, /setLoadingTenantDetails\(true\)/);
+  assert.match(paymentsEntry, /searchPreviewOnly/);
+  assert.match(paymentsEntry, /Live tenant balance is still loading/);
+  assert.match(paymentsEntry, /loadingDetails=\{loadingTenantDetails \|\| isSearchPreviewTenant\(selectedTenant\)\}/);
+  assert.match(paymentsEntry, /isSearchPreviewTenant\(result\) \? "" : ` · Balance/);
 });
 
 test("password reset keeps only one canonical active credential and never stores plaintext PINs", () => {

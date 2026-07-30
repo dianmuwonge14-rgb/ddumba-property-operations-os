@@ -116,8 +116,8 @@ test("fast payment lookup returns saved billing day and lease start for immediat
 
 test("payments entry tenant search is compact, debounced, abortable and role-scoped", () => {
   assert.match(paymentsEntry, /setTimeout\(\(\) => \{/);
-  assert.match(paymentsEntry, /\}, 200\)/);
-  assert.match(paymentsEntry, /lookup\.length < 2/);
+  assert.match(paymentsEntry, /\}, 150\)/);
+  assert.match(paymentsEntry, /lookup\.length < 1/);
   assert.match(paymentsEntry, /abortRef\.current\?\.abort\(\)/);
   assert.match(paymentsEntry, /\/api\/collections\/payment-search\?/);
   assert.match(paymentsEntry, /\/api\/collections\/tenant\?id=/);
