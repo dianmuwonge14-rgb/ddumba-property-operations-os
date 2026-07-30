@@ -9,6 +9,7 @@ const hotPathMigration = readFileSync(new URL("../supabase/upgrade_migrations/02
 const adminAccounts = readFileSync(new URL("../app/actions/admin-accounts.ts", import.meta.url), "utf8");
 const collectors = readFileSync(new URL("../app/actions/collectors.ts", import.meta.url), "utf8");
 const loginRoute = readFileSync(new URL("../app/api/auth/office-login/route.ts", import.meta.url), "utf8");
+const loginForm = readFileSync(new URL("../components/auth/PinLoginForm.tsx", import.meta.url), "utf8");
 
 test("room-number search keeps exact and prefix matches authoritative and fast", () => {
   assert.match(paymentsEntry, /lookup\.length < 2/);
@@ -45,6 +46,15 @@ test("payments entry uses a lightweight indexed room search before hydrating ful
   assert.match(hotPathMigration, /limit \(select result_limit from search_input\)/);
   assert.doesNotMatch(hotPathMigration, /latest_collections/);
   assert.doesNotMatch(hotPathMigration, /payment_receipts pr/);
+});
+
+test("login and payments entry avoid duplicate startup work", () => {
+  assert.match(loginRoute, /redirectTo: isAdmin \? "\/office"/);
+  assert.doesNotMatch(loginForm, /router\.refresh\(\)/);
+  assert.match(paymentsEntry, /runAfterInitialPaint/);
+  assert.match(paymentsEntry, /requestIdleCallback/);
+  assert.match(paymentsEntry, /void loadRecentPayments/);
+  assert.match(paymentsEntry, /void loadAdvanceRentAssistant/);
 });
 
 test("password reset keeps only one canonical active credential and never stores plaintext PINs", () => {

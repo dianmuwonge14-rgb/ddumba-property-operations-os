@@ -50,15 +50,16 @@ test("cash position centre is an admin-only live Supabase page", () => {
   assert.doesNotMatch(componentSource, /placeholder/i);
 });
 
-test("admin navigation makes Cash Position Centre the CFO landing page", () => {
+test("admin landing opens Dashboard while Cash Position Centre remains available", () => {
   const cashPosition = sidebarSource.indexOf('/office/admin/cash-position", label: "Cash Position Centre"');
   const dashboard = sidebarSource.indexOf('/office", label: "Dashboard"');
   assert.ok(cashPosition > 0, "Cash Position Centre nav entry should exist");
   assert.ok(cashPosition < dashboard, "Cash Position Centre should be first for Admin");
   assert.match(sidebarSource, /pathname\.includes\("\/cash-position"\)/);
   assert.match(sidebarSource, /logoHref = isAdmin \? "\/office\/admin\/cash-position"/);
-  assert.match(loginSource, /isAdmin \? "\/office\/admin\/cash-position"/);
-  assert.match(officeHomeSource, /redirect\("\/office\/admin\/cash-position"\)/);
+  assert.match(loginSource, /isAdmin \? "\/office"/);
+  assert.doesNotMatch(officeHomeSource, /redirect\("\/office\/admin\/cash-position"\)/);
+  assert.match(officeHomeSource, /getDashboardLiveData/);
 });
 
 test("cash position centre includes requested executive KPIs and live office table fields", () => {

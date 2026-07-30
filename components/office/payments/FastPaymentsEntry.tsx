@@ -113,6 +113,25 @@ function normalize(value: string | null | undefined) {
     return String(value ?? "").trim().toLowerCase();
 }
 
+function runAfterInitialPaint(callback: () => void) {
+    if (typeof window === "undefined") return () => undefined;
+    let idleId: number | null = null;
+    const timeoutId = window.setTimeout(() => {
+        if ("requestIdleCallback" in window) {
+            idleId = window.requestIdleCallback(callback, { timeout: 1000 });
+        } else {
+            callback();
+        }
+    }, 150);
+
+    return () => {
+        window.clearTimeout(timeoutId);
+        if (idleId !== null && "cancelIdleCallback" in window) {
+            window.cancelIdleCallback(idleId);
+        }
+    };
+}
+
 function amountToCollect(tenant: CollectionTenantResult | null) {
     if (!tenant) return 0;
     return liveOutstandingBalance(tenant);
@@ -273,8 +292,10 @@ export default function FastPaymentsEntry({
     }, []);
 
     useEffect(() => {
-        void loadRecentPayments(paymentDate, ledgerPage, ledgerPageSize, ledgerSearch, ledgerMethod);
-        void loadAdvanceRentAssistant(paymentDate);
+        return runAfterInitialPaint(() => {
+            void loadRecentPayments(paymentDate, ledgerPage, ledgerPageSize, ledgerSearch, ledgerMethod);
+            void loadAdvanceRentAssistant(paymentDate);
+        });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [ledgerMethod, ledgerPage, ledgerPageSize, ledgerSearch, paymentDate]);
 

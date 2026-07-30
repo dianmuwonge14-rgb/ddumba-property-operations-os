@@ -37,7 +37,6 @@ export default function PinLoginForm() {
 
             setSuccess(payload.message ?? `Logged into ${payload.office?.name ?? "Office"}`);
             router.push(payload.redirectTo ?? "/office");
-            router.refresh();
         });
     }
 
