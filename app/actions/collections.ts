@@ -267,7 +267,10 @@ async function applyApprovedPaymentRemoval(input: {
             allocated_to_next_month: 0,
             balance: nextBalance,
             balance_after_payment: nextBalance,
+            financial_effective: false,
             notes: [payment.notes, `Removed by admin approval: ${reason}`].filter(Boolean).join(" | "),
+            reversal_reason: reason,
+            reversed_at: new Date().toISOString(),
             status: "removed_by_admin_approval",
         })
         .eq("id", paymentId)

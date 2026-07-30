@@ -1,5 +1,6 @@
 import { requirePermission } from "@/lib/auth/permissions";
 import { getScopedSupabase } from "@/lib/auth/query";
+import { collectionAmount, uniqueFinanciallyEffectiveCollections } from "@/lib/collections/validity";
 import type {
     CashAccountRow,
     CollectionRow,
@@ -188,7 +189,7 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
     const categories = categoriesResult.data ?? [];
     const properties = propertiesResult.data ?? [];
     const landlords = landlordsResult.data ?? [];
-    const collections = collectionsResult.data ?? [];
+    const collections = uniqueFinanciallyEffectiveCollections((collectionsResult.data ?? []) as CollectionRow[]);
     const cashAccounts = cashAccountsResult.data ?? [];
     const users = usersResult.data ?? [];
     const offices = (officesResult.data ?? []).map((office) => ({
@@ -357,10 +358,10 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
     }
 
     const expenses = expensesResult.data ?? [];
-    const collections = collectionsResult.data ?? [];
+    const collections = uniqueFinanciallyEffectiveCollections((collectionsResult.data ?? []) as CollectionRow[]);
     const items = hydrateExpenseItems(expenses, categoriesResult.data ?? [], propertiesResult.data ?? [], landlordsResult.data ?? [], usersResult.data ?? []);
     const officeById = new Map((officesResult.data ?? []).map((office) => [office.id, office.office_name ?? office.name ?? "Office"]));
-    const totalCollections = collections.reduce((total, collection) => total + Number(collection.amount_paid ?? collection.amount ?? 0), 0);
+    const totalCollections = collections.reduce((total, collection) => total + collectionAmount(collection), 0);
     const approvedExpenses = expenses.filter(isApprovedExpense);
     const totalExpenses = sumExpenses(approvedExpenses);
     const collectionItems = hydrateCollectionItems(collections, usersResult.data ?? [], officeById);
@@ -455,7 +456,8 @@ function calculateKpis(
     const monthExpenses = sumExpenses(approvedExpenses.filter((expense) => expense.expense_date && expense.expense_date >= month.start && expense.expense_date <= month.end));
     const propertyIds = new Set(properties.map((property) => property.id));
     const propertyExpenses = sumExpenses(approvedExpenses.filter((expense) => expense.property_id && propertyIds.has(expense.property_id)));
-    const collectionValue = collections.reduce((total, collection) => total + Number(collection.amount_paid ?? collection.amount ?? 0), 0);
+    const validCollections = uniqueFinanciallyEffectiveCollections(collections);
+    const collectionValue = validCollections.reduce((total, collection) => total + collectionAmount(collection), 0);
     const netCashPosition = collectionValue - totalExpenses;
 
     return {
@@ -491,7 +493,7 @@ function hydrateCollectionItems(
                     : "";
         return {
             ...collection,
-            amountValue: Number(raw.amount_paid ?? raw.amount ?? 0),
+            amountValue: collectionAmount(raw),
             officeName: officeId ? officeById.get(officeId) ?? "Office" : null,
             paymentDate: typeof raw.payment_date === "string" ? raw.payment_date : typeof raw.paid_at === "string" ? raw.paid_at.slice(0, 10) : typeof raw.created_at === "string" ? raw.created_at.slice(0, 10) : null,
             paymentMethod: typeof raw.payment_method === "string" ? raw.payment_method : null,

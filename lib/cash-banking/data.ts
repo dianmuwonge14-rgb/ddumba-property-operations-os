@@ -1,10 +1,9 @@
 import { requirePermission, hasPermission } from "@/lib/auth/permissions";
+import { collectionAmount, isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { CashBankingData, CashBankingFilters, CashInsight, CashLedgerRow, CashOfficeSummary } from "./types";
 
 type Row = Record<string, any>;
-
-const INACTIVE_PAYMENT_STATUSES = new Set(["voided", "removed", "removed_by_admin_approval", "rejected", "pending", "cancelled", "canceled"]);
 
 function todayKey() {
     return new Date().toISOString().slice(0, 10);
@@ -39,13 +38,12 @@ function inRange(value: string | null | undefined, startDate: string, endDate: s
 }
 
 function isActiveCollection(row: Row) {
-    const status = String(row.status ?? "active").toLowerCase();
-    return !INACTIVE_PAYMENT_STATUSES.has(status);
+    return isFinanciallyEffectiveCollection(row);
 }
 
 function isApprovedExpense(row: Row) {
     const status = String(row.status ?? "approved").toLowerCase();
-    return !INACTIVE_PAYMENT_STATUSES.has(status);
+    return !["voided", "removed", "removed_by_admin_approval", "rejected", "pending", "cancelled", "canceled", "reversed", "deleted"].includes(status);
 }
 
 function officeName(row: Row) {
@@ -57,7 +55,7 @@ function sum(rows: Row[], value: (row: Row) => number) {
 }
 
 function cashAmount(row: Row) {
-    return numberValue(row.amount_paid ?? row.amount);
+    return collectionAmount(row);
 }
 
 function expenseAmount(row: Row) {
@@ -204,7 +202,7 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
         usersResult,
     ] = await Promise.all([
         admin.from("offices").select("id, office_name, name").eq("company_id", companyId).order("office_name", { ascending: true, nullsFirst: false }),
-        admin.from("collections").select("id, company_id, office_id, amount, amount_paid, payment_date, paid_at, created_at, payment_method, reference_number, recorded_by, status").eq("company_id", companyId).limit(10000),
+        admin.from("collections").select("id, company_id, office_id, amount, amount_paid, payment_date, paid_at, created_at, payment_method, reference_number, recorded_by, status, financial_effective, reversed_at, voided_at, deleted_at, superseded_at, superseded_by_payment_id, corrected_by_payment_id, correction_of_payment_id").eq("company_id", companyId).limit(10000),
         admin.from("expenses").select("id, company_id, office_id, amount, expense_date, created_at, item, description, entered_by, submitted_by, status").eq("company_id", companyId).limit(10000),
         admin.from("cash_accounts").select("id, company_id, office_id, account_type, name, status").eq("company_id", companyId).eq("status", "active"),
         (admin as unknown as { from: (table: string) => any }).from("cash_transactions").select("id, company_id, office_id, cash_account_id, amount, transaction_type, source_type, source_id, transaction_date, created_at, description, recorded_by, status, direction, occurred_at").eq("company_id", companyId).limit(10000),

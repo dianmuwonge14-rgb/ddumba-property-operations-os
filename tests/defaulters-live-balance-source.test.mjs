@@ -9,9 +9,16 @@ const migration = readFileSync(new URL("../supabase/upgrade_migrations/0223_live
 
 test("defaulters are sourced directly from live positive tenant balances", () => {
   assert.match(dataSource, /const outstandingBalance = liveOutstanding\(tenant, room\);/);
+  assert.match(dataSource, /displayTenantNetBalance/);
   assert.doesNotMatch(dataSource, /outstandingBalance = Math\.max\(0, amount\(tenant\.balance \?\? room\.outstanding_balance\) - prepaidForCurrentMonth\)/);
   assert.doesNotMatch(dataSource, /if \(dateOnly\(now\) <= paymentDueDate\) continue;/);
   assert.match(dataSource, /if \(outstandingBalance <= 0\) continue;/);
+});
+
+test("active defaulters exclude vacated rooms and corrected collection rows", () => {
+  assert.match(dataSource, /status\.includes\("vacated"\)/);
+  assert.match(dataSource, /uniqueFinanciallyEffectiveCollections\(collections\)/);
+  assert.match(dataSource, /collectionAmount\(lastPayment\)/);
 });
 
 test("admin remains company-wide while offices and collectors are scoped", () => {

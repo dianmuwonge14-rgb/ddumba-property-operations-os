@@ -1,6 +1,7 @@
 import "server-only";
 
 import { requireCompanyAdminMode } from "@/lib/auth/permissions";
+import { collectionAmount as validCollectionAmount, isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type {
     CashPositionChartPoint,
@@ -15,7 +16,6 @@ import type {
 
 type Row = Record<string, any>;
 
-const INACTIVE_PAYMENT_STATUSES = new Set(["voided", "removed", "removed_by_admin_approval", "rejected", "pending", "cancelled", "canceled"]);
 const ACTIVE_RECEIPT_STATUSES = new Set(["issued", "reissued", "corrected"]);
 const APPROVED_EXPENSE_STATUSES = new Set(["approved"]);
 const PENDING_EXPENSE_STATUSES = new Set(["pending", "pending_admin_approval", "submitted"]);
@@ -132,7 +132,7 @@ function inRange(value: string | null | undefined, startDate: string | null, end
 }
 
 function isActiveCollection(row: Row) {
-    return !INACTIVE_PAYMENT_STATUSES.has(String(row.status ?? "posted").toLowerCase());
+    return isFinanciallyEffectiveCollection(row);
 }
 
 function isActiveReceipt(row: Row) {
@@ -160,7 +160,7 @@ function expenseDate(row: Row) {
 }
 
 function collectionAmount(row: Row) {
-    return numberValue(row.amount_paid ?? row.amount);
+    return validCollectionAmount(row);
 }
 
 function collectionDate(row: Row) {
@@ -427,7 +427,7 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         securityResult,
     ] = await Promise.all([
         db.from("offices").select("id, office_name, name, status").eq("company_id", companyId).order("office_name", { ascending: true, nullsFirst: false }).limit(1000),
-        db.from("collections").select("id, company_id, office_id, amount, amount_paid, payment_date, paid_at, created_at, payment_method, reference_number, recorded_by, status, room_id, tenant_id").eq("company_id", companyId).limit(10000),
+        db.from("collections").select("id, company_id, office_id, amount, amount_paid, payment_date, paid_at, created_at, payment_method, reference_number, recorded_by, status, room_id, tenant_id, financial_effective, reversed_at, voided_at, deleted_at, superseded_at, superseded_by_payment_id, corrected_by_payment_id, correction_of_payment_id").eq("company_id", companyId).limit(10000),
         db.from("expenses").select("id, company_id, office_id, amount, expense_date, created_at, item, category, submitted_by, approved_at, approved_by, status").eq("company_id", companyId).limit(10000),
         db.from("cash_accounts").select("id, company_id, office_id, account_type, name, status").eq("company_id", companyId).eq("status", "active").limit(2000),
         db.from("cash_transactions").select("id, company_id, office_id, cash_account_id, amount, transaction_type, source_type, source_id, transaction_date, created_at, description, recorded_by").eq("company_id", companyId).limit(10000),

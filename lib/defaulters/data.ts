@@ -1,6 +1,8 @@
 import { requireAuth } from "@/lib/auth/permissions";
 import { getScopedSupabase } from "@/lib/auth/query";
+import { collectionAmount, uniqueFinanciallyEffectiveCollections } from "@/lib/collections/validity";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { displayTenantNetBalance } from "@/lib/tenants/balance-reconciliation";
 import type { Database } from "@/types/database.types";
 import type { DefaulterAssistant, DefaulterItem, DefaultersKpis, DefaultersPageData } from "./types";
 
@@ -100,9 +102,16 @@ function daysBetween(start: string, end = new Date()) {
 }
 
 function liveOutstanding(tenant: TenantRow, room: RoomRow | null | undefined) {
-    const tenantBalance = amount(tenant.balance);
-    if (tenantBalance > 0 || tenant.balance === 0) return Math.max(0, tenantBalance);
-    return Math.max(0, amount(room?.outstanding_balance));
+    const row = tenant as TenantRow & { advance_rent_balance?: number | string | null; outstanding_balance?: number | string | null };
+    const rawOutstanding = row.balance != null
+        ? amount(row.balance)
+        : row.outstanding_balance != null
+            ? amount(row.outstanding_balance)
+            : amount(room?.outstanding_balance);
+    return displayTenantNetBalance({
+        advanceBalance: amount(row.advance_rent_balance),
+        outstandingBalance: rawOutstanding,
+    }).outstandingBalance;
 }
 
 function estimateUnpaidPeriods(outstandingBalance: number, monthlyRent: number) {
@@ -125,7 +134,7 @@ function isActiveTenant(value: string | null | undefined) {
 function isActiveRoom(value: string | null | undefined) {
     const status = String(value ?? "").toLowerCase();
     if (!status) return true;
-    return !status.includes("vacant") && !status.includes("archiv") && !status.includes("delete") && !status.includes("inactive");
+    return status === "occupied" || status === "active" || (!status.includes("vacant") && !status.includes("vacated") && !status.includes("archiv") && !status.includes("delete") && !status.includes("inactive"));
 }
 
 function isClosedPromise(value: string | null | undefined) {
@@ -322,14 +331,15 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
         if (!activeLeaseByRoom.has(lease.room_id)) activeLeaseByRoom.set(lease.room_id, lease);
     }
 
+    const validCollections = uniqueFinanciallyEffectiveCollections(collections);
     const latestPaymentByTenant = new Map<string, CollectionRow>();
     const currentMonthPaidByTenant = new Map<string, number>();
     const currentMonthStart = firstOfCurrentMonth(now);
-    for (const collection of collections) {
+    for (const collection of validCollections) {
         if (!collection.tenant_id) continue;
         latestPaymentByTenant.set(collection.tenant_id, latestCollection(latestPaymentByTenant.get(collection.tenant_id), collection));
         if ((collection.payment_date ?? "") >= currentMonthStart && (collection.payment_date ?? "") <= dateOnly(now)) {
-            currentMonthPaidByTenant.set(collection.tenant_id, (currentMonthPaidByTenant.get(collection.tenant_id) ?? 0) + amount(collection.amount_paid ?? collection.amount));
+            currentMonthPaidByTenant.set(collection.tenant_id, (currentMonthPaidByTenant.get(collection.tenant_id) ?? 0) + collectionAmount(collection));
         }
     }
 
@@ -362,7 +372,7 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
         }
     }
 
-    for (const collection of collections) {
+    for (const collection of validCollections) {
         if (!collection.tenant_id || collectorByTenant.has(collection.tenant_id)) continue;
         if (collection.collector_id) collectorByTenant.set(collection.tenant_id, userById.get(collection.collector_id)?.full_name ?? collection.entered_by_name ?? "Collector recorded payment");
     }
@@ -444,7 +454,7 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
             daysDefaulted,
             monthsDefaulted: Math.floor(daysDefaulted / 30),
             lastPaymentDate: lastPayment?.payment_date ?? lastPayment?.paid_at?.slice(0, 10) ?? null,
-            lastPaymentAmount: amount(lastPayment?.amount_paid ?? lastPayment?.amount),
+            lastPaymentAmount: collectionAmount(lastPayment),
             promiseStatus: promiseStatus(openPromiseCount, failedPromiseCount, dueTodayCount),
             openPromiseCount,
             failedPromiseCount,
@@ -507,7 +517,7 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
             daysDefaulted,
             monthsDefaulted: Math.floor(daysDefaulted / 30),
             lastPaymentDate: lastPayment?.payment_date ?? lastPayment?.paid_at?.slice(0, 10) ?? null,
-            lastPaymentAmount: amount(lastPayment?.amount_paid ?? lastPayment?.amount),
+            lastPaymentAmount: collectionAmount(lastPayment),
             promiseStatus: promiseStatus(openPromiseCount, failedPromiseCount, dueTodayCount),
             openPromiseCount,
             failedPromiseCount,
@@ -564,7 +574,7 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
             daysDefaulted: 0,
             monthsDefaulted: 0,
             lastPaymentDate: lastPayment?.payment_date ?? lastPayment?.paid_at?.slice(0, 10) ?? null,
-            lastPaymentAmount: amount(lastPayment?.amount_paid ?? lastPayment?.amount),
+            lastPaymentAmount: collectionAmount(lastPayment),
             promiseStatus: "Cleared",
             openPromiseCount: 0,
             failedPromiseCount: 0,

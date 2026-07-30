@@ -1,5 +1,6 @@
 import { getScopedSupabase } from "@/lib/auth/query";
 import { requirePermission } from "@/lib/auth/permissions";
+import { collectionAmount, isFinanciallyEffectiveCollection, uniqueFinanciallyEffectiveCollections } from "@/lib/collections/validity";
 import { availableAdvanceAllocation, displayTenantNetBalance } from "@/lib/tenants/balance-reconciliation";
 import { billingPeriodForDate, clampBillingDay, nextBillingDate } from "@/lib/tenants/billing-cycle";
 import type {
@@ -177,7 +178,7 @@ export async function getFastPaymentRecentPayments(paymentDate: string, options?
     const { data: collections, error } = await collectionQuery;
     if (error) throw new Error(error.message);
 
-    const rows = (collections ?? []) as CollectionRow[];
+    const rows = uniqueFinanciallyEffectiveCollections((collections ?? []) as CollectionRow[]);
     const tenantIds = uniqueIds(rows.map((row) => row.tenant_id));
     const roomIds = uniqueIds(rows.map((row) => row.room_id));
     const officeIds = uniqueIds(rows.map((row) => row.office_id));
@@ -259,7 +260,7 @@ export async function getFastPaymentRecentPayments(paymentDate: string, options?
             tenantName: tenant?.full_name ?? "Unnamed tenant",
             landlordName: landlord?.full_name ?? "No landlord",
             officeName: office?.office_name ?? office?.name ?? "No office",
-            amount: Number(row.amount_paid ?? row.amount ?? 0),
+            amount: collectionAmount(row),
             method: row.payment_method ?? "payment",
             paymentType: row.type ?? "rent",
             recordedBy: user?.full_name ?? "System",
@@ -341,7 +342,7 @@ function monthRange() {
 }
 
 function sumAmounts(rows: Array<{ amount_paid: number | null; amount: number | null }>) {
-    return rows.reduce((total, row) => total + Number(row.amount_paid ?? row.amount ?? 0), 0);
+    return rows.filter(isFinanciallyEffectiveCollection).reduce((total, row) => total + collectionAmount(row), 0);
 }
 
 function todayDateOnly() {
@@ -488,7 +489,7 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
     const { data: collectionData, error } = await collectionQuery;
     if (error) throw new Error(error.message);
 
-    const collections = (collectionData ?? []) as CollectionRow[];
+    const collections = uniqueFinanciallyEffectiveCollections((collectionData ?? []) as CollectionRow[]);
     const tenantIds = uniqueIds(collections.map((row) => row.tenant_id));
     const roomIds = uniqueIds(collections.map((row) => row.room_id));
     const officeIds = uniqueIds(collections.map((row) => row.office_id));
@@ -532,7 +533,7 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
                 tenantName: tenant?.full_name ?? "Unnamed tenant",
                 landlordName: landlord?.full_name ?? "No landlord",
                 officeName: office?.office_name ?? office?.name ?? (row.office_id ? officeNameById.get(row.office_id) : null) ?? "No office",
-                amountPaid: Number(row.amount_paid ?? row.amount ?? 0),
+                amountPaid: collectionAmount(row),
                 remainingBalance: Number(row.balance ?? 0),
                 paymentMethod: row.payment_method ?? "payment",
                 recordedBy: user?.full_name ?? user?.email ?? "System",
@@ -1233,7 +1234,7 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
     const collectionsByTenant = new Map<string, Array<Record<string, unknown>>>();
     for (const collection of collectionRows as Array<Record<string, unknown>>) {
         const tenantId = String(collection.tenant_id ?? "");
-        if (!tenantId || ["voided", "removed_by_admin_approval", "rejected", "pending"].includes(String(collection.status ?? "").toLowerCase())) continue;
+        if (!tenantId || !isFinanciallyEffectiveCollection(collection)) continue;
         collectionsByTenant.set(tenantId, [...(collectionsByTenant.get(tenantId) ?? []), collection]);
     }
     const allocationsByTenant = new Map<string, Array<Record<string, unknown>>>();
@@ -1266,11 +1267,11 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
         const monthsCovered = [...new Set(futureAllocations.map((allocation) => monthLabelFromDate(String(allocation.allocation_month ?? ""))).filter((value): value is string => Boolean(value)))];
         const rawCurrentMonthPaid = tenantCollections
             .filter((collection) => collectionPaymentDate(collection as CollectionRow).slice(0, 7) === monthStart.slice(0, 7))
-            .reduce((total, collection) => total + Number(collection.amount_paid ?? collection.amount ?? 0), 0);
+            .reduce((total, collection) => total + collectionAmount(collection), 0);
         const resolvedOverpayments: Array<{ amount: number; months: string[] }> = [];
         const unresolvedOverpayments: Array<{ amount: number; missing: number }> = [];
         for (const collection of tenantCollections) {
-            const paid = Number(collection.amount_paid ?? collection.amount ?? 0);
+            const paid = collectionAmount(collection);
             const totalDueBeforePayment = Number(collection.balance_before_payment ?? collection.expected_amount ?? 0);
             const excess = Math.max(0, paid - totalDueBeforePayment);
             if (excess <= 0) continue;
@@ -1829,7 +1830,7 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
             .reduce((total, allocation) => total + Number(allocation.amount_allocated ?? 0), 0);
         const rawCurrentMonthPaid = tenantCollections
             .filter((collection) => collectionPaymentDate(collection).slice(0, 7) === monthStart.slice(0, 7))
-            .reduce((total, collection) => total + Number(collection.amount_paid ?? collection.amount ?? 0), 0);
+            .reduce((total, collection) => total + collectionAmount(collection), 0);
         const currentMonthPaid = allocatedCurrentMonthPaid > 0 ? allocatedCurrentMonthPaid : Math.min(rawCurrentMonthPaid, monthlyRent);
         const futureAdvanceAllocations = tenantAllocations
             .filter((allocation) => String(allocation.allocation_type) === "advance_month" && String(allocation.allocation_month ?? "").slice(0, 10) >= upcomingMonth);
@@ -2005,10 +2006,10 @@ function buildContributionBreakdown({
     }) as CollectionWithContribution[];
     const employerReceivedThisMonth = thisMonth
         .filter((collection) => collection.payment_source === "employer")
-        .reduce((total, collection) => total + Number(collection.amount_paid ?? collection.amount ?? 0), 0);
+        .reduce((total, collection) => total + collectionAmount(collection), 0);
     const tenantTopUpPaidThisMonth = thisMonth
         .filter((collection) => collection.payment_source !== "employer")
-        .reduce((total, collection) => total + Number(collection.amount_paid ?? collection.amount ?? 0), 0);
+        .reduce((total, collection) => total + collectionAmount(collection), 0);
 
     return {
         hasSponsor: true,

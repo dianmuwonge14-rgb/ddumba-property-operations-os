@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
 import type { AuthContext } from "@/lib/auth/types";
 import type { ArchivedIntegrityRecord, DataIntegrityCentreData, IntegrityDuplicateRecord, IntegrityEntityRecord } from "./types";
 
@@ -129,7 +130,7 @@ function duplicateTenantPhones(tenants: LooseRow[], officeById: Map<string, stri
 
 function duplicatePayments(collections: LooseRow[], officeById: Map<string, string>): IntegrityDuplicateRecord[] {
     return duplicateBy(
-        collections.filter((collection) => !inactive(collection.status)),
+        collections.filter(isFinanciallyEffectiveCollection),
         (collection) => [collection.company_id, collection.office_id, collection.room_id, collection.tenant_id, dateOnly(collection.payment_date), numberValue(collection.amount_paid ?? collection.amount)].join("|"),
         (key, records) => ({
             id: `payment-${key}`,

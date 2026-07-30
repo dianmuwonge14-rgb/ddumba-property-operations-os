@@ -1,5 +1,6 @@
 import { requireCompanyAdminMode } from "@/lib/auth/permissions";
 import { getScopedSupabase } from "@/lib/auth/query";
+import { collectionAmount, isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
 import type {
     StatementCategory,
     StatementColumn,
@@ -471,7 +472,7 @@ async function loadTenantStatement({
 
     let rows: StatementRow[] = [];
     if (filters.statementType.includes("received")) {
-        rows = ((collectionsResult.data ?? []) as LooseRow[]).map((collection) => {
+        rows = ((collectionsResult.data ?? []) as LooseRow[]).filter(isFinanciallyEffectiveCollection).map((collection) => {
             const tenant = tenantById.get(String(collection.tenant_id)) ?? {};
             const room = roomById.get(String(collection.room_id ?? tenant.room_id)) ?? {};
             const landlord = landlordById.get(String(collection.landlord_id ?? room.landlord_id)) ?? {};
@@ -481,13 +482,13 @@ async function loadTenantStatement({
                 landlord: text(landlord.full_name, "Landlord"),
                 office: officeById.get(String(collection.office_id ?? tenant.office_id)) ?? "Office",
                 monthlyRent: amount(tenant.monthly_rent ?? room.monthly_rent),
-                amountPaid: amount(collection.amount_paid ?? collection.amount),
+                amountPaid: collectionAmount(collection),
                 balance: amount(collection.balance ?? tenant.balance),
                 advanceAmount: amount(collection.balance) < 0 ? Math.abs(amount(collection.balance)) : 0,
                 paymentDate: dateOnly(collection.paid_at ?? collection.created_at),
                 collector: text(collection.recorded_by ?? collection.collector_id, "Recorded in Supabase"),
                 paymentMethod: text(collection.payment_method, "payment"),
-                total: amount(collection.amount_paid ?? collection.amount),
+                total: collectionAmount(collection),
             };
         });
     } else {
@@ -572,12 +573,12 @@ async function loadOfficeStatement({
     }
     const officeIds = filters.officeId ? [filters.officeId] : offices.map((office) => office.id);
     const rows = officeIds.map((officeId) => {
-        const collections = ((collectionsResult.data ?? []) as LooseRow[]).filter((row) => String(row.office_id) === officeId);
+        const collections = ((collectionsResult.data ?? []) as LooseRow[]).filter((row) => String(row.office_id) === officeId && isFinanciallyEffectiveCollection(row));
         const expenses = ((expensesResult.data ?? []) as LooseRow[]).filter((row) => String(row.office_id) === officeId);
         const payables = ((payablesResult.data ?? []) as LooseRow[]).filter((row) => String(row.office_id) === officeId);
         const advances = ((advancesResult.data ?? []) as LooseRow[]).filter((row) => String(row.office_id) === officeId);
         const deductions = ((deductionsResult.data ?? []) as LooseRow[]).filter((row) => String(row.office_id) === officeId);
-        const totalCollections = collections.reduce((total, row) => total + amount(row.amount_paid ?? row.amount), 0);
+        const totalCollections = collections.reduce((total, row) => total + collectionAmount(row), 0);
         const companyCommission = payables.reduce((total, row) => total + amount(row.commission_amount), 0);
         const landlordPayable = payables.reduce((total, row) => total + amount(row.net_payable), 0);
         const landlordUnpaid = payables.reduce((total, row) => total + amount(row.unpaid_balance), 0);

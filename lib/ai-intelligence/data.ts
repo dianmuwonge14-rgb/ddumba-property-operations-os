@@ -1,5 +1,6 @@
 import { requirePermission } from "@/lib/auth/permissions";
 import { getScopedSupabase } from "@/lib/auth/query";
+import { collectionAmount, isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
 import type {
     AiIntelligenceData,
     AttendanceEventRow,
@@ -228,10 +229,10 @@ function buildCollectionIntelligence(input: {
     const likelyRecoveryAmount = Math.round(input.promises.filter((promise) => !isBrokenPromise(promise)).reduce((total, promise) => total + amount(promise.promised_amount ?? promise.amount), 0) * 0.68);
     const collectorMap = new Map<string, { value: number; count: number }>();
 
-    for (const collection of input.collections) {
+    for (const collection of input.collections.filter(isFinanciallyEffectiveCollection)) {
         const key = collection.collector_id ?? collection.recorded_by ?? "unknown";
         const existing = collectorMap.get(key) ?? { value: 0, count: 0 };
-        existing.value += amount(collection.amount_paid ?? collection.amount);
+        existing.value += collectionAmount(collection);
         existing.count += 1;
         collectorMap.set(key, existing);
     }
@@ -331,8 +332,8 @@ function buildLandlordIntelligence(input: {
         if (property.landlord_id) propertiesByLandlord.set(property.landlord_id, (propertiesByLandlord.get(property.landlord_id) ?? 0) + 1);
     }
     const revenueByLandlord = new Map<string, number>();
-    for (const collection of input.collections) {
-        if (collection.landlord_id) revenueByLandlord.set(collection.landlord_id, (revenueByLandlord.get(collection.landlord_id) ?? 0) + amount(collection.amount_paid ?? collection.amount));
+    for (const collection of input.collections.filter(isFinanciallyEffectiveCollection)) {
+        if (collection.landlord_id) revenueByLandlord.set(collection.landlord_id, (revenueByLandlord.get(collection.landlord_id) ?? 0) + collectionAmount(collection));
     }
 
     return {
@@ -561,7 +562,7 @@ function recommendedRiskAction(input: { targetRate: number; outstanding: number;
 }
 
 function sumCollections(collections: CollectionRow[]) {
-    return collections.reduce((total, collection) => total + amount(collection.amount_paid ?? collection.amount), 0);
+    return collections.filter(isFinanciallyEffectiveCollection).reduce((total, collection) => total + collectionAmount(collection), 0);
 }
 
 function sumExpenses(expenses: ExpenseRow[]) {

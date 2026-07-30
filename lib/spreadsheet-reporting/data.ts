@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { requirePermission } from "@/lib/auth/permissions";
 import { getScopedSupabase } from "@/lib/auth/query";
+import { collectionAmount, isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
 import type { Database } from "@/types/database.types";
 import type { SpreadsheetData, SpreadsheetRow } from "./types";
 
@@ -217,7 +218,7 @@ export const getSpreadsheetData = cache(async function getSpreadsheetData(option
 
     const offices = filterOffices(officesData, context.offices.map((office) => office.id), context.canAccessAllOffices);
     const officeIds = new Set(offices.map((office) => office.id));
-    const collections = filterByOffice(collectionsData, officeIds, context.canAccessAllOffices);
+    const collections = filterByOffice(collectionsData, officeIds, context.canAccessAllOffices).filter(isFinanciallyEffectiveCollection);
     const promises = filterByOffice(promisesData, officeIds, context.canAccessAllOffices);
     const expenses = filterByOffice(expensesData, officeIds, context.canAccessAllOffices);
     const landlordPayments = filterByOffice(landlordPaymentsData, officeIds, context.canAccessAllOffices);
@@ -415,7 +416,7 @@ function collectionRow(collection: CollectionRow, lookup: {
     const room = collection.room_id ? lookup.roomById.get(collection.room_id) : tenant?.room_id ? lookup.roomById.get(tenant.room_id) : null;
     const property = collection.property_id ? lookup.propertyById.get(collection.property_id) : room?.property_id ? lookup.propertyById.get(room.property_id) : null;
     const promise = collection.tenant_id ? lookup.latestPromiseByTenant.get(collection.tenant_id) : null;
-    const paid = amount(collection.amount_paid ?? collection.amount);
+    const paid = collectionAmount(collection);
     const after = amount(collection.balance);
     const bundle = tenantBundle({ tenant, room, property });
     return {

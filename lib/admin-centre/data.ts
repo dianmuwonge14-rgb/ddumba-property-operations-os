@@ -1,5 +1,6 @@
 import { requirePermission } from "@/lib/auth/permissions";
 import { getScopedSupabase } from "@/lib/auth/query";
+import { collectionAmount, isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
 import { cache } from "react";
 import { getProductionReadinessStatus } from "@/lib/production-readiness/data";
 import type {
@@ -663,8 +664,8 @@ function buildRentRoll(input: {
         const rooms = input.rooms.filter((room) => room.office_id === office.id);
         const roomIds = new Set(rooms.map((room) => room.id));
         const collectedThisMonth = input.collections
-            .filter((collection) => collection.office_id === office.id && (!collection.room_id || roomIds.has(collection.room_id)))
-            .reduce((total, collection) => total + amount(collection.amount_paid ?? collection.amount), 0);
+            .filter((collection) => collection.office_id === office.id && (!collection.room_id || roomIds.has(collection.room_id)) && isFinanciallyEffectiveCollection(collection))
+            .reduce((total, collection) => total + collectionAmount(collection), 0);
         const expectedMonthlyRent = rooms.reduce((total, room) => total + amount(room.monthly_rent), 0);
         const outstandingBalance = rooms.reduce((total, room) => total + amount(room.outstanding_balance), 0);
         const occupiedRooms = rooms.filter((room) => activeRoomIds.has(room.id) || ["occupied", "active"].includes((room.status ?? "").toLowerCase())).length;
@@ -800,7 +801,7 @@ function buildMonthlyFinance(input: {
         const expectedLandlordPayable = officePayables.length
             ? officePayables.reduce((total, payable) => total + amount(payable.net_payable), 0)
             : landlordFinance.landlordPayable;
-        const collectedThisMonth = collections.reduce((total, collection) => total + amount(collection.amount_paid ?? collection.amount), 0);
+        const collectedThisMonth = collections.filter(isFinanciallyEffectiveCollection).reduce((total, collection) => total + collectionAmount(collection), 0);
         const expenseTotal = expenses.reduce((total, expense) => total + amount(expense.amount), 0);
         const landlordPaymentsMade = landlordPayments.reduce((total, payment) => total + amount(payment.amount), 0) +
             landlordMonthlyPayments.reduce((total, payment) => total + amount(payment.amount), 0);
@@ -816,8 +817,8 @@ function buildMonthlyFinance(input: {
         const outstandingTenantBalances = tenants.reduce((total, tenant) => total + amount(tenant.balance), 0) +
             rooms.reduce((total, room) => total + amount(room.outstanding_balance), 0);
         const todayCollections = collections
-            .filter((collection) => isToday(collection.paid_at ?? collection.created_at))
-            .reduce((total, collection) => total + amount(collection.amount_paid ?? collection.amount), 0);
+            .filter((collection) => isFinanciallyEffectiveCollection(collection) && isToday(collection.paid_at ?? collection.created_at))
+            .reduce((total, collection) => total + collectionAmount(collection), 0);
         const todayExpenses = expenses
             .filter((expense) => isToday(expense.expense_date ?? expense.created_at))
             .reduce((total, expense) => total + amount(expense.amount), 0);

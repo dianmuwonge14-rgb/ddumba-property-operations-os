@@ -1,4 +1,5 @@
 import { requirePermission } from "@/lib/auth/permissions";
+import { collectionAmount, isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type {
     AttendanceEventRow,
@@ -39,7 +40,7 @@ type LooseRow = Record<string, any> & { office_id: string | null };
 
 const TIME_ZONE = "Africa/Kampala";
 const SUPABASE_PAGE_SIZE = 1000;
-const COLLECTION_COLUMNS = "id,office_id,amount,amount_paid,expected_amount,payment_source,status,paid_at,payment_date,created_at";
+const COLLECTION_COLUMNS = "id,office_id,amount,amount_paid,expected_amount,payment_source,status,paid_at,payment_date,created_at,financial_effective,reversed_at,voided_at,deleted_at,superseded_at,superseded_by_payment_id,corrected_by_payment_id,correction_of_payment_id";
 const PROMISE_COLUMNS = "id,office_id,status,fulfilled_at,promised_date,promise_date";
 const PROPERTY_COLUMNS = "id,office_id,status";
 const ROOM_COLUMNS = "id,office_id,property_id,landlord_id,monthly_rent,status";
@@ -596,7 +597,7 @@ function buildFinanceSummary(input: {
     const occupiedRooms = input.rooms.filter(isOccupiedRoom).length;
     const vacantRooms = input.rooms.filter(isVacantRoom).length;
     const vacantDeductions = landlordFinance.vacantDeductions;
-    const activeCollections = input.collections.filter(isActiveFinancialRow);
+    const activeCollections = input.collections.filter(isFinanciallyEffectiveCollection);
     const approvedExpenses = input.expenses.filter(isApprovedExpense);
     const activeLandlordPayments = input.landlordPayments.filter(isActiveFinancialRow);
     const collectedSoFarThisMonth = sumCollections(activeCollections);
@@ -607,10 +608,10 @@ function buildFinanceSummary(input: {
     const tenantTopUpsExpected = input.rentSponsors.reduce((total, sponsor) => total + amount(sponsor.tenant_top_up_amount), 0);
     const employerContributionsReceived = (activeCollections as CollectionWithSource[])
         .filter((collection) => collection.payment_source === "employer")
-        .reduce((total, collection) => total + amount(collection.amount_paid ?? collection.amount), 0);
+        .reduce((total, collection) => total + collectionAmount(collection), 0);
     const tenantTopUpsCollected = (activeCollections as CollectionWithSource[])
         .filter((collection) => collection.payment_source !== "employer")
-        .reduce((total, collection) => total + amount(collection.amount_paid ?? collection.amount), 0);
+        .reduce((total, collection) => total + collectionAmount(collection), 0);
     const pendingLandlordPayments = Math.max(0, expectedLandlordPayable - landlordPaymentsMade);
     const activeTenantRoomIds = new Set(input.tenants.map((tenant) => tenant.room_id).filter(Boolean));
     const outstandingTenantBalances = input.tenants.reduce((total, tenant) => total + amount(tenant.balance), 0) +
@@ -732,7 +733,7 @@ function latestByOffice<T extends { office_id: string | null }>(rows: T[], dateK
 }
 
 function sumCollections(collections: CollectionRow[]) {
-    return collections.filter(isActiveFinancialRow).reduce((total, collection) => total + amount(collection.amount_paid ?? collection.amount), 0);
+    return collections.filter(isFinanciallyEffectiveCollection).reduce((total, collection) => total + collectionAmount(collection), 0);
 }
 
 function sumExpenses(expenses: ExpenseRow[]) {

@@ -1,5 +1,6 @@
 import { requirePermission } from "@/lib/auth/permissions";
 import { getScopedSupabase } from "@/lib/auth/query";
+import { collectionAmount, isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
 import type {
     AiInsightRow,
     AttendanceEventRow,
@@ -655,7 +656,7 @@ function sameDate(value: string | null | undefined, date: string) {
 }
 
 function sumCollections(collections: CollectionRow[]) {
-    return collections.reduce((total, collection) => total + amount(collection.amount_paid ?? collection.amount), 0);
+    return collections.filter(isFinanciallyEffectiveCollection).reduce((total, collection) => total + collectionAmount(collection), 0);
 }
 
 function sumExpenses(expenses: ExpenseRow[]) {
