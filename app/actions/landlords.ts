@@ -22,6 +22,7 @@ import type {
     AssignLandlordRoomsInput,
     AddLandlordRoomInput,
     DeleteLandlordRoomInput,
+    PermanentlyDeleteLandlordInput,
     UpdateLandlordCommissionInput,
     LandlordCommissionCalculationMode,
 } from "@/lib/landlords/types";
@@ -241,6 +242,51 @@ export async function archiveLandlord(input: ArchiveLandlordInput) {
     });
 
     revalidatePath("/office/landlords");
+    return data;
+}
+
+export async function permanentlyDeleteLandlordPortfolio(input: PermanentlyDeleteLandlordInput) {
+    const context = await activeAdminWriteContext();
+    const companyId = context.activeCompany!.id;
+    const adminId = context.profile?.id ?? context.authUser?.id ?? null;
+    const reason = input.reason.trim();
+    if (!input.landlordId) throw new Error("Landlord is required.");
+    if (input.confirmation !== "DELETE") throw new Error("Type DELETE to confirm permanent deletion.");
+    if (!reason) throw new Error("Deletion reason is required.");
+    if (!adminId) throw new Error("Admin user context is required.");
+
+    const supabase = await createSupabaseServerClient();
+    const db = supabase as unknown as LooseDb;
+    if (!db.rpc) throw new Error("Permanent landlord deletion RPC is not available.");
+
+    const { data, error } = await db.rpc("ddumba_v1_permanently_delete_landlord_portfolio", {
+        p_admin_id: adminId,
+        p_company_id: companyId,
+        p_confirmation: input.confirmation,
+        p_landlord_id: input.landlordId,
+        p_reason: reason,
+    });
+
+    if (error) throw new Error(error.message);
+
+    for (const path of [
+        "/office/landlords",
+        "/office/landlord-payments",
+        "/office/payments",
+        "/office/collections",
+        "/office/defaulters",
+        "/office/vacant-rooms",
+        "/office/cash-position",
+        "/office/admin/cash-position",
+        "/office/dashboard",
+        "/office/admin",
+        "/office/reports",
+        "/office/expenses",
+        "/office/audit",
+    ]) {
+        revalidatePath(path);
+    }
+
     return data;
 }
 

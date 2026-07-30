@@ -1,9 +1,9 @@
 "use client";
 
-import { memo, useEffect, useMemo, useState, useTransition } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import type React from "react";
 import { useRouter } from "next/navigation";
-import { addRoomToLandlord, deleteOrArchiveLandlordRoom, generateLandlordStatement, markLandlordMonthlyPayablePaid, markLandlordSettlementPaid } from "@/app/actions/landlords";
+import { addRoomToLandlord, deleteOrArchiveLandlordRoom, generateLandlordStatement, markLandlordMonthlyPayablePaid, markLandlordSettlementPaid, permanentlyDeleteLandlordPortfolio } from "@/app/actions/landlords";
 import type { CollectionTenantResult } from "@/lib/collections/types";
 import type { LandlordItem, LandlordRoomAssignmentOption } from "@/lib/landlords/types";
 import { landlordMonthlyDeductions, landlordMonthlyDue } from "@/lib/landlord-payables/payment-allocation";
@@ -86,6 +86,11 @@ function LandlordProfile({
     const [roomError, setRoomError] = useState<string | null>(null);
     const [roomRemovalTargetId, setRoomRemovalTargetId] = useState<string | null>(null);
     const [roomRemovalReason, setRoomRemovalReason] = useState("");
+    const [landlordDeleteOpen, setLandlordDeleteOpen] = useState(false);
+    const [landlordDeleteReason, setLandlordDeleteReason] = useState("");
+    const [landlordDeleteConfirmation, setLandlordDeleteConfirmation] = useState("");
+    const [landlordDeleteError, setLandlordDeleteError] = useState<string | null>(null);
+    const [landlordDeleteMessage, setLandlordDeleteMessage] = useState<string | null>(null);
     const [monthlyPayableMessage, setMonthlyPayableMessage] = useState<string | null>(null);
     const [payablePaymentInputs, setPayablePaymentInputs] = useState<Record<string, string>>({});
     const [roomForm, setRoomForm] = useState({
@@ -121,6 +126,11 @@ function LandlordProfile({
         setRoomError(null);
         setRoomRemovalTargetId(null);
         setRoomRemovalReason("");
+        setLandlordDeleteOpen(false);
+        setLandlordDeleteReason("");
+        setLandlordDeleteConfirmation("");
+        setLandlordDeleteError(null);
+        setLandlordDeleteMessage(null);
         setMonthlyPayableMessage(null);
         setPayablePaymentInputs({});
         setRoomForm((current) => ({ ...current, roomNumber: "", monthlyRent: "", openingOutstanding: "", startDate: new Date().toISOString().slice(0, 10), tenantName: "", tenantPhone: "", notes: "" }));
@@ -321,6 +331,56 @@ function LandlordProfile({
         });
     }
 
+    const closePermanentDelete = useCallback(() => {
+        if (isPending) return;
+        setLandlordDeleteOpen(false);
+        setLandlordDeleteReason("");
+        setLandlordDeleteConfirmation("");
+        setLandlordDeleteError(null);
+    }, [isPending]);
+
+    useEffect(() => {
+        if (!landlordDeleteOpen) return;
+        function handleKeyDown(event: KeyboardEvent) {
+            if (event.key === "Escape") closePermanentDelete();
+        }
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [closePermanentDelete, landlordDeleteOpen]);
+
+    function submitPermanentDelete() {
+        if (!landlord) return;
+        const reason = landlordDeleteReason.trim();
+        if (landlordDeleteConfirmation !== "DELETE") {
+            setLandlordDeleteError("Type DELETE to confirm permanent deletion.");
+            return;
+        }
+        if (!reason) {
+            setLandlordDeleteError("Enter a deletion reason before continuing.");
+            return;
+        }
+
+        startTransition(async () => {
+            try {
+                setLandlordDeleteError(null);
+                setLandlordDeleteMessage(null);
+                await permanentlyDeleteLandlordPortfolio({
+                    landlordId: landlord.id,
+                    reason,
+                    confirmation: "DELETE",
+                });
+                setLandlordDeleteMessage(`${landlord.full_name} and attached operational portfolio records were permanently deleted.`);
+                setLandlordDeleteOpen(false);
+                setLandlordDeleteReason("");
+                setLandlordDeleteConfirmation("");
+                await onSaved();
+                router.refresh();
+            } catch (error) {
+                setLandlordDeleteError(error instanceof Error ? error.message : "Unable to permanently delete this landlord.");
+            }
+        });
+    }
+
     if (!landlord) {
         return (
             <div className="bg-white rounded-3xl shadow-lg p-8">
@@ -344,6 +404,13 @@ function LandlordProfile({
     const visibleUnpaidMonths = unpaidMonths.slice(0, LIST_PREVIEW_SIZE);
     const selectedRoomAction = visibleRooms.find((item) => item.room.id === selectedRoomActionId) ?? null;
     const roomRemovalTarget = visibleRooms.find((item) => item.room.id === roomRemovalTargetId) ?? null;
+    const deleteOccupiedRooms = landlord.rooms.filter((item) =>
+        item.tenant?.id || ["occupied", "active"].includes(String(item.room.status ?? "").toLowerCase()),
+    ).length;
+    const deleteVacantRooms = Math.max(0, landlord.rooms.length - deleteOccupiedRooms);
+    const deleteRentRoll = landlord.rooms.reduce((total, item) => total + item.monthlyRent, 0);
+    const deleteOfficeLabel = landlord.offices.map(officeLabel).filter(Boolean).join(", ") || "No office assigned";
+    const deleteOutstanding = Math.max(landlord.totalUnpaidMonthlyPayables, landlord.outstandingSettlementValue, landlord.totalOutstandingBalance, 0);
     return (
         <div className="space-y-6">
             <div className="bg-white rounded-3xl shadow-lg overflow-hidden">
@@ -764,6 +831,34 @@ function LandlordProfile({
                     </div>
                 ) : null}
 
+                {canAdminManage ? (
+                    <div className="mb-4 overflow-hidden rounded-3xl border border-red-200 bg-gradient-to-br from-red-950 via-red-900 to-slate-950 text-white shadow-xl">
+                        <div className="flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between">
+                            <div>
+                                <p className="text-xs font-black uppercase tracking-[0.2em] text-red-200">Permanent danger action</p>
+                                <h3 className="mt-2 text-xl font-black">Permanently Delete Landlord & Portfolio</h3>
+                                <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-red-100">
+                                    This removes the operational landlord, search index, portfolio configuration, and exclusively attached rooms from Supabase. Financial history is protected by dependency checks before deletion.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setLandlordDeleteOpen(true);
+                                    setLandlordDeleteError(null);
+                                    setLandlordDeleteMessage(null);
+                                }}
+                                className="min-h-12 rounded-2xl border border-red-300 bg-white px-5 py-3 text-sm font-black text-red-800 shadow-sm transition hover:bg-red-50 focus:outline-none focus:ring-4 focus:ring-red-200"
+                            >
+                                Permanently Delete
+                            </button>
+                        </div>
+                        {landlordDeleteMessage ? (
+                            <div className="border-t border-red-800/60 bg-emerald-500/15 px-5 py-3 text-sm font-black text-emerald-100">{landlordDeleteMessage}</div>
+                        ) : null}
+                    </div>
+                ) : null}
+
                 {!canAdminManage && roomMessage ? (
                     <p className="mb-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-800">{roomMessage}</p>
                 ) : null}
@@ -1005,6 +1100,104 @@ function LandlordProfile({
                                 >
                                     {isPending ? "Processing..." : "Delete / Archive Room"}
                                 </button>
+                            </div>
+                        </div>
+                    </div>
+                ) : null}
+                {canAdminManage && landlordDeleteOpen ? (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-slate-950/80 px-4 py-6 backdrop-blur-sm">
+                        <div className="w-full max-w-4xl rounded-3xl border border-red-200 bg-white shadow-2xl">
+                            <div className="rounded-t-3xl bg-gradient-to-r from-red-950 via-red-900 to-slate-950 p-6 text-white">
+                                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                                    <div>
+                                        <p className="text-xs font-black uppercase tracking-[0.2em] text-red-200">Irreversible deletion</p>
+                                        <h3 className="mt-2 text-2xl font-black">Permanently delete {landlord.full_name}</h3>
+                                        <p className="mt-2 text-sm font-semibold leading-6 text-red-100">
+                                            This action permanently deletes the landlord and all rooms attached to this landlord from the operational database.
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={closePermanentDelete}
+                                        disabled={isPending}
+                                        className="min-h-11 rounded-2xl border border-white/30 px-4 py-2 text-sm font-black text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                        Close
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="p-6">
+                                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                                    <ReportLine label="Landlord Name" value={landlord.full_name} />
+                                    <ReportLine label="Office" value={deleteOfficeLabel} />
+                                    <ReportLine label="Total Rooms" value={landlord.rooms.length.toLocaleString()} />
+                                    <ReportLine label="Occupied Rooms" value={deleteOccupiedRooms.toLocaleString()} />
+                                    <ReportLine label="Vacant Rooms" value={deleteVacantRooms.toLocaleString()} />
+                                    <ReportLine label="Monthly Rent Roll" value={money(deleteRentRoll)} />
+                                    <ReportLine label="Outstanding Balance" value={money(deleteOutstanding)} />
+                                    <ReportLine label="Net Payable" value={money(landlord.totalLandlordPayable)} strong />
+                                </div>
+
+                                <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4">
+                                    <p className="text-sm font-black text-red-950">Validation still runs inside the database transaction before anything is deleted.</p>
+                                    <p className="mt-1 text-sm font-semibold leading-6 text-red-800">
+                                        Active tenants, occupied rooms, pending approvals, unresolved advances, security deposits, outstanding payables, or protected financial history will block the deletion and return the exact reason.
+                                    </p>
+                                </div>
+
+                                {landlordDeleteError ? (
+                                    <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-black text-red-800 [overflow-wrap:anywhere]">
+                                        {landlordDeleteError}
+                                    </div>
+                                ) : null}
+
+                                <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+                                    <label className="space-y-2">
+                                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Type DELETE to continue</span>
+                                        <input
+                                            value={landlordDeleteConfirmation}
+                                            onChange={(event) => {
+                                                setLandlordDeleteConfirmation(event.target.value);
+                                                setLandlordDeleteError(null);
+                                            }}
+                                            className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-950 outline-none focus:border-red-300 focus:ring-4 focus:ring-red-50"
+                                            placeholder="DELETE"
+                                        />
+                                    </label>
+                                    <label className="space-y-2">
+                                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Deletion reason</span>
+                                        <textarea
+                                            value={landlordDeleteReason}
+                                            onChange={(event) => {
+                                                setLandlordDeleteReason(event.target.value);
+                                                setLandlordDeleteError(null);
+                                            }}
+                                            rows={3}
+                                            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-950 outline-none focus:border-red-300 focus:ring-4 focus:ring-red-50"
+                                            placeholder="Explain why this operational landlord portfolio must be permanently removed."
+                                        />
+                                    </label>
+                                </div>
+
+                                <div className="mt-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-end">
+                                    <button
+                                        type="button"
+                                        onClick={closePermanentDelete}
+                                        disabled={isPending}
+                                        className="min-h-12 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                        Keep Landlord
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={submitPermanentDelete}
+                                        disabled={isPending || landlordDeleteConfirmation !== "DELETE" || !landlordDeleteReason.trim()}
+                                        className="min-h-12 rounded-2xl bg-red-700 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-red-800 focus:outline-none focus:ring-4 focus:ring-red-200 disabled:cursor-not-allowed disabled:opacity-40"
+                                    >
+                                        {isPending ? "Deleting..." : "Permanently Delete Landlord & Portfolio"}
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>

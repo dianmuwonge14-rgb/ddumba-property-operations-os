@@ -338,6 +338,12 @@ export type ArchiveLandlordInput = {
     reason?: string;
 };
 
+export type PermanentlyDeleteLandlordInput = {
+    landlordId: string;
+    reason: string;
+    confirmation: "DELETE";
+};
+
 export type AssignPropertyInput = {
     landlordId: string;
     propertyId: string;
