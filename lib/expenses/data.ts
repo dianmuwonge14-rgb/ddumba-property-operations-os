@@ -12,6 +12,7 @@ import type {
     ExpenseKpis,
     ExpenseRow,
     ExpensesPageData,
+    LandlordExpenseEditRequestItem,
     LandlordRow,
     PropertyRow,
     UserRow,
@@ -260,6 +261,15 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
         supabase,
         userById: new Map(users.map((user) => [user.id, user.full_name ?? user.email ?? "User"])),
     });
+    const landlordExpenseEditRequests = await getLandlordExpenseEditRequests({
+        companyId,
+        isAdmin,
+        landlordById: new Map(landlords.map((landlord) => [landlord.id, landlord.full_name ?? "Landlord"])),
+        officeById,
+        officeId: selectedOfficeId,
+        supabase,
+        userById: new Map(users.map((user) => [user.id, user.full_name ?? user.email ?? "User"])),
+    });
 
     return {
         company: context.activeCompany,
@@ -281,6 +291,7 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
             assignmentType: (employee as Record<string, unknown>).employee_assignment_type ? String((employee as Record<string, unknown>).employee_assignment_type) : null,
         })),
         expenseChangeRequests,
+        landlordExpenseEditRequests,
         employeeExpenseRequests,
         cashAccounts,
         kpis: calculateKpis(expenses, properties, collections, cashAccounts),
@@ -474,6 +485,7 @@ function emptyData(): ExpensesPageData {
         landlordPaymentRequests: [],
         employeeOptions: [],
         expenseChangeRequests: [],
+        landlordExpenseEditRequests: [],
         employeeExpenseRequests: [],
         cashAccounts: [],
         kpis: {
@@ -538,6 +550,56 @@ async function getExpenseChangeRequests(input: {
         });
     } catch (error) {
         console.warn("Expense change requests could not load:", error instanceof Error ? error.message : error);
+        return [];
+    }
+}
+
+async function getLandlordExpenseEditRequests(input: {
+    companyId: string;
+    isAdmin: boolean;
+    landlordById: Map<string, string>;
+    officeById: Map<string, string>;
+    officeId: string | null;
+    supabase: { from: (table: string) => any };
+    userById: Map<string, string>;
+}): Promise<LandlordExpenseEditRequestItem[]> {
+    try {
+        let query = input.supabase
+            .from("landlord_expense_edit_requests")
+            .select("*")
+            .eq("company_id", input.companyId)
+            .order("created_at", { ascending: false })
+            .limit(100);
+        if (!input.isAdmin && input.officeId) query = query.eq("office_id", input.officeId);
+        const { data, error } = await query;
+        if (error) {
+            if (/relation .*landlord_expense_edit_requests|does not exist|schema cache/i.test(error.message ?? "")) return [];
+            throw new Error(error.message);
+        }
+        return ((data ?? []) as Array<Record<string, unknown>>).map((request) => {
+            const landlordId = String(request.landlord_id ?? "");
+            const officeId = typeof request.office_id === "string" ? request.office_id : null;
+            const requestedBy = String(request.requested_by ?? "");
+            return {
+                id: String(request.id),
+                landlordId,
+                landlordName: input.landlordById.get(landlordId) ?? "Landlord",
+                officeId,
+                officeName: officeId ? input.officeById.get(officeId) ?? "Office" : "Office",
+                requestType: String(request.request_type ?? "landlord_edit"),
+                oldValue: isRecord(request.old_value) ? request.old_value : {},
+                requestedValue: isRecord(request.requested_value) ? request.requested_value : {},
+                effectiveDate: typeof request.effective_date === "string" ? request.effective_date : null,
+                effectiveMonth: typeof request.effective_month === "string" ? request.effective_month : null,
+                reason: String(request.reason ?? ""),
+                status: String(request.status ?? "pending"),
+                requestedByName: input.userById.get(requestedBy) ?? "User",
+                createdAt: typeof request.created_at === "string" ? request.created_at : null,
+                adminComment: typeof request.admin_comment === "string" ? request.admin_comment : null,
+            };
+        });
+    } catch (error) {
+        console.warn("Landlord edit requests could not load:", error instanceof Error ? error.message : error);
         return [];
     }
 }

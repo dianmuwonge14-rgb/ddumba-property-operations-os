@@ -120,7 +120,7 @@ export async function GET(request: NextRequest) {
         }
 
         if (type === "landlord") {
-            const [landlordResult, roomsResult, payablesResult, advancesResult, paymentsResult] = await Promise.all([
+            const [landlordResult, roomsResult, payablesResult, advancesResult, paymentsResult, adjustmentResult] = await Promise.all([
                 db
                     .from("landlords")
                     .select("*")
@@ -159,12 +159,22 @@ export async function GET(request: NextRequest) {
                     .order("paid_at", { ascending: false, nullsFirst: false })
                     .order("created_at", { ascending: false, nullsFirst: false })
                     .limit(1),
+                db
+                    .from("landlord_balance_adjustments")
+                    .select("*")
+                    .eq("company_id", companyId)
+                    .eq("landlord_id", id)
+                    .eq("status", "approved")
+                    .order("effective_date", { ascending: false, nullsFirst: false })
+                    .order("created_at", { ascending: false, nullsFirst: false })
+                    .limit(1),
             ]);
             if (landlordResult.error) throw new Error(landlordResult.error.message);
             if (roomsResult.error) throw new Error(roomsResult.error.message);
             if (payablesResult.error && !/does not exist|schema cache/i.test(payablesResult.error.message ?? "")) throw new Error(payablesResult.error.message);
             if (advancesResult.error && !/does not exist|schema cache/i.test(advancesResult.error.message ?? "")) throw new Error(advancesResult.error.message);
             if (paymentsResult.error && !/does not exist|schema cache/i.test(paymentsResult.error.message ?? "")) throw new Error(paymentsResult.error.message);
+            if (adjustmentResult.error && !/does not exist|schema cache/i.test(adjustmentResult.error.message ?? "")) throw new Error(adjustmentResult.error.message);
             const landlord = landlordResult.data as Record<string, unknown> | null;
             if (!landlord) throw new Error("Landlord not found.");
             const rooms = (roomsResult.data ?? []) as Array<Record<string, unknown>>;
@@ -172,7 +182,9 @@ export async function GET(request: NextRequest) {
             const firstRoom = rooms[0];
             const office = firstRoom?.offices as Record<string, unknown> | null;
             const payables = ((payablesResult.data ?? []) as Array<Record<string, unknown>>).filter(activeStatus);
-            const outstandingBalance = payables.reduce((total, row) => total + amount(row.unpaid_balance ?? row.outstanding_amount ?? row.balance_due ?? row.net_payable), 0);
+            const ledgerOutstandingBalance = payables.reduce((total, row) => total + amount(row.unpaid_balance ?? row.outstanding_amount ?? row.balance_due ?? row.net_payable), 0);
+            const latestAdjustment = ((adjustmentResult.data ?? []) as Array<Record<string, unknown>>)[0] ?? null;
+            const outstandingBalance = latestAdjustment ? amount(latestAdjustment.new_balance) : ledgerOutstandingBalance;
             const currentPayable = payables[0] ?? {};
             const advanceBalance = ((advancesResult.data ?? []) as Array<Record<string, unknown>>)
                 .filter(activeStatus)
@@ -192,8 +204,8 @@ export async function GET(request: NextRequest) {
                     outstandingBalance,
                     lastPaymentAmount: amount(lastPayment?.amount),
                     lastPaymentDate: lastPayment?.paid_at ? String(lastPayment.paid_at).slice(0, 10) : null,
-                    landlordPaymentDate: String(landlord.payment_date ?? landlord.landlord_payment_date ?? landlord.preferred_payment_date ?? expenseDate),
-                    landlordBillingDate: String(landlord.billing_date ?? landlord.landlord_billing_date ?? `${expenseDate.slice(0, 7)}-01`),
+                    landlordPaymentDate: String(landlord.payment_date ?? landlord.landlord_payment_date ?? landlord.preferred_payment_date ?? expenseDate).slice(0, 10),
+                    landlordBillingDate: String(landlord.billing_date ?? landlord.landlord_billing_date ?? `${expenseDate.slice(0, 7)}-01`).slice(0, 10),
                     commissionType: String(landlord.commission_calculation_mode ?? landlord.commission_input_mode ?? ""),
                     commissionRate: Number.isFinite(Number(landlord.commission_rate)) ? Number(landlord.commission_rate) : null,
                     fullRentRoll: amount(currentPayable.full_rent_roll ?? currentPayable.gross_rent ?? fullRentRoll),

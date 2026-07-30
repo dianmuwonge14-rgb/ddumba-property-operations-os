@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { ReactNode } from "react";
 import { AlertTriangle, Banknote, Bot, CheckCircle2, Download, Edit3, Eye, FileText, History, Loader2, Printer, ReceiptText, Search, Trash2, UserRound, WalletCards, X } from "lucide-react";
-import { adminEditExpenseDirect, adminSafeDeleteExpense, approveExpense, createEmployeeExpenseFromExpenses, createExpense, createLandlordPaidExpenseRequest, decideEmployeeExpenseRequest, decideExpenseChangeRequest, previewEmployeeExpense, previewLandlordPaymentExpense, rejectExpense, submitExpenseChangeRequest } from "@/app/actions/expenses";
-import type { EmployeeExpensePreview, ExpenseBalanceReport, ExpenseChangePayload, ExpenseItem, ExpensePeriodMode, ExpensesPageData } from "@/lib/expenses/types";
+import { adminEditExpenseDirect, adminSafeDeleteExpense, approveExpense, createEmployeeExpenseFromExpenses, createExpense, createLandlordPaidExpenseRequest, decideEmployeeExpenseRequest, decideExpenseChangeRequest, decideLandlordExpenseEditRequest, previewEmployeeExpense, previewLandlordPaymentExpense, rejectExpense, submitExpenseChangeRequest, submitLandlordExpenseEdit } from "@/app/actions/expenses";
+import type { EmployeeExpensePreview, ExpenseBalanceReport, ExpenseChangePayload, ExpenseItem, ExpensePeriodMode, ExpensesPageData, LandlordExpenseEditRequestType } from "@/lib/expenses/types";
 
 type Props = {
     canManage: boolean;
@@ -73,6 +73,10 @@ type LandlordPaymentPreview = Awaited<ReturnType<typeof previewLandlordPaymentEx
 type ExpenseEntryMode = "landlord_payment" | "authorised" | "unauthorised";
 type AuthorisedExpenseType = "employee_lunch" | "airtime" | "internet" | "transport_kampala";
 type ExpenseModalMode = "view" | "edit" | "date" | "employee" | "history";
+type LandlordEditModalState = {
+    requestType: LandlordExpenseEditRequestType;
+    landlord: LandlordEntryDetail;
+};
 type EntrySearchResult = {
     id: string;
     name: string;
@@ -196,6 +200,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
     const [showPrintPreview, setShowPrintPreview] = useState(false);
     const [selectedExpenseIds, setSelectedExpenseIds] = useState<string[]>([]);
     const [expenseModal, setExpenseModal] = useState<null | { expense: ExpenseItem; mode: ExpenseModalMode }>(null);
+    const [landlordEditModal, setLandlordEditModal] = useState<LandlordEditModalState | null>(null);
     const [actionMessage, setActionMessage] = useState<string | null>(null);
     const [deleteReason, setDeleteReason] = useState("Admin safe delete");
     const [isPending, startTransition] = useTransition();
@@ -490,6 +495,15 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
 
     function updateFilter<Key extends keyof ExpenseFilters>(key: Key, value: ExpenseFilters[Key]) {
         setFilters((current) => ({ ...current, [key]: value }));
+    }
+
+    function openLandlordEdit(requestType: LandlordExpenseEditRequestType) {
+        if (!selectedLandlordDetail) {
+            setMessage("Select a landlord first.");
+            return;
+        }
+        setMessage(null);
+        setLandlordEditModal({ landlord: selectedLandlordDetail, requestType });
     }
 
     function applyExpenseListPreset(preset: "today" | "yesterday" | "week" | "month" | "custom_date" | "custom_range" | "all_dates") {
@@ -898,26 +912,34 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                                     </label>
                                 </div>
                                 {selectedLandlordOption ? (
-                                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                                        <PremiumEntryCard label="Landlord Name" value={selectedLandlordOption.name} />
-                                        <PremiumEntryCard label="Location" value={selectedLandlordOption.location ?? "--"} />
-                                        <PremiumEntryCard label="Office" value={selectedLandlordOption.officeName ?? activeOfficeName} />
-                                        <PremiumEntryCard label="Outstanding Balance" value={loadingLandlordDetail ? "Loading..." : money(selectedLandlordDetail?.outstandingBalance ?? landlordPreview?.outstandingAmount ?? 0)} actionLabel="Edit" onAction={() => setMessage(isAdmin ? "Admin balance edits must post a controlled landlord ledger adjustment. Use the landlord settlement editor to apply the audited change." : "Office balance edits create an Admin approval request before they affect landlord totals.")} />
-                                        <PremiumEntryCard label="Last Payment Amount" value={loadingLandlordDetail ? "Loading..." : money(selectedLandlordDetail?.lastPaymentAmount ?? 0)} />
-                                        <PremiumEntryCard label="Last Payment Date" value={selectedLandlordDetail?.lastPaymentDate ?? "--"} />
-                                        <PremiumEntryCard label="Landlord Payment Date" value={selectedLandlordDetail?.landlordPaymentDate?.slice(0, 10) ?? expenseDate} actionLabel="Edit" onAction={() => setMessage(isAdmin ? "Admin payment date edits are audited from the landlord settlement editor." : "Office payment date edits create an Admin approval request before approval.")} />
-                                        <PremiumEntryCard label="Landlord Billing Date" value={selectedLandlordDetail?.landlordBillingDate?.slice(0, 10) ?? `${expenseDate.slice(0, 7)}-01`} actionLabel="Edit" onAction={() => setMessage(isAdmin ? "Admin billing date edits are audited from the landlord settlement editor." : "Office billing date edits create an Admin approval request before approval.")} />
-                                        <PremiumEntryCard label="Commission Type" value={selectedLandlordOption.commissionType ?? "--"} />
-                                        <PremiumEntryCard label="Commission Rate" value={selectedLandlordOption.commissionRate == null ? "--" : `${selectedLandlordOption.commissionRate}%`} />
-                                        <PremiumEntryCard label="Full Rent Roll" value={money(selectedLandlordDetail?.fullRentRoll ?? 0)} />
-                                        <PremiumEntryCard label="Net Payable" value={loadingLandlordDetail ? "Loading..." : money(selectedLandlordDetail?.netPayable ?? landlordPreview?.currentNetPayable ?? 0)} />
-                                        <PremiumEntryCard label="Portfolio Value" value={money(selectedLandlordDetail?.portfolioValue ?? 0)} />
-                                        <PremiumEntryCard label="Total Rooms" value={String(selectedLandlordDetail?.totalRooms ?? 0)} />
-                                        <PremiumEntryCard label="Occupied Rooms" value={String(selectedLandlordDetail?.occupiedRooms ?? 0)} />
-                                        <PremiumEntryCard label="Vacant Rooms" value={String(selectedLandlordDetail?.vacantRooms ?? 0)} />
-                                        <PremiumEntryCard label="Vacated With Debt" value={String(selectedLandlordDetail?.vacatedWithDebt ?? 0)} />
-                                        <PremiumEntryCard label="Advance Balance" value={money(selectedLandlordDetail?.advanceBalance ?? 0)} />
-                                        <PremiumEntryCard label="Payment Status" value={selectedLandlordDetail?.paymentStatus ?? (landlordPreview ? (landlordPreview.advanceAmount > 0 ? "Review advance" : "Within payable") : "Enter amount")} />
+                                    <div className="space-y-4">
+                                        <PremiumCardSection title="Landlord Summary">
+                                            <PremiumEntryCard label="Landlord Name" value={selectedLandlordOption.name} />
+                                            <PremiumEntryCard label="Office" value={selectedLandlordOption.officeName ?? activeOfficeName} />
+                                            <PremiumEntryCard label="Location" value={selectedLandlordOption.location ?? "--"} />
+                                            <PremiumEntryCard label="Payment Status" value={selectedLandlordDetail?.paymentStatus ?? (landlordPreview ? (landlordPreview.advanceAmount > 0 ? "Review advance" : "Within payable") : "Enter amount")} />
+                                        </PremiumCardSection>
+                                        <PremiumCardSection title="Financial Position" featured>
+                                            <PremiumEntryCard featured label="Outstanding Balance" value={loadingLandlordDetail ? "Loading..." : money(selectedLandlordDetail?.outstandingBalance ?? landlordPreview?.outstandingAmount ?? 0)} actionLabel="Edit" onAction={() => openLandlordEdit("landlord_outstanding_balance_edit")} />
+                                            <PremiumEntryCard featured label="Net Payable" value={loadingLandlordDetail ? "Loading..." : money(selectedLandlordDetail?.netPayable ?? landlordPreview?.currentNetPayable ?? 0)} />
+                                            <PremiumEntryCard featured label="Last Payment Amount" value={loadingLandlordDetail ? "Loading..." : money(selectedLandlordDetail?.lastPaymentAmount ?? 0)} />
+                                            <PremiumEntryCard featured label="Full Rent Roll" value={money(selectedLandlordDetail?.fullRentRoll ?? 0)} />
+                                            <PremiumEntryCard label="Commission Rate" value={selectedLandlordOption.commissionRate == null ? "--" : `${selectedLandlordOption.commissionRate}%`} />
+                                            <PremiumEntryCard label="Commission Type" value={selectedLandlordOption.commissionType ?? "--"} />
+                                            <PremiumEntryCard label="Advance Balance" value={money(selectedLandlordDetail?.advanceBalance ?? 0)} />
+                                        </PremiumCardSection>
+                                        <PremiumCardSection title="Payment Schedule">
+                                            <PremiumEntryCard label="Last Payment Date" value={selectedLandlordDetail?.lastPaymentDate ?? "--"} />
+                                            <PremiumEntryCard label="Landlord Payment Date" value={selectedLandlordDetail?.landlordPaymentDate?.slice(0, 10) ?? expenseDate} actionLabel="Edit" onAction={() => openLandlordEdit("landlord_payment_date_edit")} />
+                                            <PremiumEntryCard label="Landlord Billing Date" value={selectedLandlordDetail?.landlordBillingDate?.slice(0, 10) ?? `${expenseDate.slice(0, 7)}-01`} actionLabel="Edit" onAction={() => openLandlordEdit("landlord_billing_date_edit")} />
+                                        </PremiumCardSection>
+                                        <PremiumCardSection title="Portfolio">
+                                            <PremiumEntryCard label="Total Rooms" value={String(selectedLandlordDetail?.totalRooms ?? 0)} />
+                                            <PremiumEntryCard label="Occupied Rooms" value={String(selectedLandlordDetail?.occupiedRooms ?? 0)} />
+                                            <PremiumEntryCard label="Vacant Rooms" value={String(selectedLandlordDetail?.vacantRooms ?? 0)} />
+                                            <PremiumEntryCard label="Vacated With Debt" value={String(selectedLandlordDetail?.vacatedWithDebt ?? 0)} />
+                                            <PremiumEntryCard label="Portfolio Value" value={money(selectedLandlordDetail?.portfolioValue ?? 0)} />
+                                        </PremiumCardSection>
                                     </div>
                                 ) : (
                                     <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm font-bold text-slate-500">Search and select a landlord to load payment cards.</div>
@@ -1066,6 +1088,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                     onReviewed={() => setRefreshToken((token) => token + 1)}
                 />
                 <EmployeeExpenseRequestLedger isAdmin={isAdmin} requests={data.employeeExpenseRequests} />
+                <LandlordEditRequestLedger isAdmin={isAdmin} requests={data.landlordExpenseEditRequests} onReviewed={() => setRefreshToken((token) => token + 1)} />
                 <ExpenseChangeRequestLedger isAdmin={isAdmin} requests={data.expenseChangeRequests} onReviewed={() => setRefreshToken((token) => token + 1)} />
 
                 <section className="mx-auto mt-5 max-w-6xl space-y-4">
@@ -1214,6 +1237,20 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                     }}
                 />
             ) : null}
+            {landlordEditModal ? (
+                <LandlordEditModal
+                    expenseDate={expenseDate}
+                    isAdmin={isAdmin}
+                    modal={landlordEditModal}
+                    onClose={() => setLandlordEditModal(null)}
+                    onDone={(text) => {
+                        setMessage(text);
+                        setLandlordEditModal(null);
+                        setRefreshToken((token) => token + 1);
+                        if (landlordId) loadEntryDetail("landlord", landlordId);
+                    }}
+                />
+            ) : null}
         </main>
     );
 }
@@ -1252,19 +1289,31 @@ function BalanceCard({ hint, icon, label, tone, value }: { hint: string; icon: R
     );
 }
 
-function PremiumEntryCard({ actionLabel, label, onAction, value }: { actionLabel?: string; label: string; onAction?: () => void; value: string }) {
+function PremiumCardSection({ children, featured = false, title }: { children: ReactNode; featured?: boolean; title: string }) {
     return (
-        <div className="min-h-[124px] rounded-2xl border border-white/70 bg-gradient-to-br from-white via-slate-50 to-blue-50/70 p-4 shadow-xl shadow-slate-950/10 ring-1 ring-slate-900/5">
+        <section className="rounded-[24px] border border-slate-200/80 bg-white/80 p-3 shadow-xl shadow-slate-950/10 ring-1 ring-white/70">
+            <div className="mb-3 flex items-center justify-between gap-3">
+                <h3 className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">{title}</h3>
+                <span className={`h-2 w-2 rounded-full ${featured ? "bg-cyan-400" : "bg-slate-300"}`} />
+            </div>
+            <div className={`grid gap-3 md:grid-cols-2 ${featured ? "xl:grid-cols-4" : "xl:grid-cols-4"}`}>{children}</div>
+        </section>
+    );
+}
+
+function PremiumEntryCard({ actionLabel, featured = false, label, onAction, value }: { actionLabel?: string; featured?: boolean; label: string; onAction?: () => void; value: string }) {
+    return (
+        <div className={`group min-h-[132px] rounded-2xl border p-4 shadow-xl shadow-slate-950/10 ring-1 transition hover:-translate-y-0.5 hover:shadow-2xl ${featured ? "border-cyan-100 bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950 text-white ring-cyan-300/20" : "border-white/70 bg-gradient-to-br from-white via-slate-50 to-blue-50/70 text-slate-950 ring-slate-900/5"}`}>
             <div className="flex items-start justify-between gap-3">
-                <p className="text-xs font-black uppercase tracking-wide text-slate-500">{label}</p>
+                <p className={`text-xs font-black uppercase tracking-wide ${featured ? "text-cyan-100/80" : "text-slate-500"}`}>{label}</p>
                 {actionLabel && onAction ? (
-                    <button type="button" onClick={onAction} className="inline-flex h-7 items-center gap-1 rounded-xl border border-blue-100 bg-white px-2 text-[11px] font-black text-blue-700 shadow-sm">
+                    <button type="button" onClick={onAction} className="inline-flex min-h-10 items-center gap-1 rounded-xl border border-blue-100 bg-white px-3 text-xs font-black text-blue-700 shadow-sm transition hover:border-blue-200 hover:bg-blue-50 focus:outline-none focus:ring-4 focus:ring-blue-200 active:scale-[0.98]">
                         <Edit3 size={12} />
                         {actionLabel}
                     </button>
                 ) : null}
             </div>
-            <p className="mt-3 break-words text-xl font-black leading-tight text-slate-950">{value}</p>
+            <p className={`mt-3 break-words font-black leading-tight ${featured ? "text-2xl text-white" : "text-xl text-slate-950"}`}>{value}</p>
         </div>
     );
 }
@@ -1882,6 +1931,200 @@ function EmployeeExpenseRequestLedger({ isAdmin, requests }: { isAdmin: boolean;
             ) : null}
         </section>
     );
+}
+
+function LandlordEditModal({
+    expenseDate,
+    isAdmin,
+    modal,
+    onClose,
+    onDone,
+}: {
+    expenseDate: string;
+    isAdmin: boolean;
+    modal: LandlordEditModalState;
+    onClose: () => void;
+    onDone: (message: string) => void;
+}) {
+    const currentValue = modal.requestType === "landlord_outstanding_balance_edit"
+        ? modal.landlord.outstandingBalance
+        : modal.requestType === "landlord_payment_date_edit"
+            ? modal.landlord.landlordPaymentDate?.slice(0, 10) ?? expenseDate
+            : modal.landlord.landlordBillingDate?.slice(0, 10) ?? `${expenseDate.slice(0, 7)}-01`;
+    const [newValue, setNewValue] = useState(String(currentValue ?? ""));
+    const [reason, setReason] = useState("");
+    const [effectiveDate, setEffectiveDate] = useState(expenseDate);
+    const [effectiveMonth, setEffectiveMonth] = useState(expenseDate.slice(0, 7));
+    const [error, setError] = useState<string | null>(null);
+    const [isPending, startTransition] = useTransition();
+    const isBalance = modal.requestType === "landlord_outstanding_balance_edit";
+    const title = isBalance ? "Outstanding Balance Edit" : modal.requestType === "landlord_payment_date_edit" ? "Landlord Payment Date Edit" : "Landlord Billing Date Edit";
+    const adjustmentAmount = isBalance ? Number(newValue || 0) - Number(currentValue || 0) : 0;
+
+    function save() {
+        if (!reason.trim()) {
+            setError("Reason is required.");
+            return;
+        }
+        setError(null);
+        startTransition(async () => {
+            try {
+                const result = await submitLandlordExpenseEdit({
+                    effectiveDate,
+                    effectiveMonth,
+                    landlordId: modal.landlord.id,
+                    newValue: isBalance ? Number(newValue) : newValue,
+                    officeId: modal.landlord.officeId,
+                    oldValue: currentValue,
+                    reason: reason.trim(),
+                    requestType: modal.requestType,
+                });
+                onDone(result.direct ? `${title} applied by Admin.` : `${title} sent for Admin approval.`);
+            } catch (saveError) {
+                setError(saveError instanceof Error ? saveError.message : "Landlord edit could not be saved.");
+            }
+        });
+    }
+
+    return (
+        <div className="fixed inset-0 z-[140] overflow-auto bg-slate-950/70 p-4 backdrop-blur-sm">
+            <div className="mx-auto my-8 max-w-3xl overflow-hidden rounded-[28px] bg-white shadow-2xl shadow-slate-950/30">
+                <div className="bg-slate-950 p-5 text-white">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                            <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200">{isAdmin ? "Admin direct landlord edit" : "Landlord edit approval request"}</p>
+                            <h2 className="mt-2 text-2xl font-black">{title}</h2>
+                            <p className="mt-1 text-sm font-bold text-slate-300">{modal.landlord.name} · {modal.landlord.officeName ?? "Office"}</p>
+                        </div>
+                        <button type="button" disabled={isPending} onClick={onClose} className="inline-flex min-h-10 items-center justify-center rounded-xl bg-white/10 px-4 text-sm font-black text-white hover:bg-white/15 disabled:opacity-40">Close</button>
+                    </div>
+                </div>
+                <div className="grid gap-3 p-5 md:grid-cols-2">
+                    <ModalField label="Landlord name">
+                        <input readOnly value={modal.landlord.name} className="modal-input" />
+                    </ModalField>
+                    <ModalField label="Office">
+                        <input readOnly value={modal.landlord.officeName ?? "Office"} className="modal-input" />
+                    </ModalField>
+                    <ModalField label={isBalance ? "Current outstanding balance" : modal.requestType === "landlord_payment_date_edit" ? "Current payment date" : "Current billing date"}>
+                        <input readOnly value={isBalance ? money(currentValue) : String(currentValue ?? "")} className="modal-input" />
+                    </ModalField>
+                    <ModalField label={isBalance ? "New requested balance" : modal.requestType === "landlord_payment_date_edit" ? "New payment date" : "New billing date"}>
+                        <input type={isBalance ? "number" : "date"} value={newValue} onChange={(event) => setNewValue(event.target.value)} className="modal-input" />
+                    </ModalField>
+                    {isBalance ? (
+                        <ModalField label="Adjustment amount">
+                            <input readOnly value={money(adjustmentAmount)} className="modal-input" />
+                        </ModalField>
+                    ) : (
+                        <ModalField label="Effective month">
+                            <input type="month" value={effectiveMonth} onChange={(event) => setEffectiveMonth(event.target.value)} className="modal-input" />
+                        </ModalField>
+                    )}
+                    <ModalField label="Effective date">
+                        <input type="date" value={effectiveDate} onChange={(event) => setEffectiveDate(event.target.value)} className="modal-input" />
+                    </ModalField>
+                    <div className="md:col-span-2">
+                        <ModalField label="Reason">
+                            <textarea value={reason} onChange={(event) => setReason(event.target.value)} className="min-h-28 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
+                        </ModalField>
+                    </div>
+                </div>
+                {error ? <p className="mx-5 rounded-2xl bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</p> : null}
+                <div className="flex flex-wrap justify-end gap-2 p-5">
+                    <button type="button" disabled={isPending} onClick={onClose} className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 disabled:opacity-40">Cancel</button>
+                    <button type="button" disabled={isPending} onClick={save} className="rounded-xl bg-blue-700 px-4 py-2 text-sm font-black text-white disabled:opacity-40">
+                        {isPending ? "Saving..." : isAdmin ? "Apply Now" : "Submit for Approval"}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function LandlordEditRequestLedger({ isAdmin, onReviewed, requests }: { isAdmin: boolean; onReviewed: () => void; requests: ExpensesPageData["landlordExpenseEditRequests"] }) {
+    const [comments, setComments] = useState<Record<string, string>>({});
+    const [message, setMessage] = useState<string | null>(null);
+    const [isPending, startTransition] = useTransition();
+    const visibleRequests = requests.filter((request) => request.status === "pending" || isAdmin);
+    if (!visibleRequests.length) return null;
+
+    function decide(requestId: string, decision: "approved" | "rejected" | "more_info") {
+        startTransition(async () => {
+            try {
+                await decideLandlordExpenseEditRequest({ requestId, decision, comment: comments[requestId] ?? undefined });
+                setMessage(decision === "approved" ? "Landlord edit approved." : decision === "more_info" ? "More information requested." : "Landlord edit rejected.");
+                onReviewed();
+            } catch (error) {
+                setMessage(error instanceof Error ? error.message : "Landlord edit request could not be reviewed.");
+            }
+        });
+    }
+
+    return (
+        <section className="mx-auto mt-5 max-w-6xl overflow-hidden rounded-[26px] border border-white/70 bg-white shadow-2xl shadow-slate-950/15">
+            <div className="border-b border-slate-200 px-4 py-3">
+                <p className="text-xs font-black uppercase tracking-wide text-blue-600">Landlord edit approval list</p>
+                <h2 className="text-lg font-black text-slate-950">Landlord Card Edit Requests</h2>
+                {message ? <p className="mt-2 text-sm font-bold text-slate-600">{message}</p> : null}
+            </div>
+            <div className="overflow-auto">
+                <table className="w-full min-w-[1180px] text-left text-sm">
+                    <thead className="bg-slate-950 text-xs uppercase text-slate-200">
+                        <tr>
+                            <th className="px-4 py-3">Requested</th>
+                            <th className="px-4 py-3">Landlord</th>
+                            <th className="px-4 py-3">Request Type</th>
+                            <th className="px-4 py-3">Old Value</th>
+                            <th className="px-4 py-3">New Value</th>
+                            <th className="px-4 py-3">Reason</th>
+                            <th className="px-4 py-3">Office</th>
+                            <th className="px-4 py-3">Requested By</th>
+                            <th className="px-4 py-3">Status</th>
+                            {isAdmin ? <th className="px-4 py-3">Admin Action</th> : null}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {visibleRequests.map((request) => (
+                            <tr key={`landlord-edit-request:${request.id}`} className="border-b border-slate-100 align-top">
+                                <td className="px-4 py-3 font-bold text-slate-500">{request.createdAt ? new Date(request.createdAt).toLocaleString() : "--"}</td>
+                                <td className="px-4 py-3 font-black text-slate-950">{request.landlordName}</td>
+                                <td className="px-4 py-3 font-bold text-slate-700">{request.requestType.replaceAll("_", " ")}</td>
+                                <td className="px-4 py-3 font-bold text-slate-500">{formatRequestValue(request.oldValue.value)}</td>
+                                <td className="px-4 py-3 font-black text-slate-950">{formatRequestValue(request.requestedValue.value)}</td>
+                                <td className="max-w-xs px-4 py-3 font-semibold text-slate-600">{request.reason}</td>
+                                <td className="px-4 py-3 font-bold text-slate-500">{request.officeName}</td>
+                                <td className="px-4 py-3 font-bold text-slate-500">{request.requestedByName}</td>
+                                <td className="px-4 py-3"><StatusBadge status={request.status} /></td>
+                                {isAdmin ? (
+                                    <td className="px-4 py-3">
+                                        {request.status === "pending" ? (
+                                            <div className="flex min-w-[310px] flex-col gap-2">
+                                                <input value={comments[request.id] ?? ""} onChange={(event) => setComments((current) => ({ ...current, [request.id]: event.target.value }))} placeholder="Admin comment..." className="h-9 rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs font-bold text-slate-900 outline-none" />
+                                                <div className="flex flex-wrap gap-2">
+                                                    <button disabled={isPending} onClick={() => decide(request.id, "approved")} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white disabled:opacity-50">Approve</button>
+                                                    <button disabled={isPending} onClick={() => decide(request.id, "rejected")} className="rounded-xl bg-rose-600 px-3 py-2 text-xs font-black text-white disabled:opacity-50">Reject</button>
+                                                    <button disabled={isPending} onClick={() => decide(request.id, "more_info")} className="rounded-xl bg-amber-500 px-3 py-2 text-xs font-black text-slate-950 disabled:opacity-50">More Info</button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <p className="max-w-xs text-xs font-bold text-slate-500">{request.adminComment ?? "No comment"}</p>
+                                        )}
+                                    </td>
+                                ) : null}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    );
+}
+
+function formatRequestValue(value: unknown) {
+    if (typeof value === "number") return money(value);
+    if (typeof value === "string" && /^\d+(\.\d+)?$/.test(value)) return money(Number(value));
+    return String(value ?? "--");
 }
 
 function ExpenseChangeRequestLedger({ isAdmin, onReviewed, requests }: { isAdmin: boolean; onReviewed: () => void; requests: ExpensesPageData["expenseChangeRequests"] }) {

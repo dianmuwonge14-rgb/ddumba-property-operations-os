@@ -18,11 +18,13 @@ import type {
     CreateLandlordPaidExpenseRequestInput,
     DecideExpenseChangeRequestInput,
     DecideEmployeeExpenseRequestInput,
+    DecideLandlordExpenseEditRequestInput,
     DecideLandlordPaidExpenseRequestInput,
     DeleteExpenseInput,
     EmployeeExpensePreview,
     EditExpenseInput,
     ExpenseDecisionInput,
+    SubmitLandlordExpenseEditInput,
     SubmitExpenseChangeRequestInput,
 } from "@/lib/expenses/types";
 
@@ -2289,6 +2291,267 @@ export async function adminEditExpenseDirect(input: SubmitExpenseChangeRequestIn
     });
     revalidateExpenseSurfaces();
     return updated;
+}
+
+async function loadLandlordForCompany(db: { from: (table: string) => any }, input: { companyId: string; landlordId: string }) {
+    const { data, error } = await db
+        .from("landlords")
+        .select("*")
+        .eq("company_id", input.companyId)
+        .eq("id", input.landlordId)
+        .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) throw new Error("Landlord not found.");
+    return data as Record<string, unknown>;
+}
+
+async function resolveLandlordOfficeForEdit(db: { from: (table: string) => any }, input: { activeOfficeId?: string | null; companyId: string; landlordId: string; requestedOfficeId?: string | null }) {
+    if (input.requestedOfficeId) return input.requestedOfficeId;
+    if (input.activeOfficeId) return input.activeOfficeId;
+    const { data, error } = await db
+        .from("rooms")
+        .select("office_id")
+        .eq("company_id", input.companyId)
+        .eq("landlord_id", input.landlordId)
+        .not("office_id", "is", null)
+        .limit(1);
+    if (error && !isMissingSchemaError(error)) throw new Error(error.message);
+    return typeof data?.[0]?.office_id === "string" ? data[0].office_id : null;
+}
+
+function landlordEditLabel(type: SubmitLandlordExpenseEditInput["requestType"]) {
+    if (type === "landlord_outstanding_balance_edit") return "Landlord outstanding balance edit";
+    if (type === "landlord_payment_date_edit") return "Landlord payment date edit";
+    return "Landlord billing date edit";
+}
+
+function validateLandlordEdit(input: SubmitLandlordExpenseEditInput) {
+    if (!validUuid(input.landlordId)) throw new Error("Select a landlord.");
+    if (!input.reason?.trim()) throw new Error("Reason is required.");
+    if (input.requestType === "landlord_outstanding_balance_edit") {
+        const newBalance = Number(input.newValue);
+        if (!Number.isFinite(newBalance) || newBalance < 0) throw new Error("Enter a valid new outstanding balance.");
+    } else {
+        const newDate = String(input.newValue ?? "");
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) throw new Error("Enter a valid date.");
+    }
+}
+
+async function applyLandlordCardEdit(db: { from: (table: string) => any }, input: {
+    actorId: string | null;
+    companyId: string;
+    effectiveDate?: string | null;
+    effectiveMonth?: string | null;
+    landlord: Record<string, unknown>;
+    officeId: string | null;
+    reason: string;
+    requestType: SubmitLandlordExpenseEditInput["requestType"];
+    newValue: number | string;
+}) {
+    const landlordId = String(input.landlord.id);
+    if (input.requestType === "landlord_outstanding_balance_edit") {
+        const oldBalance = amount(input.landlord.balance_remaining);
+        const newBalance = amount(input.newValue);
+        const { data: adjustment, error: adjustmentError } = await db
+            .from("landlord_balance_adjustments")
+            .insert({
+                adjustment_amount: newBalance - oldBalance,
+                approved_at: new Date().toISOString(),
+                approved_by: input.actorId,
+                company_id: input.companyId,
+                effective_date: input.effectiveDate || new Date().toISOString().slice(0, 10),
+                landlord_id: landlordId,
+                new_balance: newBalance,
+                office_id: input.officeId,
+                old_balance: oldBalance,
+                reason: input.reason,
+                requested_by: input.actorId,
+                status: "approved",
+            })
+            .select("*")
+            .single();
+        if (adjustmentError) throw new Error(`Landlord balance adjustment failed: ${adjustmentError.message}`);
+        const { data: updated, error: updateError } = await db
+            .from("landlords")
+            .update({ balance_remaining: newBalance, updated_at: new Date().toISOString() })
+            .eq("company_id", input.companyId)
+            .eq("id", landlordId)
+            .select("*")
+            .single();
+        if (updateError) throw new Error(updateError.message);
+        return { adjustment, updated };
+    }
+
+    const field = input.requestType === "landlord_payment_date_edit" ? "payment_date" : "billing_date";
+    const { data: updated, error } = await db
+        .from("landlords")
+        .update({ [field]: String(input.newValue).slice(0, 10), updated_at: new Date().toISOString() })
+        .eq("company_id", input.companyId)
+        .eq("id", landlordId)
+        .select("*")
+        .single();
+    if (error) throw new Error(error.message);
+    return { updated };
+}
+
+export async function submitLandlordExpenseEdit(input: SubmitLandlordExpenseEditInput) {
+    validateLandlordEdit(input);
+    const context = await expenseCorrectionContext();
+    const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
+    const db = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
+    const companyId = context.activeCompany?.id;
+    const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    if (!companyId) throw new Error("Active company is required.");
+    const landlord = await loadLandlordForCompany(db, { companyId, landlordId: input.landlordId });
+    const officeId = await resolveLandlordOfficeForEdit(db, {
+        activeOfficeId: context.activeOffice?.id ?? null,
+        companyId,
+        landlordId: input.landlordId,
+        requestedOfficeId: input.officeId ?? null,
+    });
+    if (!isDirectAdmin && context.activeOffice?.id && officeId && officeId !== context.activeOffice.id) {
+        throw new Error("You can only request landlord edits for your active office.");
+    }
+    const oldValue = { value: input.oldValue };
+    const requestedValue = { value: input.newValue };
+
+    if (isDirectAdmin) {
+        const result = await applyLandlordCardEdit(db, {
+            actorId,
+            companyId,
+            effectiveDate: input.effectiveDate,
+            effectiveMonth: input.effectiveMonth,
+            landlord,
+            newValue: input.newValue,
+            officeId,
+            reason: input.reason.trim(),
+            requestType: input.requestType,
+        });
+        await logUserAction({
+            action: "landlord_expense_card_edit_applied",
+            entityType: "landlord",
+            entityId: input.landlordId,
+            companyId,
+            officeId: officeId ?? undefined,
+            beforeData: { requestType: input.requestType, oldValue, landlord } as any,
+            afterData: { requestType: input.requestType, requestedValue, result, reason: input.reason.trim() } as any,
+        });
+        revalidateExpenseSurfaces();
+        return { status: "approved", direct: true, result };
+    }
+
+    const { data: request, error } = await db
+        .from("landlord_expense_edit_requests")
+        .insert({
+            company_id: companyId,
+            effective_date: input.effectiveDate || null,
+            effective_month: input.effectiveMonth || null,
+            landlord_id: input.landlordId,
+            office_id: officeId,
+            old_value: oldValue,
+            reason: input.reason.trim(),
+            requested_by: actorId,
+            requested_value: requestedValue,
+            request_type: input.requestType,
+            status: "pending",
+        })
+        .select("*")
+        .single();
+    if (error) throw new Error(`Landlord edit request could not be created: ${error.message}`);
+    await createNotificationWithEmail(db, {
+        action_url: "/office/expenses",
+        channel: "in_app",
+        company_id: companyId,
+        delivery_status: "pending",
+        entity_id: request.id,
+        entity_type: "landlord_expense_edit_request",
+        is_read: false,
+        message: `${landlordEditLabel(input.requestType)} requested for ${String(landlord.full_name ?? "Landlord")}.`,
+        office_id: officeId ?? undefined,
+        recipient_type: "admin",
+        severity: "warning",
+        title: "Landlord edit pending approval",
+    });
+    await logUserAction({
+        action: "landlord_expense_card_edit_requested",
+        entityType: "landlord_expense_edit_request",
+        entityId: request.id,
+        companyId,
+        officeId: officeId ?? undefined,
+        beforeData: { landlord, oldValue } as any,
+        afterData: request as any,
+    });
+    revalidateExpenseSurfaces();
+    return { status: "pending", direct: false, request };
+}
+
+export async function decideLandlordExpenseEditRequest(input: DecideLandlordExpenseEditRequestInput) {
+    const context = await requireCompanyAdminMode();
+    const db = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
+    const companyId = context.activeCompany?.id;
+    const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    if (!companyId) throw new Error("Active company is required.");
+    const { data: request, error: requestError } = await db
+        .from("landlord_expense_edit_requests")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("id", input.requestId)
+        .maybeSingle();
+    if (requestError) throw new Error(requestError.message);
+    if (!request) throw new Error("Landlord edit request not found.");
+    if (String(request.status) !== "pending") throw new Error("This landlord edit request has already been reviewed.");
+    if (input.decision !== "approved") {
+        const { data, error } = await db
+            .from("landlord_expense_edit_requests")
+            .update({
+                admin_comment: input.comment || null,
+                reviewed_at: new Date().toISOString(),
+                reviewed_by: actorId,
+                status: input.decision,
+            })
+            .eq("id", input.requestId)
+            .select("*")
+            .single();
+        if (error) throw new Error(error.message);
+        revalidateExpenseSurfaces();
+        return data;
+    }
+    const landlord = await loadLandlordForCompany(db, { companyId, landlordId: String(request.landlord_id) });
+    const requested = (request.requested_value ?? {}) as Record<string, unknown>;
+    const result = await applyLandlordCardEdit(db, {
+        actorId,
+        companyId,
+        effectiveDate: typeof request.effective_date === "string" ? request.effective_date : null,
+        effectiveMonth: typeof request.effective_month === "string" ? request.effective_month : null,
+        landlord,
+        newValue: Number.isFinite(Number(requested.value)) ? Number(requested.value) : String(requested.value ?? ""),
+        officeId: typeof request.office_id === "string" ? request.office_id : null,
+        reason: String(request.reason ?? "Approved landlord edit request"),
+        requestType: request.request_type as SubmitLandlordExpenseEditInput["requestType"],
+    });
+    const { data: reviewed, error: reviewError } = await db
+        .from("landlord_expense_edit_requests")
+        .update({
+            admin_comment: input.comment || null,
+            reviewed_at: new Date().toISOString(),
+            reviewed_by: actorId,
+            status: "approved",
+        })
+        .eq("id", input.requestId)
+        .select("*")
+        .single();
+    if (reviewError) throw new Error(reviewError.message);
+    await logUserAction({
+        action: "landlord_expense_card_edit_request_approved",
+        entityType: "landlord_expense_edit_request",
+        entityId: input.requestId,
+        companyId,
+        officeId: typeof request.office_id === "string" ? request.office_id : undefined,
+        beforeData: { request, landlord } as any,
+        afterData: { request: reviewed, result } as any,
+    });
+    revalidateExpenseSurfaces();
+    return reviewed;
 }
 
 export async function decideExpenseChangeRequest(input: DecideExpenseChangeRequestInput) {

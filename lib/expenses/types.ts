@@ -64,6 +64,24 @@ export type ExpenseChangeRequestItem = {
     adminComment: string | null;
 };
 
+export type LandlordExpenseEditRequestItem = {
+    id: string;
+    landlordId: string;
+    landlordName: string;
+    officeId: string | null;
+    officeName: string;
+    requestType: string;
+    oldValue: Record<string, unknown>;
+    requestedValue: Record<string, unknown>;
+    effectiveDate: string | null;
+    effectiveMonth: string | null;
+    reason: string;
+    status: string;
+    requestedByName: string;
+    createdAt: string | null;
+    adminComment: string | null;
+};
+
 export type ExpensesPageData = {
     company: CompanyRow | null;
     office: OfficeRow | null;
@@ -87,6 +105,7 @@ export type ExpensesPageData = {
     }>;
     employeeOptions: EmployeeExpenseOption[];
     expenseChangeRequests: ExpenseChangeRequestItem[];
+    landlordExpenseEditRequests: LandlordExpenseEditRequestItem[];
     landlordPaymentRequests: Array<{
         id: string;
         landlordId: string;
@@ -229,6 +248,28 @@ export type DecideEmployeeExpenseRequestInput = {
 export type DecideLandlordPaidExpenseRequestInput = {
     requestId: string;
     decision: "approved" | "rejected";
+    comment?: string;
+};
+
+export type LandlordExpenseEditRequestType =
+    | "landlord_outstanding_balance_edit"
+    | "landlord_payment_date_edit"
+    | "landlord_billing_date_edit";
+
+export type SubmitLandlordExpenseEditInput = {
+    landlordId: string;
+    officeId?: string | null;
+    requestType: LandlordExpenseEditRequestType;
+    oldValue: number | string | null;
+    newValue: number | string;
+    reason: string;
+    effectiveDate?: string;
+    effectiveMonth?: string;
+};
+
+export type DecideLandlordExpenseEditRequestInput = {
+    requestId: string;
+    decision: "approved" | "rejected" | "more_info";
     comment?: string;
 };
 
