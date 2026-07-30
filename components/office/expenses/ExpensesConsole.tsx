@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { ReactNode } from "react";
 import { AlertTriangle, Banknote, Bot, CheckCircle2, Download, Edit3, Eye, FileText, History, Loader2, Printer, ReceiptText, Search, Trash2, UserRound, WalletCards, X } from "lucide-react";
+import { depositOfficeCashToBank } from "@/app/actions/cash-banking";
 import { adminEditExpenseDirect, adminSafeDeleteExpense, approveExpense, createEmployeeExpenseFromExpenses, createExpense, createLandlordPaidExpenseRequest, decideEmployeeExpenseRequest, decideExpenseChangeRequest, decideLandlordExpenseEditRequest, previewEmployeeExpense, previewLandlordPaymentExpense, rejectExpense, submitExpenseChangeRequest, submitLandlordExpenseEdit } from "@/app/actions/expenses";
 import type { EmployeeExpensePreview, ExpenseBalanceReport, ExpenseChangePayload, ExpenseItem, ExpensePeriodMode, ExpensesPageData, LandlordExpenseEditRequestType } from "@/lib/expenses/types";
 
@@ -70,7 +71,7 @@ type ExpenseFilters = {
 };
 
 type LandlordPaymentPreview = Awaited<ReturnType<typeof previewLandlordPaymentExpense>>;
-type ExpenseEntryMode = "landlord_payment" | "authorised" | "unauthorised";
+type ExpenseEntryMode = "landlord_payment" | "authorised" | "unauthorised" | "banking";
 type AuthorisedExpenseType = "employee_lunch" | "airtime" | "internet" | "transport_kampala";
 type ExpenseModalMode = "view" | "edit" | "date" | "employee" | "history";
 type SummaryDrilldownKind = "collections" | "expenses";
@@ -225,6 +226,10 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
     const [loadingLandlordDetail, setLoadingLandlordDetail] = useState(false);
     const [paymentMonth, setPaymentMonth] = useState(thisMonth());
     const [paymentMethod, setPaymentMethod] = useState("cash");
+    const [bankingOfficeId, setBankingOfficeId] = useState(data.office?.id ?? data.offices[0]?.id ?? "");
+    const [bankingMethod, setBankingMethod] = useState("Bank deposit");
+    const [bankingBankAccount, setBankingBankAccount] = useState("Company Bank");
+    const [bankingReference, setBankingReference] = useState("");
     const [notes, setNotes] = useState("");
     const [employeeId, setEmployeeId] = useState("");
     const [employeeSearch, setEmployeeSearch] = useState("");
@@ -282,6 +287,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
     const periodLabel = report ? `${report.filters.startDate} to ${report.filters.endDate}` : filters.singleDate;
     const isLandlordPaidMode = entryMode === "landlord_payment";
     const isAuthorisedMode = entryMode === "authorised";
+    const isBankingMode = entryMode === "banking";
     const isEmployeeExpenseMode = isAuthorisedMode && authorisedType === "employee_lunch";
     const activeAuthorisedExpense = AUTHORISED_EXPENSES.find((item) => item.value === authorisedType) ?? AUTHORISED_EXPENSES[0];
     const selectedLandlordOption = selectedLandlordDetail;
@@ -327,6 +333,13 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
     }), [data.employeeExpenseRequests, data.landlordPaymentRequests, expenses, totals]);
 
     const selectedExpenses = useMemo(() => expenses.filter((expense) => selectedExpenseIds.includes(expense.id)), [expenses, selectedExpenseIds]);
+    const selectedBankingSummary = useMemo(() => {
+        const officeId = isAdmin ? bankingOfficeId : activeOfficeId;
+        return data.banking.summaries.find((summary) => summary.officeId === officeId) ?? data.banking.summaries[0] ?? null;
+    }, [activeOfficeId, bankingOfficeId, data.banking.summaries, isAdmin]);
+    const amountToBank = Number(amount || 0);
+    const expectedOfficeCashAfterBanking = Math.max(0, (selectedBankingSummary?.currentPhysicalOfficeCash ?? 0) - (Number.isFinite(amountToBank) ? amountToBank : 0));
+    const expectedMoneyAtBankAfterBanking = data.banking.totals.currentMoneyAtBank + (Number.isFinite(amountToBank) ? amountToBank : 0);
 
     useEffect(() => {
         itemInputRef.current?.focus();
@@ -613,6 +626,48 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
         const trimmedItem = expenseItem.trim();
         const authorisedLabel = activeAuthorisedExpense.label;
         const value = Number(amount);
+        if (isBankingMode) {
+            if (!selectedBankingSummary?.officeId) {
+                setMessage("Select the office whose physical cash is being banked.");
+                return;
+            }
+            if (!Number.isFinite(value) || value <= 0) {
+                setMessage("Enter the amount to bank.");
+                return;
+            }
+            if (value > selectedBankingSummary.eligibleAmountAvailableToBank) {
+                setMessage(`Amount exceeds eligible office cash. Available: ${money(selectedBankingSummary.eligibleAmountAvailableToBank)}.`);
+                return;
+            }
+            if (!bankingBankAccount.trim()) {
+                setMessage("Bank account is required.");
+                return;
+            }
+            startTransition(async () => {
+                try {
+                    setMessage(null);
+                    const idempotentReference = bankingReference.trim() || `EXP-BANK-${selectedBankingSummary.officeId.slice(0, 8)}-${expenseDate}-${value}`;
+                    const result = await depositOfficeCashToBank({
+                        accountReference: bankingBankAccount.trim(),
+                        amount: value,
+                        bankName: bankingBankAccount.trim(),
+                        bankingDate: expenseDate,
+                        channel: bankingMethod || "Bank deposit",
+                        notes: notes || "Banking recorded from Expenses page.",
+                        officeId: selectedBankingSummary.officeId,
+                        referenceNumber: idempotentReference,
+                    });
+                    setMessage(`Banking completed. Office cash is now ${money(result.balances.moneyAtOffice)} and Money at Bank is ${money(result.balances.moneyAtBank)}.`);
+                    setAmount("");
+                    setBankingReference("");
+                    setNotes("");
+                    setRefreshToken((token) => token + 1);
+                } catch (error) {
+                    setMessage(error instanceof Error ? error.message : "Banking could not be completed.");
+                }
+            });
+            return;
+        }
         if (entryMode === "unauthorised" && !trimmedItem) {
             setMessage("Enter expense name.");
             return;
@@ -907,11 +962,12 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                                 <h2 className="mt-1 text-2xl font-black">Record the correct workflow first</h2>
                                 <p className="mt-1 text-sm font-semibold text-slate-300">Landlord payments, authorised office allowances, and unauthorised requests are routed separately.</p>
                             </div>
-                            <div className="grid gap-2 sm:grid-cols-3 lg:w-[560px]">
+                            <div className="grid gap-2 sm:grid-cols-2 lg:w-[720px] lg:grid-cols-4">
                                 {([
                                     ["landlord_payment", "Landlord Payment"],
                                     ["authorised", "Authorised Expenses"],
                                     ["unauthorised", "Unauthorised Expenses"],
+                                    ["banking", "Banking"],
                                 ] as Array<[ExpenseEntryMode, string]>).map(([mode, label]) => (
                                     <button
                                         key={`expense-entry-mode:${mode}`}
@@ -1129,14 +1185,72 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                             </div>
                         ) : null}
 
+                        {isBankingMode ? (
+                            <div className="space-y-4">
+                                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_190px_220px]">
+                                    <label className="block">
+                                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Office</span>
+                                        {isAdmin ? (
+                                            <select value={bankingOfficeId} onChange={(event) => setBankingOfficeId(event.target.value)} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100">
+                                                {data.banking.summaries.map((summary) => (
+                                                    <option key={`banking-office:${summary.officeId}`} value={summary.officeId}>{summary.officeName}</option>
+                                                ))}
+                                            </select>
+                                        ) : (
+                                            <div className="mt-1 flex h-16 items-center rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950">{selectedBankingSummary?.officeName ?? activeOfficeName}</div>
+                                        )}
+                                    </label>
+                                    <label className="block">
+                                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Banking Date</span>
+                                        <input type="date" value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
+                                    </label>
+                                    <label className="block">
+                                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Payment / Transfer Method</span>
+                                        <select value={bankingMethod} onChange={(event) => setBankingMethod(event.target.value)} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100">
+                                            <option value="Bank deposit">Bank deposit</option>
+                                            <option value="Mobile money transfer">Mobile money transfer</option>
+                                            <option value="Cash deposit">Cash deposit</option>
+                                            <option value="Other">Other</option>
+                                        </select>
+                                    </label>
+                                </div>
+                                <div className="grid gap-4 md:grid-cols-2">
+                                    <label className="block">
+                                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Bank Account</span>
+                                        <input value={bankingBankAccount} onChange={(event) => setBankingBankAccount(event.target.value)} placeholder="Configured bank account" className="mt-1 h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
+                                    </label>
+                                    <label className="block">
+                                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Deposit Slip / Reference</span>
+                                        <input value={bankingReference} onChange={(event) => setBankingReference(event.target.value)} placeholder="Optional reference" className="mt-1 h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-base font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
+                                    </label>
+                                </div>
+                                <PremiumCardSection title="Banking Live Summary" featured>
+                                    <PremiumEntryCard featured label="Office Name" value={selectedBankingSummary?.officeName ?? activeOfficeName} />
+                                    <PremiumEntryCard featured label="Current Physical Office Cash" value={money(selectedBankingSummary?.currentPhysicalOfficeCash ?? 0)} />
+                                    <PremiumEntryCard label="Collections Today" value={money(selectedBankingSummary?.collectionsToday ?? 0)} />
+                                    <PremiumEntryCard label="Approved Expenses Today" value={money(selectedBankingSummary?.approvedExpensesToday ?? 0)} />
+                                    <PremiumEntryCard label="Already Banked Today" value={money(selectedBankingSummary?.alreadyBankedToday ?? 0)} />
+                                    <PremiumEntryCard label="Cash Handed to Admin Today" value={money(selectedBankingSummary?.cashHandedToAdminToday ?? 0)} />
+                                    <PremiumEntryCard featured label="Eligible Amount Available to Bank" value={money(selectedBankingSummary?.eligibleAmountAvailableToBank ?? 0)} />
+                                    <PremiumEntryCard label="Amount Being Banked" value={money(Number.isFinite(amountToBank) ? amountToBank : 0)} />
+                                    <PremiumEntryCard label="Expected Office Cash After Banking" value={money(expectedOfficeCashAfterBanking)} />
+                                    <PremiumEntryCard label="Current Money at Bank" value={money(data.banking.totals.currentMoneyAtBank)} />
+                                    <PremiumEntryCard featured label="Expected Money at Bank After Banking" value={money(expectedMoneyAtBankAfterBanking)} />
+                                </PremiumCardSection>
+                                <p className="rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-sm font-bold text-cyan-900">
+                                    Banking transfers physical office cash to Money at Bank. It does not change collections, approved expenses, landlord payments or Company Cash Position.
+                                </p>
+                            </div>
+                        ) : null}
+
                         <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_240px]">
                             <label className="block">
-                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">{entryMode === "unauthorised" ? "Reason / Supporting Notes" : "Supporting Notes"}</span>
-                                <input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder={entryMode === "unauthorised" ? "Reason and notes required..." : "Optional notes..."} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
+                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">{entryMode === "unauthorised" ? "Reason / Supporting Notes" : isBankingMode ? "Banking Notes" : "Supporting Notes"}</span>
+                                <input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder={entryMode === "unauthorised" ? "Reason and notes required..." : isBankingMode ? "Controlled banking notes..." : "Optional notes..."} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
                                 {entryMode === "unauthorised" ? <span className="mt-1 block text-xs font-bold text-slate-500">Optional Attachment can be added to the approval request from Admin review.</span> : null}
                             </label>
                             <label className="block">
-                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Amount</span>
+                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">{isBankingMode ? "Amount to Bank" : "Amount"}</span>
                                 <input ref={amountInputRef} value={amount} onChange={(event) => setAmount(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveExpense(); }} type="number" min="0" placeholder="UGX" className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-2xl font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
                             </label>
                         </div>
@@ -1145,12 +1259,12 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                         <div className="mt-5 flex flex-wrap items-center gap-3">
                             <button type="button" onClick={saveExpense} disabled={!canManage || isPending} className="inline-flex h-13 items-center gap-2 rounded-2xl bg-emerald-600 px-7 text-base font-black text-white shadow-lg shadow-emerald-100 transition hover:-translate-y-0.5 disabled:opacity-40">
                                 {isPending ? <Loader2 className="animate-spin" size={18} /> : <ReceiptText size={18} />}
-                                {isPending ? "Submitting..." : isLandlordPaidMode ? "Submit Landlord Payment" : isEmployeeExpenseMode ? "Record / Request Lunch" : entryMode === "unauthorised" ? "Submit for Admin Approval" : "Record / Request Authorised Expense"}
+                                {isPending ? "Submitting..." : isBankingMode ? "Bank Office Cash" : isLandlordPaidMode ? "Submit Landlord Payment" : isEmployeeExpenseMode ? "Record / Request Lunch" : entryMode === "unauthorised" ? "Submit for Admin Approval" : "Record / Request Authorised Expense"}
                             </button>
                             <button type="button" onClick={() => setShowPrintPreview(true)} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700"><Printer size={16} />Print A4 Report</button>
                             <button type="button" onClick={() => setShowPrintPreview(true)} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700"><Download size={16} />Export PDF</button>
                             <button type="button" onClick={exportCsv} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700"><Download size={16} />Export CSV</button>
-                            <span className="text-xs font-bold text-slate-500">{isAdmin ? "Admin overrides are audited immediately." : "Office entries that exceed limits or are unauthorised require Admin approval."}</span>
+                            <span className="text-xs font-bold text-slate-500">{isBankingMode ? "Banking is a cash-location transfer, not an expense." : isAdmin ? "Admin overrides are audited immediately." : "Office entries that exceed limits or are unauthorised require Admin approval."}</span>
                         </div>
                     </div>
                 </section>
@@ -1163,6 +1277,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                 />
                 <EmployeeExpenseRequestLedger isAdmin={isAdmin} requests={data.employeeExpenseRequests} />
                 <LandlordEditRequestLedger isAdmin={isAdmin} requests={data.landlordExpenseEditRequests} onReviewed={() => setRefreshToken((token) => token + 1)} />
+                <BankingRecordsLedger activeOfficeName={activeOfficeName} banking={data.banking} isAdmin={isAdmin} offices={data.offices} />
                 <ExpenseChangeRequestLedger activeOfficeName={activeOfficeName} isAdmin={isAdmin} offices={data.offices} requests={data.expenseChangeRequests} onReviewed={() => setRefreshToken((token) => token + 1)} />
 
                 <section className="mx-auto mt-5 max-w-6xl space-y-4">
@@ -1384,6 +1499,13 @@ function BalanceCard({ hint, icon, interactive = false, label, onClick, tone, va
 }
 
 function SummaryDrilldownModal({ kind, onClose, report }: { kind: SummaryDrilldownKind; onClose: () => void; report: ExpenseBalanceReport | null }) {
+    useEffect(() => {
+        const handleKey = (event: KeyboardEvent) => {
+            if (event.key === "Escape") onClose();
+        };
+        window.addEventListener("keydown", handleKey);
+        return () => window.removeEventListener("keydown", handleKey);
+    }, [onClose]);
     const isCollections = kind === "collections";
     const expenses = useMemo(() => (report?.expenses ?? []).filter((expense) => normalizeStatus(expense.status ?? expense.approvalState) === "approved"), [report?.expenses]);
     const collections = report?.collections ?? [];
@@ -1399,9 +1521,12 @@ function SummaryDrilldownModal({ kind, onClose, report }: { kind: SummaryDrilldo
         : "/office/collections";
 
     return (
-        <div className="fixed inset-0 z-[130] overflow-auto bg-slate-950/70 p-4 backdrop-blur-sm">
-            <div className="mx-auto my-8 max-w-6xl overflow-hidden rounded-[30px] bg-white shadow-2xl shadow-slate-950/30">
-                <div className="bg-slate-950 p-5 text-white">
+        <div className="fixed inset-0 z-[130] overflow-auto bg-slate-950/70 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+            <div className="relative mx-auto my-8 max-w-6xl overflow-hidden rounded-[30px] bg-white shadow-2xl shadow-slate-950/30">
+                <button type="button" onClick={onClose} className="absolute right-4 top-4 z-10 inline-flex min-h-11 min-w-11 items-center justify-center rounded-full border border-white/10 bg-white/10 text-white shadow-lg transition hover:bg-white hover:text-slate-950 focus:outline-none focus:ring-4 focus:ring-cyan-200" aria-label="Close records drill-down">
+                    <X size={18} />
+                </button>
+                <div className="bg-slate-950 p-5 pr-20 text-white">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                         <div>
                             <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200">Filtered drill-down</p>
@@ -1414,7 +1539,7 @@ function SummaryDrilldownModal({ kind, onClose, report }: { kind: SummaryDrilldo
                                     Open Collections
                                 </a>
                             ) : null}
-                            <button type="button" onClick={onClose} className="inline-flex min-h-10 items-center rounded-xl bg-white/10 px-4 text-sm font-black text-white hover:bg-white/15">Close</button>
+                            <button type="button" onClick={onClose} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-white/10 px-4 text-sm font-black text-white hover:bg-white/15 focus:outline-none focus:ring-4 focus:ring-cyan-200"><X size={16} />Close</button>
                         </div>
                     </div>
                     <div className="mt-4 grid gap-3 sm:grid-cols-3">
@@ -2141,15 +2266,25 @@ function RecordTableSummary({ count, dateLabel, officeLabel, total }: { count: n
 }
 
 function RecordDetailsModal({ onClose, rows, title }: { onClose: () => void; rows: Array<[string, string]>; title: string }) {
+    useEffect(() => {
+        const handleKey = (event: KeyboardEvent) => {
+            if (event.key === "Escape") onClose();
+        };
+        window.addEventListener("keydown", handleKey);
+        return () => window.removeEventListener("keydown", handleKey);
+    }, [onClose]);
     return (
-        <div className="fixed inset-0 z-[120] overflow-auto bg-slate-950/70 p-4 backdrop-blur-sm">
-            <div className="mx-auto my-8 max-w-2xl overflow-hidden rounded-[28px] bg-white shadow-2xl shadow-slate-950/30">
-                <div className="flex items-start justify-between gap-3 bg-slate-950 p-5 text-white">
+        <div className="fixed inset-0 z-[120] overflow-auto bg-slate-950/70 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+            <div className="relative mx-auto my-8 max-w-2xl overflow-hidden rounded-[28px] bg-white shadow-2xl shadow-slate-950/30">
+                <button type="button" onClick={onClose} className="absolute right-4 top-4 z-10 inline-flex min-h-11 min-w-11 items-center justify-center rounded-full border border-white/10 bg-white/10 text-white shadow-lg transition hover:bg-white hover:text-slate-950 focus:outline-none focus:ring-4 focus:ring-cyan-200" aria-label="Close record details">
+                    <X size={18} />
+                </button>
+                <div className="flex items-start justify-between gap-3 bg-slate-950 p-5 pr-20 text-white">
                     <div>
                         <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200">Record details</p>
                         <h2 className="mt-2 text-2xl font-black">{title}</h2>
                     </div>
-                    <button type="button" onClick={onClose} className="rounded-xl bg-white/10 px-4 py-2 text-sm font-black hover:bg-white/15">Close</button>
+                    <button type="button" onClick={onClose} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-white/10 px-4 py-2 text-sm font-black hover:bg-white/15 focus:outline-none focus:ring-4 focus:ring-cyan-200"><X size={16} />Close</button>
                 </div>
                 <div className="grid gap-3 p-5 sm:grid-cols-2">
                     {rows.map(([label, value]) => (
@@ -2428,6 +2563,125 @@ function LandlordEditModal({
                 </div>
             </div>
         </div>
+    );
+}
+
+function BankingRecordsLedger({ activeOfficeName, banking, isAdmin, offices }: { activeOfficeName: string; banking: ExpensesPageData["banking"]; isAdmin: boolean; offices: ExpensesPageData["offices"] }) {
+    const [filters, setFilters] = useState<RecordTableFilters>(() => defaultRecordTableFilters());
+    const [status, setStatus] = useState("");
+    const [method, setMethod] = useState("");
+    const [selected, setSelected] = useState<ExpensesPageData["banking"]["records"][number] | null>(null);
+    const range = useMemo(() => resolveRecordFilterRange(filters), [filters]);
+    const visibleRecords = useMemo(() => banking.records.filter((record) => {
+        if (isAdmin && filters.officeId && record.officeId !== filters.officeId) return false;
+        if (status && normalizeStatus(record.status) !== normalizeStatus(status)) return false;
+        if (method && record.method !== method) return false;
+        return isDateInRange(record.bankingDate, range);
+    }), [banking.records, filters.officeId, isAdmin, method, range, status]);
+    const total = useMemo(() => visibleRecords.reduce((sum, record) => sum + Number(record.amount ?? 0), 0), [visibleRecords]);
+    const methods = useMemo(() => Array.from(new Set(banking.records.map((record) => record.method).filter(Boolean))).sort(), [banking.records]);
+    const officeLabel = isAdmin && filters.officeId ? offices.find((office) => office.id === filters.officeId)?.name ?? "Selected office" : isAdmin ? "All Offices" : activeOfficeName;
+
+    return (
+        <section className="mx-auto mt-5 max-w-6xl overflow-hidden rounded-[26px] border border-white/70 bg-white shadow-2xl shadow-slate-950/15">
+            <div className="border-b border-slate-200 px-4 py-3">
+                <p className="text-xs font-black uppercase tracking-wide text-emerald-600">Treasury transfer history</p>
+                <h2 className="text-lg font-black text-slate-950">Banking Records</h2>
+                <RecordTableFilterBar
+                    activeOfficeName={activeOfficeName}
+                    filters={filters}
+                    isAdmin={isAdmin}
+                    label="Banking Records"
+                    offices={offices}
+                    onChange={setFilters}
+                />
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <label className="block">
+                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Status</span>
+                        <div className="mt-1 flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3">
+                            <select value={status} onChange={(event) => setStatus(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm font-black text-slate-900 outline-none">
+                                <option value="">All Statuses</option>
+                                <option value="approved">Approved</option>
+                                <option value="completed">Completed</option>
+                                <option value="posted">Posted</option>
+                                <option value="pending">Pending</option>
+                            </select>
+                            {status ? <button type="button" onClick={() => setStatus("")} className="rounded-full p-1 text-slate-400 hover:bg-white hover:text-slate-700" aria-label="Clear banking status filter"><X size={14} /></button> : null}
+                        </div>
+                    </label>
+                    <label className="block">
+                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Method</span>
+                        <div className="mt-1 flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3">
+                            <select value={method} onChange={(event) => setMethod(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm font-black text-slate-900 outline-none">
+                                <option value="">All Methods</option>
+                                {methods.map((option) => <option key={`banking-method:${option}`} value={option}>{option}</option>)}
+                            </select>
+                            {method ? <button type="button" onClick={() => setMethod("")} className="rounded-full p-1 text-slate-400 hover:bg-white hover:text-slate-700" aria-label="Clear banking method filter"><X size={14} /></button> : null}
+                        </div>
+                    </label>
+                </div>
+                <RecordTableSummary count={visibleRecords.length} dateLabel={range.label} officeLabel={officeLabel} total={total} />
+            </div>
+            <div className="overflow-auto">
+                <table className="w-full min-w-[1120px] text-left text-sm">
+                    <thead className="bg-slate-950 text-xs uppercase text-slate-200">
+                        <tr>
+                            <th className="px-4 py-3">Banking Date</th>
+                            <th className="px-4 py-3">Office</th>
+                            <th className="px-4 py-3 text-right">Amount</th>
+                            <th className="px-4 py-3">Method</th>
+                            <th className="px-4 py-3">Bank Account</th>
+                            <th className="px-4 py-3">Reference</th>
+                            <th className="px-4 py-3">Banked By</th>
+                            <th className="px-4 py-3">Approval Status</th>
+                            <th className="px-4 py-3">Created Time</th>
+                            <th className="px-4 py-3">Notes</th>
+                            <th className="px-4 py-3">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {visibleRecords.map((record) => (
+                            <tr key={`banking-record:${record.id}`} onClick={() => setSelected(record)} className="cursor-pointer border-b border-slate-100 hover:bg-emerald-50/70">
+                                <td className="px-4 py-3 font-bold text-slate-500">{record.bankingDate || "--"}</td>
+                                <td className="px-4 py-3 font-black text-slate-950">{record.officeName}</td>
+                                <td className="px-4 py-3 text-right font-black text-emerald-700">{money(record.amount)}</td>
+                                <td className="px-4 py-3 font-bold text-slate-500">{record.method}</td>
+                                <td className="px-4 py-3 font-bold text-slate-500">{record.bankAccount}</td>
+                                <td className="px-4 py-3 font-bold text-slate-500">{record.reference ?? "--"}</td>
+                                <td className="px-4 py-3 font-bold text-slate-500">{record.bankedBy}</td>
+                                <td className="px-4 py-3"><StatusBadge status={record.status} /></td>
+                                <td className="px-4 py-3 font-bold text-slate-500">{record.createdAt ? new Date(record.createdAt).toLocaleString() : "--"}</td>
+                                <td className="max-w-xs px-4 py-3 font-semibold text-slate-600">{record.notes ?? "--"}</td>
+                                <td className="px-4 py-3">
+                                    <button type="button" onClick={(event) => { event.stopPropagation(); setSelected(record); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-emerald-100">
+                                        View
+                                    </button>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+            {!visibleRecords.length ? <p className="p-5 text-sm font-bold text-slate-500">No banking records match the selected filters.</p> : null}
+            {selected ? (
+                <RecordDetailsModal
+                    onClose={() => setSelected(null)}
+                    rows={[
+                        ["Banking Date", selected.bankingDate || "--"],
+                        ["Office", selected.officeName],
+                        ["Amount", money(selected.amount)],
+                        ["Method", selected.method],
+                        ["Bank Account", selected.bankAccount],
+                        ["Reference", selected.reference ?? "--"],
+                        ["Banked By", selected.bankedBy],
+                        ["Approval Status", selected.status],
+                        ["Created Time", selected.createdAt ? new Date(selected.createdAt).toLocaleString() : "--"],
+                        ["Notes", selected.notes ?? "--"],
+                    ]}
+                    title="Banking Record"
+                />
+            ) : null}
+        </section>
     );
 }
 

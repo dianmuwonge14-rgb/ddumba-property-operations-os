@@ -149,6 +149,35 @@ export type ExpensesPageData = {
         createdAt: string | null;
         adminComment: string | null;
     }>;
+    banking: {
+        records: Array<{
+            id: string;
+            bankingDate: string;
+            officeId: string | null;
+            officeName: string;
+            amount: number;
+            method: string;
+            bankAccount: string;
+            reference: string | null;
+            bankedBy: string;
+            status: string;
+            createdAt: string | null;
+            notes: string | null;
+        }>;
+        summaries: Array<{
+            officeId: string;
+            officeName: string;
+            currentPhysicalOfficeCash: number;
+            collectionsToday: number;
+            approvedExpensesToday: number;
+            alreadyBankedToday: number;
+            cashHandedToAdminToday: number;
+            eligibleAmountAvailableToBank: number;
+        }>;
+        totals: {
+            currentMoneyAtBank: number;
+        };
+    };
     cashAccounts: CashAccountRow[];
     kpis: ExpenseKpis;
     expenses: ExpenseItem[];

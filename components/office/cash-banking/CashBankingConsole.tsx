@@ -247,7 +247,7 @@ export default function CashBankingConsole({ data }: Props) {
         { label: "Money At Bank", value: data.totals.moneyAtBank, icon: Landmark, hint: "Banked cash less bank-funded office float" },
         { label: "Collected Period", value: data.totals.collectedPeriod, icon: Banknote, hint: "Active tenant collections in selected period" },
         { label: "With Collectors", value: data.totals.moneyWithCollectors, icon: Send, hint: "Live collector money in hand" },
-        { label: "Company Cash Position", value: data.totals.companyCashPosition, icon: Building2, hint: "Bank + admin cash + office + collector cash" },
+        { label: "Company Cash Position", value: data.totals.companyCashPosition, icon: Building2, hint: "Collections minus approved expenses; banking is a separate cash-location transfer" },
     ];
 
     return (

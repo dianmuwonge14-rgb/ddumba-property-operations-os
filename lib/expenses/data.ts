@@ -122,6 +122,7 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
         landlordsResult,
         collectionsResult,
         cashAccountsResult,
+        cashTransactionsResult,
         usersResult,
         officesResult,
         roomsResult,
@@ -160,6 +161,17 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
             if (selectedOfficeId) query = query.eq("office_id", selectedOfficeId);
             return query;
         })(),
+        (() => {
+            let query = (supabase as unknown as { from: (table: string) => any })
+                .from("cash_transactions")
+                .select("id, company_id, office_id, cash_account_id, amount, transaction_type, direction, source_type, source_id, transaction_date, occurred_at, created_at, description, notes, payment_method, reference, recorded_by, status, metadata")
+                .eq("company_id", companyId)
+                .order("transaction_date", { ascending: false, nullsFirst: false })
+                .order("created_at", { ascending: false, nullsFirst: false })
+                .limit(1000);
+            if (selectedOfficeId) query = query.eq("office_id", selectedOfficeId);
+            return query;
+        })(),
         supabase.from("users").select("*").eq("company_id", companyId).eq("status", "active"),
         supabase.from("offices").select("id, office_name, name").eq("company_id", companyId).order("office_name", { ascending: true, nullsFirst: false }),
         (() => {
@@ -177,6 +189,7 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
         landlordsResult,
         collectionsResult,
         cashAccountsResult,
+        cashTransactionsResult,
         usersResult,
         officesResult,
         roomsResult,
@@ -191,6 +204,7 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
     const landlords = landlordsResult.data ?? [];
     const collections = uniqueFinanciallyEffectiveCollections((collectionsResult.data ?? []) as CollectionRow[]);
     const cashAccounts = cashAccountsResult.data ?? [];
+    const cashTransactions = cashTransactionsResult.data ?? [];
     const users = usersResult.data ?? [];
     const offices = (officesResult.data ?? []).map((office) => ({
         id: office.id,
@@ -199,6 +213,7 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
     const employees = (employeesResult.data ?? []) as EmployeeRow[];
     const officeById = new Map(offices.map((office) => [office.id, office.name]));
     const employeeById = new Map(employees.map((employee) => [employee.id, employee.full_name ?? "Employee"]));
+    const userById = new Map(users.map((user) => [user.id, user.full_name ?? user.email ?? "User"]));
     const landlordOfficeById = new Map<string, string | null>();
     type LandlordRoomRow = { landlord_id: string | null; office_id: string | null; status?: string | null; monthly_rent?: number | string | null };
     const landlordPortfolioById = new Map<string, { portfolioValue: number; numberOfRooms: number; occupiedRooms: number; vacantRooms: number; vacatedWithDebt: number }>();
@@ -291,6 +306,15 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
         expenseChangeRequests,
         landlordExpenseEditRequests,
         employeeExpenseRequests,
+        banking: buildBankingSnapshot({
+            cashAccounts,
+            cashTransactions,
+            collections,
+            expenses,
+            officeById,
+            offices,
+            userById,
+        }),
         cashAccounts,
         kpis: calculateKpis(expenses, properties, collections, cashAccounts),
         expenses: items,
@@ -475,6 +499,98 @@ function sumExpenses(expenses: ExpenseRow[]) {
     return expenses.reduce((total, expense) => total + Number(expense.amount ?? 0), 0);
 }
 
+function dateKey(value: unknown) {
+    return typeof value === "string" ? value.slice(0, 10) : "";
+}
+
+function isApprovedLedger(row: Record<string, unknown>) {
+    return ["approved", "completed", "posted"].includes(String(row.status ?? "approved").toLowerCase());
+}
+
+function signedCashAmount(row: Record<string, unknown>) {
+    const amount = Number(row.amount ?? 0);
+    const type = String(row.transaction_type ?? "").toLowerCase();
+    const direction = String(row.direction ?? "").toLowerCase();
+    return direction === "outflow" || type === "outflow" || type === "transfer_out" ? -amount : amount;
+}
+
+function metadataBankAccount(value: unknown) {
+    if (!value || typeof value !== "object") return null;
+    const metadata = value as Record<string, unknown>;
+    return typeof metadata.bank_account_name === "string" ? metadata.bank_account_name : null;
+}
+
+function buildBankingSnapshot(input: {
+    cashAccounts: Array<Record<string, unknown>>;
+    cashTransactions: Array<Record<string, unknown>>;
+    collections: CollectionRow[];
+    expenses: ExpenseRow[];
+    officeById: Map<string, string>;
+    offices: Array<{ id: string; name: string }>;
+    userById: Map<string, string>;
+}): ExpensesPageData["banking"] {
+    const today = new Date().toISOString().slice(0, 10);
+    const accountById = new Map(input.cashAccounts.map((account) => [String(account.id), account]));
+    const activeTransactions = input.cashTransactions.filter(isApprovedLedger);
+    const officeCashTransactions = activeTransactions.filter((row) => accountById.get(String(row.cash_account_id))?.account_type === "office_cash");
+    const bankTransactions = activeTransactions.filter((row) => accountById.get(String(row.cash_account_id))?.account_type === "bank");
+    const bankOutflows = officeCashTransactions.filter((row) => row.source_type === "bank_deposit" && String(row.transaction_type).toLowerCase() === "outflow");
+    const adminHandovers = officeCashTransactions.filter((row) => ["office_to_admin_transfer", "admin_float"].includes(String(row.source_type ?? "")) && String(row.transaction_type).toLowerCase() === "outflow");
+    const approvedExpenses = input.expenses.filter(isApprovedExpense);
+
+    const summaries = input.offices.map((office) => {
+        const officeId = office.id;
+        const currentPhysicalOfficeCash = officeCashTransactions
+            .filter((row) => row.office_id === officeId)
+            .reduce((total, row) => total + signedCashAmount(row), 0);
+        const collectionsToday = input.collections
+            .filter((collection) => (collection as CollectionRow & Record<string, unknown>).office_id === officeId && dateKey((collection as CollectionRow & Record<string, unknown>).payment_date ?? (collection as CollectionRow & Record<string, unknown>).paid_at ?? collection.created_at) === today)
+            .reduce((total, collection) => total + collectionAmount(collection), 0);
+        const approvedExpensesToday = approvedExpenses
+            .filter((expense) => expense.office_id === officeId && dateKey(expense.expense_date ?? expense.created_at) === today)
+            .reduce((total, expense) => total + Number(expense.amount ?? 0), 0);
+        const alreadyBankedToday = bankOutflows
+            .filter((row) => row.office_id === officeId && dateKey(row.transaction_date ?? row.occurred_at ?? row.created_at) === today)
+            .reduce((total, row) => total + Number(row.amount ?? 0), 0);
+        const cashHandedToAdminToday = adminHandovers
+            .filter((row) => row.office_id === officeId && dateKey(row.transaction_date ?? row.occurred_at ?? row.created_at) === today)
+            .reduce((total, row) => total + Number(row.amount ?? 0), 0);
+        return {
+            officeId,
+            officeName: office.name,
+            currentPhysicalOfficeCash: Math.max(0, currentPhysicalOfficeCash),
+            collectionsToday,
+            approvedExpensesToday,
+            alreadyBankedToday,
+            cashHandedToAdminToday,
+            eligibleAmountAvailableToBank: Math.max(0, currentPhysicalOfficeCash),
+        };
+    });
+
+    const records = bankOutflows.map((row) => ({
+        id: String(row.source_id ?? row.id),
+        bankingDate: dateKey(row.transaction_date ?? row.occurred_at ?? row.created_at),
+        officeId: typeof row.office_id === "string" ? row.office_id : null,
+        officeName: typeof row.office_id === "string" ? input.officeById.get(row.office_id) ?? "Office" : "Office",
+        amount: Number(row.amount ?? 0),
+        method: typeof row.payment_method === "string" ? row.payment_method : "Bank",
+        bankAccount: metadataBankAccount(row.metadata) ?? "Company Bank",
+        reference: typeof row.reference === "string" ? row.reference : typeof row.source_id === "string" ? row.source_id : null,
+        bankedBy: typeof row.recorded_by === "string" ? input.userById.get(row.recorded_by) ?? "User" : "User",
+        status: String(row.status ?? "approved"),
+        createdAt: typeof row.created_at === "string" ? row.created_at : null,
+        notes: typeof row.notes === "string" ? row.notes : typeof row.description === "string" ? row.description : null,
+    }));
+
+    return {
+        records,
+        summaries,
+        totals: {
+            currentMoneyAtBank: bankTransactions.reduce((total, row) => total + signedCashAmount(row), 0),
+        },
+    };
+}
+
 function hydrateCollectionItems(
     collections: CollectionRow[],
     users: UserRow[],
@@ -519,6 +635,13 @@ function emptyData(): ExpensesPageData {
         expenseChangeRequests: [],
         landlordExpenseEditRequests: [],
         employeeExpenseRequests: [],
+        banking: {
+            records: [],
+            summaries: [],
+            totals: {
+                currentMoneyAtBank: 0,
+            },
+        },
         cashAccounts: [],
         kpis: {
             totalExpenses: 0,

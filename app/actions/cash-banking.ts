@@ -14,6 +14,7 @@ type BankMoneyInput = {
     bankingDate: string;
     bankName: string;
     channel: string;
+    officeId?: string | null;
     accountReference?: string | null;
     referenceNumber?: string | null;
     notes?: string | null;
@@ -231,7 +232,9 @@ export async function depositOfficeCashToBank(input: BankMoneyInput): Promise<De
         || hasPermission(context, "expenses.manage");
     if (!allowed) throw new Error("You do not have permission to bank office money.");
     const companyId = context.activeCompany?.id;
-    const officeId = context.activeOffice?.id;
+    const officeId = context.isCompanyAdmin && !context.isOfficeMode && input.officeId
+        ? input.officeId
+        : context.activeOffice?.id;
     if (!companyId || !officeId) throw new Error("Active company and office are required.");
     if (!canAccessOffice(context, officeId)) throw new Error("You cannot bank money for this office.");
 

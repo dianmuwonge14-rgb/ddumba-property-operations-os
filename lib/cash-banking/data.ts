@@ -464,7 +464,7 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
         moneyAtBank,
         adminCashBalance,
         moneyWithCollectors: collectorCash,
-        companyCashPosition: moneyAtBank + adminCashBalance + collectorCash + moneyAtOffices,
+        companyCashPosition: sum(periodCollections, cashAmount) - sum(periodExpenses, expenseAmount),
         adminFloatGiven: sum(adminFloatInflows, (row) => numberValue(row.amount)) - sum(adminFloatOutflows, (row) => numberValue(row.amount)),
     };
 

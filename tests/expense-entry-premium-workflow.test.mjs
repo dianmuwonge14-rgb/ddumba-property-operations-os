@@ -9,11 +9,12 @@ const expenseActions = readFileSync(new URL("../app/actions/expenses.ts", import
 const entrySearchRoute = readFileSync(new URL("../app/api/expenses/entry-search/route.ts", import.meta.url), "utf8");
 const entryDetailRoute = readFileSync(new URL("../app/api/expenses/entry-detail/route.ts", import.meta.url), "utf8");
 
-test("expense entry exposes only the approved premium workflow categories", () => {
-  assert.match(expensesConsole, /type ExpenseEntryMode = "landlord_payment" \| "authorised" \| "unauthorised"/);
+test("expense entry exposes the approved premium workflow categories plus banking transfer", () => {
+  assert.match(expensesConsole, /type ExpenseEntryMode = "landlord_payment" \| "authorised" \| "unauthorised" \| "banking"/);
   assert.match(expensesConsole, /Landlord Payment/);
   assert.match(expensesConsole, /Authorised Expenses/);
   assert.match(expensesConsole, /Unauthorised Expenses/);
+  assert.match(expensesConsole, /Banking/);
   assert.match(expensesConsole, /Employee Lunch/);
   assert.match(expensesConsole, /Airtime/);
   assert.match(expensesConsole, /Internet/);
@@ -113,6 +114,7 @@ test("expense page keeps the existing queues and recorded expenses ledger below 
   assert.match(expensesConsole, /<LandlordPaymentRequestLedger activeOfficeName=\{activeOfficeName\} isAdmin=\{isAdmin\} offices=\{data\.offices\} requests=\{data\.landlordPaymentRequests\}/);
   assert.match(expensesConsole, /<GenericExpenseApprovalQueue/);
   assert.match(expensesConsole, /<EmployeeExpenseRequestLedger/);
+  assert.match(expensesConsole, /<BankingRecordsLedger/);
   assert.match(expensesConsole, /<ExpenseChangeRequestLedger/);
   assert.match(expensesConsole, /Recorded Expenses/);
 });
@@ -123,6 +125,8 @@ test("expense summary cards and request ledgers are interactive and filterable",
   assert.match(expensesConsole, /function SummaryDrilldownModal/);
   assert.match(expensesConsole, /Total Collections Records/);
   assert.match(expensesConsole, /Total Expenses Records/);
+  assert.match(expensesConsole, /aria-label="Close records drill-down"/);
+  assert.match(expensesConsole, /aria-label="Close record details"/);
   assert.match(expensesConsole, /function RecordTableFilterBar/);
   assert.match(expensesConsole, /Clear All Filters/);
   assert.match(expensesConsole, /Date filter/);
@@ -131,4 +135,15 @@ test("expense summary cards and request ledgers are interactive and filterable",
   assert.match(expensesConsole, /Visible total/);
   assert.match(expenseTypes, /ExpenseReportCollectionItem/);
   assert.match(expenseData, /collections: collectionItems/);
+});
+
+test("banking entry uses treasury transfer semantics instead of expense semantics", () => {
+  assert.match(expensesConsole, /depositOfficeCashToBank/);
+  assert.match(expensesConsole, /Bank Office Cash/);
+  assert.match(expensesConsole, /Current Physical Office Cash/);
+  assert.match(expensesConsole, /Expected Money at Bank After Banking/);
+  assert.match(expensesConsole, /Banking transfers physical office cash to Money at Bank/);
+  assert.match(expensesConsole, /function BankingRecordsLedger/);
+  assert.match(expenseTypes, /banking: \{/);
+  assert.match(expenseData, /buildBankingSnapshot/);
 });
