@@ -4,16 +4,31 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { KeyRound, Loader2, LockKeyhole, ShieldCheck } from "lucide-react";
 
+const LOGIN_TIMEOUT_MS = 12000;
+
+function safeLoginError(message: unknown) {
+    const text = typeof message === "string" ? message : "";
+    if (/<\/?[a-z][\s\S]*>/i.test(text) || /cloudflare|error 522|connection timed out/i.test(text)) {
+        return "Login service is temporarily unavailable. Please retry in a moment.";
+    }
+    return text || "Login failed.";
+}
+
 export default function PinLoginForm() {
     const router = useRouter();
     const [pin, setPin] = useState("");
     const [error, setError] = useState("");
     const [success, setSuccess] = useState("");
+    const [errorRef, setErrorRef] = useState("");
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const [isPending, startTransition] = useTransition();
+    const busy = isSubmitting || isPending;
 
     function login() {
+        if (busy) return;
         setError("");
         setSuccess("");
+        setErrorRef("");
 
         const secret = pin.trim();
 
@@ -23,20 +38,35 @@ export default function PinLoginForm() {
         }
 
         startTransition(async () => {
-            const response = await fetch("/api/auth/office-login", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ pin: secret }),
-            });
+            const controller = new AbortController();
+            const timeout = window.setTimeout(() => controller.abort(), LOGIN_TIMEOUT_MS);
+            setIsSubmitting(true);
+            try {
+                const response = await fetch("/api/auth/office-login", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ pin: secret }),
+                    signal: controller.signal,
+                });
 
-            const payload = await response.json().catch(() => ({}));
-            if (!response.ok) {
-                setError(payload.error ?? "Login failed.");
-                return;
+                const contentType = response.headers.get("content-type") ?? "";
+                const payload = contentType.includes("application/json") ? await response.json().catch(() => ({})) : {};
+                if (!response.ok) {
+                    setError(safeLoginError(payload.error));
+                    setErrorRef(typeof payload.errorReference === "string" ? payload.errorReference : "");
+                    return;
+                }
+
+                setSuccess(payload.message ?? `Logged into ${payload.office?.name ?? "Office"}`);
+                router.push(payload.redirectTo ?? "/office");
+            } catch (loginError) {
+                setError(loginError instanceof DOMException && loginError.name === "AbortError"
+                    ? "Login service is temporarily unavailable. Please retry in a moment."
+                    : safeLoginError(loginError instanceof Error ? loginError.message : loginError));
+            } finally {
+                window.clearTimeout(timeout);
+                setIsSubmitting(false);
             }
-
-            setSuccess(payload.message ?? `Logged into ${payload.office?.name ?? "Office"}`);
-            router.push(payload.redirectTo ?? "/office");
         });
     }
 
@@ -69,21 +99,27 @@ export default function PinLoginForm() {
                     onKeyDown={(event) => {
                         if (event.key === "Enter") login();
                     }}
+                    disabled={busy}
                     className="w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 text-center text-2xl font-black text-slate-950 outline-none focus:border-emerald-500 focus:bg-white"
                 />
             </div>
 
-            {error && <p className="rounded-xl bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{error}</p>}
+            {error && (
+                <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
+                    <p>{error}</p>
+                    {errorRef ? <p className="mt-1 text-xs text-red-500">Reference: {errorRef}</p> : null}
+                </div>
+            )}
             {success && <p className="rounded-xl bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{success}</p>}
 
             <button
                 type="button"
                 onClick={login}
-                disabled={isPending}
+                disabled={busy}
                 className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-slate-950 to-blue-700 py-4 text-lg font-black text-white shadow-xl shadow-blue-200/70 transition hover:from-blue-800 hover:to-slate-950 disabled:opacity-60"
             >
-                {isPending ? <Loader2 size={20} className="animate-spin" /> : <LockKeyhole size={20} />}
-                {isPending ? "Signing in..." : "Login"}
+                {busy ? <Loader2 size={20} className="animate-spin" /> : <LockKeyhole size={20} />}
+                {busy ? "Signing in..." : "Login"}
             </button>
         </div>
     );

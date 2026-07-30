@@ -10,6 +10,7 @@ const adminAccounts = readFileSync(new URL("../app/actions/admin-accounts.ts", i
 const collectors = readFileSync(new URL("../app/actions/collectors.ts", import.meta.url), "utf8");
 const loginRoute = readFileSync(new URL("../app/api/auth/office-login/route.ts", import.meta.url), "utf8");
 const loginForm = readFileSync(new URL("../components/auth/PinLoginForm.tsx", import.meta.url), "utf8");
+const systemHealthRoute = readFileSync(new URL("../app/api/system/health/route.ts", import.meta.url), "utf8");
 
 test("room-number search keeps exact and prefix matches authoritative and fast", () => {
   assert.match(paymentsEntry, /lookup\.length < 1/);
@@ -51,10 +52,30 @@ test("payments entry uses a lightweight indexed room search before hydrating ful
 test("login and payments entry avoid duplicate startup work", () => {
   assert.match(loginRoute, /redirectTo: isAdmin \? "\/office"/);
   assert.doesNotMatch(loginForm, /router\.refresh\(\)/);
+  assert.match(loginForm, /LOGIN_TIMEOUT_MS/);
+  assert.match(loginForm, /safeLoginError/);
+  assert.match(loginForm, /AbortController/);
+  assert.match(loginForm, /isSubmitting/);
   assert.match(paymentsEntry, /runAfterInitialPaint/);
   assert.match(paymentsEntry, /requestIdleCallback/);
   assert.match(paymentsEntry, /void loadRecentPayments/);
   assert.match(paymentsEntry, /void loadAdvanceRentAssistant/);
+});
+
+test("login outage handling never exposes raw Cloudflare HTML", () => {
+  assert.match(loginRoute, /LOGIN_UNAVAILABLE_MESSAGE/);
+  assert.match(loginRoute, /withLoginTimeout/);
+  assert.match(loginRoute, /credential_rpc/);
+  assert.match(loginRoute, /supabase_auth_sign_in/);
+  assert.match(loginRoute, /office-login-failure/);
+  assert.match(loginRoute, /isHtmlOrGatewayError/);
+  assert.match(loginRoute, /errorReference/);
+  assert.match(loginRoute, /status: 503/);
+  assert.match(loginForm, /cloudflare\|error 522\|connection timed out/i);
+  assert.match(systemHealthRoute, /Supabase Auth/);
+  assert.match(systemHealthRoute, /API Gateway/);
+  assert.match(systemHealthRoute, /Database/);
+  assert.match(systemHealthRoute, /Realtime/);
 });
 
 test("payments entry shows lightweight room selection before live financial hydration", () => {
