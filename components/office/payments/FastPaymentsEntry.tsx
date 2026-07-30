@@ -2250,6 +2250,13 @@ function TenantBalance({ isAdmin, loadingDetails, onEditOutstanding, tenant }: {
                 <p className="mt-1 text-2xl font-black text-emerald-700">{liveValue(money(amountToCollect(tenant)))}</p>
             </div>
             <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4">
+                <p className="text-xs font-black uppercase text-sky-500">Cash From Admin</p>
+                <p className="mt-1 text-2xl font-black text-sky-700">{liveValue(money(tenant.cashFromAdmin?.amountToday ?? 0))}</p>
+                <p className="mt-1 text-[11px] font-black text-sky-500">
+                    Period {liveValue(money(tenant.cashFromAdmin?.amountInSelectedPeriod ?? 0))} · Latest {tenant.cashFromAdmin?.latestTransferDate ?? "--"}
+                </p>
+            </div>
+            <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4">
                 <p className="text-xs font-black uppercase text-sky-500">Billing Anniversary</p>
                 <p className="mt-1 text-2xl font-black text-sky-700">
                     {loadingDetails ? "Loading..." : tenant.billingAnniversaryDay ? `${tenant.billingAnniversaryDay}${tenant.billingAnniversaryDay === 1 ? "st" : tenant.billingAnniversaryDay === 2 ? "nd" : tenant.billingAnniversaryDay === 3 ? "rd" : "th"}` : "Not set"}

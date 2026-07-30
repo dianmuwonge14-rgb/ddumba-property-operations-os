@@ -9,12 +9,13 @@ const expenseActions = readFileSync(new URL("../app/actions/expenses.ts", import
 const entrySearchRoute = readFileSync(new URL("../app/api/expenses/entry-search/route.ts", import.meta.url), "utf8");
 const entryDetailRoute = readFileSync(new URL("../app/api/expenses/entry-detail/route.ts", import.meta.url), "utf8");
 
-test("expense entry exposes the approved premium workflow categories plus banking transfer", () => {
-  assert.match(expensesConsole, /type ExpenseEntryMode = "landlord_payment" \| "authorised" \| "unauthorised" \| "banking"/);
+test("expense entry exposes the approved premium workflow categories plus treasury transfers", () => {
+  assert.match(expensesConsole, /type ExpenseEntryMode = "landlord_payment" \| "authorised" \| "unauthorised" \| "banking" \| "cash_handover_admin"/);
   assert.match(expensesConsole, /Landlord Payment/);
   assert.match(expensesConsole, /Authorised Expenses/);
   assert.match(expensesConsole, /Unauthorised Expenses/);
   assert.match(expensesConsole, /Banking/);
+  assert.match(expensesConsole, /Cash Handover to Admin/);
   assert.match(expensesConsole, /Employee Lunch/);
   assert.match(expensesConsole, /Airtime/);
   assert.match(expensesConsole, /Internet/);
@@ -114,6 +115,7 @@ test("expense page keeps the existing queues and recorded expenses ledger below 
   assert.match(expensesConsole, /<LandlordPaymentRequestLedger activeOfficeName=\{activeOfficeName\} isAdmin=\{isAdmin\} offices=\{data\.offices\} requests=\{data\.landlordPaymentRequests\}/);
   assert.match(expensesConsole, /<GenericExpenseApprovalQueue/);
   assert.match(expensesConsole, /<EmployeeExpenseRequestLedger/);
+  assert.match(expensesConsole, /<TreasuryCashRequestLedger/);
   assert.match(expensesConsole, /<BankingRecordsLedger/);
   assert.match(expensesConsole, /<ExpenseChangeRequestLedger/);
   assert.match(expensesConsole, /Recorded Expenses/);
@@ -138,12 +140,25 @@ test("expense summary cards and request ledgers are interactive and filterable",
 });
 
 test("banking entry uses treasury transfer semantics instead of expense semantics", () => {
-  assert.match(expensesConsole, /depositOfficeCashToBank/);
+  assert.match(expensesConsole, /submitTreasuryCashRequest/);
   assert.match(expensesConsole, /Bank Office Cash/);
   assert.match(expensesConsole, /Current Physical Office Cash/);
   assert.match(expensesConsole, /Expected Money at Bank After Banking/);
   assert.match(expensesConsole, /Banking transfers physical office cash to Money at Bank/);
+  assert.match(expensesConsole, /requestType: "banking"/);
   assert.match(expensesConsole, /function BankingRecordsLedger/);
   assert.match(expenseTypes, /banking: \{/);
   assert.match(expenseData, /buildBankingSnapshot/);
+});
+
+test("cash handover to admin is an approval-backed expense-impacting treasury movement", () => {
+  assert.match(expensesConsole, /Cash Handover Live Summary/);
+  assert.match(expensesConsole, /Pending Cash Handover/);
+  assert.match(expensesConsole, /Current Cash Held by Admin/);
+  assert.match(expensesConsole, /Expected Admin Cash After Approval/);
+  assert.match(expensesConsole, /requestType: "cash_handover_admin"/);
+  assert.match(expensesConsole, /function TreasuryCashRequestLedger/);
+  assert.match(expenseTypes, /treasuryCashRequests/);
+  assert.match(expenseData, /treasury_cash_requests/);
+  assert.match(expenseData, /pendingCashHandover/);
 });

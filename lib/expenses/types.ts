@@ -172,12 +172,35 @@ export type ExpensesPageData = {
             approvedExpensesToday: number;
             alreadyBankedToday: number;
             cashHandedToAdminToday: number;
+            pendingBanking: number;
+            pendingCashHandover: number;
             eligibleAmountAvailableToBank: number;
         }>;
         totals: {
             currentMoneyAtBank: number;
+            currentCashHeldByAdmin: number;
         };
     };
+    treasuryCashRequests: Array<{
+        id: string;
+        requestType: "banking" | "cash_handover_admin";
+        officeId: string;
+        officeName: string;
+        amount: number;
+        businessDate: string;
+        method: string | null;
+        bankAccountName: string | null;
+        reference: string | null;
+        reason: string;
+        notes: string | null;
+        handedOverBy: string | null;
+        receivedByAdminName: string | null;
+        status: string;
+        submittedByName: string;
+        approvedByName: string | null;
+        createdAt: string | null;
+        adminComment: string | null;
+    }>;
     cashAccounts: CashAccountRow[];
     kpis: ExpenseKpis;
     expenses: ExpenseItem[];

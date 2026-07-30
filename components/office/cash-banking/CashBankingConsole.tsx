@@ -152,7 +152,9 @@ export default function CashBankingConsole({ data }: Props) {
                     referenceNumber: bankForm.referenceNumber || null,
                     notes: bankForm.notes || null,
                 });
-                setMessage(`Deposit recorded successfully. Money at Office is now ${formatMoney(result.balances.moneyAtOffice)} and Money at Bank is ${formatMoney(result.balances.moneyAtBank)}.`);
+                setMessage(result.pending
+                    ? `Banking request submitted for Admin approval. Money at Office remains ${formatMoney(result.balances.moneyAtOffice)} until approval.`
+                    : `Deposit recorded successfully. Money at Office is now ${formatMoney(result.balances.moneyAtOffice)} and Money at Bank is ${formatMoney(result.balances.moneyAtBank)}.`);
                 setDepositDebug(result.debug);
                 setBankForm((current) => ({ ...current, amount: "", referenceNumber: "", notes: "" }));
                 router.refresh();

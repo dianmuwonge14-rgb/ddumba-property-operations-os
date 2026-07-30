@@ -58,6 +58,13 @@ export type CollectionTenantResult = {
     lastAmountPaid: number;
     amountUsedToClearOutstanding: number;
     amountAllocatedToNextMonth: number;
+    cashFromAdmin?: {
+        amountToday: number;
+        amountInSelectedPeriod: number;
+        latestTransferAmount: number;
+        latestTransferDate: string | null;
+        currentAvailableAmount: number;
+    };
     monthlyRent: number;
     billingAnniversaryDay?: number | null;
     currentRentPeriod?: { start: string; end: string } | null;

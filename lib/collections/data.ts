@@ -238,6 +238,7 @@ export async function getFastPaymentRecentPayments(paymentDate: string, options?
     }
 
     const payments = rows.map((row): FastPaymentRecentItem => {
+        const isAdminCashTransfer = String(row.type ?? "").toUpperCase() === "ADMIN_CASH_TRANSFER";
         const room = row.room_id ? roomById.get(row.room_id) : null;
         const tenant = row.tenant_id ? tenantById.get(row.tenant_id) : null;
         const office = row.office_id ? officeById.get(row.office_id) : null;
@@ -256,12 +257,12 @@ export async function getFastPaymentRecentPayments(paymentDate: string, options?
             paymentDate: collectionPaymentDate(row),
             roomId: row.room_id ?? null,
             tenantId: row.tenant_id ?? null,
-            roomNumber: room?.room_number ?? "Unknown room",
-            tenantName: tenant?.full_name ?? "Unnamed tenant",
-            landlordName: landlord?.full_name ?? "No landlord",
+            roomNumber: isAdminCashTransfer ? "Office cash" : room?.room_number ?? "Unknown room",
+            tenantName: isAdminCashTransfer ? "Cash from Admin" : tenant?.full_name ?? "Unnamed tenant",
+            landlordName: isAdminCashTransfer ? "Treasury" : landlord?.full_name ?? "No landlord",
             officeName: office?.office_name ?? office?.name ?? "No office",
             amount: collectionAmount(row),
-            method: row.payment_method ?? "payment",
+            method: isAdminCashTransfer ? "Admin Cash Transfer" : row.payment_method ?? "payment",
             paymentType: row.type ?? "rent",
             recordedBy: user?.full_name ?? "System",
             balanceAfter: Number(row.balance ?? 0),
@@ -518,6 +519,7 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
 
     const rows: CollectionReportRow[] = collections
         .map((row) => {
+            const isAdminCashTransfer = String(row.type ?? "").toUpperCase() === "ADMIN_CASH_TRANSFER";
             const room = row.room_id ? roomById.get(row.room_id) : null;
             const tenant = row.tenant_id ? tenantById.get(row.tenant_id) : null;
             const office = row.office_id ? officeById.get(row.office_id) : null;
@@ -529,13 +531,13 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
                 paidAt: row.paid_at,
                 date: collectionPaymentDate(row),
                 time: businessTimeOnly(collectionRecordedTime(row)),
-                roomNumber: room?.room_number ?? "Unknown room",
-                tenantName: tenant?.full_name ?? "Unnamed tenant",
-                landlordName: landlord?.full_name ?? "No landlord",
+                roomNumber: isAdminCashTransfer ? "Office cash" : room?.room_number ?? "Unknown room",
+                tenantName: isAdminCashTransfer ? "Cash from Admin" : tenant?.full_name ?? "Unnamed tenant",
+                landlordName: isAdminCashTransfer ? "Treasury" : landlord?.full_name ?? "No landlord",
                 officeName: office?.office_name ?? office?.name ?? (row.office_id ? officeNameById.get(row.office_id) : null) ?? "No office",
                 amountPaid: collectionAmount(row),
                 remainingBalance: Number(row.balance ?? 0),
-                paymentMethod: row.payment_method ?? "payment",
+                paymentMethod: isAdminCashTransfer ? "Admin Cash Transfer" : row.payment_method ?? "payment",
                 recordedBy: user?.full_name ?? user?.email ?? "System",
             };
         })
@@ -1143,6 +1145,10 @@ async function hydrateFastPaymentRpcResults(rows: Array<Record<string, unknown>>
     const { supabase } = await getScopedSupabase();
     const propertyIds = uniqueIds(rows.map((row) => row.room_property_id as string | null));
     const directLandlordIds = uniqueIds(rows.map((row) => row.room_landlord_id as string | null));
+    const officeIds = uniqueIds(rows.map((row) => (row.office_id ?? row.room_office_id ?? row.tenant_office_id) as string | null));
+    const monthStart = selectedMonthStart(paymentMonth);
+    const nextMonth = addMonthsToMonthStart(monthStart, 1);
+    const today = todayDateOnly();
     const { data: properties } = propertyIds.length
         ? await supabase.from("properties").select("*").eq("company_id", companyId).in("id", propertyIds)
         : { data: [] as PropertyRow[] };
@@ -1153,13 +1159,54 @@ async function hydrateFastPaymentRpcResults(rows: Array<Record<string, unknown>>
         ? await supabase.from("landlords").select("*").eq("company_id", companyId).in("id", landlordIds)
         : { data: [] as LandlordRow[] };
     const landlordById = new Map((landlords ?? []).map((landlord) => [landlord.id, landlord]));
+    const { data: adminTransferRows } = officeIds.length
+        ? await supabase
+            .from("collections")
+            .select("*")
+            .eq("company_id", companyId)
+            .in("office_id", officeIds)
+            .eq("type", "ADMIN_CASH_TRANSFER")
+            .gte("payment_date", monthStart)
+            .lt("payment_date", nextMonth)
+            .order("payment_date", { ascending: false })
+        : { data: [] as CollectionRow[] };
+    const adminTransferByOffice = new Map<string, NonNullable<CollectionTenantResult["cashFromAdmin"]>>();
+    for (const row of uniqueFinanciallyEffectiveCollections(((adminTransferRows ?? []) as CollectionRow[]).filter(isFinanciallyEffectiveCollection))) {
+        const officeId = row.office_id ?? "";
+        if (!officeId) continue;
+        const paymentDate = collectionPaymentDate(row);
+        const amount = collectionAmount(row);
+        const current = adminTransferByOffice.get(officeId) ?? {
+            amountToday: 0,
+            amountInSelectedPeriod: 0,
+            currentAvailableAmount: 0,
+            latestTransferAmount: 0,
+            latestTransferDate: null,
+        };
+        current.amountInSelectedPeriod += amount;
+        current.currentAvailableAmount += amount;
+        if (paymentDate === today) current.amountToday += amount;
+        if (!current.latestTransferDate || paymentDate >= current.latestTransferDate) {
+            current.latestTransferDate = paymentDate;
+            current.latestTransferAmount = amount;
+        }
+        adminTransferByOffice.set(officeId, current);
+    }
 
     return rows.map((row) => {
         const result = fastPaymentRpcRowToTenantResult(row, paymentMonth);
         const property = result.room?.property_id ? propertyById.get(result.room.property_id) ?? null : null;
         const landlordId = result.room?.landlord_id ?? property?.landlord_id ?? null;
+        const officeId = result.office?.id ?? result.room?.office_id ?? result.tenant.office_id ?? null;
         return {
             ...result,
+            cashFromAdmin: officeId ? adminTransferByOffice.get(officeId) ?? {
+                amountToday: 0,
+                amountInSelectedPeriod: 0,
+                currentAvailableAmount: 0,
+                latestTransferAmount: 0,
+                latestTransferDate: null,
+            } : undefined,
             property,
             landlord: landlordId ? landlordById.get(landlordId) ?? null : null,
             room: result.room ? { ...result.room, landlord_id: landlordId } as RoomRow : result.room,

@@ -22,6 +22,7 @@ type BankMoneyInput = {
 
 type DepositResult = {
     ok: true;
+    pending?: boolean;
     transferId: string;
     balances: {
         moneyAtOffice: number;
@@ -36,6 +37,29 @@ type DepositResult = {
         bankBalanceAfter: number;
         supabaseTransactionId: string;
     };
+};
+
+type TreasuryRequestType = "banking" | "cash_handover_admin";
+
+type TreasuryCashRequestInput = {
+    amount: number;
+    bankAccountName?: string | null;
+    businessDate: string;
+    handedOverBy?: string | null;
+    method?: string | null;
+    notes?: string | null;
+    officeId?: string | null;
+    reason: string;
+    receivedByAdminId?: string | null;
+    receivedByAdminName?: string | null;
+    reference?: string | null;
+    requestType: TreasuryRequestType;
+};
+
+type TreasuryDecisionInput = {
+    adminComment?: string | null;
+    decision: "approved" | "rejected";
+    requestId: string;
 };
 
 type GiveMoneyInput = {
@@ -91,6 +115,10 @@ function assertDate(value: string, label: string) {
 
 function actorId(context: AuthContext) {
     return context.profile?.id ?? context.authUser?.id ?? null;
+}
+
+function isAdminContext(context: AuthContext) {
+    return context.isCompanyAdmin && !context.isOfficeMode;
 }
 
 async function ensureCashAccount(input: {
@@ -217,12 +245,155 @@ async function upsertOptional(table: string, row: Record<string, unknown>, onCon
 function revalidateCashPages() {
     revalidatePath("/office/cash-banking");
     revalidatePath("/office/admin/cash-banking");
+    revalidatePath("/office/admin/cash-position");
+    revalidatePath("/office/admin/defaulters");
     revalidatePath("/office/expenses");
     revalidatePath("/office/collections");
     revalidatePath("/office/admin");
     revalidatePath("/office/dashboard");
     revalidatePath("/office/admin/statements");
     revalidatePath("/office/notifications");
+}
+
+async function createTreasuryCashRequest(context: AuthContext, input: TreasuryCashRequestInput) {
+    const companyId = context.activeCompany?.id;
+    const isAdmin = isAdminContext(context);
+    const officeId = isAdmin && input.officeId ? input.officeId : context.activeOffice?.id;
+    if (!companyId || !officeId) throw new Error("Active company and office are required.");
+    if (!canAccessOffice(context, officeId)) throw new Error("You cannot create treasury requests for this office.");
+
+    const amount = amountValue(input.amount);
+    assertAmount(amount);
+    assertDate(input.businessDate, input.requestType === "banking" ? "Banking date" : "Handover date");
+    if (!input.reason?.trim()) throw new Error("Reason is required.");
+
+    const db = createSupabaseAdminClient();
+    const idempotencyKey = [
+        input.requestType,
+        companyId,
+        officeId,
+        input.businessDate,
+        amount,
+        input.reference?.trim() || input.reason.trim().toLowerCase(),
+    ].join(":");
+
+    const { data: request, error } = await (db as unknown as { from: (table: string) => any })
+        .from("treasury_cash_requests")
+        .insert({
+            amount,
+            bank_account_name: input.bankAccountName?.trim() || null,
+            business_date: input.businessDate,
+            company_id: companyId,
+            handed_over_by: input.handedOverBy?.trim() || context.profile?.full_name || null,
+            idempotency_key: idempotencyKey,
+            method: input.method?.trim() || (input.requestType === "banking" ? "Bank deposit" : "Cash"),
+            notes: input.notes?.trim() || null,
+            office_id: officeId,
+            reason: input.reason.trim(),
+            received_by_admin: input.receivedByAdminId || null,
+            received_by_admin_name: input.receivedByAdminName?.trim() || null,
+            reference: input.reference?.trim() || null,
+            request_type: input.requestType,
+            status: "pending",
+            submitted_by: actorId(context),
+        })
+        .select("*")
+        .single();
+    if (error) throw new Error(`Treasury request could not be created: ${error.message}`);
+
+    const title = input.requestType === "banking" ? "Banking request pending approval" : "Cash handover to Admin pending approval";
+    const message = `${context.profile?.full_name ?? "Office"} requested ${input.requestType === "banking" ? "banking" : "cash handover to Admin"} of UGX ${Math.round(amount).toLocaleString()} for ${input.businessDate}.`;
+    await notify({
+        actionUrl: "/office/notifications",
+        companyId,
+        entityId: String(request.id),
+        entityType: "treasury_cash_request",
+        message,
+        officeId,
+        recipientType: "admin",
+        severity: "warning",
+        title,
+    });
+
+    await logUserAction({
+        action: "treasury_cash_request_submitted",
+        entityType: "treasury_cash_request",
+        entityId: String(request.id),
+        companyId,
+        officeId,
+        afterData: { ...input, amount, status: "pending" },
+    });
+    revalidateCashPages();
+    return request as Record<string, unknown>;
+}
+
+export async function submitTreasuryCashRequest(input: TreasuryCashRequestInput) {
+    const context = await requireAuth();
+    const allowed = hasPermission(context, "cash.manage")
+        || hasPermission(context, "collections.manage")
+        || hasPermission(context, "expenses.manage");
+    if (!allowed) throw new Error("You do not have permission to submit treasury cash requests.");
+    if (isAdminContext(context)) {
+        const request = await createTreasuryCashRequest(context, input);
+        return decideTreasuryCashRequest({
+            requestId: String(request.id),
+            decision: "approved",
+            adminComment: input.notes || "Admin direct treasury entry.",
+        });
+    }
+    return {
+        ok: true,
+        pending: true,
+        request: await createTreasuryCashRequest(context, input),
+    };
+}
+
+export async function decideTreasuryCashRequest(input: TreasuryDecisionInput) {
+    const context = await requireCompanyAdminMode();
+    if (!hasPermission(context, "cash.manage") && !hasPermission(context, "expenses.manage")) {
+        throw new Error("Admin cash or expense management permission is required.");
+    }
+    if (!input.requestId) throw new Error("Treasury request is required.");
+    const companyId = context.activeCompany?.id;
+    if (!companyId) throw new Error("Active company is required.");
+    const admin = createSupabaseAdminClient() as unknown as { from: (table: string) => any; rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: any; error: any }> };
+
+    if (input.decision === "rejected") {
+        const { data, error } = await admin
+            .from("treasury_cash_requests")
+            .update({
+                admin_comment: input.adminComment ?? null,
+                rejected_at: new Date().toISOString(),
+                rejected_by: actorId(context),
+                status: "rejected",
+                updated_at: new Date().toISOString(),
+            })
+            .eq("id", input.requestId)
+            .eq("company_id", companyId)
+            .eq("status", "pending")
+            .select("*")
+            .single();
+        if (error) throw new Error(`Treasury request rejection failed: ${error.message}`);
+        await logUserAction({
+            action: "treasury_cash_request_rejected",
+            entityType: "treasury_cash_request",
+            entityId: input.requestId,
+            companyId,
+            officeId: String(data.office_id ?? ""),
+            afterData: { status: "rejected", adminComment: input.adminComment ?? null },
+        });
+        revalidateCashPages();
+        return { ok: true, request: data, status: "rejected" };
+    }
+
+    const { data, error } = await admin.rpc("approve_treasury_cash_request", {
+        p_admin_comment: input.adminComment ?? null,
+        p_admin_id: actorId(context),
+        p_request_id: input.requestId,
+    });
+    if (error) throw new Error(`Treasury request approval failed: ${error.message}${error.code ? ` (${error.code})` : ""}`);
+    revalidateCashPages();
+    return data ?? { ok: true };
 }
 
 export async function depositOfficeCashToBank(input: BankMoneyInput): Promise<DepositResult> {
@@ -242,6 +413,46 @@ export async function depositOfficeCashToBank(input: BankMoneyInput): Promise<De
     assertAmount(amount);
     assertDate(input.bankingDate, "Banking date");
     if (!input.bankName?.trim()) throw new Error("Bank/mobile money account is required.");
+
+    if (!isAdminContext(context)) {
+        const request = await createTreasuryCashRequest(context, {
+            amount,
+            bankAccountName: input.bankName.trim(),
+            businessDate: input.bankingDate,
+            method: input.channel || "Bank",
+            notes: input.notes,
+            officeId,
+            reason: input.notes || "Office banking request",
+            reference: input.referenceNumber,
+            requestType: "banking",
+        });
+        const officeBalance = await officeCashBalance({ companyId, officeId });
+        const bankAccount = await ensureCashAccount({
+            accountType: "bank",
+            companyId,
+            officeId: null,
+            name: "Company Bank",
+        });
+        const bankBalance = await accountBalance(String(bankAccount.id));
+        return {
+            ok: true,
+            pending: true,
+            transferId: String(request.id),
+            balances: {
+                moneyAtOffice: Math.max(0, officeBalance),
+                moneyAtBank: bankBalance,
+            },
+            debug: {
+                submittedAmount: amount,
+                officeId,
+                moneyAtOfficeBefore: officeBalance,
+                moneyAtOfficeAfter: officeBalance,
+                bankBalanceBefore: bankBalance,
+                bankBalanceAfter: bankBalance,
+                supabaseTransactionId: String(request.id),
+            },
+        };
+    }
 
     const db = createSupabaseAdminClient() as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: any; error: any }> };
     const { data, error } = await db.rpc("deposit_office_cash_to_bank", {
@@ -403,6 +614,25 @@ export async function giveMoneyToOffice(input: GiveMoneyInput) {
         office_id: input.officeId,
         updated_at: new Date().toISOString(),
     }, "company_id,office_id,balance_date");
+
+    await upsertOptional("collections", {
+        amount,
+        amount_paid: amount,
+        collection_number: `ADMIN-CASH-${transfer.id}`,
+        company_id: companyId,
+        entered_by_account_id: actorId(context),
+        entered_by_name: context.profile?.full_name ?? "Admin",
+        financial_effective: true,
+        notes: input.notes ?? input.reason,
+        office_id: input.officeId,
+        paid_at: `${input.movementDate}T00:00:00.000Z`,
+        payment_date: input.movementDate,
+        payment_method: input.source === "bank" ? "Admin Bank Transfer" : "Admin Cash Transfer",
+        recorded_by: actorId(context),
+        reference_number: `ADMIN-CASH-${transfer.id}`,
+        status: "paid",
+        type: "ADMIN_CASH_TRANSFER",
+    }, "company_id,office_id,reference_number");
 
     await notify({
         actionUrl: "/office/cash-banking",
