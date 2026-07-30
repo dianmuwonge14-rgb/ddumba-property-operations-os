@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { ReactNode } from "react";
-import { AlertTriangle, Banknote, Bot, CheckCircle2, Download, Edit3, Eye, FileText, History, Loader2, Printer, ReceiptText, Search, Trash2, UserRound, WalletCards } from "lucide-react";
+import { AlertTriangle, Banknote, Bot, CheckCircle2, Download, Edit3, Eye, FileText, History, Loader2, Printer, ReceiptText, Search, Trash2, UserRound, WalletCards, X } from "lucide-react";
 import { adminEditExpenseDirect, adminSafeDeleteExpense, approveExpense, createEmployeeExpenseFromExpenses, createExpense, createLandlordPaidExpenseRequest, decideEmployeeExpenseRequest, decideExpenseChangeRequest, previewEmployeeExpense, previewLandlordPaymentExpense, rejectExpense, submitExpenseChangeRequest } from "@/app/actions/expenses";
 import type { EmployeeExpensePreview, ExpenseBalanceReport, ExpenseChangePayload, ExpenseItem, ExpensePeriodMode, ExpensesPageData } from "@/lib/expenses/types";
 
@@ -18,6 +18,19 @@ function today() {
 
 function thisMonth() {
     return today().slice(0, 7);
+}
+
+function addDays(dateValue: string, days: number) {
+    const date = new Date(`${dateValue}T00:00:00`);
+    date.setDate(date.getDate() + days);
+    return date.toISOString().slice(0, 10);
+}
+
+function startOfWeek(dateValue: string) {
+    const date = new Date(`${dateValue}T00:00:00`);
+    const day = date.getDay() || 7;
+    date.setDate(date.getDate() - day + 1);
+    return date.toISOString().slice(0, 10);
 }
 
 function money(value: number | string | null | undefined) {
@@ -60,6 +73,44 @@ type LandlordPaymentPreview = Awaited<ReturnType<typeof previewLandlordPaymentEx
 type ExpenseEntryMode = "landlord_payment" | "authorised" | "unauthorised";
 type AuthorisedExpenseType = "employee_lunch" | "airtime" | "internet" | "transport_kampala";
 type ExpenseModalMode = "view" | "edit" | "date" | "employee" | "history";
+type EntrySearchResult = {
+    id: string;
+    name: string;
+    officeId: string | null;
+    officeName: string | null;
+    location?: string | null;
+    phone?: string | null;
+    role?: string | null;
+};
+type EmployeeLunchDetail = EntrySearchResult & {
+    position: string;
+    dailyLunchAllocation: number;
+    previousUnusedLunchBalance: number;
+    lunchAvailableToday: number;
+    totalUsableLunch: number;
+    lunchUsedToday: number;
+    remainingLunchBalance: number;
+    lastLunchExpenseDate: string | null;
+    approvalStatus: string;
+};
+type LandlordEntryDetail = EntrySearchResult & {
+    outstandingBalance: number;
+    lastPaymentAmount: number;
+    lastPaymentDate: string | null;
+    landlordPaymentDate: string | null;
+    landlordBillingDate: string | null;
+    commissionType: string | null;
+    commissionRate: number | null;
+    fullRentRoll: number;
+    netPayable: number;
+    portfolioValue: number;
+    totalRooms: number;
+    occupiedRooms: number;
+    vacantRooms: number;
+    vacatedWithDebt: number;
+    advanceBalance: number;
+    paymentStatus: string;
+};
 
 const AUTHORISED_EXPENSES: Array<{ value: AuthorisedExpenseType; label: string; amount: number }> = [
     { value: "employee_lunch", label: "Employee Lunch", amount: 7000 },
@@ -107,11 +158,19 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
     const [amount, setAmount] = useState("");
     const [landlordId, setLandlordId] = useState("");
     const [landlordSearch, setLandlordSearch] = useState("");
+    const [landlordSearchResults, setLandlordSearchResults] = useState<EntrySearchResult[]>([]);
+    const [selectedLandlordDetail, setSelectedLandlordDetail] = useState<LandlordEntryDetail | null>(null);
+    const [loadingLandlordSearch, setLoadingLandlordSearch] = useState(false);
+    const [loadingLandlordDetail, setLoadingLandlordDetail] = useState(false);
     const [paymentMonth, setPaymentMonth] = useState(thisMonth());
     const [paymentMethod, setPaymentMethod] = useState("cash");
     const [notes, setNotes] = useState("");
     const [employeeId, setEmployeeId] = useState("");
     const [employeeSearch, setEmployeeSearch] = useState("");
+    const [employeeSearchResults, setEmployeeSearchResults] = useState<EntrySearchResult[]>([]);
+    const [selectedEmployeeDetail, setSelectedEmployeeDetail] = useState<EmployeeLunchDetail | null>(null);
+    const [loadingEmployeeSearch, setLoadingEmployeeSearch] = useState(false);
+    const [loadingEmployeeDetail, setLoadingEmployeeDetail] = useState(false);
     const [employeePreview, setEmployeePreview] = useState<EmployeeExpensePreview | null>(null);
     const [loadingEmployeePreview, setLoadingEmployeePreview] = useState(false);
     const [landlordPreview, setLandlordPreview] = useState<LandlordPaymentPreview | null>(null);
@@ -145,35 +204,14 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
     const bottomRef = useRef<HTMLTableRowElement | null>(null);
     const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const abortRef = useRef<AbortController | null>(null);
+    const employeeSearchAbortRef = useRef<AbortController | null>(null);
+    const landlordSearchAbortRef = useRef<AbortController | null>(null);
+    const detailAbortRef = useRef<AbortController | null>(null);
 
     const expenses = useMemo(() => report?.expenses ?? [], [report]);
     const activeOfficeName = data.office?.office_name ?? data.office?.name ?? "Office";
     const activeOfficeId = data.office?.id ?? "";
     const isEntebbeOperationsOffice = /entebbe operations/i.test(activeOfficeName);
-    const employeeOptions = useMemo(() => {
-        const query = employeeSearch.trim().toLowerCase();
-        if (!query) return data.employeeOptions;
-        return data.employeeOptions.filter((employee) => [
-            employee.name,
-            employee.phone,
-            employee.email,
-            employee.role,
-            employee.officeName,
-            employee.assignmentType,
-        ].some((value) => String(value ?? "").toLowerCase().includes(query)));
-    }, [data.employeeOptions, employeeSearch]);
-    const landlordOptions = useMemo(() => {
-        const query = landlordSearch.trim().toLowerCase();
-        if (!query) return data.landlordOptions.slice(0, 20);
-        return data.landlordOptions
-            .filter((landlord) => [
-                landlord.name,
-                landlord.officeName,
-                landlord.location,
-                landlord.commissionType,
-            ].some((value) => String(value ?? "").toLowerCase().includes(query)))
-            .slice(0, 20);
-    }, [data.landlordOptions, landlordSearch]);
     const totals = useMemo(
         () => report?.totals ?? { totalCollections: 0, totalExpenses: 0, remainingBalance: 0, expenseRows: 0, paymentRows: 0 },
         [report?.totals],
@@ -183,14 +221,8 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
     const isAuthorisedMode = entryMode === "authorised";
     const isEmployeeExpenseMode = isAuthorisedMode && authorisedType === "employee_lunch";
     const activeAuthorisedExpense = AUTHORISED_EXPENSES.find((item) => item.value === authorisedType) ?? AUTHORISED_EXPENSES[0];
-    const selectedLandlordOption = useMemo(
-        () => data.landlordOptions.find((landlord) => landlord.id === landlordId) ?? null,
-        [data.landlordOptions, landlordId],
-    );
-    const selectedEmployeeOption = useMemo(
-        () => data.employeeOptions.find((employee) => employee.id === employeeId) ?? null,
-        [data.employeeOptions, employeeId],
-    );
+    const selectedLandlordOption = selectedLandlordDetail;
+    const selectedEmployeeOption = selectedEmployeeDetail;
     const currentMonthExpenses = useMemo(() => {
         const month = expenseDate.slice(0, 7) || thisMonth();
         return data.expenses.filter((expense) => {
@@ -237,6 +269,9 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
         itemInputRef.current?.focus();
         return () => {
             abortRef.current?.abort();
+            employeeSearchAbortRef.current?.abort();
+            landlordSearchAbortRef.current?.abort();
+            detailAbortRef.current?.abort();
             if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
         };
     }, []);
@@ -244,6 +279,112 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
     useEffect(() => {
         if (filters.mode === "single_date") setExpenseDate(filters.singleDate);
     }, [filters.mode, filters.singleDate]);
+
+    useEffect(() => {
+        const query = employeeSearch.trim();
+        if (!isEmployeeExpenseMode || !query || query === selectedEmployeeDetail?.name) {
+            employeeSearchAbortRef.current?.abort();
+            setEmployeeSearchResults([]);
+            setLoadingEmployeeSearch(false);
+            return;
+        }
+        const controller = new AbortController();
+        employeeSearchAbortRef.current?.abort();
+        employeeSearchAbortRef.current = controller;
+        setLoadingEmployeeSearch(true);
+        const timer = setTimeout(() => {
+            void (async () => {
+                try {
+                    const response = await fetch(`/api/expenses/entry-search?type=employee&q=${encodeURIComponent(query)}`, {
+                        cache: "no-store",
+                        signal: controller.signal,
+                    });
+                    const payload = await response.json();
+                    if (controller.signal.aborted) return;
+                    if (!response.ok) throw new Error(payload.error ?? "Employee search failed.");
+                    setEmployeeSearchResults(payload.results ?? []);
+                } catch (error) {
+                    if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "Employee search failed.");
+                } finally {
+                    if (!controller.signal.aborted) setLoadingEmployeeSearch(false);
+                }
+            })();
+        }, 150);
+        return () => {
+            clearTimeout(timer);
+            controller.abort();
+        };
+    }, [employeeSearch, isEmployeeExpenseMode, selectedEmployeeDetail?.name]);
+
+    useEffect(() => {
+        const query = landlordSearch.trim();
+        if (!isLandlordPaidMode || !query || query === selectedLandlordDetail?.name) {
+            landlordSearchAbortRef.current?.abort();
+            setLandlordSearchResults([]);
+            setLoadingLandlordSearch(false);
+            return;
+        }
+        const controller = new AbortController();
+        landlordSearchAbortRef.current?.abort();
+        landlordSearchAbortRef.current = controller;
+        setLoadingLandlordSearch(true);
+        const timer = setTimeout(() => {
+            void (async () => {
+                try {
+                    const response = await fetch(`/api/expenses/entry-search?type=landlord&q=${encodeURIComponent(query)}`, {
+                        cache: "no-store",
+                        signal: controller.signal,
+                    });
+                    const payload = await response.json();
+                    if (controller.signal.aborted) return;
+                    if (!response.ok) throw new Error(payload.error ?? "Landlord search failed.");
+                    setLandlordSearchResults(payload.results ?? []);
+                } catch (error) {
+                    if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "Landlord search failed.");
+                } finally {
+                    if (!controller.signal.aborted) setLoadingLandlordSearch(false);
+                }
+            })();
+        }, 150);
+        return () => {
+            clearTimeout(timer);
+            controller.abort();
+        };
+    }, [isLandlordPaidMode, landlordSearch, selectedLandlordDetail?.name]);
+
+    function loadEntryDetail(type: "employee" | "landlord", id: string) {
+        detailAbortRef.current?.abort();
+        const controller = new AbortController();
+        detailAbortRef.current = controller;
+        if (type === "employee") setLoadingEmployeeDetail(true);
+        if (type === "landlord") setLoadingLandlordDetail(true);
+        void (async () => {
+            try {
+                const response = await fetch(`/api/expenses/entry-detail?type=${type}&id=${encodeURIComponent(id)}&expenseDate=${encodeURIComponent(expenseDate)}`, {
+                    cache: "no-store",
+                    signal: controller.signal,
+                });
+                const payload = await response.json();
+                if (controller.signal.aborted) return;
+                if (!response.ok) throw new Error(payload.error ?? "Selected record could not load.");
+                if (type === "employee") setSelectedEmployeeDetail(payload.detail ?? null);
+                if (type === "landlord") setSelectedLandlordDetail(payload.detail ?? null);
+            } catch (error) {
+                if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "Selected record could not load.");
+            } finally {
+                if (!controller.signal.aborted) {
+                    if (type === "employee") setLoadingEmployeeDetail(false);
+                    if (type === "landlord") setLoadingLandlordDetail(false);
+                }
+            }
+        })();
+    }
+
+    useEffect(() => {
+        if (employeeId && isEmployeeExpenseMode) loadEntryDetail("employee", employeeId);
+        if (landlordId && isLandlordPaidMode) loadEntryDetail("landlord", landlordId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [expenseDate, refreshToken]);
 
     useEffect(() => {
         abortRef.current?.abort();
@@ -351,6 +492,37 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
         setFilters((current) => ({ ...current, [key]: value }));
     }
 
+    function applyExpenseListPreset(preset: "today" | "yesterday" | "week" | "month" | "custom_date" | "custom_range" | "all_dates") {
+        const todayValue = today();
+        if (preset === "today") {
+            setFilters((current) => ({ ...current, mode: "single_date", singleDate: todayValue, startDate: todayValue, endDate: todayValue }));
+            return;
+        }
+        if (preset === "yesterday") {
+            const value = addDays(todayValue, -1);
+            setFilters((current) => ({ ...current, mode: "single_date", singleDate: value, startDate: value, endDate: value }));
+            return;
+        }
+        if (preset === "week") {
+            setFilters((current) => ({ ...current, mode: "date_range", startDate: startOfWeek(todayValue), endDate: todayValue }));
+            return;
+        }
+        if (preset === "month") {
+            setFilters((current) => ({ ...current, mode: "single_month", singleMonth: todayValue.slice(0, 7) }));
+            return;
+        }
+        if (preset === "custom_date") {
+            const value = filters.singleDate || todayValue;
+            setFilters((current) => ({ ...current, mode: "single_date", singleDate: value, startDate: value, endDate: value }));
+            return;
+        }
+        if (preset === "custom_range") {
+            setFilters((current) => ({ ...current, mode: "date_range", startDate: current.startDate || todayValue, endDate: current.endDate || current.startDate || todayValue }));
+            return;
+        }
+        setFilters((current) => ({ ...current, mode: "all_dates" }));
+    }
+
     function flashExpense(id: string) {
         if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
         setLatestExpenseId(id);
@@ -398,9 +570,10 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
             return;
         }
         if (isEmployeeExpenseMode && !isAdmin) {
-            const lunchAvailable = employeePreview?.lunchBalanceBefore ?? 7000;
+            const lunchAvailable = selectedEmployeeDetail?.remainingLunchBalance ?? employeePreview?.lunchBalanceBefore ?? 7000;
             if (employeePreview && value > lunchAvailable) {
                 setMessage("Requested lunch amount exceeds the employee's available lunch balance. Submit to Admin for approval.");
+                return;
             }
         }
         if (isLandlordPaidMode && !expenseDate) {
@@ -487,6 +660,8 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                 setLandlordPreview(null);
                 setEmployeePreview(null);
                 setRefreshToken((token) => token + 1);
+                if (isEmployeeExpenseMode && employeeId) loadEntryDetail("employee", employeeId);
+                if (isLandlordPaidMode && landlordId) loadEntryDetail("landlord", landlordId);
             } catch (error) {
                 setMessage(error instanceof Error ? error.message : "Expense could not be recorded.");
             }
@@ -592,6 +767,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                                     <option value="date_range">Date range</option>
                                     <option value="single_month">Single month</option>
                                     <option value="month_range">Month range</option>
+                                    <option value="all_dates">All dates</option>
                                 </select>
                             </label>
                             {isAdmin ? (
@@ -615,6 +791,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
 
                 <section className="mx-auto mt-4 max-w-6xl rounded-[26px] border border-white/10 bg-slate-900 p-4 text-white shadow-2xl shadow-black/20">
                     <div className="grid gap-3 md:grid-cols-4">
+                        {filters.mode === "all_dates" ? <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-black text-cyan-100">All Dates</div> : null}
                         <DateField visible={filters.mode === "single_date"} label="Single date" type="date" value={filters.singleDate} onChange={(value) => updateFilter("singleDate", value)} />
                         <DateField visible={filters.mode === "date_range"} label="Start date" type="date" value={filters.startDate} onChange={(value) => updateFilter("startDate", value)} />
                         <DateField visible={filters.mode === "date_range"} label="End date" type="date" value={filters.endDate} onChange={(value) => updateFilter("endDate", value)} />
@@ -670,17 +847,40 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                         {isLandlordPaidMode ? (
                             <div className="space-y-4">
                                 <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_180px_190px]">
-                                    <label className="block">
+                                    <label className="relative block">
                                         <span className="text-xs font-black uppercase tracking-wide text-slate-500">Search landlord</span>
                                         <div className="mt-1 flex h-16 items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 focus-within:border-blue-400 focus-within:bg-white focus-within:ring-4 focus-within:ring-blue-100">
                                             <Search size={18} className="text-slate-400" />
                                             <input
                                                 value={landlordSearch}
-                                                onChange={(event) => setLandlordSearch(event.target.value)}
+                                                onChange={(event) => {
+                                                    setLandlordSearch(event.target.value);
+                                                    setLandlordId("");
+                                                    setSelectedLandlordDetail(null);
+                                                }}
                                                 placeholder="Type landlord name..."
                                                 className="h-full min-w-0 flex-1 bg-transparent text-lg font-black text-slate-950 outline-none"
                                             />
+                                            {landlordSearch ? <button type="button" onClick={() => { setLandlordSearch(""); setLandlordId(""); setSelectedLandlordDetail(null); setLandlordSearchResults([]); }} className="rounded-full p-1 text-slate-400 hover:bg-white hover:text-slate-700"><X size={16} /></button> : null}
                                         </div>
+                                        {landlordSearchResults.length || loadingLandlordSearch ? (
+                                            <div className="absolute z-30 mt-2 max-h-72 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl shadow-slate-950/20">
+                                                {loadingLandlordSearch ? <div className="px-3 py-2 text-sm font-bold text-slate-500">Searching landlords...</div> : null}
+                                                {landlordSearchResults.map((landlord) => (
+                                                    <button key={`landlord-search:${landlord.id}:${landlord.officeId ?? "company"}`} type="button" onClick={() => {
+                                                        setLandlordId(landlord.id);
+                                                        setLandlordSearch(landlord.name);
+                                                        setSelectedLandlordDetail(landlord as LandlordEntryDetail);
+                                                        setLandlordSearchResults([]);
+                                                        loadEntryDetail("landlord", landlord.id);
+                                                    }} className="block w-full rounded-xl px-3 py-2 text-left hover:bg-blue-50">
+                                                        <p className="text-sm font-black text-slate-950">{landlord.name}</p>
+                                                        <p className="text-xs font-bold text-slate-500">{landlord.officeName ?? "Company"}{landlord.location ? ` · ${landlord.location}` : ""}</p>
+                                                    </button>
+                                                ))}
+                                                {!loadingLandlordSearch && !landlordSearchResults.length ? <div className="px-3 py-2 text-sm font-bold text-slate-500">No landlord matches found.</div> : null}
+                                            </div>
+                                        ) : null}
                                     </label>
                                     <label className="block">
                                         <span className="text-xs font-black uppercase tracking-wide text-slate-500">Payment month</span>
@@ -697,39 +897,27 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                                         </select>
                                     </label>
                                 </div>
-                                <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                                    {landlordOptions.map((landlord) => (
-                                        <button
-                                            key={`landlord-paid-result:${landlord.id}:${landlord.officeId ?? "company"}`}
-                                            type="button"
-                                            onClick={() => {
-                                                setLandlordId(landlord.id);
-                                                setLandlordSearch(landlord.name);
-                                            }}
-                                            className={`rounded-2xl border p-3 text-left transition ${landlord.id === landlordId ? "border-cyan-300 bg-cyan-50 shadow-lg shadow-cyan-100" : "border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50"}`}
-                                        >
-                                            <p className="text-sm font-black text-slate-950">{landlord.name}</p>
-                                            <p className="mt-1 text-xs font-bold text-slate-500">{landlord.officeName ?? "Company"}{landlord.location ? ` · ${landlord.location}` : ""}</p>
-                                        </button>
-                                    ))}
-                                </div>
                                 {selectedLandlordOption ? (
                                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                                         <PremiumEntryCard label="Landlord Name" value={selectedLandlordOption.name} />
                                         <PremiumEntryCard label="Location" value={selectedLandlordOption.location ?? "--"} />
                                         <PremiumEntryCard label="Office" value={selectedLandlordOption.officeName ?? activeOfficeName} />
-                                        <PremiumEntryCard label="Outstanding Balance" value={money(landlordPreview?.outstandingAmount ?? 0)} actionLabel="Edit" onAction={() => setMessage(isAdmin ? "Admin can edit landlord balance directly from the landlord payment review workflow." : "Office balance edits create an Admin approval request before they affect landlord totals.")} />
-                                        <PremiumEntryCard label="Last Payment" value={money(landlordPreview?.alreadyPaidAmount ?? 0)} />
-                                        <PremiumEntryCard label="Payment Date" value={expenseDate} actionLabel="Edit" onAction={() => setMessage(isAdmin ? "Admin payment date edit is available before approval." : "Office date edits create an Admin approval request before approval.")} />
+                                        <PremiumEntryCard label="Outstanding Balance" value={loadingLandlordDetail ? "Loading..." : money(selectedLandlordDetail?.outstandingBalance ?? landlordPreview?.outstandingAmount ?? 0)} actionLabel="Edit" onAction={() => setMessage(isAdmin ? "Admin balance edits must post a controlled landlord ledger adjustment. Use the landlord settlement editor to apply the audited change." : "Office balance edits create an Admin approval request before they affect landlord totals.")} />
+                                        <PremiumEntryCard label="Last Payment Amount" value={loadingLandlordDetail ? "Loading..." : money(selectedLandlordDetail?.lastPaymentAmount ?? 0)} />
+                                        <PremiumEntryCard label="Last Payment Date" value={selectedLandlordDetail?.lastPaymentDate ?? "--"} />
+                                        <PremiumEntryCard label="Landlord Payment Date" value={selectedLandlordDetail?.landlordPaymentDate?.slice(0, 10) ?? expenseDate} actionLabel="Edit" onAction={() => setMessage(isAdmin ? "Admin payment date edits are audited from the landlord settlement editor." : "Office payment date edits create an Admin approval request before approval.")} />
+                                        <PremiumEntryCard label="Landlord Billing Date" value={selectedLandlordDetail?.landlordBillingDate?.slice(0, 10) ?? `${expenseDate.slice(0, 7)}-01`} actionLabel="Edit" onAction={() => setMessage(isAdmin ? "Admin billing date edits are audited from the landlord settlement editor." : "Office billing date edits create an Admin approval request before approval.")} />
                                         <PremiumEntryCard label="Commission Type" value={selectedLandlordOption.commissionType ?? "--"} />
                                         <PremiumEntryCard label="Commission Rate" value={selectedLandlordOption.commissionRate == null ? "--" : `${selectedLandlordOption.commissionRate}%`} />
-                                        <PremiumEntryCard label="Portfolio Value" value={money(selectedLandlordOption.portfolioValue ?? 0)} />
-                                        <PremiumEntryCard label="Number of Rooms" value={String(selectedLandlordOption.numberOfRooms ?? 0)} />
-                                        <PremiumEntryCard label="Occupied Rooms" value={String(selectedLandlordOption.occupiedRooms ?? 0)} />
-                                        <PremiumEntryCard label="Vacant Rooms" value={String(selectedLandlordOption.vacantRooms ?? 0)} />
-                                        <PremiumEntryCard label="Vacated With Debt" value={String(selectedLandlordOption.vacatedWithDebt ?? 0)} />
-                                        <PremiumEntryCard label="Net Payable" value={money(landlordPreview?.currentNetPayable ?? 0)} />
-                                        <PremiumEntryCard label="Payment Status" value={landlordPreview ? (landlordPreview.advanceAmount > 0 ? "Review advance" : "Within payable") : "Enter amount"} />
+                                        <PremiumEntryCard label="Full Rent Roll" value={money(selectedLandlordDetail?.fullRentRoll ?? 0)} />
+                                        <PremiumEntryCard label="Net Payable" value={loadingLandlordDetail ? "Loading..." : money(selectedLandlordDetail?.netPayable ?? landlordPreview?.currentNetPayable ?? 0)} />
+                                        <PremiumEntryCard label="Portfolio Value" value={money(selectedLandlordDetail?.portfolioValue ?? 0)} />
+                                        <PremiumEntryCard label="Total Rooms" value={String(selectedLandlordDetail?.totalRooms ?? 0)} />
+                                        <PremiumEntryCard label="Occupied Rooms" value={String(selectedLandlordDetail?.occupiedRooms ?? 0)} />
+                                        <PremiumEntryCard label="Vacant Rooms" value={String(selectedLandlordDetail?.vacantRooms ?? 0)} />
+                                        <PremiumEntryCard label="Vacated With Debt" value={String(selectedLandlordDetail?.vacatedWithDebt ?? 0)} />
+                                        <PremiumEntryCard label="Advance Balance" value={money(selectedLandlordDetail?.advanceBalance ?? 0)} />
+                                        <PremiumEntryCard label="Payment Status" value={selectedLandlordDetail?.paymentStatus ?? (landlordPreview ? (landlordPreview.advanceAmount > 0 ? "Review advance" : "Within payable") : "Enter amount")} />
                                     </div>
                                 ) : (
                                     <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm font-bold text-slate-500">Search and select a landlord to load payment cards.</div>
@@ -752,36 +940,54 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                                 {isEmployeeExpenseMode ? (
                                     <>
                                         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
-                                            <label className="block">
+                                            <label className="relative block">
                                                 <span className="text-xs font-black uppercase tracking-wide text-slate-500">Search employee</span>
                                                 <div className="mt-1 flex h-16 items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 focus-within:border-blue-400 focus-within:bg-white focus-within:ring-4 focus:ring-blue-100">
                                                     <Search size={18} className="text-slate-400" />
-                                                    <input value={employeeSearch} onChange={(event) => setEmployeeSearch(event.target.value)} placeholder="Search name, phone, role, office..." className="h-full min-w-0 flex-1 bg-transparent text-lg font-black text-slate-950 outline-none" />
+                                                    <input value={employeeSearch} onChange={(event) => {
+                                                        setEmployeeSearch(event.target.value);
+                                                        setEmployeeId("");
+                                                        setSelectedEmployeeDetail(null);
+                                                    }} placeholder="Search employee name, phone or position..." className="h-full min-w-0 flex-1 bg-transparent text-lg font-black text-slate-950 outline-none" />
+                                                    {employeeSearch ? <button type="button" onClick={() => { setEmployeeSearch(""); setEmployeeId(""); setSelectedEmployeeDetail(null); setEmployeeSearchResults([]); }} className="rounded-full p-1 text-slate-400 hover:bg-white hover:text-slate-700"><X size={16} /></button> : null}
                                                 </div>
+                                                {employeeSearchResults.length || loadingEmployeeSearch ? (
+                                                    <div className="absolute z-30 mt-2 max-h-72 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl shadow-slate-950/20">
+                                                        {loadingEmployeeSearch ? <div className="px-3 py-2 text-sm font-bold text-slate-500">Searching employees...</div> : null}
+                                                        {employeeSearchResults.map((employee) => (
+                                                            <button key={`employee-search:${employee.id}:${employee.officeId ?? "company"}`} type="button" onClick={() => {
+                                                                setEmployeeId(employee.id);
+                                                                setEmployeeSearch(employee.name);
+                                                                setSelectedEmployeeDetail(employee as EmployeeLunchDetail);
+                                                                setEmployeeSearchResults([]);
+                                                                loadEntryDetail("employee", employee.id);
+                                                            }} className="block w-full rounded-xl px-3 py-2 text-left hover:bg-blue-50">
+                                                                <p className="text-sm font-black text-slate-950">{employee.name}</p>
+                                                                <p className="text-xs font-bold text-slate-500">{employee.officeName ?? "Office"}{employee.role ? ` · ${employee.role}` : ""}{employee.phone ? ` · ${employee.phone}` : ""}</p>
+                                                            </button>
+                                                        ))}
+                                                        {!loadingEmployeeSearch && !employeeSearchResults.length ? <div className="px-3 py-2 text-sm font-bold text-slate-500">No real employee matches found.</div> : null}
+                                                    </div>
+                                                ) : null}
                                             </label>
                                             <label className="block">
                                                 <span className="text-xs font-black uppercase tracking-wide text-slate-500">Expense date</span>
                                                 <input type="date" value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
                                             </label>
                                         </div>
-                                        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                                            {employeeOptions.slice(0, 18).map((employee) => (
-                                                <button key={`employee-expense-result:${employee.id}:${employee.officeId ?? "company"}`} type="button" onClick={() => { setEmployeeId(employee.id); setEmployeeSearch(employee.name); }} className={`rounded-2xl border p-3 text-left transition ${employee.id === employeeId ? "border-cyan-300 bg-cyan-50 shadow-lg shadow-cyan-100" : "border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50"}`}>
-                                                    <p className="text-sm font-black text-slate-950">{employee.name}</p>
-                                                    <p className="mt-1 text-xs font-bold text-slate-500">{employee.officeName ?? "Office"}{employee.role ? ` · ${employee.role}` : ""}{employee.phone ? ` · ${employee.phone}` : ""}</p>
-                                                </button>
-                                            ))}
-                                        </div>
                                         {selectedEmployeeOption ? (
                                             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                                                 <PremiumEntryCard label="Employee Name" value={selectedEmployeeOption.name} />
                                                 <PremiumEntryCard label="Office" value={selectedEmployeeOption.officeName ?? activeOfficeName} />
-                                                <PremiumEntryCard label="Position" value={selectedEmployeeOption.role ?? "--"} />
-                                                <PremiumEntryCard label="Lunch Available Today" value={money(employeePreview?.dailyLunchAllowance || 7000)} />
-                                                <PremiumEntryCard label="Previous Lunch Balance Not Used" value={money(Math.max(0, (employeePreview?.lunchBalanceBefore ?? 0) - (employeePreview?.dailyLunchAllowance || 7000)))} />
-                                                <PremiumEntryCard label="Total Lunch Available" value={money(employeePreview?.lunchBalanceBefore || 7000)} />
-                                                <PremiumEntryCard label="Lunch Used Today" value={money(Number(amount || 0))} />
-                                                <PremiumEntryCard label="Remaining Lunch Balance" value={money(Math.max(0, (employeePreview?.lunchBalanceBefore || 7000) - Number(amount || 0)))} />
+                                                <PremiumEntryCard label="Position" value={selectedEmployeeDetail?.position ?? selectedEmployeeOption.role ?? "--"} />
+                                                <PremiumEntryCard label="Daily Lunch Allocation" value={money(selectedEmployeeDetail?.dailyLunchAllocation ?? employeePreview?.dailyLunchAllowance ?? 7000)} />
+                                                <PremiumEntryCard label="Previous Unused Lunch Balance" value={loadingEmployeeDetail ? "Loading..." : money(selectedEmployeeDetail?.previousUnusedLunchBalance ?? Math.max(0, (employeePreview?.lunchBalanceBefore ?? 0) - (employeePreview?.dailyLunchAllowance || 7000)))} />
+                                                <PremiumEntryCard label="Lunch Available Today" value={loadingEmployeeDetail ? "Loading..." : money(selectedEmployeeDetail?.lunchAvailableToday ?? employeePreview?.remainingAllowance ?? 0)} />
+                                                <PremiumEntryCard label="Total Usable Lunch" value={loadingEmployeeDetail ? "Loading..." : money(selectedEmployeeDetail?.totalUsableLunch ?? employeePreview?.remainingAllowance ?? 0)} />
+                                                <PremiumEntryCard label="Lunch Used Today" value={loadingEmployeeDetail ? "Loading..." : money(selectedEmployeeDetail?.lunchUsedToday ?? 0)} />
+                                                <PremiumEntryCard label="Remaining Lunch Balance" value={loadingEmployeeDetail ? "Loading..." : money(selectedEmployeeDetail?.remainingLunchBalance ?? Math.max(0, (employeePreview?.lunchBalanceBefore ?? 0) - Number(amount || 0)))} />
+                                                <PremiumEntryCard label="Last Lunch Expense Date" value={selectedEmployeeDetail?.lastLunchExpenseDate ?? "--"} />
+                                                <PremiumEntryCard label="Approval Status" value={selectedEmployeeDetail?.approvalStatus ?? (employeePreview?.approvalRequired ? "Approval required" : "Available")} />
                                             </div>
                                         ) : null}
                                         <EmployeeExpenseAiPreview loading={loadingEmployeePreview} preview={employeePreview} />
@@ -868,9 +1074,31 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                             <div>
                                 <p className="text-xs font-black uppercase tracking-wide text-blue-600">Selected period ledger</p>
                                 <h2 className="text-lg font-black text-slate-950">Recorded Expenses</h2>
+                                <p className="mt-1 text-xs font-black uppercase tracking-wide text-slate-500">
+                                    {filters.mode === "all_dates" ? "All Dates" : `Expense date: ${periodLabel}`}
+                                </p>
                                 {actionMessage ? <p className="mt-1 text-sm font-bold text-slate-600">{actionMessage}</p> : null}
                             </div>
                             <div className="flex flex-wrap items-center gap-2">
+                                {[
+                                    ["today", "Today"],
+                                    ["yesterday", "Yesterday"],
+                                    ["week", "This Week"],
+                                    ["month", "This Month"],
+                                    ["custom_date", "Custom Date"],
+                                    ["custom_range", "Custom Range"],
+                                    ["all_dates", "All Dates"],
+                                ].map(([preset, label]) => (
+                                    <button key={`expense-list-preset:${preset}`} type="button" onClick={() => applyExpenseListPreset(preset as Parameters<typeof applyExpenseListPreset>[0])} className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700 hover:border-blue-200 hover:bg-blue-50">
+                                        {label}
+                                    </button>
+                                ))}
+                                {filters.mode !== "all_dates" ? (
+                                    <button type="button" onClick={() => applyExpenseListPreset("all_dates")} className="inline-flex h-9 items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs font-black text-slate-600 hover:bg-white">
+                                        <X size={14} />
+                                        Clear Date
+                                    </button>
+                                ) : null}
                                 <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-700">{loadingReport ? "Loading" : `${expenses.length} rows`}</span>
                                 <button type="button" onClick={exportSelectedExpenses} className="inline-flex h-9 items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700">
                                     <Download size={14} />
@@ -888,17 +1116,22 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                             </div>
                         </div>
                         <div className="max-h-[420px] overflow-auto scroll-smooth">
-                            <table className="w-full min-w-[1120px] text-left text-sm">
+                            <table className="w-full min-w-[1480px] text-left text-sm">
                                 <thead className="sticky top-0 bg-slate-950 text-xs uppercase text-slate-200">
                                     <tr>
                                         <th className="px-4 py-3">
                                             <input checked={expenses.length > 0 && expenses.every((expense) => selectedExpenseIds.includes(expense.id))} type="checkbox" onChange={(event) => setSelectedExpenseIds(event.target.checked ? expenses.map((expense) => expense.id) : [])} className="h-4 w-4 rounded border-slate-300 text-blue-700" />
                                         </th>
-                                        <th className="px-4 py-3">Time</th>
-                                        <th className="px-4 py-3">Expense Item</th>
-                                        <th className="px-4 py-3 text-right">Amount Spent</th>
+                                        <th className="px-4 py-3">Expense Date</th>
+                                        <th className="px-4 py-3">Expense Type</th>
+                                        <th className="px-4 py-3">Employee or Landlord</th>
                                         <th className="px-4 py-3">Office</th>
+                                        <th className="px-4 py-3 text-right">Amount Spent</th>
                                         <th className="px-4 py-3">Recorded By</th>
+                                        <th className="px-4 py-3">Approval Status</th>
+                                        <th className="px-4 py-3">Approved By</th>
+                                        <th className="px-4 py-3">Reason</th>
+                                        <th className="px-4 py-3">Reference</th>
                                         <th className="px-4 py-3">Status</th>
                                         <th className="px-4 py-3">Actions</th>
                                     </tr>
@@ -909,11 +1142,16 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                                             <td className="px-4 py-3">
                                                 <input checked={selectedExpenseIds.includes(expense.id)} type="checkbox" onChange={() => setSelectedExpenseIds((current) => current.includes(expense.id) ? current.filter((id) => id !== expense.id) : [...current, expense.id])} className="h-4 w-4 rounded border-slate-300 text-blue-700" />
                                             </td>
-                                            <td className="px-4 py-3 font-bold text-slate-500">{expenseTime(expense)}</td>
-                                            <td className="px-4 py-3 font-black text-slate-950">{expense.item ?? expense.expense_number ?? "Expense"}</td>
-                                            <td className="px-4 py-3 text-right font-black text-red-700">{money(expense.amount)}</td>
+                                            <td className="px-4 py-3 font-bold text-slate-500">{expense.expense_date ?? expense.created_at?.slice(0, 10) ?? "--"}</td>
+                                            <td className="px-4 py-3 font-black text-slate-950">{expense.item ?? expense.categoryName ?? expense.category ?? "Expense"}</td>
+                                            <td className="px-4 py-3 font-bold text-slate-700">{expense.employeeName ?? expense.landlordName ?? expense.vendor ?? "--"}</td>
                                             <td className="px-4 py-3 font-bold text-slate-500">{expense.officeName ?? report?.officeName ?? data.office?.office_name ?? data.office?.name ?? "Office"}</td>
+                                            <td className="px-4 py-3 text-right font-black text-red-700">{money(expense.amount)}</td>
                                             <td className="px-4 py-3 font-bold text-slate-500">{expense.submittedByName ?? "System"}</td>
+                                            <td className="px-4 py-3"><StatusBadge status={expense.approvalState} /></td>
+                                            <td className="px-4 py-3 font-bold text-slate-500">{(expense as ExpenseItem & { approved_by?: string | null }).approved_by ?? "--"}</td>
+                                            <td className="max-w-[260px] truncate px-4 py-3 font-bold text-slate-500" title={expense.description ?? ""}>{expense.description ?? "--"}</td>
+                                            <td className="px-4 py-3 font-bold text-slate-500">{expense.expense_number ?? expense.id.slice(0, 8)}</td>
                                             <td className="px-4 py-3"><StatusBadge status={expense.status ?? expense.approvalState} /></td>
                                             <td className="px-4 py-3">
                                                 <div className="flex min-w-[260px] flex-wrap gap-1">
@@ -927,13 +1165,13 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                                         </tr>
                                     )) : (
                                         <tr>
-                                            <td colSpan={8} className="px-4 py-8 text-center font-bold text-slate-500">
+                                            <td colSpan={13} className="px-4 py-8 text-center font-bold text-slate-500">
                                                 {loadingReport ? "Loading expenses..." : "No expenses recorded for this period yet."}
                                             </td>
                                         </tr>
                                     )}
                                     <tr ref={bottomRef} aria-hidden="true">
-                                        <td colSpan={8} className="h-0 p-0" />
+                                        <td colSpan={13} className="h-0 p-0" />
                                     </tr>
                                 </tbody>
                             </table>
@@ -1016,11 +1254,11 @@ function BalanceCard({ hint, icon, label, tone, value }: { hint: string; icon: R
 
 function PremiumEntryCard({ actionLabel, label, onAction, value }: { actionLabel?: string; label: string; onAction?: () => void; value: string }) {
     return (
-        <div className="min-h-[116px] rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-lg shadow-slate-950/5">
+        <div className="min-h-[124px] rounded-2xl border border-white/70 bg-gradient-to-br from-white via-slate-50 to-blue-50/70 p-4 shadow-xl shadow-slate-950/10 ring-1 ring-slate-900/5">
             <div className="flex items-start justify-between gap-3">
                 <p className="text-xs font-black uppercase tracking-wide text-slate-500">{label}</p>
                 {actionLabel && onAction ? (
-                    <button type="button" onClick={onAction} className="inline-flex h-7 items-center gap-1 rounded-xl border border-slate-200 bg-white px-2 text-[11px] font-black text-blue-700">
+                    <button type="button" onClick={onAction} className="inline-flex h-7 items-center gap-1 rounded-xl border border-blue-100 bg-white px-2 text-[11px] font-black text-blue-700 shadow-sm">
                         <Edit3 size={12} />
                         {actionLabel}
                     </button>

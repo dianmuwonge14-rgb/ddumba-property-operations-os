@@ -64,6 +64,10 @@ function resolveExpenseFilters(filters: ExpenseBalanceFilters = {}) {
     let startMonth = filters.startMonth || currentMonth;
     let endMonth = filters.endMonth || currentMonth;
 
+    if (mode === "all_dates") {
+        startDate = "1900-01-01";
+        endDate = "2999-12-31";
+    }
     if (mode === "single_date") {
         startDate = filters.singleDate || today;
         endDate = startDate;

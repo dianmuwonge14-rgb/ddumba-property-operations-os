@@ -825,7 +825,8 @@ async function loadEmployeeExpensePreview(input: {
         ?? allowances.find((row) => !row.employee_id && !row.role_key && (!row.office_id || String(row.office_id) === input.officeId))
         ?? null;
     const lunchItem = isLunchItem(input.expenseItem);
-    const dailyLunchAllowance = lunchItem ? amount(employee.daily_lunch_allowance ?? allowance?.allowance_amount) : 0;
+    const storedLunchAllowance = amount(employee.daily_lunch_allowance ?? allowance?.allowance_amount);
+    const dailyLunchAllowance = lunchItem ? (storedLunchAllowance > 0 ? storedLunchAllowance : 7000) : 0;
     const lunchLedgerRows = (lunchLedgerResult.data ?? []) as Array<Record<string, unknown>>;
     const attendanceRows = (attendanceResult.data ?? []) as Array<Record<string, unknown>>;
     const attendanceStatus = String(attendanceRows[0]?.status ?? "not_checked_in");
@@ -940,6 +941,35 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
     let employeeExpenseId: string | null = null;
     const lunchItem = isLunchItem(input.expenseItem);
     const salaryDeductible = isSalaryDeductibleExpenseItem(input.expenseItem);
+    if (lunchItem) {
+        const [existingLunchResult, pendingLunchResult] = await Promise.all([
+            db
+                .from("employee_expenses")
+                .select("id, office_id, status")
+                .eq("company_id", companyId)
+                .eq("employee_id", input.employeeId)
+                .eq("expense_date", expenseDate)
+                .eq("category", "lunch")
+                .eq("active", true)
+                .in("status", ["approved", "pending"])
+                .limit(1),
+            db
+                .from("employee_expense_requests")
+                .select("id, office_id, status")
+                .eq("company_id", companyId)
+                .eq("employee_id", input.employeeId)
+                .eq("expense_date", expenseDate)
+                .eq("requested_item_key", "lunch")
+                .eq("active", true)
+                .eq("status", "pending")
+                .limit(1),
+        ]);
+        if (existingLunchResult.error && !/does not exist|schema cache/i.test(existingLunchResult.error.message ?? "")) throw new Error(existingLunchResult.error.message);
+        if (pendingLunchResult.error && !/does not exist|schema cache/i.test(pendingLunchResult.error.message ?? "")) throw new Error(pendingLunchResult.error.message);
+        if ((existingLunchResult.data ?? []).length || (pendingLunchResult.data ?? []).length) {
+            throw new Error("Lunch has already been recorded for this employee on this date.");
+        }
+    }
     if (lunchItem && preview.presentForExpenseDate && preview.dailyLunchAllowance > 0) {
         const { data: existingEarned, error: existingEarnedError } = await db
             .from("employee_lunch_ledger")

@@ -10,7 +10,7 @@ export type CollectionRow = Database["public"]["Tables"]["collections"]["Row"];
 export type CashAccountRow = Database["public"]["Tables"]["cash_accounts"]["Row"];
 export type UserRow = Database["public"]["Tables"]["users"]["Row"];
 export type EmployeeRow = Database["public"]["Tables"]["employees"]["Row"];
-export type ExpensePeriodMode = "single_date" | "date_range" | "single_month" | "month_range";
+export type ExpensePeriodMode = "single_date" | "date_range" | "single_month" | "month_range" | "all_dates";
 
 export type ExpenseKpis = {
     totalExpenses: number;
