@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect } from "react";
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
     AlertTriangle,
@@ -211,9 +210,9 @@ export default function OfficeSidebar({ isAdmin, isCollector = false, officeName
                 <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_14%_0%,rgba(59,130,246,0.28),transparent_28%),radial-gradient(circle_at_86%_0%,rgba(20,184,166,0.18),transparent_26%)]" />
                 <div className="app-header-main relative mx-auto grid max-w-[1800px] grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-3">
                     <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
-                        <Link prefetch={false} href={logoHref} aria-label="Open role landing page" className="grid h-9 w-9 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-blue-500 via-cyan-400 to-emerald-400 text-white shadow-lg shadow-cyan-500/20 ring-1 ring-white/20 transition hover:scale-105 motion-reduce:transform-none sm:h-11 sm:w-11">
+                        <a href={logoHref} aria-label="Open role landing page" className="grid h-9 w-9 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-blue-500 via-cyan-400 to-emerald-400 text-white shadow-lg shadow-cyan-500/20 ring-1 ring-white/20 transition hover:scale-105 motion-reduce:transform-none sm:h-11 sm:w-11">
                             <WalletCards size={19} />
-                        </Link>
+                        </a>
                         <div className="min-w-0">
                             <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
                                 <p className="whitespace-nowrap text-xs font-black tracking-wide text-white sm:text-sm">DDUMBA OS</p>
@@ -237,10 +236,10 @@ export default function OfficeSidebar({ isAdmin, isCollector = false, officeName
                         const active = pathname === item.href || (item.href !== "/office" && pathname.startsWith(item.href));
                         const Icon = item.icon;
                         return (
-                            <Link prefetch={false} key={item.href} href={item.href} className={`mobile-nowrap inline-flex shrink-0 items-center gap-1.5 rounded-2xl px-2.5 py-2 text-[11px] font-black ring-1 transition sm:gap-2 sm:px-3 sm:text-xs ${active ? "bg-white text-slate-950 shadow-lg shadow-cyan-500/20 ring-white/30" : "bg-white/7 text-slate-300 ring-white/10 hover:bg-white/14 hover:text-white"}`}>
+                            <a key={item.href} href={item.href} className={`mobile-nowrap inline-flex shrink-0 items-center gap-1.5 rounded-2xl px-2.5 py-2 text-[11px] font-black ring-1 transition sm:gap-2 sm:px-3 sm:text-xs ${active ? "bg-white text-slate-950 shadow-lg shadow-cyan-500/20 ring-white/30" : "bg-white/7 text-slate-300 ring-white/10 hover:bg-white/14 hover:text-white"}`}>
                                 <Icon className="shrink-0" size={15} />
                                 <span className="whitespace-nowrap">{item.href === "/office/notifications" && notificationCount > 0 ? `${item.label} (${notificationCount})` : item.label}</span>
-                            </Link>
+                            </a>
                         );
                     })}
                 </nav>

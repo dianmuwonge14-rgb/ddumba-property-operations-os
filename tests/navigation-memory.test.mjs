@@ -63,6 +63,7 @@ test("shared hooks and smart back controls are available for explicit workflow a
 });
 
 test("office shell navigation does not prefetch heavy live server pages", () => {
-  assert.match(sidebarSource, /<Link prefetch=\{false\} href=\{logoHref\}/);
-  assert.match(sidebarSource, /<Link prefetch=\{false\} key=\{item\.href\}/);
+  assert.doesNotMatch(sidebarSource, /from "next\/link"/);
+  assert.match(sidebarSource, /<a href=\{logoHref\}/);
+  assert.match(sidebarSource, /<a key=\{item\.href\} href=\{item\.href\}/);
 });
