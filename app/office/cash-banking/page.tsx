@@ -13,17 +13,21 @@ function scalar(value: string | string[] | undefined) {
 
 export default async function OfficeCashBankingPage({ searchParams }: Props) {
     const params = await searchParams;
-    const [data, submissions] = await Promise.all([
-        getCashBankingData({
-            startDate: scalar(params.startDate),
-            endDate: scalar(params.endDate),
-        }),
-        getOfficeCollectorSubmissionData(),
-    ]);
+    const data = await getCashBankingData({
+        startDate: scalar(params.startDate),
+        endDate: scalar(params.endDate),
+    });
+    const submissionsResult = await getOfficeCollectorSubmissionData().catch((error) => {
+        console.warn("cash-banking optional collector submissions failed", {
+            message: error instanceof Error ? error.message : String(error),
+            route: "/office/cash-banking",
+        });
+        return [];
+    });
 
     return (
         <>
-            <OfficeCollectorSubmissions submissions={submissions} />
+            <OfficeCollectorSubmissions submissions={submissionsResult} />
             <CashBankingConsole data={data} />
         </>
     );

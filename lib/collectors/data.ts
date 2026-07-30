@@ -87,25 +87,34 @@ export async function getCollectorDashboardData() {
 }
 
 export async function getOfficeCollectorSubmissionData() {
-    const context = await requireAuth();
-    if (!context.activeCompany?.id || !context.activeOffice?.id) return [];
-    const db = createSupabaseAdminClient() as unknown as DynamicDb;
-    const { data } = await db
-        .from("field_collector_money_submissions")
-        .select("*")
-        .eq("company_id", context.activeCompany.id)
-        .eq("office_id", context.activeOffice.id)
-        .order("created_at", { ascending: false })
-        .limit(40);
-    const collectorIds = [...new Set((data ?? []).map((row: Record<string, unknown>) => String(row.collector_user_id ?? "")).filter(Boolean))];
-    const { data: users } = collectorIds.length
-        ? await db.from("users").select("id, full_name, phone, email").in("id", collectorIds)
-        : { data: [] };
-    const userById = new Map(((users ?? []) as Row[]).map((row) => [String(row.id), row]));
-    return ((data ?? []) as Row[]).map((row) => ({
-        ...row,
-        collectorName: String(userById.get(String(row.collector_user_id))?.full_name ?? "Collector"),
-    }));
+    try {
+        const context = await requireAuth();
+        if (!context.activeCompany?.id || !context.activeOffice?.id) return [];
+        const db = createSupabaseAdminClient() as unknown as DynamicDb;
+        const { data, error } = await db
+            .from("field_collector_money_submissions")
+            .select("*")
+            .eq("company_id", context.activeCompany.id)
+            .eq("office_id", context.activeOffice.id)
+            .order("created_at", { ascending: false })
+            .limit(40);
+        if (error) throw new Error(error.message);
+        const collectorIds = [...new Set((data ?? []).map((row: Record<string, unknown>) => String(row.collector_user_id ?? "")).filter(Boolean))];
+        const { data: users, error: usersError } = collectorIds.length
+            ? await db.from("users").select("id, full_name, phone, email").in("id", collectorIds)
+            : { data: [], error: null };
+        if (usersError) throw new Error(usersError.message);
+        const userById = new Map(((users ?? []) as Row[]).map((row) => [String(row.id), row]));
+        return ((data ?? []) as Row[]).map((row) => ({
+            ...row,
+            collectorName: String(userById.get(String(row.collector_user_id))?.full_name ?? "Collector"),
+        }));
+    } catch (error) {
+        console.warn("Collector money submissions could not load", {
+            message: error instanceof Error ? error.message : String(error),
+        });
+        return [];
+    }
 }
 
 function groupAmounts(rows: Record<string, unknown>[], labelFor: (row: Record<string, unknown>) => string) {

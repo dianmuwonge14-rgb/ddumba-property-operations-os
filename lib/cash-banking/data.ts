@@ -143,6 +143,39 @@ function buildInsights(summaries: CashOfficeSummary[], totals: CashBankingData["
     return insights;
 }
 
+function logCashBankingQueryError(name: string, error: Row | null | undefined, filters: ReturnType<typeof resolveFilters>) {
+    console.error("cash-banking query failed", {
+        code: error?.code ?? null,
+        details: error?.details ?? null,
+        endDate: filters.endDate,
+        hint: error?.hint ?? null,
+        message: error?.message ?? "Unknown Supabase error",
+        name,
+        officeId: filters.officeId,
+        startDate: filters.startDate,
+    });
+}
+
+function assertCashBankingQuery<T extends { error?: Row | null }>(name: string, result: T, filters: ReturnType<typeof resolveFilters>) {
+    if (result.error) {
+        logCashBankingQueryError(name, result.error, filters);
+        throw new Error(`Cash Banking data query failed: ${name}`);
+    }
+}
+
+async function optionalCashBankingRows<T extends { data?: Row[] | null; error?: Row | null }>(
+    name: string,
+    query: Promise<T>,
+    filters: ReturnType<typeof resolveFilters>,
+) {
+    const result = await query;
+    if (result.error) {
+        logCashBankingQueryError(name, result.error, filters);
+        return [];
+    }
+    return result.data ?? [];
+}
+
 export async function getCashBankingData(filtersInput: CashBankingFilters = {}): Promise<CashBankingData> {
     const context = await requirePermission("cash.read");
     const companyId = context.activeCompany?.id;
@@ -167,22 +200,26 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
         accountsResult,
         cashTransactionsResult,
         cashTransfersResult,
-        collectorProfilesResult,
+        collectorProfilesRows,
         usersResult,
     ] = await Promise.all([
         admin.from("offices").select("id, office_name, name").eq("company_id", companyId).order("office_name", { ascending: true, nullsFirst: false }),
         admin.from("collections").select("id, company_id, office_id, amount, amount_paid, payment_date, paid_at, created_at, payment_method, reference_number, recorded_by, status").eq("company_id", companyId).limit(10000),
         admin.from("expenses").select("id, company_id, office_id, amount, expense_date, created_at, item, description, entered_by, submitted_by, status").eq("company_id", companyId).limit(10000),
         admin.from("cash_accounts").select("id, company_id, office_id, account_type, name, status").eq("company_id", companyId).eq("status", "active"),
-        (admin as unknown as { from: (table: string) => any }).from("cash_transactions").select("id, company_id, office_id, cash_account_id, amount, transaction_type, source_type, source_id, transaction_date, created_at, description, recorded_by").eq("company_id", companyId).limit(10000),
+        (admin as unknown as { from: (table: string) => any }).from("cash_transactions").select("id, company_id, office_id, cash_account_id, amount, transaction_type, source_type, source_id, transaction_date, created_at, description, recorded_by, status, direction, occurred_at").eq("company_id", companyId).limit(10000),
         admin.from("cash_transfers").select("id, company_id, from_cash_account_id, to_cash_account_id, amount, status, correction_metadata").eq("company_id", companyId).limit(10000),
-        (admin as unknown as { from: (table: string) => any }).from("field_collector_profiles").select("id, company_id, user_id, cash_balance, status").eq("company_id", companyId).limit(1000),
+        optionalCashBankingRows("collectorProfilesResult", (admin as unknown as { from: (table: string) => any }).from("field_collector_profiles").select("id, company_id, user_id, cash_balance, status").eq("company_id", companyId).limit(1000), filters),
         admin.from("users").select("id, full_name, email").eq("company_id", companyId).limit(1000),
     ]);
 
-    for (const result of [officesResult, collectionsResult, expensesResult, accountsResult, cashTransactionsResult, cashTransfersResult, collectorProfilesResult, usersResult]) {
-        if (result.error) throw new Error(result.error.message);
-    }
+    assertCashBankingQuery("officesResult", officesResult, filters);
+    assertCashBankingQuery("collectionsResult", collectionsResult, filters);
+    assertCashBankingQuery("expensesResult", expensesResult, filters);
+    assertCashBankingQuery("accountsResult", accountsResult, filters);
+    assertCashBankingQuery("cashTransactionsResult", cashTransactionsResult, filters);
+    assertCashBankingQuery("cashTransfersResult", cashTransfersResult, filters);
+    assertCashBankingQuery("usersResult", usersResult, filters);
 
     const allOffices = (officesResult.data ?? []) as Row[];
     const visibleOffices = allOffices
@@ -203,7 +240,7 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
         const account = accountById.get(String(row.cash_account_id));
         return Boolean(account);
     });
-    const collectorCash = ((collectorProfilesResult.data ?? []) as Row[])
+    const collectorCash = (collectorProfilesRows as Row[])
         .filter((row) => String(row.status ?? "active").toLowerCase() === "active")
         .reduce((total, row) => total + numberValue(row.cash_balance), 0);
 
