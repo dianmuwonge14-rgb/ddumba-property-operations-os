@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { ReactNode } from "react";
-import { AlertTriangle, Banknote, Bot, CheckCircle2, Download, Edit3, Eye, FileText, History, Loader2, Printer, ReceiptText, Trash2, UserRound, WalletCards } from "lucide-react";
+import { AlertTriangle, Banknote, Bot, CheckCircle2, Download, Edit3, Eye, FileText, History, Loader2, Printer, ReceiptText, Search, Trash2, UserRound, WalletCards } from "lucide-react";
 import { adminEditExpenseDirect, adminSafeDeleteExpense, approveExpense, createEmployeeExpenseFromExpenses, createExpense, createLandlordPaidExpenseRequest, decideEmployeeExpenseRequest, decideExpenseChangeRequest, previewEmployeeExpense, previewLandlordPaymentExpense, rejectExpense, submitExpenseChangeRequest } from "@/app/actions/expenses";
 import type { EmployeeExpensePreview, ExpenseBalanceReport, ExpenseChangePayload, ExpenseItem, ExpensePeriodMode, ExpensesPageData } from "@/lib/expenses/types";
 
@@ -32,13 +32,6 @@ function expenseTime(expense: ExpenseItem) {
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function normalizeCategory(value: string) {
-    const normalized = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
-    if (normalized === "landlord_paid" || normalized === "landlord_payment" || normalized === "paid_landlord" || normalized === "landlord_advance") return "landlord_paid";
-    if (normalized === "employee_expense") return "employee_expense";
-    return normalized || "office_expense";
-}
-
 function queryString(filters: ExpenseFilters) {
     const params = new URLSearchParams();
     params.set("mode", filters.mode);
@@ -64,8 +57,16 @@ type ExpenseFilters = {
 };
 
 type LandlordPaymentPreview = Awaited<ReturnType<typeof previewLandlordPaymentExpense>>;
-type EmployeeExpenseItem = "Lunch" | "Fuel" | "Transport" | "Airtime" | "Field facilitation" | "Other";
+type ExpenseEntryMode = "landlord_payment" | "authorised" | "unauthorised";
+type AuthorisedExpenseType = "employee_lunch" | "airtime" | "internet" | "transport_kampala";
 type ExpenseModalMode = "view" | "edit" | "date" | "employee" | "history";
+
+const AUTHORISED_EXPENSES: Array<{ value: AuthorisedExpenseType; label: string; amount: number }> = [
+    { value: "employee_lunch", label: "Employee Lunch", amount: 7000 },
+    { value: "airtime", label: "Airtime", amount: 30000 },
+    { value: "internet", label: "Internet", amount: 110000 },
+    { value: "transport_kampala", label: "Transport to Kampala", amount: 200000 },
+];
 
 function expenseField(expense: ExpenseItem, key: keyof ExpenseChangePayload) {
     const row = expense as ExpenseItem & {
@@ -100,16 +101,17 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
         officeId: "",
     });
     const [expenseDate, setExpenseDate] = useState(today());
-    const [expenseCategory, setExpenseCategory] = useState("Office expense");
+    const [entryMode, setEntryMode] = useState<ExpenseEntryMode>("landlord_payment");
+    const [authorisedType, setAuthorisedType] = useState<AuthorisedExpenseType>("employee_lunch");
     const [expenseItem, setExpenseItem] = useState("");
     const [amount, setAmount] = useState("");
     const [landlordId, setLandlordId] = useState("");
+    const [landlordSearch, setLandlordSearch] = useState("");
     const [paymentMonth, setPaymentMonth] = useState(thisMonth());
     const [paymentMethod, setPaymentMethod] = useState("cash");
     const [notes, setNotes] = useState("");
     const [employeeId, setEmployeeId] = useState("");
     const [employeeSearch, setEmployeeSearch] = useState("");
-    const [employeeExpenseItem, setEmployeeExpenseItem] = useState<EmployeeExpenseItem>("Lunch");
     const [employeePreview, setEmployeePreview] = useState<EmployeeExpensePreview | null>(null);
     const [loadingEmployeePreview, setLoadingEmployeePreview] = useState(false);
     const [landlordPreview, setLandlordPreview] = useState<LandlordPaymentPreview | null>(null);
@@ -145,6 +147,9 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
     const abortRef = useRef<AbortController | null>(null);
 
     const expenses = useMemo(() => report?.expenses ?? [], [report]);
+    const activeOfficeName = data.office?.office_name ?? data.office?.name ?? "Office";
+    const activeOfficeId = data.office?.id ?? "";
+    const isEntebbeOperationsOffice = /entebbe operations/i.test(activeOfficeName);
     const employeeOptions = useMemo(() => {
         const query = employeeSearch.trim().toLowerCase();
         if (!query) return data.employeeOptions;
@@ -157,17 +162,68 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
             employee.assignmentType,
         ].some((value) => String(value ?? "").toLowerCase().includes(query)));
     }, [data.employeeOptions, employeeSearch]);
+    const landlordOptions = useMemo(() => {
+        const query = landlordSearch.trim().toLowerCase();
+        if (!query) return data.landlordOptions.slice(0, 20);
+        return data.landlordOptions
+            .filter((landlord) => [
+                landlord.name,
+                landlord.officeName,
+                landlord.location,
+                landlord.commissionType,
+            ].some((value) => String(value ?? "").toLowerCase().includes(query)))
+            .slice(0, 20);
+    }, [data.landlordOptions, landlordSearch]);
     const totals = useMemo(
         () => report?.totals ?? { totalCollections: 0, totalExpenses: 0, remainingBalance: 0, expenseRows: 0, paymentRows: 0 },
         [report?.totals],
     );
     const periodLabel = report ? `${report.filters.startDate} to ${report.filters.endDate}` : filters.singleDate;
-    const isLandlordPaidMode = normalizeCategory(expenseCategory || expenseItem) === "landlord_paid";
-    const isEmployeeExpenseMode = normalizeCategory(expenseCategory || expenseItem) === "employee_expense";
+    const isLandlordPaidMode = entryMode === "landlord_payment";
+    const isAuthorisedMode = entryMode === "authorised";
+    const isEmployeeExpenseMode = isAuthorisedMode && authorisedType === "employee_lunch";
+    const activeAuthorisedExpense = AUTHORISED_EXPENSES.find((item) => item.value === authorisedType) ?? AUTHORISED_EXPENSES[0];
     const selectedLandlordOption = useMemo(
         () => data.landlordOptions.find((landlord) => landlord.id === landlordId) ?? null,
         [data.landlordOptions, landlordId],
     );
+    const selectedEmployeeOption = useMemo(
+        () => data.employeeOptions.find((employee) => employee.id === employeeId) ?? null,
+        [data.employeeOptions, employeeId],
+    );
+    const currentMonthExpenses = useMemo(() => {
+        const month = expenseDate.slice(0, 7) || thisMonth();
+        return data.expenses.filter((expense) => {
+            const status = String(expense.status ?? expense.approvalState ?? "").toLowerCase();
+            if (["rejected", "cancelled", "canceled", "reversed", "voided", "deleted"].includes(status)) return false;
+            if (activeOfficeId && expense.office_id && expense.office_id !== activeOfficeId) return false;
+            return String(expense.expense_date ?? "").slice(0, 7) === month;
+        });
+    }, [activeOfficeId, data.expenses, expenseDate]);
+    const authorisedUsage = useMemo(() => {
+        const sumByNeedle = (needles: string[]) => currentMonthExpenses
+            .filter((expense) => {
+                const haystack = `${expense.item ?? ""} ${expense.category ?? ""} ${expense.categoryName ?? ""}`.toLowerCase();
+                return needles.some((needle) => haystack.includes(needle));
+            })
+            .reduce((total, expense) => total + Number(expense.amount ?? 0), 0);
+        const internetRows = currentMonthExpenses.filter((expense) => {
+            const haystack = `${expense.item ?? ""} ${expense.category ?? ""} ${expense.categoryName ?? ""}`.toLowerCase();
+            return haystack.includes("internet");
+        });
+        const transportRows = currentMonthExpenses.filter((expense) => {
+            const haystack = `${expense.item ?? ""} ${expense.category ?? ""} ${expense.categoryName ?? ""}`.toLowerCase();
+            return haystack.includes("transport to kampala");
+        });
+        return {
+            airtimeUsed: sumByNeedle(["airtime"]),
+            internetUsed: internetRows.reduce((total, expense) => total + Number(expense.amount ?? 0), 0),
+            internetLastRecorded: internetRows[0]?.expense_date ?? internetRows[0]?.created_at ?? null,
+            internetRecorded: internetRows.length > 0,
+            transportUsed: transportRows.reduce((total, expense) => total + Number(expense.amount ?? 0), 0),
+            transportTrips: transportRows.length,
+        };
+    }, [currentMonthExpenses]);
     const financeInsights = useMemo(() => buildFinanceInsights({
         expenses,
         employeeRequests: data.employeeExpenseRequests,
@@ -271,7 +327,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                         amount: Number(amount),
                         employeeId,
                         expenseDate,
-                        expenseItem: employeeExpenseItem,
+                        expenseItem: "Lunch",
                         note: notes,
                     });
                     if (!cancelled) setEmployeePreview(preview);
@@ -289,7 +345,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
             cancelled = true;
             clearTimeout(timer);
         };
-    }, [amount, employeeExpenseItem, employeeId, expenseDate, isEmployeeExpenseMode, notes]);
+    }, [amount, employeeId, expenseDate, isEmployeeExpenseMode, notes]);
 
     function updateFilter<Key extends keyof ExpenseFilters>(key: Key, value: ExpenseFilters[Key]) {
         setFilters((current) => ({ ...current, [key]: value }));
@@ -311,9 +367,14 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
 
     function saveExpense() {
         const trimmedItem = expenseItem.trim();
+        const authorisedLabel = activeAuthorisedExpense.label;
         const value = Number(amount);
-        if (!trimmedItem && !isLandlordPaidMode) {
-            setMessage("Enter expense item.");
+        if (entryMode === "unauthorised" && !trimmedItem) {
+            setMessage("Enter expense name.");
+            return;
+        }
+        if (entryMode === "unauthorised" && !notes.trim()) {
+            setMessage("Enter the reason for this unauthorised expense.");
             return;
         }
         if (!Number.isFinite(value) || value <= 0) {
@@ -327,6 +388,20 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
         if (isEmployeeExpenseMode && !employeeId) {
             setMessage("Select employee.");
             return;
+        }
+        if (isAuthorisedMode && authorisedType === "internet" && authorisedUsage.internetRecorded && !isAdmin) {
+            setMessage("Internet has already been claimed this month.");
+            return;
+        }
+        if (isAuthorisedMode && authorisedType === "transport_kampala" && !isEntebbeOperationsOffice) {
+            setMessage("Transport to Kampala can only be recorded by Entebbe Operations Office.");
+            return;
+        }
+        if (isEmployeeExpenseMode && !isAdmin) {
+            const lunchAvailable = employeePreview?.lunchBalanceBefore ?? 7000;
+            if (employeePreview && value > lunchAvailable) {
+                setMessage("Requested lunch amount exceeds the employee's available lunch balance. Submit to Admin for approval.");
+            }
         }
         if (isLandlordPaidMode && !expenseDate) {
             setMessage("Select payment date.");
@@ -381,24 +456,31 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                         amount: value,
                         employeeId,
                         expenseDate,
-                        expenseItem: employeeExpenseItem,
+                        expenseItem: "Lunch",
                         note: notes || trimmedItem || undefined,
                     });
                     flashExpense(String(result.expenseId ?? result.request?.id ?? Date.now()));
                     setMessage(isAdmin && result.preview.extraAmount > 0
                         ? "Employee expense approved directly by Admin."
                         : result.preview.extraAmount > 0
-                        ? `Allowed portion recorded. UGX ${Math.round(result.preview.extraAmount).toLocaleString()} extra was sent to Admin for approval.`
-                        : `Employee expense recorded. Remaining ${employeeExpenseItem} allowance: ${money(result.preview.remainingAllowance - result.preview.allowedPortion)}.`);
+                        ? "Requested lunch amount exceeds the employee's available lunch balance. Submit to Admin for approval."
+                        : `Employee lunch recorded. Remaining lunch balance: ${money(result.preview.remainingAllowance - result.preview.allowedPortion)}.`);
                 } else {
+                    const itemName = entryMode === "unauthorised" ? trimmedItem : authorisedLabel;
+                    const categoryName = entryMode === "unauthorised" ? "Unauthorised Expenses" : "Authorised Expenses";
                     const saved = await createExpense({
                         amount: value,
-                        category: expenseCategory,
+                        category: categoryName,
+                        description: notes || undefined,
                         expenseDate,
-                        item: trimmedItem,
+                        item: itemName,
                     });
                     flashExpense(saved.id);
-                    setMessage(isAdmin ? "Expense recorded and approved." : "Sent for Admin Approval. Cash position is unchanged until approval.");
+                    setMessage(isAdmin
+                        ? `${itemName} recorded and approved.`
+                        : entryMode === "unauthorised"
+                            ? "Sent for Admin Approval. Unauthorised expense submitted for Admin approval."
+                            : `Sent for Admin Approval. ${itemName} submitted. Admin approval is required before cash position changes.`);
                 }
                 clearForNext();
                 setContinueAsAdvance(false);
@@ -552,204 +634,222 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
 
                 <ExpenseFinanceAssistant insights={financeInsights} />
 
-                <section className="mx-auto mt-5 max-w-6xl rounded-[30px] border border-white/70 bg-white p-5 shadow-2xl shadow-slate-950/20">
-                    <div className="mb-4 grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)]">
-                        <label className="block">
-                            <span className="text-xs font-black uppercase tracking-wide text-slate-500">Expense category</span>
-                            <select
-                                value={expenseCategory}
-                                onChange={(event) => setExpenseCategory(event.target.value)}
-                                className="mt-1 h-13 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                            >
-                                {["Office expense", "Fuel", "Lunch", "Transport", "Airtime", "Office supplies", "Employee expense", "Landlord Payment", "Other"].map((category) => (
-                                    <option key={`expense-category:${category}`} value={category}>{category}</option>
+                <section className="mx-auto mt-5 max-w-6xl overflow-hidden rounded-[30px] border border-white/70 bg-white shadow-2xl shadow-slate-950/20">
+                    <div className="border-b border-slate-200 bg-slate-950 p-4 text-white">
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                            <div>
+                                <p className="text-xs font-black uppercase tracking-wide text-cyan-200">Premium Expense Entry</p>
+                                <h2 className="mt-1 text-2xl font-black">Record the correct workflow first</h2>
+                                <p className="mt-1 text-sm font-semibold text-slate-300">Landlord payments, authorised office allowances, and unauthorised requests are routed separately.</p>
+                            </div>
+                            <div className="grid gap-2 sm:grid-cols-3 lg:w-[560px]">
+                                {([
+                                    ["landlord_payment", "Landlord Payment"],
+                                    ["authorised", "Authorised Expenses"],
+                                    ["unauthorised", "Unauthorised Expenses"],
+                                ] as Array<[ExpenseEntryMode, string]>).map(([mode, label]) => (
+                                    <button
+                                        key={`expense-entry-mode:${mode}`}
+                                        type="button"
+                                        onClick={() => {
+                                            setEntryMode(mode);
+                                            setMessage(null);
+                                            setExpenseItem("");
+                                            setAmount("");
+                                        }}
+                                        className={`h-12 rounded-2xl border px-3 text-sm font-black transition ${entryMode === mode ? "border-cyan-300 bg-cyan-300 text-slate-950 shadow-lg shadow-cyan-950/30" : "border-white/10 bg-white/10 text-white hover:bg-white/15"}`}
+                                    >
+                                        {label}
+                                    </button>
                                 ))}
-                            </select>
-                        </label>
-                        <div className={`rounded-2xl border px-4 py-3 ${isLandlordPaidMode ? "border-amber-200 bg-amber-50 text-amber-900" : "border-blue-100 bg-blue-50 text-blue-900"}`}>
-                            <p className="text-xs font-black uppercase tracking-wide">{isLandlordPaidMode ? "Landlord payment approval mode" : isEmployeeExpenseMode ? "Employee allowance mode" : "Smart expense routing"}</p>
-                            <p className="mt-1 text-sm font-bold">
-                                {isLandlordPaidMode
-                                    ? "This checks live payable first. Normal payments and any advance portion go to Admin approval before ledgers change."
-                                    : isEmployeeExpenseMode
-                                        ? "This checks live employee allowances first. Above-allowance money goes to Admin approval before payroll is affected."
-                                    : "Fuel, lunch, transport, airtime, supplies, employee expenses, landlord payments, and other costs are routed by category."}
-                            </p>
+                            </div>
                         </div>
                     </div>
-                    {isEmployeeExpenseMode ? (
-                        <div className="mb-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px_minmax(0,1fr)]">
-                            <label className="block">
-                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Employee</span>
-                                <input
-                                    value={employeeSearch}
-                                    onChange={(event) => setEmployeeSearch(event.target.value)}
-                                    placeholder="Search name, phone, email, role, office..."
-                                    className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-900 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                                />
-                                <select
-                                    value={employeeId}
-                                    onChange={(event) => setEmployeeId(event.target.value)}
-                                    className="mt-2 h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                                >
-                                    <option value="">Select employee</option>
-                                    {employeeOptions.map((employee) => (
-                                        <option key={`employee-expense-option:${employee.id}:${employee.officeId ?? "company"}`} value={employee.id}>
-                                            {employee.name}{employee.phone ? ` · ${employee.phone}` : ""}{employee.officeName ? ` · ${employee.officeName}` : ""}{employee.role ? ` · ${employee.role}` : ""}
-                                        </option>
+
+                    <div className="p-5">
+                        {isLandlordPaidMode ? (
+                            <div className="space-y-4">
+                                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_180px_190px]">
+                                    <label className="block">
+                                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Search landlord</span>
+                                        <div className="mt-1 flex h-16 items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 focus-within:border-blue-400 focus-within:bg-white focus-within:ring-4 focus-within:ring-blue-100">
+                                            <Search size={18} className="text-slate-400" />
+                                            <input
+                                                value={landlordSearch}
+                                                onChange={(event) => setLandlordSearch(event.target.value)}
+                                                placeholder="Type landlord name..."
+                                                className="h-full min-w-0 flex-1 bg-transparent text-lg font-black text-slate-950 outline-none"
+                                            />
+                                        </div>
+                                    </label>
+                                    <label className="block">
+                                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Payment month</span>
+                                        <input type="month" value={paymentMonth} onChange={(event) => setPaymentMonth(event.target.value)} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
+                                    </label>
+                                    <label className="block">
+                                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Payment method</span>
+                                        <select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100">
+                                            <option value="cash">Cash</option>
+                                            <option value="bank">Bank</option>
+                                            <option value="mobile_money">Mobile Money</option>
+                                            <option value="cheque">Cheque</option>
+                                            <option value="other">Other</option>
+                                        </select>
+                                    </label>
+                                </div>
+                                <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                                    {landlordOptions.map((landlord) => (
+                                        <button
+                                            key={`landlord-paid-result:${landlord.id}:${landlord.officeId ?? "company"}`}
+                                            type="button"
+                                            onClick={() => {
+                                                setLandlordId(landlord.id);
+                                                setLandlordSearch(landlord.name);
+                                            }}
+                                            className={`rounded-2xl border p-3 text-left transition ${landlord.id === landlordId ? "border-cyan-300 bg-cyan-50 shadow-lg shadow-cyan-100" : "border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50"}`}
+                                        >
+                                            <p className="text-sm font-black text-slate-950">{landlord.name}</p>
+                                            <p className="mt-1 text-xs font-bold text-slate-500">{landlord.officeName ?? "Company"}{landlord.location ? ` · ${landlord.location}` : ""}</p>
+                                        </button>
                                     ))}
-                                </select>
-                                <span className="mt-1 block text-[11px] font-bold text-slate-500">{employeeOptions.length} active employee result(s)</span>
+                                </div>
+                                {selectedLandlordOption ? (
+                                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                                        <PremiumEntryCard label="Landlord Name" value={selectedLandlordOption.name} />
+                                        <PremiumEntryCard label="Location" value={selectedLandlordOption.location ?? "--"} />
+                                        <PremiumEntryCard label="Office" value={selectedLandlordOption.officeName ?? activeOfficeName} />
+                                        <PremiumEntryCard label="Outstanding Balance" value={money(landlordPreview?.outstandingAmount ?? 0)} actionLabel="Edit" onAction={() => setMessage(isAdmin ? "Admin can edit landlord balance directly from the landlord payment review workflow." : "Office balance edits create an Admin approval request before they affect landlord totals.")} />
+                                        <PremiumEntryCard label="Last Payment" value={money(landlordPreview?.alreadyPaidAmount ?? 0)} />
+                                        <PremiumEntryCard label="Payment Date" value={expenseDate} actionLabel="Edit" onAction={() => setMessage(isAdmin ? "Admin payment date edit is available before approval." : "Office date edits create an Admin approval request before approval.")} />
+                                        <PremiumEntryCard label="Commission Type" value={selectedLandlordOption.commissionType ?? "--"} />
+                                        <PremiumEntryCard label="Commission Rate" value={selectedLandlordOption.commissionRate == null ? "--" : `${selectedLandlordOption.commissionRate}%`} />
+                                        <PremiumEntryCard label="Portfolio Value" value={money(selectedLandlordOption.portfolioValue ?? 0)} />
+                                        <PremiumEntryCard label="Number of Rooms" value={String(selectedLandlordOption.numberOfRooms ?? 0)} />
+                                        <PremiumEntryCard label="Occupied Rooms" value={String(selectedLandlordOption.occupiedRooms ?? 0)} />
+                                        <PremiumEntryCard label="Vacant Rooms" value={String(selectedLandlordOption.vacantRooms ?? 0)} />
+                                        <PremiumEntryCard label="Vacated With Debt" value={String(selectedLandlordOption.vacatedWithDebt ?? 0)} />
+                                        <PremiumEntryCard label="Net Payable" value={money(landlordPreview?.currentNetPayable ?? 0)} />
+                                        <PremiumEntryCard label="Payment Status" value={landlordPreview ? (landlordPreview.advanceAmount > 0 ? "Review advance" : "Within payable") : "Enter amount"} />
+                                    </div>
+                                ) : (
+                                    <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm font-bold text-slate-500">Search and select a landlord to load payment cards.</div>
+                                )}
+                                <LandlordPaymentAiPreview loading={loadingLandlordPreview} onContinue={() => setContinueAsAdvance(true)} onCancel={() => setContinueAsAdvance(false)} preview={landlordPreview} />
+                                {landlordPreview && landlordPreview.advanceAmount > 0 && continueAsAdvance ? <AdvanceAgreementPanel agreement={advanceAgreement} advanceAmount={landlordPreview.advanceAmount} onChange={setAdvanceAgreement} paymentMonth={paymentMonth} /> : null}
+                            </div>
+                        ) : null}
+
+                        {isAuthorisedMode ? (
+                            <div className="space-y-4">
+                                <div className="grid gap-3 md:grid-cols-4">
+                                    {AUTHORISED_EXPENSES.filter((item) => item.value !== "transport_kampala" || isEntebbeOperationsOffice).map((item) => (
+                                        <button key={`authorised-expense:${item.value}`} type="button" onClick={() => setAuthorisedType(item.value)} className={`rounded-2xl border p-4 text-left transition ${authorisedType === item.value ? "border-cyan-300 bg-cyan-50 shadow-lg shadow-cyan-100" : "border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50"}`}>
+                                            <p className="text-sm font-black text-slate-950">{item.label}</p>
+                                            <p className="mt-1 text-xs font-bold text-slate-500">{item.value === "employee_lunch" ? "UGX 7,000 per employee per day" : `${money(item.amount)} monthly allocation`}</p>
+                                        </button>
+                                    ))}
+                                </div>
+                                {isEmployeeExpenseMode ? (
+                                    <>
+                                        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+                                            <label className="block">
+                                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Search employee</span>
+                                                <div className="mt-1 flex h-16 items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 focus-within:border-blue-400 focus-within:bg-white focus-within:ring-4 focus:ring-blue-100">
+                                                    <Search size={18} className="text-slate-400" />
+                                                    <input value={employeeSearch} onChange={(event) => setEmployeeSearch(event.target.value)} placeholder="Search name, phone, role, office..." className="h-full min-w-0 flex-1 bg-transparent text-lg font-black text-slate-950 outline-none" />
+                                                </div>
+                                            </label>
+                                            <label className="block">
+                                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Expense date</span>
+                                                <input type="date" value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
+                                            </label>
+                                        </div>
+                                        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                                            {employeeOptions.slice(0, 18).map((employee) => (
+                                                <button key={`employee-expense-result:${employee.id}:${employee.officeId ?? "company"}`} type="button" onClick={() => { setEmployeeId(employee.id); setEmployeeSearch(employee.name); }} className={`rounded-2xl border p-3 text-left transition ${employee.id === employeeId ? "border-cyan-300 bg-cyan-50 shadow-lg shadow-cyan-100" : "border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50"}`}>
+                                                    <p className="text-sm font-black text-slate-950">{employee.name}</p>
+                                                    <p className="mt-1 text-xs font-bold text-slate-500">{employee.officeName ?? "Office"}{employee.role ? ` · ${employee.role}` : ""}{employee.phone ? ` · ${employee.phone}` : ""}</p>
+                                                </button>
+                                            ))}
+                                        </div>
+                                        {selectedEmployeeOption ? (
+                                            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                                                <PremiumEntryCard label="Employee Name" value={selectedEmployeeOption.name} />
+                                                <PremiumEntryCard label="Office" value={selectedEmployeeOption.officeName ?? activeOfficeName} />
+                                                <PremiumEntryCard label="Position" value={selectedEmployeeOption.role ?? "--"} />
+                                                <PremiumEntryCard label="Lunch Available Today" value={money(employeePreview?.dailyLunchAllowance || 7000)} />
+                                                <PremiumEntryCard label="Previous Lunch Balance Not Used" value={money(Math.max(0, (employeePreview?.lunchBalanceBefore ?? 0) - (employeePreview?.dailyLunchAllowance || 7000)))} />
+                                                <PremiumEntryCard label="Total Lunch Available" value={money(employeePreview?.lunchBalanceBefore || 7000)} />
+                                                <PremiumEntryCard label="Lunch Used Today" value={money(Number(amount || 0))} />
+                                                <PremiumEntryCard label="Remaining Lunch Balance" value={money(Math.max(0, (employeePreview?.lunchBalanceBefore || 7000) - Number(amount || 0)))} />
+                                            </div>
+                                        ) : null}
+                                        <EmployeeExpenseAiPreview loading={loadingEmployeePreview} preview={employeePreview} />
+                                    </>
+                                ) : null}
+                                {authorisedType === "airtime" ? (
+                                    <div className="grid gap-3 md:grid-cols-4">
+                                        <PremiumEntryCard label="Monthly Airtime Allocation" value={money(30000)} />
+                                        <PremiumEntryCard label="Airtime Used" value={money(authorisedUsage.airtimeUsed)} />
+                                        <PremiumEntryCard label="Airtime Remaining" value={money(Math.max(0, 30000 - authorisedUsage.airtimeUsed))} />
+                                        <PremiumEntryCard label="Current Month" value={expenseDate.slice(0, 7)} />
+                                    </div>
+                                ) : null}
+                                {authorisedType === "internet" ? (
+                                    <div className="grid gap-3 md:grid-cols-4">
+                                        <PremiumEntryCard label="Monthly Allocation" value={money(110000)} />
+                                        <PremiumEntryCard label="Current Month Status" value={authorisedUsage.internetRecorded ? "Internet has already been claimed this month." : "Available"} />
+                                        <PremiumEntryCard label="Date Last Recorded" value={authorisedUsage.internetLastRecorded ? String(authorisedUsage.internetLastRecorded).slice(0, 10) : "--"} />
+                                        <PremiumEntryCard label="Remaining Internet Allocation" value={money(authorisedUsage.internetRecorded ? 0 : 110000)} />
+                                    </div>
+                                ) : null}
+                                {authorisedType === "transport_kampala" ? (
+                                    <div className="grid gap-3 md:grid-cols-4">
+                                        <PremiumEntryCard label="Monthly Allocation" value={money(200000)} />
+                                        <PremiumEntryCard label="Used This Month" value={money(authorisedUsage.transportUsed)} />
+                                        <PremiumEntryCard label="Remaining Balance" value={money(Math.max(0, 200000 - authorisedUsage.transportUsed))} />
+                                        <PremiumEntryCard label="Trips Recorded" value={String(authorisedUsage.transportTrips)} />
+                                    </div>
+                                ) : null}
+                            </div>
+                        ) : null}
+
+                        {entryMode === "unauthorised" ? (
+                            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+                                <label className="block">
+                                    <span className="text-xs font-black uppercase tracking-wide text-slate-500">Expense Name</span>
+                                    <input ref={itemInputRef} value={expenseItem} onChange={(event) => setExpenseItem(event.target.value)} placeholder="Describe the expense..." className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-2xl font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
+                                </label>
+                                <label className="block">
+                                    <span className="text-xs font-black uppercase tracking-wide text-slate-500">Expense date</span>
+                                    <input type="date" value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
+                                </label>
+                            </div>
+                        ) : null}
+
+                        <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_240px]">
+                            <label className="block">
+                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">{entryMode === "unauthorised" ? "Reason / Supporting Notes" : "Supporting Notes"}</span>
+                                <input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder={entryMode === "unauthorised" ? "Reason and notes required..." : "Optional notes..."} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
+                                {entryMode === "unauthorised" ? <span className="mt-1 block text-xs font-bold text-slate-500">Optional Attachment can be added to the approval request from Admin review.</span> : null}
                             </label>
                             <label className="block">
-                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Expense type</span>
-                                <select
-                                    value={employeeExpenseItem}
-                                    onChange={(event) => setEmployeeExpenseItem(event.target.value as EmployeeExpenseItem)}
-                                    className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                                >
-                                    {["Lunch", "Fuel", "Transport", "Airtime", "Field facilitation", "Other"].map((item) => (
-                                        <option key={`employee-expense-item:${item}`} value={item}>{item}</option>
-                                    ))}
-                                </select>
-                            </label>
-                            <label className="block">
-                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Note</span>
-                                <input
-                                    value={notes}
-                                    onChange={(event) => setNotes(event.target.value)}
-                                    placeholder="Optional"
-                                    className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                                />
+                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Amount</span>
+                                <input ref={amountInputRef} value={amount} onChange={(event) => setAmount(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveExpense(); }} type="number" min="0" placeholder="UGX" className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-2xl font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
                             </label>
                         </div>
-                    ) : null}
-                    {isEmployeeExpenseMode ? (
-                        <EmployeeExpenseAiPreview loading={loadingEmployeePreview} preview={employeePreview} />
-                    ) : null}
-                    {isLandlordPaidMode ? (
-                        <div className="mb-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_180px_200px_220px]">
-                            <label className="block">
-                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Landlord</span>
-                                <select
-                                    value={landlordId}
-                                    onChange={(event) => setLandlordId(event.target.value)}
-                                    className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                                >
-                                    <option value="">Select landlord</option>
-                                    {data.landlordOptions.map((landlord) => (
-                                        <option key={`landlord-paid-option:${landlord.id}:${landlord.officeId ?? "company"}`} value={landlord.id}>
-                                            {landlord.name}{landlord.officeName ? ` · ${landlord.officeName}` : ""}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
-                            <label className="block">
-                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Payment month</span>
-                                <input
-                                    type="month"
-                                    value={paymentMonth}
-                                    onChange={(event) => setPaymentMonth(event.target.value)}
-                                    className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                                />
-                            </label>
-                            <label className="block">
-                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Payment method</span>
-                                <select
-                                    value={paymentMethod}
-                                    onChange={(event) => setPaymentMethod(event.target.value)}
-                                    className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                                >
-                                    <option value="cash">Cash</option>
-                                    <option value="bank">Bank</option>
-                                    <option value="mobile_money">Mobile Money</option>
-                                    <option value="cheque">Cheque</option>
-                                    <option value="other">Other</option>
-                                </select>
-                            </label>
-                            <label className="block">
-                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Notes / reason</span>
-                                <input
-                                    value={notes}
-                                    onChange={(event) => setNotes(event.target.value)}
-                                    placeholder="Optional"
-                                    className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                                />
-                            </label>
+
+                        {message ? <p className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">{message}</p> : null}
+                        <div className="mt-5 flex flex-wrap items-center gap-3">
+                            <button type="button" onClick={saveExpense} disabled={!canManage || isPending} className="inline-flex h-13 items-center gap-2 rounded-2xl bg-emerald-600 px-7 text-base font-black text-white shadow-lg shadow-emerald-100 transition hover:-translate-y-0.5 disabled:opacity-40">
+                                {isPending ? <Loader2 className="animate-spin" size={18} /> : <ReceiptText size={18} />}
+                                {isPending ? "Submitting..." : isLandlordPaidMode ? "Submit Landlord Payment" : isEmployeeExpenseMode ? "Record / Request Lunch" : entryMode === "unauthorised" ? "Submit for Admin Approval" : "Record / Request Authorised Expense"}
+                            </button>
+                            <button type="button" onClick={() => setShowPrintPreview(true)} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700"><Printer size={16} />Print A4 Report</button>
+                            <button type="button" onClick={() => setShowPrintPreview(true)} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700"><Download size={16} />Export PDF</button>
+                            <button type="button" onClick={exportCsv} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700"><Download size={16} />Export CSV</button>
+                            <span className="text-xs font-bold text-slate-500">{isAdmin ? "Admin overrides are audited immediately." : "Office entries that exceed limits or are unauthorised require Admin approval."}</span>
                         </div>
-                    ) : null}
-                    {isLandlordPaidMode ? (
-                        <LandlordPaymentAiPreview
-                            loading={loadingLandlordPreview}
-                            onContinue={() => setContinueAsAdvance(true)}
-                            onCancel={() => setContinueAsAdvance(false)}
-                            preview={landlordPreview}
-                        />
-                    ) : null}
-                    {isLandlordPaidMode && landlordPreview && landlordPreview.advanceAmount > 0 && continueAsAdvance ? (
-                        <AdvanceAgreementPanel
-                            agreement={advanceAgreement}
-                            advanceAmount={landlordPreview.advanceAmount}
-                            onChange={setAdvanceAgreement}
-                            paymentMonth={paymentMonth}
-                        />
-                    ) : null}
-                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_240px]">
-                        <label className="block">
-                            <span className="text-xs font-black uppercase tracking-wide text-slate-500">{isLandlordPaidMode ? "Payment reason / note" : isEmployeeExpenseMode ? "Extra note" : "Expense item"}</span>
-                            <input
-                                ref={itemInputRef}
-                                value={expenseItem}
-                                onChange={(event) => setExpenseItem(event.target.value)}
-                                onKeyDown={(event) => {
-                                    if (event.key === "Enter") amountInputRef.current?.focus();
-                                }}
-                                placeholder={isLandlordPaidMode ? "Landlord payment note..." : isEmployeeExpenseMode ? "Optional employee expense note..." : "Fuel, airtime, transport..."}
-                                className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-2xl font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                            />
-                        </label>
-                        <label className="block">
-                            <span className="text-xs font-black uppercase tracking-wide text-slate-500">Amount spent</span>
-                            <input
-                                ref={amountInputRef}
-                                value={amount}
-                                onChange={(event) => setAmount(event.target.value)}
-                                onKeyDown={(event) => {
-                                    if (event.key === "Enter") saveExpense();
-                                }}
-                                type="number"
-                                min="0"
-                                placeholder="UGX"
-                                className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-2xl font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                            />
-                        </label>
-                    </div>
-                    {message ? <p className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">{message}</p> : null}
-                    <div className="mt-5 flex flex-wrap items-center gap-3">
-                        <button
-                            type="button"
-                            onClick={saveExpense}
-                            disabled={!canManage || isPending}
-                            className="inline-flex h-13 items-center gap-2 rounded-2xl bg-emerald-600 px-7 text-base font-black text-white shadow-lg shadow-emerald-100 transition hover:-translate-y-0.5 disabled:opacity-40"
-                        >
-                            {isPending ? <Loader2 className="animate-spin" size={18} /> : <ReceiptText size={18} />}
-                            {isPending ? (isLandlordPaidMode || isEmployeeExpenseMode ? "Submitting..." : "Saving...") : isLandlordPaidMode ? "Submit for Admin Approval" : isEmployeeExpenseMode ? "Record / Request Approval" : "Record Expense"}
-                        </button>
-                        <button type="button" onClick={() => setShowPrintPreview(true)} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700">
-                            <Printer size={16} />
-                            Print A4 Report
-                        </button>
-                        <button type="button" onClick={() => setShowPrintPreview(true)} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700">
-                            <Download size={16} />
-                            Export PDF
-                        </button>
-                        <button type="button" onClick={exportCsv} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700">
-                            <Download size={16} />
-                            Export CSV
-                        </button>
-                        <span className="text-xs font-bold text-slate-500">
-                            {isLandlordPaidMode ? "Landlord payments require Admin approval before ledger impact." : isEmployeeExpenseMode ? "Above-allowance employee expenses require Admin approval." : "Press Enter in Amount Spent to save."}
-                        </span>
                     </div>
                 </section>
 
@@ -910,6 +1010,23 @@ function BalanceCard({ hint, icon, label, tone, value }: { hint: string; icon: R
             </div>
             <p className="mt-3 break-words text-2xl font-black leading-tight">{value}</p>
             <p className="mt-1 text-xs font-bold opacity-70">{hint}</p>
+        </div>
+    );
+}
+
+function PremiumEntryCard({ actionLabel, label, onAction, value }: { actionLabel?: string; label: string; onAction?: () => void; value: string }) {
+    return (
+        <div className="min-h-[116px] rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-lg shadow-slate-950/5">
+            <div className="flex items-start justify-between gap-3">
+                <p className="text-xs font-black uppercase tracking-wide text-slate-500">{label}</p>
+                {actionLabel && onAction ? (
+                    <button type="button" onClick={onAction} className="inline-flex h-7 items-center gap-1 rounded-xl border border-slate-200 bg-white px-2 text-[11px] font-black text-blue-700">
+                        <Edit3 size={12} />
+                        {actionLabel}
+                    </button>
+                ) : null}
+            </div>
+            <p className="mt-3 break-words text-xl font-black leading-tight text-slate-950">{value}</p>
         </div>
     );
 }

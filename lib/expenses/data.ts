@@ -160,7 +160,7 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
         supabase.from("users").select("*").eq("company_id", companyId).eq("status", "active"),
         supabase.from("offices").select("id, office_name, name").eq("company_id", companyId).order("office_name", { ascending: true, nullsFirst: false }),
         (() => {
-            let query = supabase.from("rooms").select("id, landlord_id, office_id").eq("company_id", companyId).not("landlord_id", "is", null).not("status", "in", "(archived,inactive,deleted,removed)");
+            let query = supabase.from("rooms").select("id, landlord_id, office_id, status, monthly_rent").eq("company_id", companyId).not("landlord_id", "is", null).not("status", "in", "(archived,inactive,deleted,removed)");
             if (selectedOfficeId) query = query.eq("office_id", selectedOfficeId);
             return query;
         })(),
@@ -197,19 +197,36 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
     const officeById = new Map(offices.map((office) => [office.id, office.name]));
     const employeeById = new Map(employees.map((employee) => [employee.id, employee.full_name ?? "Employee"]));
     const landlordOfficeById = new Map<string, string | null>();
-    for (const room of (roomsResult.data ?? []) as Array<{ landlord_id: string | null; office_id: string | null }>) {
+    type LandlordRoomRow = { landlord_id: string | null; office_id: string | null; status?: string | null; monthly_rent?: number | string | null };
+    const landlordPortfolioById = new Map<string, { portfolioValue: number; numberOfRooms: number; occupiedRooms: number; vacantRooms: number; vacatedWithDebt: number }>();
+    for (const room of (roomsResult.data ?? []) as LandlordRoomRow[]) {
         if (room.landlord_id && !landlordOfficeById.has(room.landlord_id)) landlordOfficeById.set(room.landlord_id, room.office_id);
+        if (!room.landlord_id) continue;
+        const current = landlordPortfolioById.get(room.landlord_id) ?? { portfolioValue: 0, numberOfRooms: 0, occupiedRooms: 0, vacantRooms: 0, vacatedWithDebt: 0 };
+        const status = String(room.status ?? "").toLowerCase();
+        current.numberOfRooms += 1;
+        current.portfolioValue += Number(room.monthly_rent ?? 0);
+        if (status.includes("vacant")) current.vacantRooms += 1;
+        else if (status.includes("vacated") || status.includes("debt")) current.vacatedWithDebt += 1;
+        else current.occupiedRooms += 1;
+        landlordPortfolioById.set(room.landlord_id, current);
     }
     const visibleLandlordIds = new Set((roomsResult.data ?? []).map((room: { landlord_id: string | null }) => room.landlord_id).filter(Boolean));
     const landlordOptions = landlords
         .filter((landlord) => isAdmin || visibleLandlordIds.has(landlord.id))
         .map((landlord) => {
             const landlordOfficeId = landlordOfficeById.get(landlord.id) ?? selectedOfficeId ?? null;
+            const rawLandlord = landlord as LandlordRow & Record<string, unknown>;
+            const portfolio = landlordPortfolioById.get(landlord.id) ?? { portfolioValue: 0, numberOfRooms: 0, occupiedRooms: 0, vacantRooms: 0, vacatedWithDebt: 0 };
             return {
                 id: landlord.id,
                 name: landlord.full_name ?? "Landlord",
                 officeId: landlordOfficeId,
                 officeName: landlordOfficeId ? officeById.get(landlordOfficeId) ?? "Office" : null,
+                location: typeof rawLandlord.location === "string" ? rawLandlord.location : typeof rawLandlord.address === "string" ? rawLandlord.address : null,
+                commissionType: typeof rawLandlord.commission_calculation_mode === "string" ? rawLandlord.commission_calculation_mode : typeof rawLandlord.commission_input_mode === "string" ? rawLandlord.commission_input_mode : null,
+                commissionRate: Number.isFinite(Number(rawLandlord.commission_rate)) ? Number(rawLandlord.commission_rate) : null,
+                ...portfolio,
             };
         });
 

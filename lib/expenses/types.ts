@@ -71,7 +71,20 @@ export type ExpensesPageData = {
     categories: ExpenseCategoryRow[];
     properties: PropertyRow[];
     landlords: LandlordRow[];
-    landlordOptions: Array<{ id: string; name: string; officeId: string | null; officeName: string | null }>;
+    landlordOptions: Array<{
+        id: string;
+        name: string;
+        officeId: string | null;
+        officeName: string | null;
+        location?: string | null;
+        commissionType?: string | null;
+        commissionRate?: number | null;
+        portfolioValue?: number;
+        numberOfRooms?: number;
+        occupiedRooms?: number;
+        vacantRooms?: number;
+        vacatedWithDebt?: number;
+    }>;
     employeeOptions: EmployeeExpenseOption[];
     expenseChangeRequests: ExpenseChangeRequestItem[];
     landlordPaymentRequests: Array<{
