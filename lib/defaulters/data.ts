@@ -128,13 +128,19 @@ function oldestUnpaidPeriod(input: { paymentDueDate: string; unpaidPeriods: numb
 
 function isActiveTenant(value: string | null | undefined) {
     const status = String(value ?? "").toLowerCase();
-    return !status || status === "active" || status === "occupied" || status === "current";
+    return status === "active";
 }
 
-function isActiveRoom(value: string | null | undefined) {
+function isOccupiedRoom(value: string | null | undefined) {
     const status = String(value ?? "").toLowerCase();
-    if (!status) return true;
-    return status === "occupied" || status === "active" || (!status.includes("vacant") && !status.includes("vacated") && !status.includes("archiv") && !status.includes("delete") && !status.includes("inactive"));
+    return status === "occupied";
+}
+
+function isActiveTenancy(lease: LeaseRow | null | undefined, today = dateOnly()) {
+    if (!lease) return false;
+    if (String(lease.status ?? "").toLowerCase() !== "active") return false;
+    if (lease.end_date && lease.end_date.slice(0, 10) < today) return false;
+    return true;
 }
 
 function isClosedPromise(value: string | null | undefined) {
@@ -396,8 +402,9 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
     for (const tenant of tenants) {
         if (!isActiveTenant(tenant.status)) continue;
         const lease = activeLeaseByTenant.get(tenant.id);
-        const room = (lease?.room_id ? roomById.get(lease.room_id) : null) ?? (tenant.room_id ? roomById.get(tenant.room_id) : null);
-        if (!room || !isActiveRoom(room.status)) continue;
+        if (!isActiveTenancy(lease, dateOnly(now))) continue;
+        const room = lease?.room_id ? roomById.get(lease.room_id) : null;
+        if (!room || !isOccupiedRoom(room.status)) continue;
 
         const monthlyRent = amount(lease?.monthly_rent ?? tenant.monthly_rent ?? room.monthly_rent);
         const outstandingBalance = liveOutstanding(tenant, room);
@@ -541,7 +548,9 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
         const clearedDate = lastPayment?.payment_date ?? tenant.updated_at?.slice(0, 10) ?? null;
         if (clearedDate !== dateOnly(now)) continue;
         const lease = activeLeaseByTenant.get(tenant.id);
-        const actualRoom = (lease?.room_id ? roomById.get(lease.room_id) : null) ?? room ?? null;
+        if (!isActiveTenancy(lease, dateOnly(now))) continue;
+        const actualRoom = lease?.room_id ? roomById.get(lease.room_id) : null;
+        if (!actualRoom || !isOccupiedRoom(actualRoom.status)) continue;
         const office = (actualRoom?.office_id ? officeById.get(actualRoom.office_id) : null) ?? (tenant.office_id ? officeById.get(tenant.office_id) : null) ?? null;
         const property = (actualRoom?.property_id ? propertyById.get(actualRoom.property_id) : null) ?? (tenant.property_id ? propertyById.get(tenant.property_id) : null) ?? null;
         const landlordId = actualRoom?.landlord_id ?? property?.landlord_id ?? null;
@@ -595,20 +604,15 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
     const qualifyingCount = tenants.filter((tenant) => {
         if (!isActiveTenant(tenant.status)) return false;
         const lease = activeLeaseByTenant.get(tenant.id);
-        const room = (lease?.room_id ? roomById.get(lease.room_id) : null) ?? (tenant.room_id ? roomById.get(tenant.room_id) : null);
+        if (!isActiveTenancy(lease, dateOnly(now))) return false;
+        const room = lease?.room_id ? roomById.get(lease.room_id) : null;
         const property = room?.property_id ? propertyById.get(room.property_id) : null;
         if (requestedLandlordId && (room?.landlord_id ?? property?.landlord_id ?? null) !== requestedLandlordId) return false;
-        return Boolean(room && isActiveRoom(room.status) && liveOutstanding(tenant, room) > 0);
-    }).length + vacatedDebts.filter((debt) => {
-        const rawRemaining = debt.remaining_amount == null ? amount(debt.final_outstanding_balance ?? debt.original_amount) - amount(debt.recovered_amount) : amount(debt.remaining_amount);
-        const room = debt.room_id ? roomById.get(debt.room_id) : null;
-        const property = (debt.property_id ? propertyById.get(debt.property_id) : null) ?? (room?.property_id ? propertyById.get(room.property_id) : null);
-        if (requestedLandlordId && (debt.landlord_id ?? room?.landlord_id ?? property?.landlord_id ?? null) !== requestedLandlordId) return false;
-        return Math.max(0, rawRemaining) > 0;
+        return Boolean(room && isOccupiedRoom(room.status) && liveOutstanding(tenant, room) > 0);
     }).length;
-    const displayedCount = defaulters.filter((item) => item.source !== "recently_cleared" && item.outstandingBalance > 0).length;
+    const displayedCount = defaulters.filter((item) => item.source === "active_tenant" && item.outstandingBalance > 0).length;
     const integrityAlerts = qualifyingCount === displayedCount ? [] : [`Data integrity alert: ${qualifyingCount.toLocaleString()} live positive-balance accounts qualify, but ${displayedCount.toLocaleString()} are displayed. Refresh or run defaulter reconciliation before collections.`];
-    const activeDefaulters = defaulters.filter((item) => item.source !== "recently_cleared" && item.outstandingBalance > 0);
+    const activeDefaulters = defaulters.filter((item) => item.source === "active_tenant" && item.outstandingBalance > 0);
     const assistant = buildAssistant(activeDefaulters);
 
     void syncDefaulterNotifications({
@@ -649,7 +653,7 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
 }
 
 function buildKpis(items: DefaulterItem[]): DefaultersKpis {
-    const activeItems = items.filter((item) => item.source !== "recently_cleared" && item.outstandingBalance > 0);
+    const activeItems = items.filter((item) => item.source === "active_tenant" && item.outstandingBalance > 0);
     const officeRisk = new Map<string, { count: number; outstanding: number }>();
     for (const item of activeItems) {
         const current = officeRisk.get(item.officeName) ?? { count: 0, outstanding: 0 };
@@ -667,7 +671,7 @@ function buildKpis(items: DefaulterItem[]): DefaultersKpis {
         clearedToday: items.filter((item) => item.source === "recently_cleared" && item.clearedDate === dateOnly()).length,
         highRiskDefaulters: activeItems.filter((item) => item.riskLevel === "high").length,
         promisesDueToday: activeItems.filter((item) => item.promiseStatus === "Due today").length,
-        vacatedWithDebt: activeItems.filter((item) => item.source === "vacated_debt").length,
+        vacatedWithDebt: items.filter((item) => item.source === "vacated_debt" && item.outstandingBalance > 0).length,
         oldestOutstandingAccount: oldestOutstandingAccount ? `${oldestOutstandingAccount.tenantName} (${oldestOutstandingAccount.daysDefaulted} days)` : "No defaulters",
         defaultedOneToSevenDays: activeItems.filter((item) => item.daysDefaulted >= 1 && item.daysDefaulted <= 7).length,
         defaultedEightToThirtyDays: activeItems.filter((item) => item.daysDefaulted >= 8 && item.daysDefaulted <= 30).length,

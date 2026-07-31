@@ -165,7 +165,7 @@ export default function DefaultersConsole({ data }: Props) {
         const monthMax = Number(customMonthsMax || 0);
         return data.defaulters
             .filter((item) => {
-                if (listFilter === "active" && (item.source === "recently_cleared" || item.outstandingBalance <= 0)) return false;
+                if (listFilter === "active" && (item.source !== "active_tenant" || item.outstandingBalance <= 0)) return false;
                 if (listFilter === "vacated" && item.source !== "vacated_debt") return false;
                 if (listFilter === "cleared" && item.source !== "recently_cleared") return false;
                 if (listFilter === "high_risk" && item.riskLevel !== "high") return false;
@@ -402,7 +402,7 @@ export default function DefaultersConsole({ data }: Props) {
 }
 
 function buildKpis(items: DefaulterItem[]) {
-    const activeItems = items.filter((item) => item.source !== "recently_cleared" && item.outstandingBalance > 0);
+    const activeItems = items.filter((item) => item.source === "active_tenant" && item.outstandingBalance > 0);
     const officeRisk = new Map<string, { count: number; outstanding: number }>();
     for (const item of activeItems) {
         const current = officeRisk.get(item.officeName) ?? { count: 0, outstanding: 0 };
@@ -418,7 +418,7 @@ function buildKpis(items: DefaulterItem[]) {
         clearedToday: items.filter((item) => item.source === "recently_cleared").length,
         highRiskDefaulters: activeItems.filter((item) => item.riskLevel === "high").length,
         promisesDueToday: activeItems.filter((item) => item.promiseStatus === "Due today").length,
-        vacatedWithDebt: activeItems.filter((item) => item.source === "vacated_debt").length,
+        vacatedWithDebt: items.filter((item) => item.source === "vacated_debt" && item.outstandingBalance > 0).length,
         oldestOutstandingAccount: oldestOutstandingAccount ? `${oldestOutstandingAccount.tenantName} (${oldestOutstandingAccount.daysDefaulted} days)` : "No defaulters",
         defaultedOneToSevenDays: activeItems.filter((item) => item.daysDefaulted >= 1 && item.daysDefaulted <= 7).length,
         defaultedEightToThirtyDays: activeItems.filter((item) => item.daysDefaulted >= 8 && item.daysDefaulted <= 30).length,
