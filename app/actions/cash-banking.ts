@@ -221,27 +221,6 @@ async function notify(input: {
     });
 }
 
-function isMissingRelationError(error: { code?: string; message?: string } | null | undefined) {
-    const message = String(error?.message ?? "").toLowerCase();
-    return error?.code === "42P01" || error?.code === "PGRST205" || message.includes("could not find the table") || message.includes("does not exist");
-}
-
-async function insertOptional(table: string, row: Record<string, unknown>) {
-    const db = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
-    const { error } = await db.from(table).insert(row);
-    if (error && !isMissingRelationError(error)) {
-        throw new Error(`${table} insert failed: ${error.message}`);
-    }
-}
-
-async function upsertOptional(table: string, row: Record<string, unknown>, onConflict: string) {
-    const db = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
-    const { error } = await db.from(table).upsert(row, { onConflict });
-    if (error && !isMissingRelationError(error)) {
-        throw new Error(`${table} upsert failed: ${error.message}`);
-    }
-}
-
 function revalidateCashPages() {
     revalidatePath("/office/cash-banking");
     revalidatePath("/office/admin/cash-banking");
@@ -513,148 +492,33 @@ export async function giveMoneyToOffice(input: GiveMoneyInput) {
     assertDate(input.movementDate, "Movement date");
     if (!input.reason?.trim()) throw new Error("Reason is required.");
 
-    const sourceType: CashAccountType = input.source === "bank" ? "bank" : "hq_cash";
     const db = createSupabaseAdminClient();
-    const sourceAccount = await ensureCashAccount({
-        accountType: sourceType,
+    const idempotencyKey = [
+        "admin-cash-transfer",
         companyId,
-        officeId: null,
-        name: input.source === "bank" ? "Company Bank" : "Admin Cash",
-    });
-    const officeAccount = await ensureCashAccount({
-        accountType: "office_cash",
-        companyId,
-        officeId: input.officeId,
-        name: "Office Cash",
-    });
-    const sourceBalance = await accountBalance(String(sourceAccount.id));
-    if (amount > sourceBalance) {
-        throw new Error(`Admin cannot assign more than available ${input.source === "bank" ? "bank" : "admin cash"} balance. Available: UGX ${Math.round(sourceBalance).toLocaleString()}.`);
-    }
-
-    const { data: transfer, error: transferError } = await db
-        .from("cash_transfers")
-        .insert({
-            amount,
-            company_id: companyId,
-            completed_at: new Date().toISOString(),
-            from_cash_account_id: sourceAccount.id,
-            requested_by: actorId(context),
-            status: "completed",
-            to_cash_account_id: officeAccount.id,
-        })
-        .select("*")
-        .single();
-    if (transferError) throw new Error(`Office float transfer could not be created: ${transferError.message}`);
-
-    const description = [
-        `Admin float from ${input.source === "bank" ? "company bank" : "admin cash"}`,
-        `reason: ${input.reason}`,
-        input.referenceNumber ? `ref ${input.referenceNumber}` : null,
-        input.notes ? `notes: ${input.notes}` : null,
-    ].filter(Boolean).join(" · ");
-
-    const { error: transactionError } = await db.from("cash_transactions").insert([
-        {
-            amount,
-            cash_account_id: sourceAccount.id,
-            company_id: companyId,
-            description,
-            office_id: input.officeId,
-            recorded_by: actorId(context),
-            source_id: transfer.id,
-            source_type: "admin_float",
-            transaction_date: input.movementDate,
-            transaction_type: "outflow",
-        },
-        {
-            amount,
-            cash_account_id: officeAccount.id,
-            company_id: companyId,
-            description,
-            office_id: input.officeId,
-            recorded_by: actorId(context),
-            source_id: transfer.id,
-            source_type: "admin_float",
-            transaction_date: input.movementDate,
-            transaction_type: "inflow",
-        },
-    ]);
-    if (transactionError) throw new Error(`Office float ledger could not be posted: ${transactionError.message}`);
-
-    await insertOptional("admin_cash_movements", {
+        input.officeId,
+        input.movementDate,
         amount,
-        company_id: companyId,
-        movement_date: input.movementDate,
-        movement_type: "money_sent_to_office",
-        notes: input.notes ?? null,
-        office_id: input.officeId,
-        recorded_by: actorId(context),
-        reference: input.referenceNumber ?? null,
-        source: input.source,
-        transfer_id: transfer.id,
+        input.source,
+        input.referenceNumber?.trim() || input.reason.trim().toLowerCase(),
+    ].join(":");
+    const { data, error } = await (db as unknown as { rpc: (name: string, args?: Record<string, unknown>) => Promise<{ data: Record<string, unknown> | null; error: { message: string } | null }> }).rpc("ddumba_v1_admin_cash_transfer_to_office", {
+        p_admin_id: actorId(context),
+        p_amount: amount,
+        p_company_id: companyId,
+        p_idempotency_key: idempotencyKey,
+        p_movement_date: input.movementDate,
+        p_notes: input.notes ?? null,
+        p_office_id: input.officeId,
+        p_reason: input.reason.trim(),
+        p_reference: input.referenceNumber?.trim() || null,
+        p_source: input.source,
     });
-    await insertOptional("office_cash_movements", {
-        amount,
-        company_id: companyId,
-        movement_date: input.movementDate,
-        movement_type: "money_in",
-        notes: input.notes ?? null,
-        office_id: input.officeId,
-        recorded_by: actorId(context),
-        reference: input.referenceNumber ?? null,
-        source_id: transfer.id,
-        source_type: "admin_float",
-    });
-    await upsertOptional("office_cash_balances", {
-        balance_date: input.movementDate,
-        company_id: companyId,
-        money_at_office: await officeCashBalance({ companyId, officeId: input.officeId }),
-        money_received_from_admin: amount,
-        office_id: input.officeId,
-        updated_at: new Date().toISOString(),
-    }, "company_id,office_id,balance_date");
+    if (error) throw new Error(`Admin Cash Transfer to Office failed: ${error.message}`);
+    if (!data?.ok) throw new Error("Admin Cash Transfer to Office failed: Supabase RPC returned no success payload.");
 
-    await upsertOptional("collections", {
-        amount,
-        amount_paid: amount,
-        collection_number: `ADMIN-CASH-${transfer.id}`,
-        company_id: companyId,
-        entered_by_account_id: actorId(context),
-        entered_by_name: context.profile?.full_name ?? "Admin",
-        financial_effective: true,
-        notes: input.notes ?? input.reason,
-        office_id: input.officeId,
-        paid_at: `${input.movementDate}T00:00:00.000Z`,
-        payment_date: input.movementDate,
-        payment_method: input.source === "bank" ? "Admin Bank Transfer" : "Admin Cash Transfer",
-        recorded_by: actorId(context),
-        reference_number: `ADMIN-CASH-${transfer.id}`,
-        status: "paid",
-        type: "ADMIN_CASH_TRANSFER",
-    }, "company_id,office_id,reference_number");
-
-    await notify({
-        actionUrl: "/office/cash-banking",
-        companyId,
-        entityId: transfer.id,
-        entityType: "cash_transfer",
-        message: `Admin gave UGX ${Math.round(amount).toLocaleString()} to your office float.`,
-        officeId: input.officeId,
-        recipientType: "office",
-        severity: "success",
-        title: "Office float received",
-    });
-    await logUserAction({
-        action: "admin_money_given_to_office",
-        entityType: "cash_transfer",
-        entityId: transfer.id,
-        companyId,
-        officeId: input.officeId,
-        afterData: { ...input, amount },
-    });
     revalidateCashPages();
-    return { ok: true, transferId: transfer.id };
+    return { ok: true, transferId: String(data.transfer_id ?? ""), duplicate: Boolean(data.duplicate), reference: String(data.reference ?? "") };
 }
 
 export async function recordAdminCashMovement(input: AdminCashMovementInput) {

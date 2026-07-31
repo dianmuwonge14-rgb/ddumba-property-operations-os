@@ -65,3 +65,24 @@ test("admin cash entry posts through the authoritative cash transaction ledger",
   assert.match(action, /source_type: "admin_bank_deposit"/);
   assert.ok(action.includes('.from("cash_transactions").insert(rows)'));
 });
+
+test("admin money to office uses the atomic transfer RPC and defaults to Admin Cash", () => {
+  const action = readFileSync("app/actions/cash-banking.ts", "utf8");
+  const giveMoneyBody = action.slice(action.indexOf("export async function giveMoneyToOffice"), action.indexOf("export async function recordAdminCashMovement"));
+  const component = readFileSync("components/office/cash-banking/CashBankingConsole.tsx", "utf8");
+  const migration = readFileSync("supabase/upgrade_migrations/0235_admin_cash_transfer_to_office_rpc.sql", "utf8");
+
+  assert.match(giveMoneyBody, /ddumba_v1_admin_cash_transfer_to_office/);
+  assert.match(giveMoneyBody, /p_office_id: input\.officeId/);
+  assert.match(giveMoneyBody, /p_source: input\.source/);
+  assert.doesNotMatch(giveMoneyBody, /\.from\("cash_transfers"\)\s*\.insert\(\{/);
+  assert.match(component, /source: "admin_cash" as "bank" \| "admin_cash"/);
+  assert.match(component, /optionValues=\{\["bank", "admin_cash"\]\}/);
+  assert.match(migration, /create or replace function public\.ddumba_v1_admin_cash_transfer_to_office/);
+  assert.match(migration, /pg_advisory_xact_lock/);
+  assert.match(migration, /raise exception '% is insufficient\. Available: UGX %\.'/);
+  assert.match(migration, /case when v_source = 'bank' then 'Money at Bank' else 'Admin cash' end/);
+  assert.match(migration, /type = 'ADMIN_CASH_TRANSFER'/);
+  assert.match(migration, /insert into public\.collections/);
+  assert.match(migration, /left join public\.admin_cash_movements acm/);
+});

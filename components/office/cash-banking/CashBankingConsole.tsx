@@ -64,7 +64,7 @@ export default function CashBankingConsole({ data }: Props) {
     const [floatForm, setFloatForm] = useState({
         officeId: data.offices[0]?.id ?? "",
         amount: "",
-        source: "bank" as "bank" | "admin_cash",
+        source: "admin_cash" as "bank" | "admin_cash",
         movementDate: today(),
         reason: "",
         referenceNumber: "",
@@ -178,7 +178,8 @@ export default function CashBankingConsole({ data }: Props) {
                     referenceNumber: floatForm.referenceNumber || null,
                     notes: floatForm.notes || null,
                 });
-                setMessage("Office float sent and office notified.");
+                const officeName = data.offices.find((office) => office.id === floatForm.officeId)?.name ?? "office";
+                setMessage(`${formatMoney(Number(floatForm.amount))} successfully transferred to ${officeName}.`);
                 setFloatForm((current) => ({ ...current, amount: "", reason: "", referenceNumber: "", notes: "" }));
                 router.refresh();
             } catch (err) {
