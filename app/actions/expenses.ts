@@ -122,6 +122,14 @@ function itemKey(value: string | null | undefined) {
     return String(value ?? "other").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "other";
 }
 
+function normalizedEmployeeRole(value: unknown) {
+    return String(value ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function isAllRounderEmployee(row: Record<string, unknown>) {
+    return [row.employee_assignment_type, row.role, row.job_title].some((value) => normalizedEmployeeRole(value) === "allrounder");
+}
+
 function itemName(value: string | null | undefined) {
     const clean = String(value ?? "Other").trim();
     return clean || "Other";
@@ -778,21 +786,22 @@ async function loadEmployeeExpensePreview(input: {
     const monthKeyValue = monthStart(input.expenseDate);
     const key = itemKey(input.expenseItem);
     const expenseDate = input.expenseDate || new Date().toISOString().slice(0, 10);
+    const employeeDb = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
     const [employeeResult, allowanceResult, spentResult, pendingResult, lunchLedgerResult, attendanceResult] = await Promise.all([
-        input.db
+        employeeDb
             .from("employees")
             .select("*")
             .eq("company_id", input.companyId)
             .eq("id", input.employeeId)
             .maybeSingle(),
-        input.db
+        employeeDb
             .from("employee_expense_allowances")
             .select("*")
             .eq("company_id", input.companyId)
             .eq("expense_item_key", key)
             .eq("period_month", monthKeyValue)
             .eq("active", true),
-        input.db
+        employeeDb
             .from("employee_expenses")
             .select("amount")
             .eq("company_id", input.companyId)
@@ -800,7 +809,7 @@ async function loadEmployeeExpensePreview(input: {
             .eq("category", key)
             .eq("month_key", monthKeyValue)
             .eq("active", true),
-        input.db
+        employeeDb
             .from("employee_expense_requests")
             .select("extra_amount")
             .eq("company_id", input.companyId)
@@ -809,7 +818,7 @@ async function loadEmployeeExpensePreview(input: {
             .eq("month_key", monthKeyValue)
             .eq("status", "pending")
             .eq("active", true),
-        input.db
+        employeeDb
             .from("employee_lunch_ledger")
             .select("entry_type,ledger_date,earned_amount,taken_amount")
             .eq("company_id", input.companyId)
@@ -833,6 +842,9 @@ async function loadEmployeeExpensePreview(input: {
     if (attendanceResult.error && !/does not exist|schema cache/i.test(attendanceResult.error.message ?? "")) throw new Error(attendanceResult.error.message);
     const employee = employeeResult.data as Record<string, unknown> | null;
     if (!employee) throw new Error("Employee not found.");
+    if (String(employee.status ?? "active").toLowerCase() !== "active" || !isAllRounderEmployee(employee)) {
+        throw new Error("Only active All Rounders can be selected for authorised employee expenses.");
+    }
     const role = itemKey(String(employee.role ?? employee.job_title ?? ""));
     const allowances = (allowanceResult.data ?? []) as Array<Record<string, unknown>>;
     const allowance = allowances.find((row) => String(row.employee_id ?? "") === input.employeeId && (!row.office_id || String(row.office_id) === input.officeId))
@@ -845,7 +857,7 @@ async function loadEmployeeExpensePreview(input: {
     const lunchLedgerRows = (lunchLedgerResult.data ?? []) as Array<Record<string, unknown>>;
     const attendanceRows = (attendanceResult.data ?? []) as Array<Record<string, unknown>>;
     const attendanceStatus = String(attendanceRows[0]?.status ?? "not_checked_in");
-    const presentForExpenseDate = attendanceRows.length > 0 && !["absent", "not_checked_in"].includes(attendanceStatus.toLowerCase());
+    const presentForExpenseDate = isAllRounderEmployee(employee) || (attendanceRows.length > 0 && !["absent", "not_checked_in"].includes(attendanceStatus.toLowerCase()));
     const earnedTodayExists = lunchLedgerRows.some((row) => String(row.entry_type) === "earned" && String(row.ledger_date).slice(0, 10) === expenseDate);
     const lunchEarnedStored = lunchLedgerRows.reduce((total, row) => total + amount(row.earned_amount), 0);
     const lunchTakenStored = lunchLedgerRows.reduce((total, row) => total + amount(row.taken_amount), 0);
@@ -880,6 +892,8 @@ async function loadEmployeeExpensePreview(input: {
         treatment,
         approvalRequired: salaryDeductible ? false : extraAmount > 0,
         employeeName: String(employee.full_name ?? "Employee"),
+        employeeHomeOfficeId: typeof employee.office_id === "string" ? employee.office_id : null,
+        submittingOfficeId: input.officeId,
         itemName: itemName(input.expenseItem),
         monthKey: monthKeyValue,
     } satisfies EmployeeExpensePreview;
@@ -956,9 +970,12 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
     let employeeExpenseId: string | null = null;
     const lunchItem = isLunchItem(input.expenseItem);
     const salaryDeductible = isSalaryDeductibleExpenseItem(input.expenseItem);
+    const employeeHomeOfficeId = preview.employeeHomeOfficeId ?? null;
+    const submittingOfficeId = preview.submittingOfficeId ?? officeId;
     if (lunchItem) {
+        const duplicateDb = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
         const [existingLunchResult, pendingLunchResult] = await Promise.all([
-            db
+            duplicateDb
                 .from("employee_expenses")
                 .select("id, office_id, status")
                 .eq("company_id", companyId)
@@ -968,7 +985,7 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
                 .eq("active", true)
                 .in("status", ["approved", "pending"])
                 .limit(1),
-            db
+            duplicateDb
                 .from("employee_expense_requests")
                 .select("id, office_id, status")
                 .eq("company_id", companyId)
@@ -1025,10 +1042,13 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
                 category: "Employee Expense",
                 company_id: companyId,
                 description: `[employee_expense_allowed] ${input.note ?? ""}`.trim(),
+                employee_id: input.employeeId,
+                employee_home_office_id: employeeHomeOfficeId,
                 expense_date: expenseDate,
                 expense_number: expenseNumber(),
                 item: `${preview.itemName} - ${preview.employeeName}`,
                 office_id: officeId,
+                submitting_office_id: submittingOfficeId,
                 submitted_by: actorId,
             })
             .select("id")
@@ -1045,6 +1065,7 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
                 category: itemKey(input.expenseItem),
                 company_id: companyId,
                 created_by: actorId,
+                employee_home_office_id: employeeHomeOfficeId,
                 expense_date: expenseDate,
                 expense_source: "office",
                 month_key: preview.monthKey,
@@ -1053,6 +1074,7 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
                 recorded_by_office: true,
                 salary_deductible: salaryDeductible,
                 status: "approved",
+                submitting_office_id: submittingOfficeId,
                 employee_id: input.employeeId,
             })
             .select("id")
@@ -1104,6 +1126,7 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
                 company_id: companyId,
                 employee_expense_id: employeeExpenseId,
                 employee_id: input.employeeId,
+                employee_home_office_id: employeeHomeOfficeId,
                 expense_date: expenseDate,
                 expense_id: expenseId,
                 extra_amount: preview.extraAmount,
@@ -1117,6 +1140,7 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
                 requested_item_key: itemKey(input.expenseItem),
                 requested_item_name: preview.itemName,
                 status: "pending",
+                submitting_office_id: submittingOfficeId,
             })
             .select("*")
             .single();
@@ -1231,10 +1255,13 @@ export async function decideEmployeeExpenseRequest(input: DecideEmployeeExpenseR
             category: "Employee Extra Expense",
             company_id: companyId,
             description: `[employee_expense_extra_approved] ${request.note ?? ""} ${input.comment ? `Admin: ${input.comment}` : ""}`.trim(),
+            employee_id: request.employee_id,
+            employee_home_office_id: request.employee_home_office_id ?? null,
             expense_date: request.expense_date,
             expense_number: expenseNumber(),
             item: `${request.requested_item_name ?? "Employee expense"} extra - ${employee?.full_name ?? "Employee"}`,
             office_id: request.office_id,
+            submitting_office_id: request.submitting_office_id ?? request.office_id,
             submitted_by: request.requested_by ?? actorId,
         })
         .select("id")
@@ -1251,6 +1278,7 @@ export async function decideEmployeeExpenseRequest(input: DecideEmployeeExpenseR
             category: String(request.requested_item_key ?? "other"),
             company_id: companyId,
             created_by: request.requested_by ?? actorId,
+            employee_home_office_id: request.employee_home_office_id ?? null,
             expense_date: request.expense_date,
             expense_source: "office_extra_approved",
             month_key: request.month_key,
@@ -1261,6 +1289,7 @@ export async function decideEmployeeExpenseRequest(input: DecideEmployeeExpenseR
             reviewed_by: actorId,
             salary_deductible: salaryDeductible,
             status: "approved",
+            submitting_office_id: request.submitting_office_id ?? request.office_id,
             employee_id: request.employee_id,
         })
         .select("id")

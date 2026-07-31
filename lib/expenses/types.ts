@@ -291,6 +291,8 @@ export type EmployeeExpensePreview = {
     treatment: "company_expense" | "employee_personal_expense";
     approvalRequired: boolean;
     employeeName: string;
+    employeeHomeOfficeId?: string | null;
+    submittingOfficeId?: string | null;
     itemName: string;
     monthKey: string;
 };

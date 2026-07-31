@@ -95,9 +95,14 @@ type EntrySearchResult = {
     location?: string | null;
     phone?: string | null;
     role?: string | null;
+    employeeCode?: string | null;
 };
 type EmployeeLunchDetail = EntrySearchResult & {
     position: string;
+    employeeHomeOfficeId?: string | null;
+    employeeHomeOfficeName?: string | null;
+    submittingOfficeId?: string | null;
+    submittingOfficeName?: string | null;
     dailyLunchAllocation: number;
     previousUnusedLunchBalance: number;
     lunchAvailableToday: number;
@@ -1162,7 +1167,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                                                         setEmployeeSearch(event.target.value);
                                                         setEmployeeId("");
                                                         setSelectedEmployeeDetail(null);
-                                                    }} placeholder="Search employee name, phone or position..." className="h-full min-w-0 flex-1 bg-transparent text-lg font-black text-slate-950 outline-none" />
+                                                    }} placeholder="Search All Rounder name, phone, code, role or office..." className="h-full min-w-0 flex-1 bg-transparent text-lg font-black text-slate-950 outline-none" />
                                                     {employeeSearch ? <button type="button" onClick={() => { setEmployeeSearch(""); setEmployeeId(""); setSelectedEmployeeDetail(null); setEmployeeSearchResults([]); }} className="rounded-full p-1 text-slate-400 hover:bg-white hover:text-slate-700"><X size={16} /></button> : null}
                                                 </div>
                                                 {employeeSearchResults.length || loadingEmployeeSearch ? (
@@ -1177,7 +1182,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                                                                 loadEntryDetail("employee", employee.id);
                                                             }} className="block w-full rounded-xl px-3 py-2 text-left hover:bg-blue-50">
                                                                 <p className="text-sm font-black text-slate-950">{employee.name}</p>
-                                                                <p className="text-xs font-bold text-slate-500">{employee.officeName ?? "Office"}{employee.role ? ` · ${employee.role}` : ""}{employee.phone ? ` · ${employee.phone}` : ""}</p>
+                                                                <p className="text-xs font-bold text-slate-500">{employee.officeName ?? "Office"}{employee.role ? ` · ${employee.role}` : ""}{employee.employeeCode ? ` · ${employee.employeeCode}` : ""}{employee.phone ? ` · ${employee.phone}` : ""}</p>
                                                             </button>
                                                         ))}
                                                         {!loadingEmployeeSearch && !employeeSearchResults.length ? <div className="px-3 py-2 text-sm font-bold text-slate-500">No real employee matches found.</div> : null}
@@ -1192,7 +1197,8 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                                         {selectedEmployeeOption ? (
                                             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                                                 <PremiumEntryCard label="Employee Name" value={selectedEmployeeOption.name} />
-                                                <PremiumEntryCard label="Office" value={selectedEmployeeOption.officeName ?? activeOfficeName} />
+                                                <PremiumEntryCard label="Employee Home Office" value={selectedEmployeeDetail?.employeeHomeOfficeName ?? selectedEmployeeOption.officeName ?? activeOfficeName} />
+                                                <PremiumEntryCard label="Submitting Office" value={selectedEmployeeDetail?.submittingOfficeName ?? activeOfficeName} />
                                                 <PremiumEntryCard label="Position" value={selectedEmployeeDetail?.position ?? selectedEmployeeOption.role ?? "--"} />
                                                 <PremiumEntryCard label="Daily Lunch Allocation" value={money(selectedEmployeeDetail?.dailyLunchAllocation ?? employeePreview?.dailyLunchAllowance ?? 7000)} />
                                                 <PremiumEntryCard label="Previous Unused Lunch Balance" value={loadingEmployeeDetail ? "Loading..." : money(selectedEmployeeDetail?.previousUnusedLunchBalance ?? Math.max(0, (employeePreview?.lunchBalanceBefore ?? 0) - (employeePreview?.dailyLunchAllowance || 7000)))} />

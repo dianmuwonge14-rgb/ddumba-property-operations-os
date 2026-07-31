@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requirePermission } from "@/lib/auth/permissions";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +19,14 @@ function activeStatus(row: Record<string, unknown>) {
     return !["rejected", "cancelled", "canceled", "reversed", "voided", "deleted", "archived"].includes(String(row.status ?? "").toLowerCase());
 }
 
+function normalizedRole(value: unknown) {
+    return String(value ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function isAllRounderEmployee(row: Record<string, unknown>) {
+    return [row.employee_assignment_type, row.role, row.job_title].some((value) => normalizedRole(value) === "allrounder");
+}
+
 export async function GET(request: NextRequest) {
     try {
         const context = await requirePermission("expenses.read");
@@ -33,22 +42,22 @@ export async function GET(request: NextRequest) {
         if (!id) throw new Error("Select a record.");
 
         if (type === "employee") {
-            let employeeQuery = db
+            const admin = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
+            const employeeQuery = admin
                 .from("employees")
-                .select("id, full_name, office_id, role, job_title, phone, email, status, offices:office_id(id, office_name, name)")
+                .select("id, full_name, office_id, role, job_title, phone, email, status, employee_assignment_type, offices:office_id(id, office_name, name)")
                 .eq("company_id", companyId)
                 .eq("id", id);
-            if (!canSeeAll && activeOfficeId) employeeQuery = employeeQuery.eq("office_id", activeOfficeId);
             const [employeeResult, ledgerResult, expenseResult, requestResult] = await Promise.all([
                 employeeQuery.maybeSingle(),
-                db
+                admin
                     .from("employee_lunch_ledger")
                     .select("entry_type, ledger_date, earned_amount, taken_amount, active")
                     .eq("company_id", companyId)
                     .eq("employee_id", id)
                     .eq("month_key", monthStart(expenseDate))
                     .eq("active", true),
-                db
+                admin
                     .from("employee_expenses")
                     .select("amount, expense_date, status, active, category")
                     .eq("company_id", companyId)
@@ -56,7 +65,7 @@ export async function GET(request: NextRequest) {
                     .eq("month_key", monthStart(expenseDate))
                     .eq("category", "lunch")
                     .eq("active", true),
-                db
+                admin
                     .from("employee_expense_requests")
                     .select("requested_amount, extra_amount, expense_date, status, requested_item_key, active")
                     .eq("company_id", companyId)
@@ -71,6 +80,9 @@ export async function GET(request: NextRequest) {
             if (requestResult.error && !/does not exist|schema cache/i.test(requestResult.error.message ?? "")) throw new Error(requestResult.error.message);
             const employee = employeeResult.data as Record<string, unknown> | null;
             if (!employee) throw new Error("Employee not found.");
+            if (String(employee.status ?? "active").toLowerCase() !== "active" || !isAllRounderEmployee(employee)) {
+                throw new Error("Only active All Rounders can be selected for authorised employee expenses.");
+            }
             const office = employee.offices as Record<string, unknown> | null;
             const dailyAllocation = 7000;
             const ledgerRows = (ledgerResult.data ?? []) as Array<Record<string, unknown>>;
@@ -106,6 +118,10 @@ export async function GET(request: NextRequest) {
                     name: String(employee.full_name ?? "Employee"),
                     officeId: typeof employee.office_id === "string" ? employee.office_id : null,
                     officeName: String(office?.office_name ?? office?.name ?? "Office"),
+                    employeeHomeOfficeId: typeof employee.office_id === "string" ? employee.office_id : null,
+                    employeeHomeOfficeName: String(office?.office_name ?? office?.name ?? "Office"),
+                    submittingOfficeId: activeOfficeId,
+                    submittingOfficeName: String(context.activeOffice?.office_name ?? context.activeOffice?.name ?? "Submitting office"),
                     position: String(employee.role ?? employee.job_title ?? ""),
                     dailyLunchAllocation: dailyAllocation,
                     previousUnusedLunchBalance,

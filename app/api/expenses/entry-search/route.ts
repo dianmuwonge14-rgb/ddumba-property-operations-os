@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requirePermission } from "@/lib/auth/permissions";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -36,29 +37,25 @@ export async function GET(request: NextRequest) {
         const canSeeAll = context.isCompanyAdmin && !context.isOfficeMode;
 
         if (type === "employee") {
-            let query = supabase
-                .from("employees")
-                .select("id, full_name, office_id, role, job_title, phone, email, status, employee_assignment_type, offices:office_id(id, office_name, name)")
-                .eq("company_id", companyId)
-                .or(`full_name.ilike.${like},phone.ilike.${like},email.ilike.${like},role.ilike.${like},job_title.ilike.${like}`)
-                .order("full_name", { ascending: true, nullsFirst: false })
-                .limit(12);
-            if (!canSeeAll && activeOfficeId) query = query.eq("office_id", activeOfficeId);
-            const { data, error } = await query;
+            const admin = createSupabaseAdminClient() as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }> };
+            const { data, error } = await admin.rpc("ddumba_v1_expense_all_rounder_search", {
+                p_company_id: companyId,
+                p_query: q,
+            });
             if (error) throw new Error(error.message);
             const results = ((data ?? []) as Array<Record<string, unknown>>)
-                .filter(isRealEmployee)
                 .map((row) => {
-                    const office = row.offices as Record<string, unknown> | null;
                     return {
-                        id: String(row.id),
-                        name: String(row.full_name ?? "Employee"),
-                        officeId: typeof row.office_id === "string" ? row.office_id : null,
-                        officeName: String(office?.office_name ?? office?.name ?? "Office"),
-                        role: String(row.role ?? row.job_title ?? ""),
+                        id: String(row.employee_id),
+                        name: String(row.employee_name ?? "Employee"),
+                        officeId: typeof row.home_office_id === "string" ? row.home_office_id : null,
+                        officeName: String(row.home_office_name ?? "Office"),
+                        role: String(row.employee_position ?? "All Rounder"),
                         phone: typeof row.phone === "string" ? row.phone : null,
+                        employeeCode: typeof row.employee_code === "string" ? row.employee_code : null,
                     };
-                });
+                })
+                .filter(isRealEmployee);
             return NextResponse.json({ results }, { headers: { "Cache-Control": "no-store" } });
         }
 
