@@ -93,6 +93,41 @@ function cleanPaymentMethod(value: unknown): "cash" | "mobile_money" | "bank" {
     return value === "mobile_money" || value === "bank" ? value : "cash";
 }
 
+function formatPermanentDeleteFailure(result: Record<string, unknown>) {
+    const code = String(result.code ?? "DELETE_FAILED");
+    const message = typeof result.message === "string" && result.message.trim()
+        ? result.message.trim()
+        : null;
+    const blockers = Array.isArray(result.blockers) ? result.blockers : [];
+
+    if (code === "DELETE_BLOCKED") {
+        const details = blockers
+            .map((blocker) => {
+                if (!blocker || typeof blocker !== "object") return null;
+                const row = blocker as Record<string, unknown>;
+                const type = String(row.type ?? "dependency");
+                const count = row.count !== undefined ? ` (${row.count})` : "";
+                const amount = row.amount !== undefined ? ` UGX ${Number(row.amount).toLocaleString("en-US")}` : "";
+                const blockerMessage = typeof row.message === "string" ? `: ${row.message}` : "";
+                return `${type}${count}${amount}${blockerMessage}`;
+            })
+            .filter(Boolean)
+            .join("; ");
+        return details
+            ? `Permanent deletion is blocked: ${details}`
+            : "Permanent deletion is blocked by protected operational dependencies.";
+    }
+
+    if (code === "DELETE_FAILED") {
+        const sqlState = typeof result.sqlstate === "string" ? result.sqlstate : "unknown";
+        return message
+            ? `Permanent deletion failed (${sqlState}): ${message}`
+            : `Permanent deletion failed (${sqlState}).`;
+    }
+
+    return message ?? "Permanent deletion could not be completed.";
+}
+
 function landlordAdvanceTotal(row: Record<string, unknown>) {
     const explicitTotal = numericAmount(row.total_repayable);
     if (explicitTotal > 0) return explicitTotal;
@@ -268,6 +303,10 @@ export async function permanentlyDeleteLandlordPortfolio(input: PermanentlyDelet
     });
 
     if (error) throw new Error(error.message);
+    const result = (data ?? {}) as Record<string, unknown>;
+    if (result.ok === false) {
+        throw new Error(formatPermanentDeleteFailure(result));
+    }
 
     for (const path of [
         "/office/landlords",
