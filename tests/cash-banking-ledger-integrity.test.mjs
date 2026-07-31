@@ -71,6 +71,7 @@ test("admin money to office uses the atomic transfer RPC and defaults to Admin C
   const giveMoneyBody = action.slice(action.indexOf("export async function giveMoneyToOffice"), action.indexOf("export async function recordAdminCashMovement"));
   const component = readFileSync("components/office/cash-banking/CashBankingConsole.tsx", "utf8");
   const migration = readFileSync("supabase/upgrade_migrations/0235_admin_cash_transfer_to_office_rpc.sql", "utf8");
+  const legacyBackfill = readFileSync("supabase/upgrade_migrations/0236_legacy_admin_float_collection_backfill.sql", "utf8");
 
   assert.match(giveMoneyBody, /ddumba_v1_admin_cash_transfer_to_office/);
   assert.match(giveMoneyBody, /p_office_id: input\.officeId/);
@@ -85,4 +86,7 @@ test("admin money to office uses the atomic transfer RPC and defaults to Admin C
   assert.match(migration, /type = 'ADMIN_CASH_TRANSFER'/);
   assert.match(migration, /insert into public\.collections/);
   assert.match(migration, /left join public\.admin_cash_movements acm/);
+  assert.match(legacyBackfill, /left\(ct\.source_id::text, 8\)/);
+  assert.match(legacyBackfill, /type = 'ADMIN_CASH_TRANSFER'/);
+  assert.doesNotMatch(legacyBackfill, /insert into public\.cash_transactions/);
 });
