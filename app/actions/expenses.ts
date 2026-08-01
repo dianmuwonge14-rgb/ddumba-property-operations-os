@@ -5,6 +5,7 @@ import { requireAuth, requireCompanyAdminMode, requirePermission } from "@/lib/a
 import { logUserAction } from "@/lib/auth/audit";
 import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createLandlordPaymentReceipt } from "@/lib/receipts/payment-receipts";
+import { assertCurrentBusinessDate, currentBusinessDate } from "@/lib/business-date";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getExpenseInActiveOffice } from "@/lib/expenses/data";
@@ -110,8 +111,12 @@ function amount(value: unknown) {
 }
 
 function monthStart(value: string | null | undefined) {
-    const source = value && /^\d{4}-\d{2}/.test(value) ? value.slice(0, 7) : new Date().toISOString().slice(0, 7);
+    const source = value && /^\d{4}-\d{2}/.test(value) ? value.slice(0, 7) : currentBusinessDate().slice(0, 7);
     return `${source}-01`;
+}
+
+function currentExpenseDate(value: string | null | undefined) {
+    return assertCurrentBusinessDate(value || currentBusinessDate(), "Expenses can only be recorded for the current date.");
 }
 
 function validUuid(value: unknown): value is string {
@@ -373,7 +378,7 @@ export async function createExpense(input: CreateExpenseInput) {
     const amount = Number(input.amount);
     assertAmount(amount);
 
-    const expenseDate = input.expenseDate || new Date().toISOString().slice(0, 10);
+    const expenseDate = currentExpenseDate(input.expenseDate);
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
     const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
     const expensePayload = {
@@ -592,7 +597,7 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
     const amount = Number(input.amount);
     assertAmount(amount);
     if (!input.landlordId) throw new Error("Select landlord.");
-    const paymentDate = input.expenseDate || new Date().toISOString().slice(0, 10);
+    const paymentDate = currentExpenseDate(input.expenseDate);
     const paymentMonth = monthStart(input.paymentMonth || paymentDate);
     const officeId = await resolveLandlordPaymentOfficeId({
         activeOfficeId: context.activeOffice!.id,
@@ -785,7 +790,7 @@ async function loadEmployeeExpensePreview(input: {
 }) {
     const monthKeyValue = monthStart(input.expenseDate);
     const key = itemKey(input.expenseItem);
-    const expenseDate = input.expenseDate || new Date().toISOString().slice(0, 10);
+    const expenseDate = input.expenseDate || currentBusinessDate();
     const employeeDb = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
     const [employeeResult, allowanceResult, spentResult, pendingResult, lunchLedgerResult, attendanceResult] = await Promise.all([
         employeeDb
@@ -935,7 +940,7 @@ export async function previewEmployeeExpense(input: CreateEmployeeExpenseInput):
         companyId,
         db,
         employeeId: input.employeeId,
-        expenseDate: input.expenseDate || new Date().toISOString().slice(0, 10),
+        expenseDate: input.expenseDate || currentBusinessDate(),
         expenseItem: input.expenseItem,
         officeId,
     });
@@ -954,8 +959,7 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
     assertAmount(value);
     if (!input.employeeId) throw new Error("Select employee.");
     if (!input.expenseItem) throw new Error("Select expense item.");
-    const expenseDate = input.expenseDate || new Date().toISOString().slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(expenseDate)) throw new Error("Select a valid expense date.");
+    const expenseDate = currentExpenseDate(input.expenseDate);
     const preview = await loadEmployeeExpensePreview({
         amount: value,
         companyId,

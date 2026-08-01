@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { canAccessOffice, hasPermission, requireAuth, requireCompanyAdminMode } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
+import { assertCurrentBusinessDate } from "@/lib/business-date";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type DynamicDb = {
@@ -74,6 +75,10 @@ function assertDate(value: string, label: string) {
     return candidate;
 }
 
+function assertCurrentSecurityDepositDate(value: string) {
+    return assertCurrentBusinessDate(assertDate(value, "Security deposit date"), "Security deposits can only be recorded for the current date.");
+}
+
 function assertAmount(value: number, label: string) {
     const amount = Number(value);
     if (!Number.isFinite(amount) || amount <= 0) throw new Error(`${label} must be greater than zero.`);
@@ -93,7 +98,7 @@ export async function recordSecurityDeposit(input: RecordSecurityDepositInput) {
     const companyId = context.activeCompany.id;
     const tenantId = input.tenantId.trim();
     const amount = assertAmount(input.amount, "Security deposit amount");
-    const paymentDate = assertDate(input.paymentDate, "Security deposit date");
+    const paymentDate = assertCurrentSecurityDepositDate(input.paymentDate);
     if (!tenantId) throw new Error("Tenant is required.");
 
     const db = createSupabaseAdminClient() as unknown as DynamicDb;

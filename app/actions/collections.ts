@@ -7,6 +7,7 @@ import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createTenantPaymentReceipt } from "@/lib/receipts/payment-receipts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { assertCurrentBusinessDate } from "@/lib/business-date";
 import { getTenantCollectionContext } from "@/lib/collections/data";
 import { buildTenantPaymentCoverageAllocations } from "@/lib/collections/move-in-allocation";
 import { recordCollectionLedgerAndCash } from "@/lib/collections/payment-ledger";
@@ -96,6 +97,10 @@ function normalizePaymentDate(value: string | undefined) {
     const dateOnly = value?.slice(0, 10) ?? "";
     assertDate(dateOnly, "Payment date");
     return dateOnly;
+}
+
+function assertCurrentPaymentDate(value: string | undefined) {
+    return assertCurrentBusinessDate(normalizePaymentDate(value), "Payments can only be recorded for the current date.");
 }
 
 async function getFastTenantPaymentContext(input: {
@@ -770,7 +775,7 @@ export async function recordCollection(input: RecordCollectionInput) {
     const usedToClearOutstanding = Math.min(balanceBefore, amount);
     const paymentSource = input.paymentSource === "employer" || input.paymentKind === "employer_sponsor" ? "employer" : "tenant";
     const paymentKind = input.paymentKind ?? (paymentSource === "employer" ? "employer_sponsor" : "tenant_normal");
-    const paymentDate = normalizePaymentDate(input.paymentDate);
+    const paymentDate = assertCurrentPaymentDate(input.paymentDate);
     const paidAt = new Date().toISOString();
     const employerBalanceAfter = paymentSource === "employer"
         ? Math.max(0, tenantContext.contribution.employerBalance - amount)

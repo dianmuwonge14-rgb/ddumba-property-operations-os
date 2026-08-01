@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireAuth, requireCompanyAdminMode, hasPermission, canAccessOffice } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
+import { assertCurrentBusinessDate } from "@/lib/business-date";
 import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { AuthContext } from "@/lib/auth/types";
@@ -111,6 +112,10 @@ function assertDate(value: string, label: string) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
         throw new Error(`${label} must be a valid date.`);
     }
+}
+
+function assertCurrentTreasuryDate(value: string) {
+    return assertCurrentBusinessDate(value, "Expenses can only be recorded for the current date.");
 }
 
 function actorId(context: AuthContext) {
@@ -244,6 +249,7 @@ async function createTreasuryCashRequest(context: AuthContext, input: TreasuryCa
     const amount = amountValue(input.amount);
     assertAmount(amount);
     assertDate(input.businessDate, input.requestType === "banking" ? "Banking date" : "Handover date");
+    const businessDate = assertCurrentTreasuryDate(input.businessDate);
     if (!input.reason?.trim()) throw new Error("Reason is required.");
 
     const db = createSupabaseAdminClient();
@@ -251,7 +257,7 @@ async function createTreasuryCashRequest(context: AuthContext, input: TreasuryCa
         input.requestType,
         companyId,
         officeId,
-        input.businessDate,
+        businessDate,
         amount,
         input.reference?.trim() || input.reason.trim().toLowerCase(),
     ].join(":");
@@ -261,7 +267,7 @@ async function createTreasuryCashRequest(context: AuthContext, input: TreasuryCa
         .insert({
             amount,
             bank_account_name: input.bankAccountName?.trim() || null,
-            business_date: input.businessDate,
+            business_date: businessDate,
             company_id: companyId,
             handed_over_by: input.handedOverBy?.trim() || context.profile?.full_name || null,
             idempotency_key: idempotencyKey,
@@ -281,7 +287,7 @@ async function createTreasuryCashRequest(context: AuthContext, input: TreasuryCa
     if (error) throw new Error(`Treasury request could not be created: ${error.message}`);
 
     const title = input.requestType === "banking" ? "Banking request pending approval" : "Cash handover to Admin pending approval";
-    const message = `${context.profile?.full_name ?? "Office"} requested ${input.requestType === "banking" ? "banking" : "cash handover to Admin"} of UGX ${Math.round(amount).toLocaleString()} for ${input.businessDate}.`;
+    const message = `${context.profile?.full_name ?? "Office"} requested ${input.requestType === "banking" ? "banking" : "cash handover to Admin"} of UGX ${Math.round(amount).toLocaleString()} for ${businessDate}.`;
     await notify({
         actionUrl: "/office/notifications",
         companyId,
@@ -391,13 +397,14 @@ export async function depositOfficeCashToBank(input: BankMoneyInput): Promise<De
     const amount = amountValue(input.amount);
     assertAmount(amount);
     assertDate(input.bankingDate, "Banking date");
+    const bankingDate = assertCurrentTreasuryDate(input.bankingDate);
     if (!input.bankName?.trim()) throw new Error("Bank/mobile money account is required.");
 
     if (!isAdminContext(context)) {
         const request = await createTreasuryCashRequest(context, {
             amount,
             bankAccountName: input.bankName.trim(),
-            businessDate: input.bankingDate,
+            businessDate: bankingDate,
             method: input.channel || "Bank",
             notes: input.notes,
             officeId,
@@ -437,7 +444,7 @@ export async function depositOfficeCashToBank(input: BankMoneyInput): Promise<De
     const { data, error } = await db.rpc("deposit_office_cash_to_bank", {
         p_amount: amount,
         p_bank_account_name: input.bankName.trim(),
-        p_deposit_date: input.bankingDate,
+        p_deposit_date: bankingDate,
         p_deposit_method: input.channel || "Bank",
         p_deposit_reference: input.referenceNumber || null,
         p_notes: input.notes || null,
@@ -490,6 +497,7 @@ export async function giveMoneyToOffice(input: GiveMoneyInput) {
     const amount = amountValue(input.amount);
     assertAmount(amount);
     assertDate(input.movementDate, "Movement date");
+    const movementDate = assertCurrentTreasuryDate(input.movementDate);
     if (!input.reason?.trim()) throw new Error("Reason is required.");
 
     const db = createSupabaseAdminClient();
@@ -497,7 +505,7 @@ export async function giveMoneyToOffice(input: GiveMoneyInput) {
         "admin-cash-transfer",
         companyId,
         input.officeId,
-        input.movementDate,
+        movementDate,
         amount,
         input.source,
         input.referenceNumber?.trim() || input.reason.trim().toLowerCase(),
@@ -507,7 +515,7 @@ export async function giveMoneyToOffice(input: GiveMoneyInput) {
         p_amount: amount,
         p_company_id: companyId,
         p_idempotency_key: idempotencyKey,
-        p_movement_date: input.movementDate,
+        p_movement_date: movementDate,
         p_notes: input.notes ?? null,
         p_office_id: input.officeId,
         p_reason: input.reason.trim(),
@@ -530,6 +538,7 @@ export async function recordAdminCashMovement(input: AdminCashMovementInput) {
     const amount = amountValue(input.amount);
     assertAmount(amount);
     assertDate(input.movementDate, "Movement date");
+    const movementDate = assertCurrentTreasuryDate(input.movementDate);
 
     const db = createSupabaseAdminClient();
     const actor = actorId(context);
@@ -593,7 +602,7 @@ export async function recordAdminCashMovement(input: AdminCashMovementInput) {
         .insert({
             amount,
             company_id: companyId,
-            movement_date: input.movementDate,
+            movement_date: movementDate,
             movement_type: movementType === "cash_received" ? "admin_cash_received" : movementType === "cash_out" ? "admin_cash_out" : "admin_bank_deposit",
             notes: input.notes ?? null,
             office_id: null,
@@ -628,7 +637,7 @@ export async function recordAdminCashMovement(input: AdminCashMovementInput) {
             recorded_by: actor,
             source_id: sourceId,
             source_type: "admin_cash_received",
-            transaction_date: input.movementDate,
+            transaction_date: movementDate,
             transaction_type: "inflow",
         }]
         : movementType === "cash_out"
@@ -641,7 +650,7 @@ export async function recordAdminCashMovement(input: AdminCashMovementInput) {
                 recorded_by: actor,
                 source_id: sourceId,
                 source_type: "admin_cash_out",
-                transaction_date: input.movementDate,
+                transaction_date: movementDate,
                 transaction_type: "outflow",
             }]
             : [
@@ -654,7 +663,7 @@ export async function recordAdminCashMovement(input: AdminCashMovementInput) {
                     recorded_by: actor,
                     source_id: sourceId,
                     source_type: "admin_bank_deposit",
-                    transaction_date: input.movementDate,
+                    transaction_date: movementDate,
                     transaction_type: "outflow",
                 },
                 {
@@ -666,7 +675,7 @@ export async function recordAdminCashMovement(input: AdminCashMovementInput) {
                     recorded_by: actor,
                     source_id: sourceId,
                     source_type: "admin_bank_deposit",
-                    transaction_date: input.movementDate,
+                    transaction_date: movementDate,
                     transaction_type: "inflow",
                 },
             ];

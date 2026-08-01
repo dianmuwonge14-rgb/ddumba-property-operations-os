@@ -13,6 +13,7 @@ import { downloadTenantPaymentReceiptPdf, prepareReceiptPdfForSharing, printTena
 import TenantContactCard from "@/components/office/shared/TenantContactCard";
 import TenantBillingDateControl from "@/components/office/shared/TenantBillingDateControl";
 import RentDueIntelligencePanel from "@/components/office/payments/RentDueIntelligencePanel";
+import { currentBusinessDate, formatBusinessDate } from "@/lib/business-date";
 import type { AdvanceRentAssistantItem, CollectionTenantResult, FastPaymentRecentItem, FastPaymentRecentTotals, FastPaymentTenantSearchResult } from "@/lib/collections/types";
 import type { Company, Office, UserProfile } from "@/lib/auth/types";
 import type { PaymentReceiptSummary } from "@/lib/receipts/payment-receipts";
@@ -93,7 +94,7 @@ type ReceiptModalState = {
 };
 
 function today() {
-    return new Date().toISOString().slice(0, 10);
+    return currentBusinessDate();
 }
 
 function isDateOnly(value: string) {
@@ -1097,12 +1098,13 @@ export default function FastPaymentsEntry({
                             </p>
                         </div>
                         <label className="block sm:w-60">
-                            <span className="text-xs font-black uppercase tracking-wide text-slate-300">Selected payment date</span>
+                            <span className="text-xs font-black uppercase tracking-wide text-slate-300">Current Date</span>
                             <input
                                 type="date"
                                 value={paymentDate}
-                                onChange={(event) => setPaymentDate(event.target.value)}
-                                className="mt-1 h-13 w-full rounded-2xl border border-white/10 bg-white px-4 text-base font-black text-slate-950 outline-none"
+                                readOnly
+                                aria-label={`Current Date, ${formatBusinessDate(paymentDate)}`}
+                                className="mt-1 h-13 w-full cursor-not-allowed rounded-2xl border border-white/10 bg-white/90 px-4 text-base font-black text-slate-950 outline-none"
                             />
                         </label>
                     </div>
@@ -1289,7 +1291,7 @@ export default function FastPaymentsEntry({
                             </div>
                             <div className="mt-4 grid gap-3 md:grid-cols-5">
                                 <TextField label="Amount paid" type="number" value={securityDepositForm.amount} onChange={(value) => setSecurityDepositForm((current) => ({ ...current, amount: value }))} placeholder="UGX" />
-                                <TextField label="Date" type="date" value={securityDepositForm.paymentDate} onChange={(value) => setSecurityDepositForm((current) => ({ ...current, paymentDate: value }))} />
+                                <TextField label="Current Date" type="date" value={securityDepositForm.paymentDate} onChange={() => undefined} readOnly />
                                 <label className="block">
                                     <span className="text-xs font-black uppercase text-emerald-700">Method</span>
                                     <select
@@ -2133,7 +2135,7 @@ function BalanceAdjustmentModal({
     );
 }
 
-function TextField({ label, onChange, placeholder, type = "text", value }: { label: string; onChange: (value: string) => void; placeholder?: string; type?: string; value: string }) {
+function TextField({ label, onChange, placeholder, readOnly = false, type = "text", value }: { label: string; onChange: (value: string) => void; placeholder?: string; readOnly?: boolean; type?: string; value: string }) {
     return (
         <label className="block">
             <span className="text-xs font-black uppercase text-slate-500">{label}</span>
@@ -2142,7 +2144,8 @@ function TextField({ label, onChange, placeholder, type = "text", value }: { lab
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
                 placeholder={placeholder}
-                className="mt-1 h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                readOnly={readOnly}
+                className={`mt-1 h-12 w-full rounded-2xl border border-slate-200 px-4 text-sm font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100 ${readOnly ? "cursor-not-allowed bg-slate-100 text-slate-700" : "bg-slate-50"}`}
             />
         </label>
     );

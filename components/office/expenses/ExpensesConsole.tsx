@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { AlertTriangle, Banknote, Bot, CheckCircle2, Download, Edit3, Eye, FileText, History, Loader2, Printer, ReceiptText, Search, Trash2, UserRound, WalletCards, X } from "lucide-react";
 import { decideTreasuryCashRequest, submitTreasuryCashRequest } from "@/app/actions/cash-banking";
 import { adminEditExpenseDirect, adminSafeDeleteExpense, approveExpense, createEmployeeExpenseFromExpenses, createExpense, createLandlordPaidExpenseRequest, decideEmployeeExpenseRequest, decideExpenseChangeRequest, decideLandlordExpenseEditRequest, previewEmployeeExpense, previewLandlordPaymentExpense, rejectExpense, submitExpenseChangeRequest, submitLandlordExpenseEdit } from "@/app/actions/expenses";
+import { currentBusinessDate, formatBusinessDate } from "@/lib/business-date";
 import type { EmployeeExpensePreview, ExpenseBalanceReport, ExpenseChangePayload, ExpenseItem, ExpensePeriodMode, ExpensesPageData, LandlordExpenseEditRequestType } from "@/lib/expenses/types";
 
 type Props = {
@@ -14,7 +15,7 @@ type Props = {
 };
 
 function today() {
-    return new Date().toISOString().slice(0, 10);
+    return currentBusinessDate();
 }
 
 function thisMonth() {
@@ -218,7 +219,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
         endMonth: thisMonth(),
         officeId: "",
     });
-    const [expenseDate, setExpenseDate] = useState(today());
+    const [expenseDate] = useState(today());
     const [entryMode, setEntryMode] = useState<ExpenseEntryMode>("landlord_payment");
     const [authorisedType, setAuthorisedType] = useState<AuthorisedExpenseType>("employee_lunch");
     const [expenseItem, setExpenseItem] = useState("");
@@ -360,10 +361,6 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
             if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
         };
     }, []);
-
-    useEffect(() => {
-        if (filters.mode === "single_date") setExpenseDate(filters.singleDate);
-    }, [filters.mode, filters.singleDate]);
 
     useEffect(() => {
         const query = employeeSearch.trim();
@@ -941,12 +938,13 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                         </div>
                         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[170px_150px_150px_150px]">
                             <label className="block">
-                                <span className="text-xs font-black uppercase tracking-wide text-slate-300">Expense date</span>
+                                <span className="text-xs font-black uppercase tracking-wide text-slate-300">Current Date</span>
                                 <input
                                     type="date"
                                     value={expenseDate}
-                                    onChange={(event) => setExpenseDate(event.target.value)}
-                                    className="mt-1 h-12 w-full rounded-2xl border border-white/10 bg-white px-4 text-sm font-black text-slate-950 outline-none"
+                                    readOnly
+                                    aria-label={`Current Date, ${formatBusinessDate(expenseDate)}`}
+                                    className="mt-1 h-12 w-full cursor-not-allowed rounded-2xl border border-white/10 bg-white/90 px-4 text-sm font-black text-slate-700 outline-none"
                                 />
                             </label>
                             <label className="block">
@@ -1190,8 +1188,8 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                                                 ) : null}
                                             </label>
                                             <label className="block">
-                                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Expense date</span>
-                                                <input type="date" value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
+                                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Current Date</span>
+                                                <input type="date" value={expenseDate} readOnly aria-label={`Current Date, ${formatBusinessDate(expenseDate)}`} className="mt-1 h-16 w-full cursor-not-allowed rounded-2xl border border-slate-200 bg-slate-100 px-4 text-lg font-black text-slate-700 outline-none" />
                                             </label>
                                         </div>
                                         {selectedEmployeeOption ? (
@@ -1247,8 +1245,8 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                                     <input ref={itemInputRef} value={expenseItem} onChange={(event) => setExpenseItem(event.target.value)} placeholder="Describe the expense..." className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-2xl font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
                                 </label>
                                 <label className="block">
-                                    <span className="text-xs font-black uppercase tracking-wide text-slate-500">Expense date</span>
-                                    <input type="date" value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
+                                    <span className="text-xs font-black uppercase tracking-wide text-slate-500">Current Date</span>
+                                    <input type="date" value={expenseDate} readOnly aria-label={`Current Date, ${formatBusinessDate(expenseDate)}`} className="mt-1 h-16 w-full cursor-not-allowed rounded-2xl border border-slate-200 bg-slate-100 px-4 text-lg font-black text-slate-700 outline-none" />
                                 </label>
                             </div>
                         ) : null}
@@ -1269,8 +1267,8 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                                         )}
                                     </label>
                                     <label className="block">
-                                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Banking Date</span>
-                                        <input type="date" value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
+                                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Current Date</span>
+                                        <input type="date" value={expenseDate} readOnly aria-label={`Current Date, ${formatBusinessDate(expenseDate)}`} className="mt-1 h-16 w-full cursor-not-allowed rounded-2xl border border-slate-200 bg-slate-100 px-4 text-lg font-black text-slate-700 outline-none" />
                                     </label>
                                     <label className="block">
                                         <span className="text-xs font-black uppercase tracking-wide text-slate-500">Payment / Transfer Method</span>
@@ -1327,8 +1325,8 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                                         )}
                                     </label>
                                     <label className="block">
-                                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Handover Date</span>
-                                        <input type="date" value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
+                                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Current Date</span>
+                                        <input type="date" value={expenseDate} readOnly aria-label={`Current Date, ${formatBusinessDate(expenseDate)}`} className="mt-1 h-16 w-full cursor-not-allowed rounded-2xl border border-slate-200 bg-slate-100 px-4 text-lg font-black text-slate-700 outline-none" />
                                     </label>
                                     <label className="block">
                                         <span className="text-xs font-black uppercase tracking-wide text-slate-500">Acknowledgement / Reference</span>

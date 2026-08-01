@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Banknote, Brain, Building2, Download, Eye, GitBranch, Landmark, Printer, RefreshCw, Send, Trash2, WalletCards } from "lucide-react";
 import { bankOfficeMoney, cancelAdminOfficeTransfer, giveMoneyToOffice, reassignAdminOfficeTransfer, recordAdminCashMovement } from "@/app/actions/cash-banking";
+import { currentBusinessDate, formatBusinessDate } from "@/lib/business-date";
 import type { CashBankingData, CashLedgerRow } from "@/lib/cash-banking/types";
 
 type Props = {
@@ -21,7 +22,7 @@ function formatMoney(value: number) {
 }
 
 function today() {
-    return new Date().toISOString().slice(0, 10);
+    return currentBusinessDate();
 }
 
 function cardTone(index: number) {
@@ -313,7 +314,7 @@ export default function CashBankingConsole({ data }: Props) {
                                 </div>
                                 <div className="grid gap-3 lg:grid-cols-[1fr_1fr_1fr_1.2fr_1fr_1.2fr_auto]">
                                     <Input label="Amount to Bank" value={bankForm.amount} onChange={(value) => setBankForm((current) => ({ ...current, amount: value }))} type="number" />
-                                    <Input label="Deposit Date" value={bankForm.bankingDate} onChange={(value) => setBankForm((current) => ({ ...current, bankingDate: value }))} type="date" />
+                                    <Input label="Current Date" value={bankForm.bankingDate} onChange={() => undefined} type="date" readOnly />
                                     <Select label="Deposit Method" value={bankForm.channel} onChange={(value) => setBankForm((current) => ({ ...current, channel: value }))} options={["Bank", "Mobile Money", "Other"]} />
                                     <Input label="Bank / Account Name" value={bankForm.bankName} onChange={(value) => setBankForm((current) => ({ ...current, bankName: value }))} />
                                     <Input label="Deposit Reference" value={bankForm.referenceNumber} onChange={(value) => setBankForm((current) => ({ ...current, referenceNumber: value }))} />
@@ -336,7 +337,7 @@ export default function CashBankingConsole({ data }: Props) {
                                 <div className="grid gap-3 lg:grid-cols-[1.2fr_1fr_1fr_1fr_1fr_1.2fr_auto]">
                                     <Select label="Choose Office" value={floatForm.officeId} onChange={(value) => setFloatForm((current) => ({ ...current, officeId: value }))} options={data.offices.map((office) => office.name)} optionValues={data.offices.map((office) => office.id)} />
                                     <Input label="Amount to Send" value={floatForm.amount} onChange={(value) => setFloatForm((current) => ({ ...current, amount: value }))} type="number" />
-                                    <Input label="Transfer Date" value={floatForm.movementDate} onChange={(value) => setFloatForm((current) => ({ ...current, movementDate: value }))} type="date" />
+                                    <Input label="Current Date" value={floatForm.movementDate} onChange={() => undefined} type="date" readOnly />
                                     <Select label="Source" value={floatForm.source} onChange={(value) => setFloatForm((current) => ({ ...current, source: value as "bank" | "admin_cash" }))} options={["Bank Account", "Admin Cash"]} optionValues={["bank", "admin_cash"]} />
                                     <Input label="Reference" value={floatForm.referenceNumber} onChange={(value) => setFloatForm((current) => ({ ...current, referenceNumber: value }))} />
                                     <Input label="Notes" value={floatForm.notes} onChange={(value) => setFloatForm((current) => ({ ...current, notes: value }))} />
@@ -356,7 +357,7 @@ export default function CashBankingConsole({ data }: Props) {
                                     <div className="grid gap-3 lg:grid-cols-[1fr_1fr_1fr_1fr_1fr_1.2fr_auto]">
                                         <Select label="Movement" value={adminCashForm.movementType} onChange={(value) => setAdminCashForm((current) => ({ ...current, movementType: value as "cash_received" | "cash_out" | "bank_deposit" }))} options={["Cash Received", "Cash Out", "Deposit to Bank"]} optionValues={["cash_received", "cash_out", "bank_deposit"]} />
                                         <Input label="Amount" value={adminCashForm.amount} onChange={(value) => setAdminCashForm((current) => ({ ...current, amount: value }))} type="number" />
-                                        <Input label="Date" value={adminCashForm.movementDate} onChange={(value) => setAdminCashForm((current) => ({ ...current, movementDate: value }))} type="date" />
+                                        <Input label="Current Date" value={adminCashForm.movementDate} onChange={() => undefined} type="date" readOnly />
                                         <Input label={adminCashForm.movementType === "cash_received" ? "Source" : "Purpose / Category"} value={adminCashForm.movementType === "cash_received" ? adminCashForm.source : adminCashForm.category} onChange={(value) => setAdminCashForm((current) => adminCashForm.movementType === "cash_received" ? { ...current, source: value } : { ...current, category: value })} />
                                         <Input label={adminCashForm.movementType === "bank_deposit" ? "Bank / Account" : "Method"} value={adminCashForm.movementType === "bank_deposit" ? adminCashForm.bankName : adminCashForm.method} onChange={(value) => setAdminCashForm((current) => adminCashForm.movementType === "bank_deposit" ? { ...current, bankName: value } : { ...current, method: value })} />
                                         <Input label="Reference / Notes" value={adminCashForm.referenceNumber} onChange={(value) => setAdminCashForm((current) => ({ ...current, referenceNumber: value }))} />
@@ -647,11 +648,18 @@ function Info({ label, value }: { label: string; value: string }) {
     );
 }
 
-function Input({ label, value, onChange, type = "text" }: { label: string; value: string; onChange: (value: string) => void; type?: string }) {
+function Input({ label, readOnly = false, value, onChange, type = "text" }: { label: string; readOnly?: boolean; value: string; onChange: (value: string) => void; type?: string }) {
     return (
         <label className="block text-xs font-black uppercase text-slate-400">
             {label}
-            <input type={type} value={value} onChange={(event) => onChange(event.target.value)} className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950 px-3 py-3 text-sm font-bold text-white outline-none placeholder:text-slate-600" />
+            <input
+                type={type}
+                value={value}
+                onChange={(event) => onChange(event.target.value)}
+                readOnly={readOnly}
+                aria-label={readOnly && type === "date" ? `Current Date, ${formatBusinessDate(value)}` : label}
+                className={`mt-2 w-full rounded-2xl border border-white/10 px-3 py-3 text-sm font-bold text-white outline-none placeholder:text-slate-600 ${readOnly ? "cursor-not-allowed bg-slate-900/70 text-slate-300" : "bg-slate-950"}`}
+            />
         </label>
     );
 }
