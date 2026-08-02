@@ -3,7 +3,7 @@
 import type React from "react";
 import { useEffect, useState, useTransition } from "react";
 import { AlertTriangle, Banknote, BrainCircuit, CheckCircle2, Clock3, FileCheck2, Landmark, Loader2, MessageSquareText, ReceiptText, Search, SendHorizonal, ShieldAlert, Sparkles, Split, WalletCards } from "lucide-react";
-import { recordCollectorPayment, recordCollectorPromise, sendCollectorMessage, submitCollectorMoney } from "@/app/actions/collectors";
+import { recordCollectorPayment, recordCollectorPromise, sendCollectorMessage } from "@/app/actions/collectors";
 
 type SearchResult = {
     balance: number;
@@ -45,7 +45,7 @@ export default function CollectorConsole({ data, mode }: Props) {
                     <div className="min-w-0">
                         <p className="collector-page-eyebrow">Field Collector</p>
                         <h1>{titleForMode(mode)}</h1>
-                        <p className="collector-page-subtitle">Live collector cash control, office split, daily reconciliation, and submission approvals.</p>
+                        <p className="collector-page-subtitle">Live collector cash control, office split, daily reconciliation, and direct bank deposit verification.</p>
                     </div>
                     <div className="grid min-w-0 grid-cols-2 gap-2 text-xs font-black sm:grid-cols-4 lg:min-w-[440px]">
                         <MiniStatus label="Pending" value={pendingCount} tone="amber" />
@@ -58,9 +58,9 @@ export default function CollectorConsole({ data, mode }: Props) {
 
             <div className="collector-kpi-grid">
                 <Kpi label="Collected Today" value={money(data.totals.totalCollectedToday)} tone="green" hint="Approved collector-entered tenant payments today." />
-                <Kpi label="Submitted and Approved" value={money(data.totals.approvedSubmissions)} tone="blue" hint="Cash handovers accepted by receiving offices." />
+                <Kpi label="Verified Banked" value={money(data.totals.approvedSubmissions)} tone="blue" hint="Legacy approved handovers plus verified banking history." />
                 <Kpi label="Money in Hand" value={money(data.totals.remainingInHand)} tone="amber" hint="Collected cash still held by the collector." />
-                <Kpi label="Pending Submissions" value={money(data.totals.pendingSubmissions)} tone="purple" hint="Submitted cash waiting for office approval." />
+                <Kpi label="Pending Banking" value={money(data.totals.pendingSubmissions)} tone="purple" hint="Cash submitted for verification or legacy pending handovers." />
                 <Kpi label="Daily Total Collected" value={money(data.totals.totalCollectedToday)} tone="green" hint="Live daily collection total." />
                 <Kpi label="Submitted vs Collected" value={money(submittedVsCollected)} tone="blue" hint="Approved plus pending submissions." />
                 <Kpi label="Remaining Balance" value={money(data.totals.remainingInHand)} tone="amber" hint="Same as money in hand after approved movements." />
@@ -87,7 +87,7 @@ export default function CollectorConsole({ data, mode }: Props) {
 function titleForMode(mode: Props["mode"]) {
     if (mode === "payments") return "Collector Payments Entry";
     if (mode === "promises") return "Collector Promise Entry";
-    if (mode === "submissions") return "Collector Money Submission";
+    if (mode === "submissions") return "Legacy Collector Submissions";
     if (mode === "instructions") return "Collector Instructions & Messages";
     if (mode === "daily") return "Collector Daily Collections";
     return "Collector Dashboard";
@@ -300,34 +300,6 @@ function CollectorPromiseEntry() {
     );
 }
 
-function CollectorSubmissionEntry({ offices }: { offices: Props["data"]["offices"] }) {
-    const [amount, setAmount] = useState("");
-    const [officeId, setOfficeId] = useState(offices[0]?.id ?? "");
-    const [notes, setNotes] = useState("");
-    const [message, setMessage] = useState("");
-    const [isPending, startTransition] = useTransition();
-    return (
-        <section className="mt-5 rounded-3xl border border-white/10 bg-slate-950/70 p-5">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                <Field label="Amount submitted" value={amount} onChange={setAmount} type="number" />
-                <label className="text-xs font-black uppercase tracking-wide text-slate-400">Receiving office<select value={officeId} onChange={(event) => setOfficeId(event.target.value)} className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-900 px-3 py-3 text-sm font-black text-white">{offices.map((office) => <option key={office.id} value={office.id}>{office.office_name ?? office.name}</option>)}</select></label>
-                <Field label="Notes" value={notes} onChange={setNotes} />
-                <ActionButton disabled={isPending || !officeId} label="Submit Money to Office" icon={<SendHorizonal size={16} />} onClick={() => startTransition(async () => {
-                    try {
-                        await submitCollectorMoney({ amount: Number(amount), officeId, notes });
-                        setAmount("");
-                        setNotes("");
-                        setMessage("Submission sent for office approval.");
-                    } catch (error) {
-                        setMessage(error instanceof Error ? error.message : "Submission failed.");
-                    }
-                })} />
-            </div>
-            <Status message={message} loading={isPending} />
-        </section>
-    );
-}
-
 function CollectorSubmissionEnterprise({ data }: { data: Props["data"] }) {
     const pendingRows = data.submissions.filter((row) => String(row.status ?? "pending") === "pending");
     const approvedRows = data.submissions.filter((row) => String(row.status ?? "") === "approved");
@@ -346,8 +318,11 @@ function CollectorSubmissionEnterprise({ data }: { data: Props["data"] }) {
 
             <section className="grid gap-5 xl:grid-cols-[1fr_1.05fr]">
                 <div className="rounded-3xl border border-cyan-300/20 bg-slate-950/80 p-5 shadow-2xl shadow-black/20">
-                    <StickyTitle icon={<SendHorizonal size={18} />} subtitle="Submit cash to the receiving office for approval." title="Submit Money to Office" />
-                    <CollectorSubmissionEntry offices={data.offices} />
+                    <StickyTitle icon={<SendHorizonal size={18} />} subtitle="Collector-to-office handovers are closed. Use direct collector banking instead." title="Direct Banking Required" />
+                    <a href="/office/collector/banking" className="mt-5 inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-300 px-5 py-3 text-sm font-black text-slate-950">
+                        <Landmark size={16} /> Open Bank Collections
+                    </a>
+                    <p className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm font-bold leading-6 text-amber-100">Historical collector-to-office submissions remain readable for audit, but Collectors can no longer create new office handovers.</p>
                     <AiCashAssistant data={data} />
                 </div>
 

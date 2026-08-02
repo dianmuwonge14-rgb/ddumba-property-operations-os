@@ -61,6 +61,7 @@ const adminSections = [
             { href: "/office/landlords", label: "Landlords Portfolio", icon: UsersRound },
             { href: "/office/notifications", label: "Notifications", icon: Bell },
             { href: "/office/admin/cash-banking", label: "Cash Banking", icon: WalletCards },
+            { href: "/office/admin/collector-banking", label: "Bank Deposit Slips", icon: Landmark },
             { href: "/office/bad-debt", label: "Bad Debt Recovery", icon: Archive },
         ],
     },
@@ -132,6 +133,7 @@ const collectorSections = [
         items: [
             { href: "/office/collector", label: "Dashboard", icon: Home },
             { href: "/office/collector/payments", label: "Payments Entry", icon: Banknote },
+            { href: "/office/collector/banking", label: "Bank Collections", icon: Landmark },
             { href: "/office/receipts", label: "Receipt History", icon: ReceiptText },
             { href: "/office/security-deposits", label: "Security Deposits", icon: Vault },
             { href: "/office/collector/daily", label: "Collections", icon: HandCoins },
@@ -139,7 +141,6 @@ const collectorSections = [
             { href: "/office/collector/promises", label: "Promise Centre", icon: CalendarCheck },
             { href: "/office/collector/vacant-rooms", label: "Vacant Rooms", icon: HousePlus },
             { href: "/office/collector/tenant-relocation", label: "Tenant Relocation", icon: GitMerge },
-            { href: "/office/collector/submissions", label: "Money Submission", icon: WalletCards },
             { href: "/office/expenses", label: "Expenses", icon: ReceiptText },
             { href: "/office/collector/instructions", label: "Instructions", icon: ClipboardCheck },
             { href: "/office/notifications", label: "Notifications", icon: Bell },

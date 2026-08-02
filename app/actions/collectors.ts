@@ -273,121 +273,15 @@ export async function recordCollectorPromise(input: { notes?: string; promisedAm
 export async function submitCollectorMoney(input: { amount: number; officeId: string; notes?: string; reference?: string }) {
     const context = await requireAuth();
     requireCollector(context);
-    const amount = Number(input.amount);
-    assertAmount(amount, "Submission amount");
-    if (!context.activeCompany?.id || !context.profile?.id) throw new Error("Collector session is required.");
-
-    const db = createSupabaseAdminClient() as unknown as DynamicDb;
-    const { data: profile } = await db.from("field_collector_profiles").select("cash_balance").eq("company_id", context.activeCompany.id).eq("user_id", context.profile.id).maybeSingle();
-    if (Number(profile?.cash_balance ?? 0) < amount) throw new Error("Submission amount is greater than collector money in hand.");
-
-    const { data, error } = await db.from("field_collector_money_submissions").insert({
-        amount,
-        company_id: context.activeCompany.id,
-        collector_user_id: context.profile.id,
-        notes: input.notes || null,
-        office_id: input.officeId,
-        reference: input.reference || null,
-        status: "pending",
-        submitted_by: context.profile.id,
-    }).select("*").single();
-    if (error) throw new Error(error.message);
-
-    await adjustCollectorBalance({
-        amount,
-        companyId: context.activeCompany.id,
-        collectorId: context.profile.id,
-        movementType: "submission_pending",
-        notes: input.notes ?? null,
-        officeId: input.officeId,
-        status: "pending",
-        submissionId: data.id,
-    });
-    await createNotificationWithEmail(db, {
-        action_url: "/office/collector/submissions",
-        channel: "in_app",
-        company_id: context.activeCompany.id,
-        delivery_status: "pending",
-        entity_id: data.id,
-        entity_type: "field_collector_money_submission",
-        is_read: false,
-        message: `${context.profile.full_name} submitted UGX ${Math.round(amount).toLocaleString()} for office receipt approval.`,
-        office_id: input.officeId,
-        recipient_type: "office",
-        severity: "warning",
-        title: "Collector money submission pending",
-    });
-    revalidatePath("/office/collector/submissions");
-    return data;
+    void input;
+    throw new Error("Collector cash must be banked directly from Bank Collections. Submit Cash to Office is closed.");
 }
 
 export async function decideCollectorMoneySubmission(input: { comment?: string; decision: "approved" | "rejected"; submissionId: string }) {
     const context = await requirePermission("collections.manage");
     if (!context.activeCompany?.id || !context.profile?.id) throw new Error("Active session required.");
-    const db = createSupabaseAdminClient() as unknown as DynamicDb;
-    const { data: request, error } = await db.from("field_collector_money_submissions").select("*").eq("company_id", context.activeCompany.id).eq("id", input.submissionId).maybeSingle();
-    if (error) throw new Error(error.message);
-    if (!request) throw new Error("Submission not found.");
-    if (!context.isCompanyAdmin && request.office_id !== context.activeOffice?.id) throw new Error("You can only review submissions for your office.");
-    if (request.status !== "pending") throw new Error("Submission already reviewed.");
-
-    const status = input.decision;
-    await db.from("field_collector_money_submissions").update({
-        office_comment: input.comment ?? null,
-        reviewed_at: new Date().toISOString(),
-        reviewed_by: context.profile.id,
-        status,
-        updated_at: new Date().toISOString(),
-    }).eq("id", request.id);
-
-    await db.from("field_collector_cash_movements").update({ status }).eq("submission_id", request.id).eq("movement_type", "submission_pending");
-
-    if (status === "approved") {
-        await adjustCollectorBalance({
-            amount: Number(request.amount ?? 0),
-            companyId: context.activeCompany.id,
-            collectorId: request.collector_user_id,
-            movementType: "submission_approved",
-            notes: input.comment ?? null,
-            officeId: request.office_id,
-            status: "approved",
-            submissionId: request.id,
-        });
-        const { data: account } = await db.from("cash_accounts").select("id").eq("company_id", context.activeCompany.id).eq("office_id", request.office_id).eq("account_type", "office_cash").eq("status", "active").maybeSingle();
-        if (account?.id) {
-            await db.from("cash_transactions").insert({
-                amount: Number(request.amount ?? 0),
-                cash_account_id: account.id,
-                company_id: context.activeCompany.id,
-                description: `Collector money received. ${input.comment ?? ""}`.trim(),
-                office_id: request.office_id,
-                recorded_by: context.profile.id,
-                source_id: request.id,
-                source_type: "collector_money_submission",
-                transaction_date: new Date().toISOString(),
-                transaction_type: "inflow",
-            });
-        }
-    }
-
-    await createNotificationWithEmail(db, {
-        action_url: "/office/collector/submissions",
-        channel: "in_app",
-        company_id: context.activeCompany.id,
-        delivery_status: "pending",
-        entity_id: request.id,
-        entity_type: "field_collector_money_submission",
-        is_read: false,
-        message: `Your money submission of UGX ${Math.round(Number(request.amount ?? 0)).toLocaleString()} was ${status}. ${input.comment ?? ""}`.trim(),
-        office_id: request.office_id,
-        recipient_type: "collector",
-        recipient_user_id: request.collector_user_id,
-        severity: status === "approved" ? "success" : "warning",
-        title: status === "approved" ? "Submission approved" : "Submission rejected",
-    });
-    revalidatePath("/office/cash-banking");
-    revalidatePath("/office/collector");
-    return { ok: true };
+    void input;
+    throw new Error("Collector-to-office handover review is closed. Verify Collector banking from Bank Deposit Slips.");
 }
 
 export async function sendCollectorMessage(input: { body: string; officeId?: string; priority?: string; recipientUserId?: string; recipientType?: string; subject: string }) {
