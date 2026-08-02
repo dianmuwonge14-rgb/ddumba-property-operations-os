@@ -60,7 +60,7 @@ export async function GET(request: Request) {
         });
     } catch (error) {
         const message = error instanceof Error ? error.message : "Room availability check failed.";
-        const status = /auth|login|session|permission|unauthor/i.test(message) ? 401 : 500;
+        const status = /NEXT_REDIRECT|auth|login|session|permission|unauthor/i.test(message) ? 401 : 500;
         return NextResponse.json({ error: message }, { status });
     }
 }
