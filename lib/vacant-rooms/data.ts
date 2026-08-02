@@ -90,7 +90,7 @@ export async function getVacantRoomsPageData(options: { admin?: boolean } = {}):
 
     const [roomsResult, officesResult, propertiesResult, landlordsResult, historyResult, tenantsResult] = await Promise.all([
         roomQuery,
-        supabase.from("offices").select("id, office_name, name").eq("company_id", companyId),
+        supabase.from("offices").select("id, office_name, name").eq("company_id", companyId).ilike("status", "active").is("merged_into_office_id", null),
         supabase.from("properties").select("*").eq("company_id", companyId),
         supabase.from("landlords").select("*").eq("company_id", companyId),
         db.from("room_status_history").select("*").eq("company_id", companyId).order("created_at", { ascending: false }).limit(5000),

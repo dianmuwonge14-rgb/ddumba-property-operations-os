@@ -14,7 +14,7 @@ type LoginIdentity = {
     is_company_admin: boolean;
     auth_mode: "admin" | "office" | "collector" | null;
     redirect_to: string | null;
-    login_status?: "success" | "invalid" | "invalid_limit" | "locked";
+    login_status?: "success" | "invalid" | "invalid_limit" | "locked" | "merged_office";
     attempts_remaining?: number | null;
     locked?: boolean | null;
 };
@@ -231,6 +231,17 @@ export async function POST(request: Request) {
         const identity = data?.[0];
         const loginStatus = identity?.login_status ?? (identity?.email ? "success" : "invalid");
         const attemptsRemaining = Math.max(0, identity?.attempts_remaining ?? 2);
+
+        if (loginStatus === "merged_office") {
+            return NextResponse.json(
+                {
+                    error: `This office was merged into ${identity?.office_name ?? "the new office"}. Please use the new office account.`,
+                    mergedOffice: true,
+                    redirectTo: "/",
+                },
+                { status: 403 },
+            );
+        }
 
         if (loginStatus === "locked" || identity?.locked) {
             return NextResponse.json(

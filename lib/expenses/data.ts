@@ -186,7 +186,7 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
             return result;
         })(),
         supabase.from("users").select("*").eq("company_id", companyId).eq("status", "active"),
-        supabase.from("offices").select("id, office_name, name").eq("company_id", companyId).order("office_name", { ascending: true, nullsFirst: false }),
+        supabase.from("offices").select("id, office_name, name").eq("company_id", companyId).ilike("status", "active").is("merged_into_office_id", null).order("office_name", { ascending: true, nullsFirst: false }),
         (() => {
             let query = supabase.from("rooms").select("id, landlord_id, office_id, status, monthly_rent").eq("company_id", companyId).not("landlord_id", "is", null).not("status", "in", "(archived,inactive,deleted,removed)");
             if (selectedOfficeId) query = query.eq("office_id", selectedOfficeId);

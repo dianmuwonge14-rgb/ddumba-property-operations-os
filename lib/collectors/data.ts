@@ -35,7 +35,7 @@ export async function getCollectorDashboardData() {
         db.from("collections").select("*").eq("company_id", context.activeCompany!.id).eq("entered_by_account_id", context.profile!.id).gte("payment_date", todayDate).lte("payment_date", todayDate).order("created_at", { ascending: false }),
         db.from("field_collector_money_submissions").select("*").eq("company_id", context.activeCompany!.id).eq("collector_user_id", context.profile!.id).order("created_at", { ascending: false }).limit(50),
         db.from("field_collector_messages").select("*").eq("company_id", context.activeCompany!.id).or(`recipient_user_id.eq.${context.profile!.id},recipient_type.eq.all_collectors`).order("created_at", { ascending: false }).limit(30),
-        db.from("offices").select("id, office_name, name").eq("company_id", context.activeCompany!.id).order("office_name"),
+        db.from("offices").select("id, office_name, name").eq("company_id", context.activeCompany!.id).ilike("status", "active").is("merged_into_office_id", null).order("office_name"),
     ]);
 
     const officeIds = [...new Set((collectionsResult.data ?? []).map((row: Record<string, unknown>) => String(row.office_id ?? "")).filter(Boolean))];

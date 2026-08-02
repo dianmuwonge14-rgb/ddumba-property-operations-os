@@ -27,7 +27,7 @@ export async function getOfficeMergeData(): Promise<OfficeMergeData> {
 
     const db = supabase as unknown as { from: (table: string) => any };
     const [officesResult, roomsResult, tenantsResult, landlordsResult, propertiesResult] = await Promise.all([
-        db.from("offices").select("id,name,office_name,office_code,code,location,status").eq("company_id", companyId).neq("status", "archived").order("office_name", { ascending: true }),
+        db.from("offices").select("id,name,office_name,office_code,code,location,status").eq("company_id", companyId).ilike("status", "active").is("merged_into_office_id", null).order("office_name", { ascending: true }),
         db.from("rooms").select("id,office_id,landlord_id,monthly_rent,status").eq("company_id", companyId),
         db.from("tenants").select("id,office_id,status").eq("company_id", companyId),
         db.from("landlords").select("id,status").eq("company_id", companyId),

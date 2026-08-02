@@ -39,7 +39,7 @@ export async function getCollectorBankingPageData() {
     const todayDate = today();
     const [profileResult, officesResult, collectionsResult, submissionsResult] = await Promise.all([
         db.from("field_collector_profiles").select("*").eq("company_id", companyId).eq("user_id", collectorId).maybeSingle(),
-        db.from("offices").select("id, office_name, name").eq("company_id", companyId).order("office_name"),
+        db.from("offices").select("id, office_name, name").eq("company_id", companyId).ilike("status", "active").is("merged_into_office_id", null).order("office_name"),
         db.from("collections").select("id, amount, amount_paid, office_id, payment_date, created_at").eq("company_id", companyId).eq("entered_by_account_id", collectorId).gte("payment_date", todayDate).lte("payment_date", todayDate).limit(500),
         db.from("collector_banking_submissions").select("*").eq("company_id", companyId).eq("collector_user_id", collectorId).order("created_at", { ascending: false }).limit(80),
     ]);
@@ -86,7 +86,7 @@ export async function getAdminCollectorBankingData() {
     const [submissionsResult, collectorsResult, officesResult, profilesResult] = await Promise.all([
         db.from("collector_banking_submissions").select("*").eq("company_id", companyId).order("created_at", { ascending: false }).limit(150),
         db.from("users").select("id, full_name, phone, email").eq("company_id", companyId).limit(1000),
-        db.from("offices").select("id, office_name, name").eq("company_id", companyId).limit(1000),
+        db.from("offices").select("id, office_name, name").eq("company_id", companyId).ilike("status", "active").is("merged_into_office_id", null).limit(1000),
         db.from("field_collector_profiles").select("user_id, cash_balance, full_name").eq("company_id", companyId).limit(1000),
     ]);
     if (submissionsResult.error && !/collector_banking_submissions|schema cache/i.test(submissionsResult.error.message)) throw new Error(submissionsResult.error.message);

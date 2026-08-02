@@ -101,7 +101,7 @@ export async function getTenantRelocationPageData(options: { admin?: boolean } =
         roomQuery,
         tenantQuery,
         leaseQuery,
-        supabase.from("offices").select("id, office_name, name").eq("company_id", companyId),
+        supabase.from("offices").select("id, office_name, name").eq("company_id", companyId).ilike("status", "active").is("merged_into_office_id", null),
         supabase.from("properties").select("*").eq("company_id", companyId),
         supabase.from("landlords").select("*").eq("company_id", companyId),
         requestQuery,

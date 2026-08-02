@@ -426,7 +426,7 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
         usersResult,
         securityResult,
     ] = await Promise.all([
-        db.from("offices").select("id, office_name, name, status").eq("company_id", companyId).order("office_name", { ascending: true, nullsFirst: false }).limit(1000),
+        db.from("offices").select("id, office_name, name, status").eq("company_id", companyId).ilike("status", "active").is("merged_into_office_id", null).order("office_name", { ascending: true, nullsFirst: false }).limit(1000),
         db.from("collections").select("id, company_id, office_id, amount, amount_paid, payment_date, paid_at, created_at, payment_method, reference_number, recorded_by, status, room_id, tenant_id, financial_effective, reversed_at, voided_at, deleted_at, superseded_at, superseded_by_payment_id, corrected_by_payment_id, correction_of_payment_id").eq("company_id", companyId).limit(10000),
         db.from("expenses").select("id, company_id, office_id, amount, expense_date, created_at, item, category, submitted_by, approved_at, approved_by, status").eq("company_id", companyId).limit(10000),
         db.from("cash_accounts").select("id, company_id, office_id, account_type, name, status").eq("company_id", companyId).eq("status", "active").limit(2000),

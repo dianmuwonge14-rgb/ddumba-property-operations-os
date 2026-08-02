@@ -201,7 +201,7 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
         collectorProfilesRows,
         usersResult,
     ] = await Promise.all([
-        admin.from("offices").select("id, office_name, name").eq("company_id", companyId).order("office_name", { ascending: true, nullsFirst: false }),
+        admin.from("offices").select("id, office_name, name").eq("company_id", companyId).ilike("status", "active").is("merged_into_office_id", null).order("office_name", { ascending: true, nullsFirst: false }),
         admin.from("collections").select("id, company_id, office_id, amount, amount_paid, payment_date, paid_at, created_at, payment_method, reference_number, recorded_by, status, financial_effective, reversed_at, voided_at, deleted_at, superseded_at, superseded_by_payment_id, corrected_by_payment_id, correction_of_payment_id").eq("company_id", companyId).limit(10000),
         admin.from("expenses").select("id, company_id, office_id, amount, expense_date, created_at, item, description, entered_by, submitted_by, status").eq("company_id", companyId).limit(10000),
         admin.from("cash_accounts").select("id, company_id, office_id, account_type, name, status").eq("company_id", companyId).eq("status", "active"),
