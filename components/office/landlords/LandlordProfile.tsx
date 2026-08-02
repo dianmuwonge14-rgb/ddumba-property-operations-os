@@ -11,6 +11,7 @@ import AICollectionInsight from "@/components/office/collections/AICollectionIns
 import CollectionActionCentre from "@/components/office/collections/CollectionActionCentre";
 import TenantSnapshot from "@/components/office/collections/TenantSnapshot";
 import RoomActionPanel from "@/components/office/rooms/RoomActionPanel";
+import { normalizeRoomNumberForUniqueness } from "@/lib/rooms/room-number";
 
 type Props = {
     canAdminManage: boolean;
@@ -22,6 +23,19 @@ type Props = {
     propertyOptions?: LandlordRoomAssignmentOption[];
     propertyFilter?: string;
     paymentFilter?: string;
+};
+
+type RoomAvailability = {
+    available: boolean;
+    existingRoom?: {
+        landlord?: string | null;
+        office?: string | null;
+        property?: string | null;
+        roomNumber?: string | null;
+        status?: string | null;
+    };
+    message?: string;
+    normalizedRoomNumber?: string;
 };
 
 function money(value: number) {
@@ -84,6 +98,8 @@ function LandlordProfile({
     const [roomCommandOpen, setRoomCommandOpen] = useState(false);
     const [roomMessage, setRoomMessage] = useState<string | null>(null);
     const [roomError, setRoomError] = useState<string | null>(null);
+    const [roomAvailability, setRoomAvailability] = useState<RoomAvailability | null>(null);
+    const [checkingRoomAvailability, setCheckingRoomAvailability] = useState(false);
     const [roomRemovalTargetId, setRoomRemovalTargetId] = useState<string | null>(null);
     const [roomRemovalReason, setRoomRemovalReason] = useState("");
     const [landlordDeleteOpen, setLandlordDeleteOpen] = useState(false);
@@ -124,6 +140,8 @@ function LandlordProfile({
         setRoomCommandOpen(false);
         setRoomMessage(null);
         setRoomError(null);
+        setRoomAvailability(null);
+        setCheckingRoomAvailability(false);
         setRoomRemovalTargetId(null);
         setRoomRemovalReason("");
         setLandlordDeleteOpen(false);
@@ -135,6 +153,35 @@ function LandlordProfile({
         setPayablePaymentInputs({});
         setRoomForm((current) => ({ ...current, roomNumber: "", monthlyRent: "", openingOutstanding: "", startDate: new Date().toISOString().slice(0, 10), tenantName: "", tenantPhone: "", notes: "" }));
     }, [landlord?.id]);
+
+    useEffect(() => {
+        const normalized = normalizeRoomNumberForUniqueness(roomForm.roomNumber);
+        if (!normalized) {
+            setRoomAvailability(null);
+            setCheckingRoomAvailability(false);
+            return;
+        }
+        const controller = new AbortController();
+        setCheckingRoomAvailability(true);
+        const timer = window.setTimeout(async () => {
+            try {
+                const response = await fetch(`/api/rooms/availability?roomNumber=${encodeURIComponent(roomForm.roomNumber)}`, { signal: controller.signal });
+                const payload = await response.json();
+                if (!response.ok) throw new Error(payload.error ?? "Room availability check failed.");
+                setRoomAvailability(payload);
+            } catch (error) {
+                if ((error as { name?: string }).name !== "AbortError") {
+                    setRoomAvailability({ available: true, message: "Room availability will be confirmed when saving." });
+                }
+            } finally {
+                if (!controller.signal.aborted) setCheckingRoomAvailability(false);
+            }
+        }, 300);
+        return () => {
+            controller.abort();
+            window.clearTimeout(timer);
+        };
+    }, [roomForm.roomNumber]);
 
     useEffect(() => {
         setRoomPage(1);
@@ -264,6 +311,10 @@ function LandlordProfile({
 
     function submitAddRoom() {
         if (!landlord) return;
+        if (roomAvailability && !roomAvailability.available) {
+            setRoomError("Room number already exists.");
+            return;
+        }
         startTransition(async () => {
             try {
                 setRoomMessage(null);
@@ -285,6 +336,7 @@ function LandlordProfile({
                 });
                 setRoomMessage("Room added to landlord portfolio. Rent roll and settlement estimates refreshed.");
                 setRoomForm((current) => ({ ...current, roomNumber: "", monthlyRent: "", openingOutstanding: "", startDate: new Date().toISOString().slice(0, 10), tenantName: "", tenantPhone: "", notes: "" }));
+                setRoomAvailability(null);
                 await onSaved();
             } catch (error) {
                 setRoomError(error instanceof Error ? error.message : "Unable to add room.");
@@ -768,6 +820,16 @@ function LandlordProfile({
                                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
                                     <Field label="Room Number">
                                         <input value={roomForm.roomNumber} onChange={(event) => updateRoomForm("roomNumber", event.target.value)} placeholder="e.g. A12" />
+                                        {checkingRoomAvailability ? <p className="mt-1 text-xs font-black text-blue-700">Checking room number...</p> : null}
+                                        {roomAvailability?.available ? <p className="mt-1 text-xs font-black text-emerald-700">Room number is available</p> : null}
+                                        {roomAvailability && !roomAvailability.available ? (
+                                            <div className="mt-2 rounded-xl border border-red-200 bg-red-50 p-2 text-xs font-bold text-red-700">
+                                                <p className="font-black">Room number already exists.</p>
+                                                <p>
+                                                    Room {roomAvailability.existingRoom?.roomNumber ?? roomAvailability.normalizedRoomNumber} · {roomAvailability.existingRoom?.office ?? "Office"} · {roomAvailability.existingRoom?.landlord ?? "Landlord"} · {roomAvailability.existingRoom?.property ?? "Property"} · {roomAvailability.existingRoom?.status ?? "active"}
+                                                </p>
+                                            </div>
+                                        ) : null}
                                     </Field>
                                     <Field label="Monthly Rent">
                                         <input value={roomForm.monthlyRent} onChange={(event) => updateRoomForm("monthlyRent", event.target.value)} inputMode="numeric" placeholder="70000" />
@@ -820,7 +882,7 @@ function LandlordProfile({
                                     <button
                                         type="button"
                                         onClick={submitAddRoom}
-                                        disabled={isPending}
+                                        disabled={isPending || checkingRoomAvailability || Boolean(roomAvailability && !roomAvailability.available)}
                                         className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                                     >
                                         {isPending ? "Saving..." : "Save Room"}

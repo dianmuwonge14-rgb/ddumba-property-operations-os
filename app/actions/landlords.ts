@@ -12,6 +12,7 @@ import { assertLandlordPayableIntegrity } from "@/lib/landlord-payables/integrit
 import { landlordMonthlyDue, landlordMonthlyPaid, landlordMonthlyUnpaid } from "@/lib/landlord-payables/payment-allocation";
 import { isRecoveryDeductionActiveForMonth } from "@/lib/landlord-payables/recovery-deductions";
 import { createLandlordPaymentReceipt } from "@/lib/receipts/payment-receipts";
+import { formatRoomDuplicateError, normalizeRoomNumberForUniqueness } from "@/lib/rooms/room-number";
 import type {
     ArchiveLandlordInput,
     AssignPropertyInput,
@@ -612,7 +613,7 @@ export async function addRoomToLandlord(input: AddLandlordRoomInput) {
     const db = supabase as unknown as LooseDb;
     const companyId = context.activeCompany!.id;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
-    const roomNumber = input.roomNumber.trim();
+    const roomNumber = normalizeRoomNumberForUniqueness(input.roomNumber);
     const monthlyRent = Number(input.monthlyRent);
     const openingOutstanding = Number(input.openingOutstanding ?? 0);
     const startDate = normalizeDateInput(input.startDate, "Room start date is required.");
@@ -648,7 +649,7 @@ export async function addRoomToLandlord(input: AddLandlordRoomInput) {
     if (error) {
         const message = error.message.includes("Could not find the function")
             ? `Canonical room creation service is missing. Apply migration 0213_canonical_landlord_room_creation.sql. ${error.message}`
-            : error.message;
+            : formatRoomDuplicateError(error.message);
         throw new Error(message);
     }
 

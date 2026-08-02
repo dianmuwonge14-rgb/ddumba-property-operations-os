@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { AlertTriangle, Building2, CheckCircle2, Plus, Trash2, UserRound, X } from "lucide-react";
 import type { CreateLandlordWithRoomsBulkInput, PropertyItem } from "@/lib/properties/types";
+import { normalizeRoomNumberForUniqueness } from "@/lib/rooms/room-number";
 
 type RoomDraft = {
     id: string;
@@ -100,12 +101,10 @@ export default function NewLandlordBulkRoomsWizard({ canManage, createAction, is
         if (!rooms.length) return "Add at least one room.";
         const seen = new Set<string>();
         for (const room of rooms) {
-            const number = room.roomNumber.trim().toUpperCase();
+            const number = normalizeRoomNumberForUniqueness(room.roomNumber);
             if (!number) return "Every room needs a room number.";
-            const propertyKey = room.propertyId || room.propertyName.trim().toLowerCase();
-            const duplicateKey = `${propertyKey}:${number}`;
-            if (seen.has(duplicateKey)) return `Duplicate room ${number} in the same property/location.`;
-            seen.add(duplicateKey);
+            if (seen.has(number)) return "Room number already exists.";
+            seen.add(number);
             if (Number(room.monthlyRent || 0) <= 0) return `Room ${number} needs a valid monthly rent.`;
             if (!room.propertyId && !room.propertyName.trim()) return `Room ${number} needs a property/location.`;
             if (room.status === "occupied") {

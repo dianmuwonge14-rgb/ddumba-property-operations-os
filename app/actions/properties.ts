@@ -7,6 +7,7 @@ import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getPropertyInActiveOffice, getRoomInActiveOffice } from "@/lib/properties/data";
+import { formatRoomDuplicateError, normalizeRoomNumberForUniqueness } from "@/lib/rooms/room-number";
 import type {
     ArchivePropertyInput,
     CreateLandlordWithRoomsBulkInput,
@@ -34,7 +35,7 @@ function normalizeName(value: string) {
 }
 
 function normalizeRoomNumber(value: string) {
-    const roomNumber = value.trim().toUpperCase();
+    const roomNumber = normalizeRoomNumberForUniqueness(value);
     if (!roomNumber) throw new Error("Room number is required.");
     return roomNumber;
 }
@@ -145,6 +146,27 @@ async function refreshLandlordSearchIndex(supabase: LooseSupabase, landlordId: s
     }
 }
 
+async function assertCompanyRoomNumberAvailable(supabase: LooseSupabase, companyId: string, normalizedRoomNumber: string, excludeRoomId?: string) {
+    const query = supabase
+        .from("rooms")
+        .select("id, room_number, status, removed")
+        .eq("company_id", companyId)
+        .eq("normalized_room_number", normalizedRoomNumber)
+        .limit(10);
+    const { data, error } = await query;
+    if (error) {
+        const message = String(error.message ?? "");
+        if (!message.includes("normalized_room_number")) throw new Error(message);
+        return;
+    }
+    const duplicate = (data ?? []).find((room: { id?: string; status?: string | null; removed?: boolean | null }) => {
+        if (excludeRoomId && room.id === excludeRoomId) return false;
+        if (room.removed) return false;
+        return !["archived", "deleted", "removed"].includes(String(room.status ?? "active").toLowerCase());
+    });
+    if (duplicate) throw new Error("Room number already exists.");
+}
+
 async function materializeLandlordWithRoomsBulk(input: {
     actorId: string | null;
     companyId: string;
@@ -169,7 +191,7 @@ async function materializeLandlordWithRoomsBulk(input: {
     if (error) {
         const message = error.message.includes("Could not find the function")
             ? `Atomic landlord creation function is missing. Apply migration 0205_landlord_bulk_room_atomic_creation.sql. ${error.message}`
-            : error.message;
+            : formatRoomDuplicateError(error.message);
         throw new Error(message);
     }
     const result = (data ?? {}) as {
@@ -290,21 +312,17 @@ async function validateBulkInput(supabase: LooseSupabase, input: CreateLandlordW
         if (rent <= 0) throw new Error(`Room ${roomNumber} needs a valid monthly rent.`);
         const propertyKey = room.propertyId || text(room.propertyName).toLowerCase();
         if (!propertyKey) throw new Error(`Room ${roomNumber} needs a property/location.`);
-        const key = `${propertyKey}:${roomNumber}`;
-        if (seen.has(key)) throw new Error(`Duplicate room ${roomNumber} in the same property/location.`);
-        seen.add(key);
-        if (room.propertyId) {
-            const duplicateRoom = await supabase
-                .from("rooms")
-                .select("id")
-                .eq("company_id", companyId)
-                .eq("office_id", officeId)
-                .eq("property_id", room.propertyId)
-                .ilike("room_number", roomNumber)
-                .limit(1);
-            if (duplicateRoom.error) throw new Error(duplicateRoom.error.message);
-            if ((duplicateRoom.data ?? []).length) throw new Error(`Room ${roomNumber} already exists in the selected property.`);
-        }
+        if (seen.has(roomNumber)) throw new Error("Room number already exists.");
+        seen.add(roomNumber);
+        const duplicateRoom = await supabase
+            .from("rooms")
+            .select("id")
+            .eq("company_id", companyId)
+            .eq("normalized_room_number", roomNumber)
+            .eq("removed", false)
+            .limit(1);
+        if (duplicateRoom.error && !String(duplicateRoom.error.message).includes("normalized_room_number")) throw new Error(duplicateRoom.error.message);
+        if ((duplicateRoom.data ?? []).length) throw new Error("Room number already exists.");
         if (room.status === "occupied") {
             if (!text(room.tenantName)) throw new Error(`Room ${roomNumber} is occupied, so tenant name is required.`);
             if (!text(room.tenantPhone)) throw new Error(`Room ${roomNumber} is occupied, so tenant phone is required.`);
@@ -615,7 +633,9 @@ export async function createRoom(input: CreateRoomInput) {
     const property = await getPropertyInActiveOffice(input.propertyId);
     const supabase = await createSupabaseServerClient();
     const monthlyRent = Number(input.monthlyRent);
+    const normalizedRoomNumber = normalizeRoomNumber(input.roomNumber);
     if (!Number.isFinite(monthlyRent) || monthlyRent < 0) throw new Error("Monthly rent must be valid.");
+    await assertCompanyRoomNumberAvailable(supabase as unknown as LooseSupabase, context.activeCompany!.id, normalizedRoomNumber);
 
     const { data, error } = await supabase
         .from("rooms")
@@ -626,14 +646,14 @@ export async function createRoom(input: CreateRoomInput) {
             monthly_rent: monthlyRent,
             office_id: context.activeOffice!.id,
             property_id: property.id,
-            room_number: normalizeRoomNumber(input.roomNumber),
+            room_number: normalizedRoomNumber,
             size_sq_m: input.sizeSqM ?? null,
             status: input.status || "vacant",
         })
         .select("*")
         .single();
 
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(formatRoomDuplicateError(error.message));
 
     await insertRoomStatusHistory(data.id, null, data.status ?? "vacant", "Room created");
     await logUserAction({
@@ -654,6 +674,8 @@ export async function editRoom(input: EditRoomInput) {
     const existing = await getRoomInActiveOffice(input.roomId);
     await getPropertyInActiveOffice(input.propertyId);
     const supabase = await createSupabaseServerClient();
+    const normalizedRoomNumber = normalizeRoomNumber(input.roomNumber);
+    await assertCompanyRoomNumberAvailable(supabase as unknown as LooseSupabase, context.activeCompany!.id, normalizedRoomNumber, existing.id);
 
     const { data, error } = await supabase
         .from("rooms")
@@ -662,7 +684,7 @@ export async function editRoom(input: EditRoomInput) {
             monthly_rent: Number(input.monthlyRent),
             outstanding_balance: input.outstandingBalance ?? existing.outstanding_balance,
             property_id: input.propertyId,
-            room_number: normalizeRoomNumber(input.roomNumber),
+            room_number: normalizedRoomNumber,
             size_sq_m: input.sizeSqM ?? null,
             status: input.status || existing.status,
         })
@@ -670,7 +692,7 @@ export async function editRoom(input: EditRoomInput) {
         .select("*")
         .single();
 
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(formatRoomDuplicateError(error.message));
 
     if (data.status !== existing.status) {
         await insertRoomStatusHistory(data.id, existing.status, data.status ?? "unknown", "Room edited");

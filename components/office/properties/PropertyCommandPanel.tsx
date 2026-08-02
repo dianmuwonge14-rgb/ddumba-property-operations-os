@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import {
     archiveProperty,
     createLandlordWithRoomsBulk,
@@ -11,6 +11,7 @@ import {
     updateRoomStatus,
 } from "@/app/actions/properties";
 import type { LandlordRow, PropertyItem, RoomWithOccupancy } from "@/lib/properties/types";
+import { normalizeRoomNumberForUniqueness } from "@/lib/rooms/room-number";
 import NewLandlordBulkRoomsWizard from "./NewLandlordBulkRoomsWizard";
 
 type Props = {
@@ -22,6 +23,19 @@ type Props = {
     selectedProperty: PropertyItem | null;
     selectedRoom: RoomWithOccupancy | null;
     onSaved: () => void;
+};
+
+type RoomAvailability = {
+    available: boolean;
+    existingRoom?: {
+        landlord?: string | null;
+        office?: string | null;
+        property?: string | null;
+        roomNumber?: string | null;
+        status?: string | null;
+    };
+    message?: string;
+    normalizedRoomNumber?: string;
 };
 
 export default function PropertyCommandPanel({ canManage, isAdmin, landlords, offices, properties, selectedProperty, selectedRoom, onSaved }: Props) {
@@ -39,6 +53,8 @@ export default function PropertyCommandPanel({ canManage, isAdmin, landlords, of
     const [floor, setFloor] = useState("");
     const [statusReason, setStatusReason] = useState("");
     const [message, setMessage] = useState<string | null>(null);
+    const [roomAvailability, setRoomAvailability] = useState<RoomAvailability | null>(null);
+    const [checkingRoomAvailability, setCheckingRoomAvailability] = useState(false);
     const [landlordSearch, setLandlordSearch] = useState("");
     const [showNewLandlordWizard, setShowNewLandlordWizard] = useState(false);
     const [isPending, startTransition] = useTransition();
@@ -48,6 +64,44 @@ export default function PropertyCommandPanel({ canManage, isAdmin, landlords, of
     const selectedOccupancyRate = selectedProperty?.totalRoomsComputed
         ? Math.round((selectedProperty.occupiedRoomsComputed / selectedProperty.totalRoomsComputed) * 100)
         : 0;
+
+    useEffect(() => {
+        const candidate = roomNumber || selectedRoom?.room_number || "";
+        const normalized = normalizeRoomNumberForUniqueness(candidate);
+        if (!normalized) {
+            setRoomAvailability(null);
+            setCheckingRoomAvailability(false);
+            return;
+        }
+        const currentNormalized = normalizeRoomNumberForUniqueness(selectedRoom?.room_number);
+        if (selectedRoom?.id && normalized === currentNormalized) {
+            setRoomAvailability({ available: true, message: "Room number is available", normalizedRoomNumber: normalized });
+            setCheckingRoomAvailability(false);
+            return;
+        }
+        const controller = new AbortController();
+        setCheckingRoomAvailability(true);
+        const timer = window.setTimeout(async () => {
+            try {
+                const params = new URLSearchParams({ roomNumber: candidate });
+                if (selectedRoom?.id) params.set("excludeRoomId", selectedRoom.id);
+                const response = await fetch(`/api/rooms/availability?${params.toString()}`, { signal: controller.signal });
+                const payload = await response.json();
+                if (!response.ok) throw new Error(payload.error ?? "Room availability check failed.");
+                setRoomAvailability(payload);
+            } catch (error) {
+                if ((error as { name?: string }).name !== "AbortError") {
+                    setRoomAvailability({ available: true, message: "Room availability will be confirmed when saving.", normalizedRoomNumber: normalized });
+                }
+            } finally {
+                if (!controller.signal.aborted) setCheckingRoomAvailability(false);
+            }
+        }, 300);
+        return () => {
+            controller.abort();
+            window.clearTimeout(timer);
+        };
+    }, [roomNumber, selectedRoom?.id, selectedRoom?.room_number]);
 
     function run(action: () => Promise<unknown>, success: string) {
         startTransition(async () => {
@@ -113,12 +167,20 @@ export default function PropertyCommandPanel({ canManage, isAdmin, landlords, of
     }
 
     function saveNewRoom() {
+        if (roomAvailability && !roomAvailability.available) {
+            setMessage("Room number already exists.");
+            return;
+        }
         run(() => createRoom(roomPayload()), "Room created.");
     }
 
     function saveRoomEdit() {
         if (!selectedRoom) {
             setMessage("Select a room first.");
+            return;
+        }
+        if (roomAvailability && !roomAvailability.available) {
+            setMessage("Room number already exists.");
             return;
         }
         run(
@@ -221,7 +283,19 @@ export default function PropertyCommandPanel({ canManage, isAdmin, landlords, of
                     <input value={statusReason} onChange={(e) => setStatusReason(e.target.value)} placeholder="Reason / note" className="field-dark h-9 min-w-[220px] flex-1 md:max-w-sm" />
                 </div>
                 <div className="grid gap-2 lg:grid-cols-[1fr_1fr_0.8fr_0.9fr_0.85fr_0.85fr_0.85fr]">
-                    <input value={roomNumber} onChange={(e) => setRoomNumber(e.target.value)} placeholder={selectedRoom?.room_number ?? "Room number"} className="field-dark h-10" />
+                    <div>
+                        <input value={roomNumber} onChange={(e) => setRoomNumber(e.target.value)} placeholder={selectedRoom?.room_number ?? "Room number"} className="field-dark h-10" />
+                        {checkingRoomAvailability ? <p className="mt-1 text-xs font-black text-cyan-100">Checking room number...</p> : null}
+                        {roomAvailability?.available ? <p className="mt-1 text-xs font-black text-emerald-200">Room number is available</p> : null}
+                        {roomAvailability && !roomAvailability.available ? (
+                            <div className="mt-2 rounded-xl border border-red-300/40 bg-red-500/15 p-2 text-xs font-bold text-red-100">
+                                <p className="font-black">Room number already exists.</p>
+                                <p>
+                                    Room {roomAvailability.existingRoom?.roomNumber ?? roomAvailability.normalizedRoomNumber} · {roomAvailability.existingRoom?.office ?? "Office"} · {roomAvailability.existingRoom?.landlord ?? "Landlord"} · {roomAvailability.existingRoom?.property ?? "Property"} · {roomAvailability.existingRoom?.status ?? "active"}
+                                </p>
+                            </div>
+                        ) : null}
+                    </div>
                     <input value={monthlyRent} onChange={(e) => setMonthlyRent(e.target.value)} type="number" placeholder={selectedRoom?.monthly_rent?.toString() ?? "Monthly rent"} className="field-dark h-10" />
                     <input value={floor} onChange={(e) => setFloor(e.target.value)} placeholder={selectedRoom?.floor ?? "Floor"} className="field-dark h-10" />
                     <select value={roomStatus} onChange={(e) => setRoomStatus(e.target.value)} className="field-dark h-10">
@@ -230,8 +304,8 @@ export default function PropertyCommandPanel({ canManage, isAdmin, landlords, of
                         <option value="maintenance">Maintenance</option>
                         <option value="reserved">Reserved</option>
                     </select>
-                    <Button disabled={!canManage || isPending || !selectedProperty} onClick={saveNewRoom}>Add Room</Button>
-                    <Button disabled={!canManage || isPending || !selectedRoom} onClick={saveRoomEdit}>Edit Room</Button>
+                <Button disabled={!canManage || isPending || checkingRoomAvailability || Boolean(roomAvailability && !roomAvailability.available) || !selectedProperty} onClick={saveNewRoom}>Add Room</Button>
+                <Button disabled={!canManage || isPending || checkingRoomAvailability || Boolean(roomAvailability && !roomAvailability.available) || !selectedRoom} onClick={saveRoomEdit}>Edit Room</Button>
                     <Button disabled={!canManage || isPending || !selectedRoom} onClick={saveRoomStatus}>Change Status</Button>
                 </div>
             </div>
