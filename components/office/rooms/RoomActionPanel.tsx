@@ -3,8 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import type React from "react";
 import { useRouter } from "next/navigation";
-import { ClipboardList, CreditCard, Eye } from "lucide-react";
-import { markRoomOccupied } from "@/app/actions/room-occupancy";
+import { ClipboardList, CreditCard, Eye, UserPlus } from "lucide-react";
 import { requestRoomRentChange } from "@/app/actions/room-rent";
 
 type RoomActionPanelRoom = {
@@ -37,18 +36,6 @@ export default function RoomActionPanel({ isAdmin = false, onSaved, room }: Prop
     const [error, setError] = useState<string | null>(null);
     const [showRentRequest, setShowRentRequest] = useState(false);
     const [showRoomDetails, setShowRoomDetails] = useState(false);
-    const [form, setForm] = useState({
-        tenantName: "",
-        tenantPhone: "",
-        nationalId: "",
-        moveInDate: new Date().toISOString().slice(0, 10),
-        monthlyRent: "",
-        moneyCollected: "0",
-        balanceDemanded: "",
-        paymentMethod: "cash",
-        referenceNumber: "",
-        notes: "",
-    });
     const [rentRequest, setRentRequest] = useState({
         proposedRent: "",
         reason: "",
@@ -58,18 +45,6 @@ export default function RoomActionPanel({ isAdmin = false, onSaved, room }: Prop
     useEffect(() => {
         setMessage(null);
         setError(null);
-        setForm((current) => ({
-            ...current,
-            tenantName: "",
-            tenantPhone: "",
-            nationalId: "",
-            moveInDate: new Date().toISOString().slice(0, 10),
-            monthlyRent: room?.monthlyRent ? String(room.monthlyRent) : "",
-            moneyCollected: "0",
-            balanceDemanded: room?.monthlyRent ? String(room.monthlyRent) : "",
-            referenceNumber: "",
-            notes: "",
-        }));
         setRentRequest({
             proposedRent: room?.monthlyRent ? String(room.monthlyRent) : "",
             reason: "",
@@ -87,15 +62,6 @@ export default function RoomActionPanel({ isAdmin = false, onSaved, room }: Prop
     const rentGovernanceDescription = isAdmin
         ? "Admin rent changes apply immediately and refresh tenant, landlord, and dashboard calculations."
         : "Office users can request rent changes. Rent does not change until admin approval.";
-    const balanceDemanded = Number(form.balanceDemanded || 0);
-    const moneyCollected = Number(form.moneyCollected || 0);
-    const projectedBalance = Math.max(0, Number(form.monthlyRent || room.monthlyRent || 0) - moneyCollected);
-
-    function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
-        setForm((current) => ({ ...current, [key]: value }));
-        setError(null);
-        setMessage(null);
-    }
 
     function openRoomRoute(path: string) {
         const selectedRoomNumber = room?.roomNumber?.trim();
@@ -103,36 +69,16 @@ export default function RoomActionPanel({ isAdmin = false, onSaved, room }: Prop
         router.push(`${path}?room=${encodeURIComponent(selectedRoomNumber)}`);
     }
 
-    function submit() {
-        const selectedRoom = room;
-        if (!selectedRoom) return;
-        startTransition(async () => {
-            try {
-                setError(null);
-                setMessage(null);
-                const result = await markRoomOccupied({
-                    roomId: selectedRoom.id,
-                    tenantName: form.tenantName,
-                    tenantPhone: form.tenantPhone,
-                    nationalId: form.nationalId || null,
-                    moveInDate: form.moveInDate,
-                    monthlyRent: Number(form.monthlyRent),
-                    moneyCollected: Number(form.moneyCollected),
-                    balanceDemanded: Number(form.balanceDemanded),
-                    paymentMethod: form.paymentMethod,
-                    referenceNumber: form.referenceNumber || null,
-                    notes: form.notes || null,
-                });
-                if (!result.ok) {
-                    setError(`${result.error} Reference: ${result.requestId}.`);
-                    return;
-                }
-                setMessage("Tenant saved successfully and room marked occupied.");
-                await onSaved();
-            } catch (caught) {
-                setError(caught instanceof Error ? caught.message : "Unable to mark room occupied.");
-            }
+    function openNewTenantWorkflow() {
+        const roomId = room?.id;
+        if (!roomId) return;
+        const params = new URLSearchParams({
+            newTenant: "1",
+            returnTo: typeof window !== "undefined" ? `${window.location.pathname}${window.location.search}` : "/office/payments",
+            roomId,
         });
+        if (room.roomNumber) params.set("room", room.roomNumber);
+        router.push(`/office/payments?${params.toString()}`);
     }
 
     function submitRentRequest() {
@@ -283,40 +229,16 @@ export default function RoomActionPanel({ isAdmin = false, onSaved, room }: Prop
                 <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
                     <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                         <div>
-                            <p className="font-black text-slate-950">Mark Room Occupied</p>
-                            <p className="text-xs font-bold text-slate-500">Previous vacated tenant debt remains separate and is not carried to the new tenant.</p>
+                            <p className="font-black text-slate-950">Add Tenant Through Payments Entry</p>
+                            <p className="text-xs font-bold text-slate-500">The room stays vacant until the canonical New Tenant workflow saves successfully.</p>
                         </div>
-                        <div className="rounded-2xl bg-white px-4 py-2 text-sm font-black text-slate-900 shadow-sm">
-                            Projected balance: {money(projectedBalance)}
-                        </div>
-                    </div>
-                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-                        <Field label="Tenant Name"><input value={form.tenantName} onChange={(event) => update("tenantName", event.target.value)} /></Field>
-                        <Field label="Tenant Phone"><input value={form.tenantPhone} onChange={(event) => update("tenantPhone", event.target.value)} /></Field>
-                        <Field label="National ID"><input value={form.nationalId} onChange={(event) => update("nationalId", event.target.value)} /></Field>
-                        <Field label="Move-in Date"><input type="date" value={form.moveInDate} onChange={(event) => update("moveInDate", event.target.value)} /></Field>
-                        <Field label="Monthly Rent"><input inputMode="numeric" value={form.monthlyRent} onChange={(event) => update("monthlyRent", event.target.value)} /></Field>
-                        <Field label="Money Collected"><input inputMode="numeric" value={form.moneyCollected} onChange={(event) => update("moneyCollected", event.target.value)} /></Field>
-                        <Field label="Final Balance After Payment"><input inputMode="numeric" value={form.balanceDemanded} onChange={(event) => update("balanceDemanded", event.target.value)} /></Field>
-                        <Field label="Payment Method">
-                            <select value={form.paymentMethod} onChange={(event) => update("paymentMethod", event.target.value)}>
-                                <option value="cash">Cash</option>
-                                <option value="mobile_money">Mobile Money</option>
-                                <option value="bank">Bank</option>
-                            </select>
-                        </Field>
-                        <Field label="Reference"><input value={form.referenceNumber} onChange={(event) => update("referenceNumber", event.target.value)} /></Field>
-                        <Field label="Notes"><input value={form.notes} onChange={(event) => update("notes", event.target.value)} /></Field>
-                    </div>
-                    <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                        <div />
                         <button
                             type="button"
-                            onClick={submit}
-                            disabled={isPending}
-                            className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                            onClick={openNewTenantWorkflow}
+                            className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-slate-800"
                         >
-                            {isPending ? "Saving..." : "Mark Room Occupied"}
+                            <UserPlus size={16} />
+                            Open New Tenant Form
                         </button>
                     </div>
                 </div>

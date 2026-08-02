@@ -5,6 +5,8 @@ import { test } from "node:test";
 const roomOccupancyAction = readFileSync(new URL("../app/actions/room-occupancy.ts", import.meta.url), "utf8");
 const roomActionPanel = readFileSync(new URL("../components/office/rooms/RoomActionPanel.tsx", import.meta.url), "utf8");
 const paymentsEntry = readFileSync(new URL("../components/office/payments/FastPaymentsEntry.tsx", import.meta.url), "utf8");
+const vacantRoomsConsole = readFileSync(new URL("../components/office/vacant-rooms/VacantRoomsConsole.tsx", import.meta.url), "utf8");
+const vacantRoomContextRoute = readFileSync(new URL("../app/api/collections/vacant-room-context/route.ts", import.meta.url), "utf8");
 
 function clampDay(year, monthIndex, day) {
   return Math.min(day, new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate());
@@ -226,8 +228,8 @@ test("new tenant server actions return safe structured errors instead of product
   assert.match(roomOccupancyAction, /safeMoveInError/);
   assert.match(roomOccupancyAction, /logMoveInFailure/);
   assert.match(roomOccupancyAction, /return \{ ok: false, error: safeMoveInError\(error\), requestId \}/);
-  assert.match(roomActionPanel, /if \(!result\.ok\)/);
-  assert.match(roomActionPanel, /Tenant saved successfully and room marked occupied/);
+  assert.doesNotMatch(roomActionPanel, /markRoomOccupied/);
+  assert.match(paymentsEntry, /await markRoomOccupied/);
   assert.match(paymentsEntry, /if \(!result\.ok\)/);
   assert.doesNotMatch(roomActionPanel, /Failed to record in the Supabase occupancy ledger/);
 });
@@ -238,7 +240,23 @@ test("move-in payment may exceed first month rent when final balance is zero", (
   assert.match(roomOccupancyAction, /minimumBalanceAfterPayment/);
   assert.match(roomOccupancyAction, /balanceDemanded \+ moneyCollected/);
   assert.match(roomOccupancyAction, /createTenantPaymentReceipt/);
-  assert.match(roomActionPanel, /Final Balance After Payment/);
+  assert.match(paymentsEntry, /balanceDemanded: Math\.max\(0, monthlyRent - paymentMade\)/);
+});
+
+test("vacant rooms Mark Occupied routes to the canonical Payments Entry New Tenant workflow", () => {
+  assert.doesNotMatch(vacantRoomsConsole, /RoomActionPanel/);
+  assert.match(vacantRoomsConsole, /openNewTenantWorkflow/);
+  assert.match(vacantRoomsConsole, /newTenant:\s*"1"/);
+  assert.match(vacantRoomsConsole, /roomId:\s*room\.id/);
+  assert.match(vacantRoomsConsole, /router\.push\(`\/office\/payments\?\$\{params\.toString\(\)\}`\)/);
+  assert.match(roomActionPanel, /Open New Tenant Form/);
+  assert.match(roomActionPanel, /newTenant:\s*"1"/);
+  assert.doesNotMatch(roomActionPanel, /Tenant Name"><input/);
+  assert.match(paymentsEntry, /vacant-room-context\?roomId=/);
+  assert.match(paymentsEntry, /buildVacantNewTenantContext/);
+  assert.match(paymentsEntry, /mode=\{isVacantNewTenantContext\(selectedTenant\) \? "vacant" : "replacement"\}/);
+  assert.match(vacantRoomContextRoute, /String\(room\.status \?\? ""\)\.toLowerCase\(\) !== "vacant"/);
+  assert.match(vacantRoomContextRoute, /canAccessOffice\(context, room\.office_id\)/);
 });
 
 test("new tenant move-in closes stale active room occupancy before creating a new active tenant", () => {

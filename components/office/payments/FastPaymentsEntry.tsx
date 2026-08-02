@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { AlertTriangle, Banknote, BrainCircuit, CalendarDays, CheckCircle2, CreditCard, DoorOpen, Eye, History, Home, Loader2, Pencil, ReceiptText, Search, ShieldCheck, Smartphone, Trash2, UserPlus } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { adminCorrectPayment, recordCollection, requestPaymentCorrection, requestTenantOutstandingBalanceAdjustment } from "@/app/actions/collections";
 import { recordCollectorPayment } from "@/app/actions/collectors";
 import { logReceiptPrintOrDownload, logReceiptShareLink, sendReceiptByEmail } from "@/app/actions/receipts";
-import { replaceTenantFromPaymentsEntry } from "@/app/actions/room-occupancy";
+import { markRoomOccupied, replaceTenantFromPaymentsEntry } from "@/app/actions/room-occupancy";
 import { recordSecurityDeposit } from "@/app/actions/security-deposits";
 import { vacateTenant } from "@/app/actions/tenants";
 import { downloadTenantPaymentReceiptPdf, prepareReceiptPdfForSharing, printTenantPaymentReceipt, tenantReceiptWhatsappHref, TenantPaymentReceiptModal } from "@/components/office/receipts/TenantPaymentReceipt";
@@ -118,6 +119,79 @@ function isSearchPreviewTenant(tenant: CollectionTenantResult | null): tenant is
     return Boolean((tenant as FastPaymentTenantSearchResult | null)?.searchPreviewOnly);
 }
 
+const VACANT_NEW_TENANT_ID_PREFIX = "__vacant_room_new_tenant__";
+
+function isVacantNewTenantContext(tenant: CollectionTenantResult | null) {
+    return Boolean(tenant?.tenant?.id?.startsWith(VACANT_NEW_TENANT_ID_PREFIX));
+}
+
+function buildVacantNewTenantContext(payload: {
+    landlord: CollectionTenantResult["landlord"];
+    office: CollectionTenantResult["office"];
+    property: CollectionTenantResult["property"];
+    room: NonNullable<CollectionTenantResult["room"]>;
+}): FastPaymentTenantSearchResult {
+    const room = payload.room;
+    const monthlyRent = Number(room.monthly_rent ?? 0);
+    return {
+        actionHistory: [],
+        advanceRentBalance: 0,
+        advanceRentMonths: [],
+        amountAllocatedToNextMonth: 0,
+        amountUsedToClearOutstanding: 0,
+        billingAnniversaryDay: null,
+        collections: [],
+        contribution: {
+            employerBalance: 0,
+            employerExpected: 0,
+            employerReceivedThisMonth: 0,
+            hasSponsor: false,
+            collectFromTenant: monthlyRent,
+            tenantTopUpBalance: 0,
+            tenantTopUpExpected: monthlyRent,
+            tenantTopUpPaidThisMonth: 0,
+        },
+        currentMonthPaid: 0,
+        currentRentPeriod: null,
+        landlord: payload.landlord,
+        lastAmountPaid: 0,
+        lastCollection: null,
+        lastRentChargeDate: null,
+        lease: null,
+        ledgerEntries: [],
+        monthlyRent,
+        nextAdvanceRentMonth: null,
+        nextMonthCoveredAmount: 0,
+        nextRentChargeDate: null,
+        office: payload.office,
+        openPromise: null,
+        outstandingBalance: 0,
+        previousOutstandingBeforeLastPayment: 0,
+        promises: [],
+        property: payload.property,
+        rentMonthAllocations: [],
+        room,
+        searchPreviewOnly: true,
+        sponsor: null,
+        tenant: {
+            balance: 0,
+            billing_day: null,
+            company_id: room.company_id,
+            created_at: null,
+            full_name: "Vacant room",
+            id: `${VACANT_NEW_TENANT_ID_PREFIX}:${room.id}`,
+            monthly_rent: monthlyRent,
+            office_id: room.office_id,
+            phone: null,
+            property_id: room.property_id,
+            room_id: room.id,
+            status: "vacant",
+            updated_at: null,
+        } as CollectionTenantResult["tenant"],
+        totalDueBeforeLastPayment: 0,
+    };
+}
+
 function runAfterInitialPaint(callback: () => void) {
     if (typeof window === "undefined") return () => undefined;
     let idleId: number | null = null;
@@ -179,6 +253,7 @@ export default function FastPaymentsEntry({
     profile,
     searchOffices = [],
 }: Props) {
+    const router = useRouter();
     const [paymentDate, setPaymentDate] = useState(today());
     const [roomQuery, setRoomQuery] = useState("");
     const [adminSearchOfficeId, setAdminSearchOfficeId] = useState("all");
@@ -211,6 +286,7 @@ export default function FastPaymentsEntry({
     const [historyRows, setHistoryRows] = useState<CorrectionHistoryRow[]>([]);
     const [loadingHistory, setLoadingHistory] = useState(false);
     const [newTenantOpen, setNewTenantOpen] = useState(false);
+    const [newTenantReturnTo, setNewTenantReturnTo] = useState<string | null>(null);
     const [newTenantError, setNewTenantError] = useState<string | null>(null);
     const [securityDepositMessage, setSecurityDepositMessage] = useState<string | null>(null);
     const [securityDepositForm, setSecurityDepositForm] = useState<SecurityDepositForm>({
@@ -293,11 +369,23 @@ export default function FastPaymentsEntry({
     useEffect(() => {
         if (prefillAppliedRef.current || typeof window === "undefined") return;
         prefillAppliedRef.current = true;
-        const requestedRoom = new URLSearchParams(window.location.search).get("room")?.trim();
+        const params = new URLSearchParams(window.location.search);
+        const requestedRoom = params.get("room")?.trim();
+        const requestedRoomId = params.get("roomId")?.trim();
+        const shouldOpenNewTenant = params.get("newTenant") === "1";
+        const returnTo = params.get("returnTo")?.trim() || null;
+
+        if (shouldOpenNewTenant && requestedRoomId) {
+            setNewTenantReturnTo(returnTo);
+            void openVacantRoomNewTenant(requestedRoomId, requestedRoom ?? "", returnTo);
+            return;
+        }
+
         if (requestedRoom) {
             setRoomQuery(requestedRoom);
             setRoomMatchesOpen(true);
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     useEffect(() => {
@@ -526,13 +614,23 @@ export default function FastPaymentsEntry({
         requestAnimationFrame(() => roomInputRef.current?.focus());
     }
 
-    function openNewTenantModal() {
-        if (!selectedTenant) return;
+    function closeNewTenantModal() {
+        if (isPending) return;
+        setNewTenantOpen(false);
+        const returnTo = newTenantReturnTo;
+        setNewTenantReturnTo(null);
+        if (returnTo) {
+            router.push(returnTo);
+        }
+    }
+
+    function openNewTenantModalFor(tenant: CollectionTenantResult | null) {
+        if (!tenant) return;
         setMessage(null);
         setNewTenantError(null);
         setNewTenantForm({
             moveInDate: paymentDate,
-            monthlyRent: String(Number(selectedTenant.monthlyRent ?? selectedTenant.room?.monthly_rent ?? 0) || ""),
+            monthlyRent: String(Number(tenant.monthlyRent ?? tenant.room?.monthly_rent ?? 0) || ""),
             nationalId: "",
             newTenantName: "",
             newTenantPhone: "",
@@ -540,13 +638,45 @@ export default function FastPaymentsEntry({
             paymentMade: "",
             paymentMethod: "cash",
             referenceNumber: "",
-            securityAmount: String(Number(selectedTenant.monthlyRent ?? selectedTenant.room?.monthly_rent ?? 0) || ""),
+            securityAmount: String(Number(tenant.monthlyRent ?? tenant.room?.monthly_rent ?? 0) || ""),
             securityNotes: "",
             securityPaid: "",
             securityReference: "",
             securityRequired: false,
         });
         setNewTenantOpen(true);
+    }
+
+    function openNewTenantModal() {
+        setNewTenantReturnTo(null);
+        openNewTenantModalFor(selectedTenant);
+    }
+
+    async function openVacantRoomNewTenant(roomId: string, fallbackRoomNumber: string, returnTo: string | null) {
+        try {
+            setMessage("Opening New Tenant form for the selected vacant room...");
+            setTenantDetailsError(null);
+            setLoadingTenantDetails(true);
+            const response = await fetch(`/api/collections/vacant-room-context?roomId=${encodeURIComponent(roomId)}`, { cache: "no-store" });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.error ?? "Vacant room could not load.");
+            const vacantContext = buildVacantNewTenantContext(payload);
+            requestSeqRef.current += 1;
+            abortRef.current?.abort();
+            tenantDetailsAbortRef.current?.abort();
+            suppressNextSearchRef.current = true;
+            setResults([]);
+            setSelectedTenant(vacantContext);
+            setRoomQuery(vacantContext.room?.room_number ?? fallbackRoomNumber);
+            setRoomMatchesOpen(false);
+            setNewTenantReturnTo(returnTo);
+            openNewTenantModalFor(vacantContext);
+            setMessage(null);
+        } catch (error) {
+            setMessage(error instanceof Error ? error.message : "Vacant room could not load.");
+        } finally {
+            setLoadingTenantDetails(false);
+        }
     }
 
     function submitSecurityDeposit() {
@@ -704,27 +834,54 @@ export default function FastPaymentsEntry({
             return;
         }
         const currentTenant = selectedTenant;
+        const vacantRoomEntry = isVacantNewTenantContext(currentTenant);
         startTransition(async () => {
             try {
                 setMessage(null);
                 setNewTenantError(null);
-                const result = await replaceTenantFromPaymentsEntry({
-                    currentTenantId: currentTenant.tenant.id,
-                    moveInDate: newTenantForm.moveInDate,
-                    monthlyRent,
-                    nationalId: newTenantForm.nationalId || null,
-                    newTenantName: newTenantForm.newTenantName,
-                    newTenantPhone: newTenantForm.newTenantPhone,
-                    notes: newTenantForm.notes || null,
-                    paymentDate,
-                    paymentMade,
-                    paymentMethod: newTenantForm.paymentMethod || "cash",
-                    referenceNumber: newTenantForm.referenceNumber || null,
-                    roomId: selectedRoomId,
-                });
-                if (!result.ok) {
-                    setNewTenantError(`${result.error} Reference: ${result.requestId}.`);
-                    return;
+                let savedTenant: { full_name?: string | null; id: string };
+                let savedRoomId = selectedRoomId;
+                if (vacantRoomEntry) {
+                    const result = await markRoomOccupied({
+                        balanceDemanded: Math.max(0, monthlyRent - paymentMade),
+                        moneyCollected: paymentMade,
+                        moveInDate: newTenantForm.moveInDate,
+                        monthlyRent,
+                        nationalId: newTenantForm.nationalId || null,
+                        notes: newTenantForm.notes || null,
+                        paymentMethod: newTenantForm.paymentMethod || "cash",
+                        referenceNumber: newTenantForm.referenceNumber || null,
+                        roomId: selectedRoomId,
+                        tenantName: newTenantForm.newTenantName,
+                        tenantPhone: newTenantForm.newTenantPhone,
+                    });
+                    if (!result.ok) {
+                        setNewTenantError(`${result.error} Reference: ${result.requestId}.`);
+                        return;
+                    }
+                    savedTenant = result.tenant;
+                    savedRoomId = result.room?.id ?? selectedRoomId;
+                } else {
+                    const result = await replaceTenantFromPaymentsEntry({
+                        currentTenantId: currentTenant.tenant.id,
+                        moveInDate: newTenantForm.moveInDate,
+                        monthlyRent,
+                        nationalId: newTenantForm.nationalId || null,
+                        newTenantName: newTenantForm.newTenantName,
+                        newTenantPhone: newTenantForm.newTenantPhone,
+                        notes: newTenantForm.notes || null,
+                        paymentDate,
+                        paymentMade,
+                        paymentMethod: newTenantForm.paymentMethod || "cash",
+                        referenceNumber: newTenantForm.referenceNumber || null,
+                        roomId: selectedRoomId,
+                    });
+                    if (!result.ok) {
+                        setNewTenantError(`${result.error} Reference: ${result.requestId}.`);
+                        return;
+                    }
+                    savedTenant = result.newTenant;
+                    savedRoomId = result.room?.id ?? selectedRoomId;
                 }
                 if (newTenantForm.securityRequired && Number(newTenantForm.securityPaid || 0) > 0) {
                     await recordSecurityDeposit({
@@ -733,15 +890,15 @@ export default function FastPaymentsEntry({
                         paymentDate: newTenantForm.moveInDate,
                         paymentMethod: newTenantForm.paymentMethod || "cash",
                         referenceNumber: newTenantForm.securityReference || newTenantForm.referenceNumber || null,
-                        roomId: result.room?.id ?? selectedRoomId,
-                        tenantId: result.newTenant.id,
+                        roomId: savedRoomId,
+                        tenantId: savedTenant.id,
                     });
                 }
                 setNewTenantOpen(false);
-                setMessage(`New tenant ${result.newTenant.full_name ?? newTenantForm.newTenantName} added to room ${currentTenant.room?.room_number ?? "selected room"}.`);
+                setMessage(`New tenant ${savedTenant.full_name ?? newTenantForm.newTenantName} added to room ${currentTenant.room?.room_number ?? "selected room"}.`);
                 setAmount("");
                 setDuplicateWarning(null);
-                await reloadRoomDetails(selectedRoomNumber, result.newTenant.id);
+                await reloadRoomDetails(selectedRoomNumber, savedTenant.id);
                 void loadRecentPayments(paymentDate);
                 void loadAdvanceRentAssistant(paymentDate);
             } catch (error) {
@@ -1460,10 +1617,9 @@ export default function FastPaymentsEntry({
                 form={newTenantForm}
                 isPending={isPending}
                 onChange={(patch) => setNewTenantForm((current) => ({ ...current, ...patch }))}
-                onClose={() => {
-                    if (!isPending) setNewTenantOpen(false);
-                }}
+                onClose={closeNewTenantModal}
                 error={newTenantError}
+                mode={isVacantNewTenantContext(selectedTenant) ? "vacant" : "replacement"}
                 onSubmit={submitNewTenant}
                 open={newTenantOpen}
                 paymentDate={paymentDate}
@@ -1599,6 +1755,7 @@ function NewTenantModal({
     error,
     form,
     isPending,
+    mode,
     onChange,
     onClose,
     onSubmit,
@@ -1609,6 +1766,7 @@ function NewTenantModal({
     error: string | null;
     form: NewTenantForm;
     isPending: boolean;
+    mode: "replacement" | "vacant";
     onChange: (patch: Partial<NewTenantForm>) => void;
     onClose: () => void;
     onSubmit: () => void;
@@ -1622,6 +1780,7 @@ function NewTenantModal({
     const monthlyRent = Math.max(0, Number(form.monthlyRent || tenant.monthlyRent || 0));
     const entryAdvance = Math.max(0, paymentMade - monthlyRent);
     const willDeductLandlord = outstanding > 0;
+    const isVacantMode = mode === "vacant";
 
     return (
         <div className="fixed inset-0 z-[130] flex items-center justify-center overflow-y-auto bg-slate-950/75 p-4 backdrop-blur-sm">
@@ -1632,9 +1791,9 @@ function NewTenantModal({
                             <UserPlus size={14} />
                             New tenant workflow
                         </p>
-                        <h2 className="mt-3 text-2xl font-black">Replace Tenant In Room {tenant.room?.room_number ?? "Unknown"}</h2>
+                        <h2 className="mt-3 text-2xl font-black">{isVacantMode ? "Add Tenant To Room" : "Replace Tenant In Room"} {tenant.room?.room_number ?? "Unknown"}</h2>
                         <p className="mt-1 text-sm font-semibold text-slate-300">
-                            Old tenant history stays separate. New tenant starts with a fresh balance.
+                            {isVacantMode ? "The room remains vacant until this form saves successfully." : "Old tenant history stays separate. New tenant starts with a fresh balance."}
                         </p>
                     </div>
                     <button type="button" disabled={isPending} onClick={onClose} className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-black text-white disabled:opacity-40">
@@ -1644,7 +1803,8 @@ function NewTenantModal({
 
                 <div className="grid gap-5 p-5 lg:grid-cols-[1.1fr_0.9fr]">
                     <div className="space-y-4">
-	                        <section className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                        {!isVacantMode ? (
+                        <section className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
 	                            <p className="text-xs font-black uppercase text-slate-500">Step 1 · Vacate current tenant</p>
 	                            <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 p-4">
 	                                <p className="font-black text-slate-950">Vacate with outstanding balance</p>
@@ -1658,6 +1818,19 @@ function NewTenantModal({
 	                                </div>
 	                            </div>
 	                        </section>
+                        ) : (
+                            <section className="rounded-3xl border border-blue-200 bg-blue-50 p-4">
+                                <p className="text-xs font-black uppercase text-blue-700">Step 1 · Confirm vacant room</p>
+                                <p className="mt-2 text-sm font-bold text-blue-950">
+                                    No balance, rent charge, tenant, or occupancy will be created unless this New Tenant form saves successfully.
+                                </p>
+                                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                                    <MiniStat label="Room" value={tenant.room?.room_number ?? "Unknown"} />
+                                    <MiniStat label="Office" value={tenant.office?.office_name ?? tenant.office?.name ?? "Office"} />
+                                    <MiniStat label="Current status" value="Vacant" />
+                                </div>
+                            </section>
+                        )}
 
                         <section className="rounded-3xl border border-slate-200 bg-white p-4">
                             <p className="text-xs font-black uppercase text-slate-500">Step 2 · Enter new tenant</p>
@@ -1738,7 +1911,7 @@ function NewTenantModal({
                                 <ModalMetric label="Security deposit" value={form.securityRequired ? money(Number(form.securityPaid || 0)) : money(0)} tone={form.securityRequired ? "text-emerald-200" : "text-slate-200"} />
                             </div>
                             <p className="mt-4 rounded-2xl bg-white/10 px-3 py-2 text-xs font-bold text-slate-200">
-	                                Old tenant debt will be frozen and recovered from landlord payable. It will not carry to the new tenant.
+	                                {isVacantMode ? "Previous tenant history stays separate. The new tenant only receives the explicit opening balance created by this form." : "Old tenant debt will be frozen and recovered from landlord payable. It will not carry to the new tenant."}
                             </p>
                             {entryAdvance > 0 ? (
                                 <p className="mt-2 rounded-2xl bg-violet-400/15 px-3 py-2 text-xs font-bold text-violet-100">

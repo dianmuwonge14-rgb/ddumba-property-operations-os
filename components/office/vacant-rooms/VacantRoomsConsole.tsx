@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ArrowDownAZ, Bot, Building2, Download, FileText, Home, Printer, Search, Sparkles, TrendingDown, UserPlus, WalletCards } from "lucide-react";
-import RoomActionPanel from "@/components/office/rooms/RoomActionPanel";
 import type { VacantRoomItem, VacantRoomsPageData } from "@/lib/vacant-rooms/types";
 
 type Props = {
@@ -21,7 +21,8 @@ function normalize(value: string | null | undefined) {
 }
 
 export default function VacantRoomsConsole({ data }: Props) {
-    const [rooms, setRooms] = useState(data.rooms);
+    const router = useRouter();
+    const [rooms] = useState(data.rooms);
     const [query, setQuery] = useState("");
     const [minRent, setMinRent] = useState("");
     const [maxRent, setMaxRent] = useState("");
@@ -31,8 +32,32 @@ export default function VacantRoomsConsole({ data }: Props) {
     const [duration, setDuration] = useState("");
     const [sort, setSort] = useState<SortMode>("rent_low");
     const [view, setView] = useState<ViewMode>("cards");
-    const [selectedRoom, setSelectedRoom] = useState<VacantRoomItem | null>(null);
     const [showPrintPreview, setShowPrintPreview] = useState(false);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        const raw = window.sessionStorage.getItem("ddumba:vacant-rooms:return-state");
+        if (!raw) return;
+        window.sessionStorage.removeItem("ddumba:vacant-rooms:return-state");
+        try {
+            const saved = JSON.parse(raw) as Partial<Record<"duration" | "landlordId" | "location" | "maxRent" | "minRent" | "officeId" | "query" | "scrollY" | "sort" | "view", string>>;
+            setQuery(saved.query ?? "");
+            setMinRent(saved.minRent ?? "");
+            setMaxRent(saved.maxRent ?? "");
+            setOfficeId(saved.officeId ?? "");
+            setLandlordId(saved.landlordId ?? "");
+            setLocation(saved.location ?? "");
+            setDuration(saved.duration ?? "");
+            if (saved.sort === "room_asc" || saved.sort === "rent_low" || saved.sort === "rent_high" || saved.sort === "days_high") setSort(saved.sort);
+            if (saved.view === "cards" || saved.view === "table") setView(saved.view);
+            const scrollY = Number(saved.scrollY ?? 0);
+            if (Number.isFinite(scrollY) && scrollY > 0) {
+                requestAnimationFrame(() => window.scrollTo({ top: scrollY }));
+            }
+        } catch {
+            // Ignore stale state from older builds.
+        }
+    }, []);
 
     const filteredRooms = useMemo(() => {
         const term = normalize(query);
@@ -71,10 +96,29 @@ export default function VacantRoomsConsole({ data }: Props) {
         setView((currentView) => currentView === nextView ? currentView : nextView);
     }
 
-    function afterOccupied() {
-        if (!selectedRoom) return;
-        setRooms((current) => current.filter((room) => room.id !== selectedRoom.id));
-        setSelectedRoom(null);
+    function openNewTenantWorkflow(room: VacantRoomItem) {
+        if (typeof window !== "undefined") {
+            window.sessionStorage.setItem("ddumba:vacant-rooms:return-state", JSON.stringify({
+                duration,
+                landlordId,
+                location,
+                maxRent,
+                minRent,
+                officeId,
+                query,
+                scrollY: String(window.scrollY),
+                sort,
+                view,
+            }));
+        }
+        const params = new URLSearchParams({
+            from: "vacant-rooms",
+            newTenant: "1",
+            returnTo: "/office/vacant-rooms",
+            roomId: room.id,
+        });
+        if (room.roomNumber) params.set("room", room.roomNumber);
+        router.push(`/office/payments?${params.toString()}`);
     }
 
     function exportCsv() {
@@ -194,11 +238,11 @@ export default function VacantRoomsConsole({ data }: Props) {
                     {view === "cards" ? (
                         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                             {filteredRooms.map((room) => (
-                                <VacantRoomCard key={`${room.id}:card:${room.vacantSince ?? "unknown"}`} canManage={data.canManageOccupancy} onSelect={() => setSelectedRoom(room)} room={room} />
+                                <VacantRoomCard key={`${room.id}:card:${room.vacantSince ?? "unknown"}`} canManage={data.canManageOccupancy} onSelect={() => openNewTenantWorkflow(room)} room={room} />
                             ))}
                         </div>
                     ) : (
-                        <VacantRoomsTable canManage={data.canManageOccupancy} onSelect={setSelectedRoom} rooms={filteredRooms} />
+                        <VacantRoomsTable canManage={data.canManageOccupancy} onSelect={openNewTenantWorkflow} rooms={filteredRooms} />
                     )}
                     {!filteredRooms.length ? (
                         <div className="rounded-[26px] border border-dashed border-white/20 bg-white/8 p-8 text-center text-white">
@@ -207,27 +251,6 @@ export default function VacantRoomsConsole({ data }: Props) {
                         </div>
                     ) : null}
                 </section>
-
-                {data.canManageOccupancy ? (
-                    <section className="mx-auto mt-5 max-w-7xl">
-                        <RoomActionPanel
-                            isAdmin={data.isAdmin}
-                            room={selectedRoom ? {
-                                id: selectedRoom.id,
-                                roomNumber: selectedRoom.roomNumber,
-                                status: selectedRoom.status,
-                                monthlyRent: selectedRoom.monthlyRent,
-                                outstandingBalance: 0,
-                                landlordName: selectedRoom.landlordName,
-                                propertyName: selectedRoom.propertyName,
-                                officeName: selectedRoom.officeName,
-                                tenantName: null,
-                                tenantPhone: null,
-                            } : null}
-                            onSaved={afterOccupied}
-                        />
-                    </section>
-                ) : null}
             </div>
 
             {showPrintPreview ? (
