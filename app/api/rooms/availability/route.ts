@@ -59,6 +59,8 @@ export async function GET(request: Request) {
             normalizedRoomNumber,
         });
     } catch (error) {
-        return NextResponse.json({ error: error instanceof Error ? error.message : "Room availability check failed." }, { status: 500 });
+        const message = error instanceof Error ? error.message : "Room availability check failed.";
+        const status = /auth|login|session|permission|unauthor/i.test(message) ? 401 : 500;
+        return NextResponse.json({ error: message }, { status });
     }
 }
