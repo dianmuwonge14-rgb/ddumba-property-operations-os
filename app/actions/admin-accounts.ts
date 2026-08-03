@@ -13,8 +13,12 @@ type OfficeAccountInput = {
     confirmPin?: string;
     officeId: string;
     roleId: string;
-    accountType?: "office" | "admin";
+    accountType?: "office" | "admin" | "receptionist";
     status?: string;
+    employeeId?: string;
+    phone?: string;
+    effectiveStartDate?: string;
+    loginIdentifier?: string;
 };
 
 type UpdateOfficeAccountInput = {
@@ -144,11 +148,79 @@ async function defaultOfficeRoleId(companyId: string) {
     return data?.id ?? null;
 }
 
+async function defaultReceptionistRoleId(companyId: string) {
+    const admin = createSupabaseAdminClient();
+    const { data, error } = await admin
+        .from("roles")
+        .select("id, company_id")
+        .eq("key", "receptionist")
+        .or(`company_id.eq.${companyId},company_id.is.null`)
+        .order("company_id", { ascending: false, nullsFirst: false })
+        .limit(1)
+        .maybeSingle();
+    if (error) throw new Error(error.message);
+    return data?.id ?? await defaultOfficeRoleId(companyId);
+}
+
+async function linkReceptionistEmployee(input: {
+    companyId: string;
+    employeeId?: string;
+    loginIdentifier?: string;
+    officeId: string;
+    phone?: string;
+    userId: string;
+}) {
+    if (!input.employeeId) return null;
+    const admin = createSupabaseAdminClient();
+    const { data: employee, error: employeeError } = await admin
+        .from("employees")
+        .select("id, office_id, full_name, user_id")
+        .eq("company_id", input.companyId)
+        .eq("id", input.employeeId)
+        .maybeSingle();
+    if (employeeError) throw new Error(employeeError.message);
+    if (!employee?.id) throw new Error("Selected employee could not be found.");
+
+    const { error } = await admin
+        .from("employees")
+        .update({
+            office_id: input.officeId,
+            primary_office_id: input.officeId,
+            user_id: input.userId,
+            employee_code: input.loginIdentifier?.trim() || undefined,
+            phone: input.phone?.trim() || undefined,
+            status: "active",
+            updated_at: new Date().toISOString(),
+        })
+        .eq("company_id", input.companyId)
+        .eq("id", input.employeeId);
+    if (error && !/primary_office_id|schema cache/i.test(error.message)) throw new Error(error.message);
+    if (error) {
+        const fallback = await admin
+            .from("employees")
+            .update({
+                office_id: input.officeId,
+                user_id: input.userId,
+                employee_code: input.loginIdentifier?.trim() || undefined,
+                phone: input.phone?.trim() || undefined,
+                status: "active",
+                updated_at: new Date().toISOString(),
+            })
+            .eq("company_id", input.companyId)
+            .eq("id", input.employeeId);
+        if (fallback.error) throw new Error(fallback.error.message);
+    }
+    return employee;
+}
+
 async function assignRole(input: {
     companyId: string;
+    employeeId?: string | null;
+    effectiveFrom?: string | null;
     officeId: string;
     roleId: string;
     scope: string;
+    status?: string;
     userId: string;
 }) {
     const admin = createSupabaseAdminClient();
@@ -161,25 +233,33 @@ async function assignRole(input: {
         .maybeSingle();
 
     if (existing?.id) {
+        const payload: Record<string, unknown> = {
+            employee_id: input.employeeId ?? null,
+            effective_from: input.effectiveFrom ?? null,
+            office_id: input.scope === "company" ? null : input.officeId,
+            role_id: input.roleId,
+            scope: input.scope,
+            status: input.status ?? "active",
+        };
         const { error } = await admin
             .from("user_office_roles")
-            .update({
-                office_id: input.scope === "company" ? null : input.officeId,
-                role_id: input.roleId,
-                scope: input.scope,
-            })
+            .update(payload as never)
             .eq("id", existing.id);
         if (error) throw new Error(error.message);
         return;
     }
 
-    const { error } = await admin.from("user_office_roles").insert({
+    const payload: Record<string, unknown> = {
         company_id: input.companyId,
+        employee_id: input.employeeId ?? null,
+        effective_from: input.effectiveFrom ?? null,
         office_id: input.scope === "company" ? null : input.officeId,
         role_id: input.roleId,
         scope: input.scope,
+        status: input.status ?? "active",
         user_id: input.userId,
-    });
+    };
+    const { error } = await admin.from("user_office_roles").insert(payload as never);
     if (error) throw new Error(error.message);
 }
 
@@ -252,11 +332,15 @@ export async function createOfficeAccount(input: OfficeAccountInput) {
     assertOfficePin(input.pin);
 
     const loginName = input.fullName.trim();
-    const email = input.email.trim().toLowerCase() || suggestedLoginEmail(loginName, context.activeCompany.id);
+    const loginIdentifier = input.loginIdentifier?.trim() || loginName;
+    const email = input.email.trim().toLowerCase() || suggestedLoginEmail(loginIdentifier, context.activeCompany.id);
     const accountType = input.accountType ?? "office";
     const status = input.status || "active";
     if (!loginName) throw new Error("Account name is required.");
     if (!input.officeId || !input.roleId) throw new Error("Office and role are required.");
+    if (accountType === "office") {
+        throw new Error("Direct office accounts are no longer available. Create a Receptionist account instead.");
+    }
 
     const admin = createSupabaseAdminClient();
     const supabase = await createSupabaseServerClient();
@@ -275,6 +359,7 @@ export async function createOfficeAccount(input: OfficeAccountInput) {
             default_office_id: input.officeId,
             account_type: accountType,
             login_name: loginName,
+            login_identifier: loginIdentifier,
         },
     });
 
@@ -288,6 +373,8 @@ export async function createOfficeAccount(input: OfficeAccountInput) {
         default_office_id: input.officeId,
         email,
         full_name: loginName,
+        employee_code: loginIdentifier,
+        phone: input.phone?.trim() || null,
         account_type: accountType,
         status,
         updated_at: new Date().toISOString(),
@@ -295,14 +382,28 @@ export async function createOfficeAccount(input: OfficeAccountInput) {
 
     if (userError) throw new Error(userError.message);
 
+    const linkedEmployee = accountType === "receptionist"
+        ? await linkReceptionistEmployee({
+            companyId: context.activeCompany.id,
+            employeeId: input.employeeId,
+            loginIdentifier,
+            officeId: input.officeId,
+            phone: input.phone,
+            userId: authUser.user.id,
+        })
+        : null;
+
     await setPinCredential(authUser.user.id, input.pin, status === "locked" ? "locked" : "active", context.profile?.id ?? null);
     const scope = await roleScope(supabase, input.roleId);
 
     await assignRole({
         companyId: context.activeCompany.id,
+        employeeId: linkedEmployee?.id ?? input.employeeId ?? null,
+        effectiveFrom: input.effectiveStartDate?.trim() || new Date().toISOString().slice(0, 10),
         officeId: input.officeId,
         roleId: input.roleId,
         scope,
+        status,
         userId: authUser.user.id,
     });
 
@@ -310,18 +411,23 @@ export async function createOfficeAccount(input: OfficeAccountInput) {
         company_id: context.activeCompany.id,
         office_id: input.officeId,
         user_id: authUser.user.id,
-        event_type: "office_account_created",
+        event_type: accountType === "receptionist" ? "receptionist_account_created" : "office_account_created",
         severity: "info",
-        metadata: { account_type: accountType, role_id: input.roleId, created_by: context.profile?.id ?? null },
+        metadata: {
+            account_type: accountType,
+            employee_id: linkedEmployee?.id ?? input.employeeId ?? null,
+            role_id: input.roleId,
+            created_by: context.profile?.id ?? null,
+        },
     });
 
     await logUserAction({
-        action: "office_account_created",
+        action: accountType === "receptionist" ? "receptionist_account_created" : "office_account_created",
         entityType: "user",
         entityId: authUser.user.id,
         companyId: context.activeCompany.id,
         officeId: input.officeId,
-        afterData: { email, full_name: loginName, role_id: input.roleId },
+        afterData: { account_type: accountType, email, employee_id: linkedEmployee?.id ?? input.employeeId ?? null, full_name: loginName, role_id: input.roleId },
     });
 
     revalidatePath("/office/admin");
@@ -654,7 +760,7 @@ export async function createOfficeWithLogin(input: OfficeWithLoginInput) {
     const officeCode = normalizeCode(input.officeCode || officeName);
     if (!officeName) throw new Error("Office name is required.");
     if (!officeCode) throw new Error("Office code is required.");
-    if (!loginName) throw new Error("Office login name is required.");
+    if (!loginName) throw new Error("Receptionist login name is required.");
     if (pin !== confirmPin) throw new Error("PIN confirmation does not match.");
     assertOfficePin(pin);
 
@@ -710,15 +816,15 @@ export async function createOfficeWithLogin(input: OfficeWithLoginInput) {
         if (officeError || !office?.id) throw new Error(officeError?.message ?? "Office was not created because office setup failed.");
         createdOfficeId = office.id;
 
-        const fallbackRoleId = await defaultOfficeRoleId(companyId) ?? "";
-        if (!fallbackRoleId) throw new Error("Office Manager role is missing. Apply default roles migration first.");
+        const fallbackRoleId = await defaultReceptionistRoleId(companyId) ?? "";
+        if (!fallbackRoleId) throw new Error("Receptionist role is missing. Apply default roles migration first.");
 
         const { data: authUser, error: authError } = await admin.auth.admin.createUser({
             email: loginEmail,
             password: pin,
             email_confirm: true,
             user_metadata: {
-                account_type: "office",
+                account_type: "receptionist",
                 default_office_id: createdOfficeId,
                 full_name: loginName,
                 login_name: loginName,
@@ -729,10 +835,11 @@ export async function createOfficeWithLogin(input: OfficeWithLoginInput) {
         createdUserId = authUser.user.id;
 
         const userPayload = {
-            account_type: "office",
+            account_type: "receptionist",
             company_id: companyId,
             default_office_id: createdOfficeId,
             email: loginEmail,
+            employee_code: loginName,
             full_name: loginName,
             status: "active",
             updated_at: now,
@@ -754,7 +861,7 @@ export async function createOfficeWithLogin(input: OfficeWithLoginInput) {
                 company_id: companyId,
                 office_id: createdOfficeId,
                 user_id: createdUserId,
-                event_type: "office_created_with_login",
+                event_type: "office_created_with_receptionist_login",
                 severity: "info",
                 metadata: {
                     created_by: context.profile?.id ?? null,
@@ -764,7 +871,7 @@ export async function createOfficeWithLogin(input: OfficeWithLoginInput) {
                 },
             }),
             logUserAction({
-                action: "office_created_with_login",
+                action: "office_created_with_receptionist_login",
                 entityType: "office",
                 entityId: createdOfficeId,
                 companyId,

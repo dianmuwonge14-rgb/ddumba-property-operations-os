@@ -16,6 +16,7 @@ function safeLoginError(message: unknown) {
 
 export default function PinLoginForm() {
     const router = useRouter();
+    const [identifier, setIdentifier] = useState("");
     const [pin, setPin] = useState("");
     const [error, setError] = useState("");
     const [success, setSuccess] = useState("");
@@ -30,6 +31,7 @@ export default function PinLoginForm() {
         setSuccess("");
         setErrorRef("");
 
+        const loginIdentifier = identifier.trim();
         const secret = pin.trim();
 
         if (secret.length < 4) {
@@ -45,7 +47,7 @@ export default function PinLoginForm() {
                 const response = await fetch("/api/auth/office-login", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ pin: secret }),
+                    body: JSON.stringify({ identifier: loginIdentifier, pin: secret }),
                     signal: controller.signal,
                 });
 
@@ -79,8 +81,8 @@ export default function PinLoginForm() {
                             <KeyRound size={20} />
                         </span>
                         <div>
-                            <p className="text-sm font-black text-slate-900">Secure Login</p>
-                            <p className="text-xs font-bold text-slate-400">Enter your PIN or password</p>
+                            <p className="text-sm font-black text-slate-900">Receptionist Login</p>
+                            <p className="text-xs font-bold text-slate-400">Enter your username, phone or employee code</p>
                         </div>
                     </div>
                     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700">
@@ -90,10 +92,22 @@ export default function PinLoginForm() {
                 </div>
 
                 <input
-                    type="password"
+                    type="text"
                     autoFocus
+                    maxLength={80}
+                    placeholder="Username / phone / employee code"
+                    value={identifier}
+                    onChange={(event) => setIdentifier(event.target.value)}
+                    onKeyDown={(event) => {
+                        if (event.key === "Enter") login();
+                    }}
+                    disabled={busy}
+                    className="mb-3 w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 text-center text-base font-black text-slate-950 outline-none focus:border-emerald-500 focus:bg-white"
+                />
+                <input
+                    type="password"
                     maxLength={64}
-                    placeholder="PIN / Password"
+                    placeholder="Personal PIN / Password"
                     value={pin}
                     onChange={(event) => setPin(event.target.value)}
                     onKeyDown={(event) => {

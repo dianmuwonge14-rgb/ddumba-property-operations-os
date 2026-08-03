@@ -19,12 +19,28 @@ type LoginIdentity = {
     locked?: boolean | null;
 };
 
+type DirectOfficeLoginCheck = {
+    office_id: string | null;
+    office_name: string | null;
+};
+
 type VerifyPinRpc = (
     fn: "ddumba_v1_verify_unified_login",
     args: { p_secret: string; p_user_agent: string | null },
 ) => Promise<{ data: LoginIdentity[] | null; error: { message: string } | null }>;
 
+type VerifyPersonalOfficeRpc = (
+    fn: "ddumba_v1_verify_personal_office_login",
+    args: { p_identifier: string; p_secret: string; p_user_agent: string | null },
+) => Promise<{ data: LoginIdentity[] | null; error: { message: string } | null }>;
+
+type DirectOfficeLoginRpc = (
+    fn: "ddumba_v1_check_direct_office_login",
+    args: { p_secret: string; p_identifier?: string | null },
+) => Promise<{ data: DirectOfficeLoginCheck[] | null; error: { message: string } | null }>;
+
 const LOGIN_UNAVAILABLE_MESSAGE = "Login service is temporarily unavailable. Please retry in a moment.";
+const DIRECT_OFFICE_LOGIN_MESSAGE = "Direct office login is no longer available. Please sign in using your assigned receptionist account.";
 const AUTH_TIMEOUT_MS = 10000;
 const PROFILE_TIMEOUT_MS = 5000;
 
@@ -190,12 +206,37 @@ async function recordIdentifiedAuthFailure(identity: LoginIdentity, userAgent: s
     return Math.max(0, 3 - nextAttempts);
 }
 
+async function isSharedOfficeAccount(userId: string, companyId: string | null) {
+    if (!companyId) return false;
+    const admin = createSupabaseAdminClient();
+    const [{ data: user }, { data: roles }] = await Promise.all([
+        admin
+            .from("users")
+            .select("account_type")
+            .eq("id", userId)
+            .eq("company_id", companyId)
+            .maybeSingle(),
+        admin
+            .from("user_office_roles")
+            .select("roles(key)")
+            .eq("user_id", userId)
+            .eq("company_id", companyId),
+    ]);
+    const roleKeys = (roles ?? []).map((row) => {
+        const role = row.roles as { key?: string | null } | { key?: string | null }[] | null;
+        return Array.isArray(role) ? role[0]?.key : role?.key;
+    }).filter(Boolean).map((key) => String(key).toLowerCase());
+    const privileged = new Set(["company_admin", "super_admin", "hq_executive", "field_collector", "collector", "receptionist"]);
+    return String(user?.account_type ?? "").toLowerCase() === "office" && !roleKeys.some((key) => privileged.has(key));
+}
+
 export async function POST(request: Request) {
     const startedAt = Date.now();
     const headerStore = await headers();
     const userAgent = headerStore.get("user-agent");
     const body = await request.json().catch(() => null);
     const secret = typeof body?.pin === "string" ? body.pin.trim() : "";
+    const identifier = typeof body?.identifier === "string" ? body.identifier.trim() : "";
 
     if (secret.length < 4 || secret.length > 64) {
         return NextResponse.json({ error: "Enter a valid PIN/password." }, { status: 400 });
@@ -206,11 +247,31 @@ export async function POST(request: Request) {
         clearSupabaseAuthCookies(cookieStore);
 
         const supabase = await createSupabaseServerClient();
-        const rpc = supabase.rpc.bind(supabase) as unknown as VerifyPinRpc;
-        const { data, error } = await withLoginTimeout("credential_rpc", PROFILE_TIMEOUT_MS, rpc("ddumba_v1_verify_unified_login", {
-            p_secret: secret,
-            p_user_agent: userAgent,
-        }));
+        let data: LoginIdentity[] | null = null;
+        let error: { message: string } | null = null;
+        if (identifier) {
+            const personalRpc = supabase.rpc.bind(supabase) as unknown as VerifyPersonalOfficeRpc;
+            const personal = await withLoginTimeout("personal_office_credential_rpc", PROFILE_TIMEOUT_MS, personalRpc("ddumba_v1_verify_personal_office_login", {
+                p_identifier: identifier,
+                p_secret: secret,
+                p_user_agent: userAgent,
+            })).catch((personalError) => {
+                throw personalError;
+            });
+            if (personal.error || personal.data?.[0]?.user_id) {
+                data = personal.data;
+                error = personal.error;
+            }
+        }
+        if (!data?.[0]?.user_id && !error) {
+            const rpc = supabase.rpc.bind(supabase) as unknown as VerifyPinRpc;
+            const response = await withLoginTimeout("credential_rpc", PROFILE_TIMEOUT_MS, rpc("ddumba_v1_verify_unified_login", {
+                p_secret: secret,
+                p_user_agent: userAgent,
+            }));
+            data = response.data;
+            error = response.error;
+        }
 
         if (error) {
             const errorRef = errorReference();
@@ -231,6 +292,17 @@ export async function POST(request: Request) {
         const identity = data?.[0];
         const loginStatus = identity?.login_status ?? (identity?.email ? "success" : "invalid");
         const attemptsRemaining = Math.max(0, identity?.attempts_remaining ?? 2);
+
+        if (identity?.user_id && identity.auth_mode === "office" && await isSharedOfficeAccount(identity.user_id, identity.company_id)) {
+            return NextResponse.json(
+                {
+                    error: DIRECT_OFFICE_LOGIN_MESSAGE,
+                    directOfficeLoginDisabled: true,
+                    redirectTo: "/",
+                },
+                { status: 403 },
+            );
+        }
 
         if (loginStatus === "merged_office") {
             return NextResponse.json(
@@ -255,6 +327,25 @@ export async function POST(request: Request) {
         }
 
         if (!identity?.email || loginStatus === "invalid" || loginStatus === "invalid_limit") {
+            const directOfficeRpc = supabase.rpc.bind(supabase) as unknown as DirectOfficeLoginRpc;
+            const directOffice = await withLoginTimeout("direct_office_login_check", PROFILE_TIMEOUT_MS, directOfficeRpc("ddumba_v1_check_direct_office_login", {
+                p_identifier: identifier || null,
+                p_secret: secret,
+            })).catch(() => null);
+            if (directOffice?.data?.[0]?.office_id) {
+                return NextResponse.json(
+                    {
+                        error: DIRECT_OFFICE_LOGIN_MESSAGE,
+                        directOfficeLoginDisabled: true,
+                        office: {
+                            id: directOffice.data[0].office_id,
+                            name: directOffice.data[0].office_name,
+                        },
+                        redirectTo: "/",
+                    },
+                    { status: 403 },
+                );
+            }
             const message = attemptsRemaining > 0
                 ? `Wrong password. You have ${attemptsRemaining} attempt${attemptsRemaining === 1 ? "" : "s"} remaining.`
                 : "Account locked after 3 failed attempts. Please contact admin for password reset.";

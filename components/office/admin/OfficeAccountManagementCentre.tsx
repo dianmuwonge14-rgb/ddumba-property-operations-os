@@ -44,7 +44,7 @@ type Props = {
     serviceRoleConfigured: boolean;
 };
 
-type CreateMode = "office" | "office-account" | "collector" | "employee" | "admin" | "all-rounder" | null;
+type CreateMode = "office" | "receptionist" | "collector" | "employee" | "admin" | "all-rounder" | null;
 type TabKey = "create" | "offices" | "accounts" | "employees" | "roles" | "incomplete" | "activity";
 type MessageTone = "success" | "error" | "info";
 
@@ -94,8 +94,8 @@ const emptyOfficeWizard: OfficeWizardState = {
 };
 
 const createOptions: Array<{ key: Exclude<CreateMode, null>; title: string; description: string; icon: React.ReactNode; tone: string }> = [
-    { key: "office", title: "Office", description: "Create the office and its working login together.", icon: <Building2 size={22} />, tone: "from-blue-600 to-cyan-500" },
-    { key: "office-account", title: "Office Account", description: "Add a login to an existing office.", icon: <KeyRound size={22} />, tone: "from-indigo-600 to-blue-500" },
+    { key: "office", title: "Office", description: "Create the office and a first personal receptionist login.", icon: <Building2 size={22} />, tone: "from-blue-600 to-cyan-500" },
+    { key: "receptionist", title: "Receptionist Account", description: "Link a personal receptionist login to one active office.", icon: <KeyRound size={22} />, tone: "from-indigo-600 to-blue-500" },
     { key: "collector", title: "Field Collector Account", description: "Create an all-office collector workspace login.", icon: <UsersRound size={22} />, tone: "from-cyan-600 to-emerald-500" },
     { key: "employee", title: "Employee", description: "Create a fixed-office employee record.", icon: <UserPlus size={22} />, tone: "from-violet-600 to-indigo-500" },
     { key: "admin", title: "Admin Account", description: "Create a company-level administrator login.", icon: <ShieldCheck size={22} />, tone: "from-slate-800 to-zinc-600" },
@@ -128,7 +128,7 @@ function roleByKey(raw: Props["raw"], keys: string[]) {
 export default function OfficeAccountManagementCentre({ company, initialFocus, raw, serviceRoleConfigured }: Props) {
     const router = useRouter();
     const [activeTab, setActiveTab] = useState<TabKey>("create");
-    const [createMode, setCreateMode] = useState<CreateMode>(initialFocus === "collector" ? "collector" : initialFocus === "office" ? "office-account" : null);
+    const [createMode, setCreateMode] = useState<CreateMode>(initialFocus === "collector" ? "collector" : initialFocus === "office" ? "receptionist" : null);
     const [officeStep, setOfficeStep] = useState(1);
     const [officeWizard, setOfficeWizard] = useState<OfficeWizardState>(emptyOfficeWizard);
     const [showPin, setShowPin] = useState(false);
@@ -141,7 +141,7 @@ export default function OfficeAccountManagementCentre({ company, initialFocus, r
 
     const officeOptions = raw.offices;
     const roleOptions = raw.roles.filter((role) => !role.company_id || role.company_id === company?.id);
-    const officeRole = roleByKey(raw, ["office_manager", "office_user"]);
+    const officeRole = roleByKey(raw, ["receptionist", "office_manager", "office_user"]);
     const adminRole = roleByKey(raw, ["company_admin", "super_admin", "hq_executive"]);
     const selectedUser = raw.users.find((user) => user.id === selectedUserId) ?? null;
     const selectedOffice = raw.offices.find((office) => office.id === selectedOfficeId) ?? null;
@@ -174,7 +174,7 @@ export default function OfficeAccountManagementCentre({ company, initialFocus, r
         }
         if (initialFocus === "office") {
             setActiveTab("create");
-            setCreateMode("office-account");
+            setCreateMode("receptionist");
         }
     }, [initialFocus]);
 
@@ -197,7 +197,7 @@ export default function OfficeAccountManagementCentre({ company, initialFocus, r
         setOfficeWizard((current) => {
             const next = { ...current, [key]: value };
             if (key === "officeName" && !current.officeCode) next.officeCode = generateCode(String(value));
-            if (key === "officeName" && !current.loginName) next.loginName = `${String(value).trim()} Office Login`.trim();
+            if (key === "officeName" && !current.loginName) next.loginName = `${String(value).trim()} Receptionist`.trim();
             return next;
         });
     }
@@ -222,21 +222,25 @@ export default function OfficeAccountManagementCentre({ company, initialFocus, r
         }, "Office created successfully.");
     }
 
-    function createExistingOfficeAccount(formData: FormData, accountType: "office" | "admin" = "office") {
+    function createExistingOfficeAccount(formData: FormData, accountType: "receptionist" | "admin" = "receptionist") {
         const roleId = accountType === "admin" ? adminRole?.id : String(formData.get("roleId") || officeRole?.id || "");
         const officeId = String(formData.get("officeId") || raw.offices[0]?.id || "");
         run(
             () => createOfficeAccount({
                 fullName: String(formData.get("fullName") ?? ""),
                 email: String(formData.get("email") ?? ""),
+                employeeId: String(formData.get("employeeId") ?? "") || undefined,
+                effectiveStartDate: String(formData.get("effectiveStartDate") ?? ""),
+                loginIdentifier: String(formData.get("loginIdentifier") ?? ""),
                 pin: String(formData.get("pin") ?? ""),
                 confirmPin: String(formData.get("confirmPin") ?? ""),
+                phone: String(formData.get("phone") ?? ""),
                 officeId,
                 roleId,
                 accountType,
                 status: String(formData.get("status") ?? "active"),
             }),
-            accountType === "admin" ? "Admin account created." : "Office account created.",
+            accountType === "admin" ? "Admin account created." : "Receptionist account created.",
         );
     }
 
@@ -311,7 +315,7 @@ export default function OfficeAccountManagementCentre({ company, initialFocus, r
                         </div>
                         <h2 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Administration Centre</h2>
                         <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-300">
-                            Create offices, accounts, collectors, and employees through a guided workflow. Creation forms are separated from management controls.
+                            Create offices, personal receptionist logins, collectors, and employees through a guided workflow. Creation forms are separated from management controls.
                         </p>
                     </div>
                     <button
@@ -354,7 +358,7 @@ export default function OfficeAccountManagementCentre({ company, initialFocus, r
                     {[
                         ["create", "Create New"],
                         ["offices", "Offices"],
-                        ["accounts", "Accounts"],
+                        ["accounts", "Office Receptionists"],
                         ["employees", "Employees"],
                         ["roles", "Roles and Permissions"],
                         ["incomplete", `Incomplete Setups (${incompleteOffices.length})`],
@@ -409,8 +413,8 @@ export default function OfficeAccountManagementCentre({ company, initialFocus, r
                                             step={officeStep}
                                         />
                                     )}
-                                    {createMode === "office-account" && (
-                                        <OfficeAccountForm
+                                    {createMode === "receptionist" && (
+                                        <ReceptionistAccountForm
                                             disabled={isPending || !serviceRoleConfigured}
                                             officeOptions={officeOptions}
                                             roleOptions={roleOptions}
@@ -488,7 +492,7 @@ export default function OfficeAccountManagementCentre({ company, initialFocus, r
                     <InfoGrid
                         items={[
                             { title: "Roles", detail: `${roleOptions.length} roles available for this company.` },
-                            { title: "Office Manager", detail: officeRole ? "Default role is available for new office logins." : "Office Manager role missing. Apply default role migration." },
+                            { title: "Receptionist", detail: officeRole ? "Default role is available for new receptionist logins." : "Receptionist role missing. Apply default role migration." },
                             { title: "Admin Role", detail: adminRole ? "Company admin role is available." : "Admin role missing. Review role seeds." },
                         ]}
                     />
@@ -555,7 +559,7 @@ function OfficeWizard({
     return (
         <div className="space-y-5">
             <div className="grid gap-2 sm:grid-cols-4">
-                {["Office details", "Office login", "Manager settings", "Review"].map((label, index) => (
+                {["Office details", "Receptionist login", "Manager settings", "Review"].map((label, index) => (
                     <button
                         key={label}
                         type="button"
@@ -579,7 +583,7 @@ function OfficeWizard({
 
             {step === 2 && (
                 <div className="grid gap-3 md:grid-cols-2">
-                    <Input label="Office login name" value={state.loginName} onChange={(value) => setValue("loginName", value)} placeholder="Nakiwogo Office Login" />
+                    <Input label="Receptionist login name" value={state.loginName} onChange={(value) => setValue("loginName", value)} placeholder="Nakiwogo Receptionist" />
                     <Input label="Optional login email" value={state.loginEmail} onChange={(value) => setValue("loginEmail", value)} placeholder="office@example.com" type="email" />
                     <SecretInput label="Six-digit PIN or password" value={state.pin} onChange={(value) => setValue("pin", value.replace(/\D/g, "").slice(0, 6))} show={showPin} />
                     <SecretInput label="Confirm PIN or password" value={state.confirmPin} onChange={(value) => setValue("confirmPin", value.replace(/\D/g, "").slice(0, 6))} show={showPin} />
@@ -653,7 +657,7 @@ function OfficeSuccessPanel({ success, onCreateAnother }: { success: OfficeSucce
             </div>
             <div className="mt-5 flex flex-wrap gap-2">
                 <button type="button" onClick={() => navigator.clipboard?.writeText(copyText)} className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-black text-emerald-800"><Copy size={16} /> Copy Login Details</button>
-                <button type="button" onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-black text-emerald-800"><Printer size={16} /> Print Office Login Sheet</button>
+                <button type="button" onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-black text-emerald-800"><Printer size={16} /> Print Receptionist Login Sheet</button>
                 <Link href="/office/admin" className="inline-flex items-center rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white">Open Office</Link>
                 <button type="button" onClick={onCreateAnother} className="rounded-2xl bg-emerald-700 px-4 py-3 text-sm font-black text-white">Create Another</button>
                 <Link href="/office/admin" className="inline-flex items-center rounded-2xl border border-emerald-200 bg-emerald-100 px-4 py-3 text-sm font-black text-emerald-900">Return to Administration</Link>
@@ -662,17 +666,21 @@ function OfficeSuccessPanel({ success, onCreateAnother }: { success: OfficeSucce
     );
 }
 
-function OfficeAccountForm({ disabled, officeOptions, roleOptions, onSubmit }: { disabled: boolean; officeOptions: Props["raw"]["offices"]; roleOptions: Props["raw"]["roles"]; onSubmit: (formData: FormData) => void }) {
+function ReceptionistAccountForm({ disabled, officeOptions, roleOptions, onSubmit }: { disabled: boolean; officeOptions: Props["raw"]["offices"]; roleOptions: Props["raw"]["roles"]; onSubmit: (formData: FormData) => void }) {
     return (
         <form action={onSubmit} className="grid gap-3 md:grid-cols-2">
             <NativeSelect name="officeId" label="Select office" options={officeOptions.map((office) => [office.id, office.office_name ?? office.name ?? "Office"])} />
             <NativeSelect name="roleId" label="Role" options={roleOptions.map((role) => [role.id, role.name])} />
-            <NativeInput name="fullName" label="Account name" />
+            <NativeInput name="employeeId" label="Existing employee ID (optional)" />
+            <NativeInput name="fullName" label="Receptionist full name" />
+            <NativeInput name="phone" label="Phone number" />
+            <NativeInput name="loginIdentifier" label="Username / login identifier" />
             <NativeInput name="email" label="Optional email / login email" type="email" />
-            <NativeInput name="pin" label="Six-digit PIN or password" type="password" maxLength={6} />
+            <NativeInput name="pin" label="Personal six-digit PIN" type="password" maxLength={6} />
             <NativeInput name="confirmPin" label="Confirm credential" type="password" maxLength={6} />
+            <NativeInput name="effectiveStartDate" label="Effective start date" type="date" />
             <NativeSelect name="status" label="Status" options={[["active", "Active"], ["inactive", "Inactive"]]} />
-            <Submit disabled={disabled} label="Create Office Account" />
+            <Submit disabled={disabled} label="Create Receptionist Account" />
         </form>
     );
 }
@@ -751,7 +759,7 @@ function IncompleteSetups({ disabled, incompleteOffices, nakiwogo, onComplete, r
                             <StatusChip label="Incomplete" tone="orange" />
                         </div>
                         <div className="mt-4 grid gap-3 md:grid-cols-2">
-                            <NativeInput name="fullName" label="Office login name" defaultValue={`${office.office_name ?? office.name} Office Login`} />
+                            <NativeInput name="fullName" label="Receptionist login name" defaultValue={`${office.office_name ?? office.name} Receptionist`} />
                             <NativeInput name="email" label="Optional login email" type="email" />
                             <NativeInput name="pin" label="Six-digit PIN" type="password" maxLength={6} />
                             <NativeInput name="confirmPin" label="Confirm PIN" type="password" maxLength={6} />
@@ -846,6 +854,22 @@ function AccountManagement({ disabled, lockedAccounts, officeOptions, pinCredent
 
     return (
         <div className="space-y-5">
+            <div className="rounded-[1.5rem] border border-blue-100 bg-gradient-to-br from-white to-blue-50 p-5">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div>
+                        <p className="text-xs font-black uppercase tracking-wide text-blue-600">Office Receptionists</p>
+                        <h3 className="mt-1 text-2xl font-black text-slate-950">Personal office access and accountability</h3>
+                        <p className="mt-2 max-w-3xl text-sm font-bold leading-6 text-slate-600">
+                            Offices remain the workspace. Receptionist accounts identify who recorded payments, receipts, expenses, deposits, move-ins and other office actions.
+                        </p>
+                    </div>
+                    <div className="grid gap-2 text-sm font-black text-slate-700 sm:grid-cols-3">
+                        <span className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-700">Personal PINs</span>
+                        <span className="rounded-2xl border border-cyan-200 bg-cyan-50 px-3 py-2 text-cyan-700">Office scoped</span>
+                        <span className="rounded-2xl border border-blue-200 bg-blue-50 px-3 py-2 text-blue-700">Audit ready</span>
+                    </div>
+                </div>
+            </div>
             <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4">
                 <div className="flex items-center justify-between gap-3">
                     <h3 className="font-black text-slate-950">Locked Account Recovery</h3>
@@ -863,7 +887,7 @@ function AccountManagement({ disabled, lockedAccounts, officeOptions, pinCredent
                             </form>
                         ))}
                     </div>
-                ) : <p className="mt-3 text-sm font-bold text-emerald-700">No locked office accounts.</p>}
+                ) : <p className="mt-3 text-sm font-bold text-emerald-700">No locked receptionist accounts.</p>}
             </div>
 
             <div className="grid gap-5 xl:grid-cols-[0.85fr_1.15fr]">

@@ -14,7 +14,7 @@ test("admin office creation is guided and requires login credentials before comp
   assert.match(centreSource, /Create New/);
   assert.match(centreSource, /What do you want to create\?/);
   assert.match(centreSource, /Office details/);
-  assert.match(centreSource, /Office login/);
+  assert.match(centreSource, /Receptionist login/);
   assert.match(centreSource, /Review and create/);
   assert.match(centreSource, /PIN must contain exactly six digits|Exactly six digits/);
   assert.match(centreSource, /validStep2/);
@@ -23,12 +23,12 @@ test("admin office creation is guided and requires login credentials before comp
 
 test("office creation action creates office and login together with rollback cleanup", () => {
   assert.match(actionSource, /export async function createOfficeWithLogin/);
-  assert.match(actionSource, /defaultOfficeRoleId/);
+  assert.match(actionSource, /defaultReceptionistRoleId/);
   assert.match(actionSource, /company_id\.is\.null/);
   assert.match(actionSource, /admin\.auth\.admin\.createUser/);
   assert.match(actionSource, /setPinCredential/);
   assert.match(actionSource, /assignRole/);
-  assert.match(actionSource, /office_created_with_login/);
+  assert.match(actionSource, /office_created_with_receptionist_login/);
   assert.match(actionSource, /ignoreCleanupError/);
   assert.match(actionSource, /deleteUser/);
   assert.match(actionSource, /createOfficeWithLogin failed/);
