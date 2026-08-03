@@ -75,6 +75,8 @@ type SetPinRpc = (
     args: { p_user_id: string; p_pin: string; p_status?: string },
 ) => Promise<{ data: null; error: { message: string } | null }>;
 
+const DUPLICATE_EMPLOYEE_MESSAGE = "An employee with these details already exists.";
+
 function assertPin(pin: string) {
     if (!/^\d{4,12}$/.test(pin)) {
         throw new Error("PIN must be 4 to 12 digits.");
@@ -307,11 +309,17 @@ async function resolveReceptionistEmployee(input: {
             updated_at: new Date().toISOString(),
         };
         const { data, error } = await admin.from("employees").insert(payload as never).select("id, office_id, full_name, user_id").single();
+        if (error && /employee with these details already exists|duplicate key/i.test(error.message ?? "")) {
+            throw new Error(DUPLICATE_EMPLOYEE_MESSAGE);
+        }
         if (error && /primary_office_id|role|schema cache/i.test(error.message)) {
             const fallbackPayload = { ...payload };
             delete fallbackPayload.primary_office_id;
             delete fallbackPayload.role;
             const fallback = await admin.from("employees").insert(fallbackPayload as never).select("id, office_id, full_name, user_id").single();
+            if (fallback.error && /employee with these details already exists|duplicate key/i.test(fallback.error.message ?? "")) {
+                throw new Error(DUPLICATE_EMPLOYEE_MESSAGE);
+            }
             if (fallback.error) throw new Error(fallback.error.message);
             employee = fallback.data ?? null;
         } else if (error) {

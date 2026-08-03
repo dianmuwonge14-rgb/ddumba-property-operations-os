@@ -21,6 +21,65 @@ function text(value: unknown) {
     return String(value ?? "").trim();
 }
 
+const DUPLICATE_EMPLOYEE_MESSAGE = "An employee with these details already exists.";
+
+function normalizeEmployeeName(value: unknown) {
+    return text(value).replace(/\s+/g, " ").toLowerCase();
+}
+
+function normalizeEmployeePhone(value: unknown) {
+    return text(value).replace(/\D/g, "");
+}
+
+function normalizeEmployeeCode(value: unknown) {
+    return text(value).toLowerCase();
+}
+
+function normalizeEmployeeEmail(value: unknown) {
+    return text(value).toLowerCase();
+}
+
+function isInactiveEmployeeStatus(value: unknown) {
+    return ["archived", "deleted", "inactive", "terminated"].includes(text(value).toLowerCase());
+}
+
+async function assertNoDuplicateEmployee(input: {
+    companyId: string;
+    employeeCode?: string | null;
+    email?: string | null;
+    excludeEmployeeId?: string | null;
+    fullName?: string | null;
+    phone?: string | null;
+}) {
+    const normalizedName = normalizeEmployeeName(input.fullName);
+    const normalizedPhone = normalizeEmployeePhone(input.phone);
+    const normalizedCode = normalizeEmployeeCode(input.employeeCode);
+    const normalizedEmail = normalizeEmployeeEmail(input.email);
+    if (!normalizedName && !normalizedPhone && !normalizedCode && !normalizedEmail) return;
+
+    let query = db()
+        .from("employees")
+        .select("id, full_name, employee_code, phone, email, status")
+        .eq("company_id", input.companyId)
+        .limit(5000);
+    if (input.excludeEmployeeId) query = query.neq("id", input.excludeEmployeeId);
+
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+
+    const duplicate = ((data ?? []) as Array<Record<string, unknown>>).find((row) => {
+        if (isInactiveEmployeeStatus(row.status)) return false;
+        return Boolean(
+            (normalizedCode && normalizeEmployeeCode(row.employee_code) === normalizedCode)
+            || (normalizedPhone && normalizeEmployeePhone(row.phone) === normalizedPhone)
+            || (normalizedEmail && normalizeEmployeeEmail(row.email) === normalizedEmail)
+            || (normalizedName && normalizeEmployeeName(row.full_name) === normalizedName),
+        );
+    });
+
+    if (duplicate) throw new Error(DUPLICATE_EMPLOYEE_MESSAGE);
+}
+
 const EMPLOYEE_OPTIONAL_COLUMNS = new Set([
     "age",
     "advance_deduction_rule",
@@ -187,6 +246,10 @@ export async function createEmployee(formData: FormData) {
     const officeId = assignment.officeId;
     const roleId = text(formData.get("roleId")) || null;
     const roleName = text(formData.get("roleName"));
+    const employeeCode = text(formData.get("employeeCode")) || `EMP-${Date.now()}`;
+    const phone = text(formData.get("phone")) || null;
+    const email = text(formData.get("email")) || null;
+    await assertNoDuplicateEmployee({ companyId, employeeCode, email, fullName, phone });
     const payload = {
         company_id: companyId,
         office_id: officeId,
@@ -196,9 +259,9 @@ export async function createEmployee(formData: FormData) {
         role_name: roleName || null,
         full_name: fullName,
         age: amount(formData.get("age")) || null,
-        employee_code: text(formData.get("employeeCode")) || `EMP-${Date.now()}`,
-        phone: text(formData.get("phone")) || null,
-        email: text(formData.get("email")) || null,
+        employee_code: employeeCode,
+        phone,
+        email,
         hire_date: text(formData.get("startDate")) || null,
         basic_salary: amount(formData.get("basicSalary")),
         salary_receiving_day: amount(formData.get("salaryDay")) || 28,
@@ -239,17 +302,22 @@ export async function updateEmployee(formData: FormData) {
     if (!companyId) throw new Error("Active company is required.");
     const employeeId = text(formData.get("employeeId"));
     if (!employeeId) throw new Error("Employee is required.");
+    const fullName = text(formData.get("fullName"));
+    const employeeCode = text(formData.get("employeeCode")) || null;
+    const phone = text(formData.get("phone")) || null;
+    const email = text(formData.get("email")) || null;
+    await assertNoDuplicateEmployee({ companyId, employeeCode, email, excludeEmployeeId: employeeId, fullName, phone });
     const payload = {
         office_id: employeeOfficeAssignment(formData).officeId,
         default_office_id: employeeOfficeAssignment(formData).defaultOfficeId,
         employee_assignment_type: employeeOfficeAssignment(formData).assignmentType,
         role_id: text(formData.get("roleId")) || null,
         role_name: text(formData.get("roleName")) || null,
-        full_name: text(formData.get("fullName")),
+        full_name: fullName,
         age: amount(formData.get("age")) || null,
-        employee_code: text(formData.get("employeeCode")) || null,
-        phone: text(formData.get("phone")) || null,
-        email: text(formData.get("email")) || null,
+        employee_code: employeeCode,
+        phone,
+        email,
         hire_date: text(formData.get("startDate")) || null,
         basic_salary: amount(formData.get("basicSalary")),
         salary_receiving_day: amount(formData.get("salaryDay")) || 28,
