@@ -11,6 +11,7 @@ export type TenantReceiptViewModel = {
     id: string;
     receiptNumber: string;
     snapshot: PaymentReceiptSnapshot;
+    status?: string;
     verificationCode: string;
 };
 
@@ -790,6 +791,23 @@ body {
   padding: 1.4mm;
   break-inside: avoid;
   page-break-inside: avoid;
+}
+.receipt-status-banner,
+.receipt-amendment-section {
+  border: 1.5px solid #000000;
+  border-radius: 1.5mm;
+  padding: 1.2mm;
+  color: #000000;
+  background: #ffffff;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+.receipt-status-cancelled,
+.receipt-status-amended,
+.receipt-status-rejected,
+.receipt-status-pending,
+.receipt-status-superseded {
+  border-color: #000000;
 }
 .receipt-qr {
   display: block;
@@ -1751,6 +1769,9 @@ export function TenantPaymentReceiptModal({
 export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptViewModel }) {
     const snapshot = receipt.snapshot;
     const companyContact = [safeText(snapshot.companyContact)].filter(Boolean).join(" · ");
+    const receiptStatus = receiptStatusPresentation(snapshot.receiptStatus ?? receipt.status ?? snapshot.status);
+    const amendments = snapshot.amendmentHistory ?? [];
+    const latestAmendment = amendments.at(-1) ?? null;
     const coveragePeriods = useMemo(() => {
         if (snapshot.coveragePeriods?.length) return snapshot.coveragePeriods.filter((period) => period.label && Number(period.amount) > 0);
         if (snapshot.coveragePeriod) return [{ amount: snapshot.amountApplied, label: snapshot.coveragePeriod, type: "coverage" }];
@@ -1767,6 +1788,13 @@ export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptVi
                 {companyContact ? <p className="receipt-muted mt-0.5 text-[9px] font-bold">{companyContact}</p> : null}
                 <p className="receipt-heading mt-2 border-y border-dashed border-slate-900 py-1 text-[10px] font-black uppercase tracking-[0.08em]">Tenant Payment Receipt</p>
             </header>
+
+            {receiptStatus.banner ? (
+                <section className={`receipt-section receipt-status-banner ${receiptStatus.className}`}>
+                    <p className="text-center text-[11px] font-black uppercase tracking-[0.08em]">{receiptStatus.banner}</p>
+                    {snapshot.amendmentSummary ? <p className="mt-1 text-center text-[9px] font-black leading-tight">{snapshot.amendmentSummary}</p> : null}
+                </section>
+            ) : null}
 
             <section className="receipt-section">
                 <ReceiptRow label="Receipt No" value={receipt.receiptNumber} strong />
@@ -1812,21 +1840,47 @@ export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptVi
                 <ReceiptRow label="Method" value={snapshot.paymentMethod?.replaceAll("_", " ") ?? "Payment"} />
                 <ReceiptRow label="Reference" value={snapshot.referenceNumber ?? "No reference"} stacked />
                 {safeText(snapshot.securityDepositReceiptNumber) ? <ReceiptRow label="Security receipt" value={safeText(snapshot.securityDepositReceiptNumber) ?? ""} stacked /> : null}
-                <ReceiptRow label="Recorded by" value={snapshot.recordedByName ?? "DDUMBA OS"} stacked />
+                <ReceiptRow label="Prepared by" value={snapshot.preparedByName ?? snapshot.recordedByName ?? "DDUMBA OS"} stacked />
                 {snapshot.collectorName ? <ReceiptRow label="Collector" value={snapshot.collectorName} stacked /> : null}
-                <ReceiptRow label="Approved by" value={snapshot.approvedByName ?? snapshot.recordedByName ?? "DDUMBA OS"} stacked />
-                <ReceiptRow label="Status" value={snapshot.status} />
+                <ReceiptRow label="Status" value={receiptStatus.label} />
                 <ReceiptRow label="Notes" value={snapshot.notes ?? "No notes"} stacked />
             </section>
+
+            {latestAmendment ? (
+                <section className="receipt-section receipt-amendment-section">
+                    <p className="receipt-section-title font-black">Amendment History</p>
+                    <ReceiptRow label="Changed field" value={latestAmendment.fieldLabel} stacked />
+                    {latestAmendment.previousValue ? <ReceiptRow label="Previous value" value={latestAmendment.previousValue} stacked /> : null}
+                    {latestAmendment.newValue ? <ReceiptRow label="New value" value={latestAmendment.newValue} stacked /> : null}
+                    {latestAmendment.requestedByName ? <ReceiptRow label="Requested by" value={latestAmendment.requestedByName} stacked /> : null}
+                    {latestAmendment.changedByName ? <ReceiptRow label="Changed by" value={latestAmendment.changedByName} stacked /> : null}
+                    {latestAmendment.approvedByName ? <ReceiptRow label="Approved by" value={latestAmendment.approvedByName} stacked /> : null}
+                    {latestAmendment.approvalDate ? <ReceiptRow label="Approved date" value={formatDateTime(latestAmendment.approvalDate)} stacked /> : null}
+                    {latestAmendment.reason ? <ReceiptRow label="Reason" value={latestAmendment.reason} stacked /> : null}
+                    {latestAmendment.auditReference ? <ReceiptRow label="Audit ref" value={latestAmendment.auditReference} stacked /> : null}
+                </section>
+            ) : null}
 
             <footer className="receipt-section text-center">
                 <img alt={`Receipt QR ${receipt.verificationCode}`} className="receipt-qr mx-auto" crossOrigin="anonymous" src={qrUrl} />
                 <p className="mt-2 text-[9px] font-black uppercase tracking-wide">Thank you for your payment</p>
                 <p className="receipt-muted mt-1 text-[8px] font-bold leading-tight">Generated from the saved DDUMBA OS Supabase transaction. Keep this slip for tenant, office, collector, and audit verification.</p>
+                {receiptStatus.banner ? <p className="mt-1 border border-slate-950 py-1 text-[9px] font-black uppercase">{receiptStatus.banner}</p> : null}
             </footer>
         </div>
         </article>
     );
+}
+
+function receiptStatusPresentation(status: string | null | undefined) {
+    const value = String(status ?? "issued").toLowerCase();
+    if (["corrected", "amended"].includes(value)) return { banner: "Amended Receipt", className: "receipt-status-amended", label: "Corrected" };
+    if (["cancelled", "canceled", "voided", "void"].includes(value)) return { banner: "Cancelled Receipt", className: "receipt-status-cancelled", label: "Cancelled" };
+    if (value === "reversed") return { banner: "Reversed Receipt", className: "receipt-status-cancelled", label: "Reversed" };
+    if (["replaced", "superseded"].includes(value)) return { banner: "Superseded Receipt", className: "receipt-status-superseded", label: "Superseded" };
+    if (["rejected", "rejected_change"].includes(value)) return { banner: "Rejected Change Recorded", className: "receipt-status-rejected", label: "Rejected change" };
+    if (["pending", "pending_correction", "pending_change"].includes(value)) return { banner: "Pending Correction", className: "receipt-status-pending", label: "Pending correction" };
+    return { banner: null, className: "", label: status ?? "Issued" };
 }
 
 function ReceiptRow({ label, stackWhenLong = false, stacked = false, strong = false, value }: { label: string; stackWhenLong?: boolean; stacked?: boolean; strong?: boolean; value: string }) {

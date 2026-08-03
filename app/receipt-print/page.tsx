@@ -20,6 +20,7 @@ type ReceiptRow = {
     office_id: string | null;
     receipt_number: string;
     receipt_snapshot: PaymentReceiptSnapshot;
+    status: string;
     verification_code: string;
 };
 
@@ -53,7 +54,7 @@ export async function loadPrintableReceipt(receiptId: string) {
     const db = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
     const { data, error } = await db
         .from("payment_receipts")
-        .select("id,company_id,office_id,receipt_number,receipt_snapshot,verification_code")
+        .select("id,company_id,office_id,receipt_number,receipt_snapshot,status,verification_code")
         .eq("company_id", context.activeCompany.id)
         .eq("id", receiptId)
         .maybeSingle();
@@ -69,6 +70,7 @@ export async function loadPrintableReceipt(receiptId: string) {
         id: row.id,
         receiptNumber: row.receipt_number,
         snapshot: row.receipt_snapshot,
+        status: row.status,
         verificationCode: row.verification_code || row.receipt_snapshot?.verificationCode,
     } satisfies TenantReceiptViewModel;
 }
@@ -231,6 +233,22 @@ body {
   background: #fff !important;
   break-inside: avoid !important;
   page-break-inside: avoid !important;
+}
+.receipt-status-banner,
+.receipt-amendment-section {
+  border: 1.5px solid #000 !important;
+  border-radius: 0 !important;
+  padding: 1mm !important;
+  margin-top: 1mm !important;
+  background: #fff !important;
+  color: #000 !important;
+  break-inside: avoid !important;
+  page-break-inside: avoid !important;
+}
+.receipt-status-banner *,
+.receipt-amendment-section * {
+  color: #000 !important;
+  font-weight: 800 !important;
 }
 .coverage-row,
 .receipt-coverage-card,
@@ -550,6 +568,37 @@ body {
 }
 .receipt-a4-coverage-row b {
   text-align: right;
+}
+.receipt-a4-status,
+.receipt-a4-amendment {
+  border: 2px solid #000;
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px 12px;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+.receipt-a4-status strong,
+.receipt-a4-final-status {
+  display: block;
+  color: #000 !important;
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.receipt-a4-status span {
+  display: block;
+  margin-top: 4px;
+  color: #000 !important;
+  font-size: 12px;
+  font-weight: 800;
+}
+.receipt-a4-final-status {
+  margin: 8px 0 0;
+  border: 2px solid #000;
+  padding: 5px 8px;
+  text-align: center;
 }
 .receipt-a4-footer img {
   width: 28mm;

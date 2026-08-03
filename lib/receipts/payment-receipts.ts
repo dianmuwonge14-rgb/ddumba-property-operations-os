@@ -20,6 +20,22 @@ export type PaymentReceiptSummary = {
     snapshot: PaymentReceiptSnapshot;
 };
 
+export type PaymentReceiptAmendmentSnapshot = {
+    amendmentType: string;
+    approvalDate: string | null;
+    approvedByName: string | null;
+    auditReference: string | null;
+    changeDate: string | null;
+    changedByName: string | null;
+    fieldLabel: string;
+    newValue: string | null;
+    previousValue: string | null;
+    reason: string | null;
+    requestedAt: string | null;
+    requestedByName: string | null;
+    status: string;
+};
+
 export type PaymentReceiptSnapshot = {
     advanceBalance: number;
     advanceAmount: number;
@@ -47,6 +63,20 @@ export type PaymentReceiptSnapshot = {
     paymentMethod: string | null;
     previousOutstandingBalance: number;
     receiptNumber: string;
+    amendmentHistory?: PaymentReceiptAmendmentSnapshot[];
+    amendmentSummary?: string | null;
+    approvalDate?: string | null;
+    auditReference?: string | null;
+    cancellationReason?: string | null;
+    changeApprovedByName?: string | null;
+    changeDate?: string | null;
+    changeReason?: string | null;
+    changeRequestedByName?: string | null;
+    changeType?: string | null;
+    changedByName?: string | null;
+    preparedByName?: string | null;
+    receiptStatus?: string;
+    statusLabel?: string;
     recordedByName: string | null;
     referenceNumber: string | null;
     remainingOutstandingBalance: number;
@@ -79,6 +109,40 @@ function isMissingSchemaError(error: { message?: string; code?: string } | null 
 function activePaymentStatus(status: unknown) {
     const value = String(status ?? "").toLowerCase();
     return !["pending", "rejected", "removed_by_admin_approval", "reversed", "deleted", "void", "voided", "cancelled"].includes(value);
+}
+
+function receiptStatusLabel(status: string) {
+    const value = status.replaceAll("_", " ").trim();
+    if (!value) return "Issued";
+    return value.replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function correctionReceiptStatus(request: LooseRow, decision: "approved" | "rejected") {
+    if (decision === "rejected") return "rejected_change";
+    const type = String(request.correction_type ?? "");
+    if (type === "remove_payment") return "cancelled";
+    return "corrected";
+}
+
+function correctionFieldLabel(type: unknown) {
+    if (type === "date_change") return "Payment date";
+    if (type === "amount_change") return "Amount paid";
+    if (type === "room_change") return "Room";
+    if (type === "remove_payment") return "Payment status";
+    return "Payment";
+}
+
+function correctionValueLabel(value: unknown, type: unknown) {
+    const row = (value ?? {}) as LooseRow;
+    if (type === "date_change") return text(row.payment_date) ?? null;
+    if (type === "amount_change") return `UGX ${Math.round(amount(row.amount)).toLocaleString()}`;
+    if (type === "room_change") {
+        const room = text(row.room_number) ?? text(row.room_id);
+        const tenant = text(row.tenant_name);
+        return [room, tenant].filter(Boolean).join(" · ") || null;
+    }
+    if (type === "remove_payment") return text(row.status) ?? (row.remove_payment ? "removed by Admin approval" : null);
+    return JSON.stringify(row);
 }
 
 function receiptNumberFor(payment: LooseRow) {
@@ -161,6 +225,13 @@ async function getOne(db: Db, table: string, id: unknown, companyId: string, sel
     const { data, error } = await db.from(table).select(select).eq("company_id", companyId).eq("id", id).maybeSingle();
     if (error && !isMissingSchemaError(error)) throw new Error(error.message);
     return (data ?? null) as LooseRow | null;
+}
+
+async function getUserName(db: Db, id: unknown) {
+    if (!id) return null;
+    const { data, error } = await db.from("users").select("id,full_name,email,phone").eq("id", id).maybeSingle();
+    if (error && !isMissingSchemaError(error)) throw new Error(error.message);
+    return text(data?.full_name) ?? text(data?.email) ?? text(data?.phone);
 }
 
 async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumber: string, verificationCode: string): Promise<PaymentReceiptSnapshot> {
@@ -297,6 +368,257 @@ export async function createTenantPaymentReceipt(paymentId: string, options: { c
         throw new Error(insertError.message);
     }
     return receiptSummary(receipt);
+}
+
+export async function syncTenantPaymentReceiptForCorrection(input: {
+    decision: "approved" | "rejected";
+    paymentId: string;
+    requestId: string;
+}) {
+    const db = createSupabaseAdminClient() as unknown as Db;
+    const { data: request, error: requestError } = await db
+        .from("payment_correction_requests")
+        .select("*")
+        .eq("id", input.requestId)
+        .maybeSingle();
+    if (requestError) throw new Error(requestError.message);
+    if (!request) throw new Error("Payment correction request not found for receipt sync.");
+
+    const { data: payment, error: paymentError } = await db.from("collections").select("*").eq("id", input.paymentId).maybeSingle();
+    if (paymentError) throw new Error(paymentError.message);
+    if (!payment) throw new Error("Payment record not found for receipt sync.");
+
+    const companyId = String(payment.company_id ?? request.company_id);
+    const { data: existing, error: existingError } = await db
+        .from("payment_receipts")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("payment_type", "tenant_collection")
+        .eq("payment_id", input.paymentId)
+        .maybeSingle();
+    if (existingError) {
+        if (isMissingSchemaError(existingError)) return null;
+        throw new Error(existingError.message);
+    }
+
+    const receiptNumber = String(existing?.receipt_number ?? receiptNumberFor(payment));
+    const verificationCode = String(existing?.verification_code ?? verificationCodeFor(payment));
+    const currentSnapshot = await buildTenantReceiptSnapshot(db, payment, receiptNumber, verificationCode);
+    const previousSnapshot = (existing?.receipt_snapshot as PaymentReceiptSnapshot | null | undefined) ?? currentSnapshot;
+    const receiptStatus = correctionReceiptStatus(request, input.decision);
+    const requestedByName = await getUserName(db, request.requested_by);
+    const changedByName = requestedByName;
+    const approvedByName = await getUserName(db, request.reviewed_by);
+    const fieldLabel = correctionFieldLabel(request.correction_type);
+    const amendment: PaymentReceiptAmendmentSnapshot = {
+        amendmentType: String(request.correction_type ?? "payment_change"),
+        approvalDate: text(request.reviewed_at),
+        approvedByName,
+        auditReference: `payment_correction:${request.id}:${input.decision}`,
+        changeDate: text(request.reviewed_at) ?? text(request.updated_at) ?? text(request.created_at),
+        changedByName,
+        fieldLabel,
+        newValue: correctionValueLabel(request.requested_value, request.correction_type),
+        previousValue: correctionValueLabel(request.original_value, request.correction_type),
+        reason: text(request.admin_comment) ?? text(request.reason),
+        requestedAt: text(request.created_at),
+        requestedByName,
+        status: input.decision,
+    };
+    const previousHistory = Array.isArray(previousSnapshot.amendmentHistory) ? previousSnapshot.amendmentHistory : [];
+    const amendmentSummary = input.decision === "rejected"
+        ? `${fieldLabel} change rejected`
+        : receiptStatus === "cancelled"
+            ? `Payment cancelled: ${amendment.reason ?? "Admin approved cancellation"}`
+            : `${fieldLabel} changed from ${amendment.previousValue ?? "previous value"} to ${amendment.newValue ?? "new value"}`;
+    const updatedSnapshot: PaymentReceiptSnapshot = {
+        ...currentSnapshot,
+        amendmentHistory: [...previousHistory, amendment],
+        amendmentSummary,
+        approvalDate: amendment.approvalDate,
+        auditReference: amendment.auditReference,
+        cancellationReason: receiptStatus === "cancelled" ? amendment.reason : previousSnapshot.cancellationReason ?? null,
+        changeApprovedByName: approvedByName,
+        changeDate: amendment.changeDate,
+        changeReason: amendment.reason,
+        changeRequestedByName: requestedByName,
+        changeType: fieldLabel,
+        changedByName,
+        preparedByName: previousSnapshot.preparedByName ?? previousSnapshot.recordedByName ?? currentSnapshot.recordedByName,
+        receiptStatus,
+        status: receiptStatus,
+        statusLabel: receiptStatusLabel(receiptStatus),
+    };
+
+    let receiptRow = existing;
+    if (existing?.id) {
+        const { data: updatedReceipt, error: updateError } = await db
+            .from("payment_receipts")
+            .update({
+                receipt_snapshot: updatedSnapshot,
+                status: receiptStatus,
+                updated_at: new Date().toISOString(),
+            })
+            .eq("id", existing.id)
+            .select("*")
+            .single();
+        if (updateError) throw new Error(updateError.message);
+        receiptRow = updatedReceipt;
+    } else if (receiptStatus !== "cancelled") {
+        const { data: insertedReceipt, error: insertError } = await db
+            .from("payment_receipts")
+            .upsert({
+                company_id: companyId,
+                file_url: null,
+                issued_by: payment.recorded_by ?? request.requested_by ?? null,
+                office_id: payment.office_id ?? request.office_id ?? null,
+                payment_id: input.paymentId,
+                payment_type: "tenant_collection",
+                receipt_number: receiptNumber,
+                receipt_snapshot: updatedSnapshot,
+                status: receiptStatus,
+                updated_at: new Date().toISOString(),
+                verification_code: verificationCode,
+            }, { onConflict: "company_id,payment_type,payment_id" })
+            .select("*")
+            .single();
+        if (insertError && !isMissingSchemaError(insertError)) throw new Error(insertError.message);
+        receiptRow = insertedReceipt;
+    }
+
+    if (receiptRow?.id) {
+        const auditReference = amendment.auditReference;
+        const { data: existingAmendment, error: amendmentLookupError } = await db
+            .from("payment_receipt_amendments")
+            .select("id")
+            .eq("audit_reference", auditReference)
+            .maybeSingle();
+        if (amendmentLookupError && !isMissingSchemaError(amendmentLookupError)) throw new Error(amendmentLookupError.message);
+        if (!existingAmendment?.id && !isMissingSchemaError(amendmentLookupError)) {
+            const { error: amendmentError } = await db.from("payment_receipt_amendments").insert({
+                amendment_type: amendment.amendmentType,
+                approved_at: amendment.approvalDate,
+                approved_by: request.reviewed_by ?? null,
+                audit_reference: auditReference,
+                changed_at: amendment.changeDate,
+                changed_by: request.requested_by ?? null,
+                company_id: companyId,
+                new_snapshot: updatedSnapshot,
+                office_id: payment.office_id ?? request.office_id ?? null,
+                payment_id: input.paymentId,
+                previous_snapshot: previousSnapshot,
+                reason: amendment.reason,
+                receipt_id: receiptRow.id,
+                requested_at: amendment.requestedAt,
+                requested_by: request.requested_by ?? null,
+                status: input.decision,
+            });
+            if (amendmentError && !isMissingSchemaError(amendmentError)) throw new Error(amendmentError.message);
+        }
+        return receiptSummary(receiptRow);
+    }
+    return null;
+}
+
+export async function markTenantPaymentReceiptPendingCorrection(input: {
+    paymentId: string;
+    requestId: string;
+}) {
+    const db = createSupabaseAdminClient() as unknown as Db;
+    const { data: request, error: requestError } = await db
+        .from("payment_correction_requests")
+        .select("*")
+        .eq("id", input.requestId)
+        .maybeSingle();
+    if (requestError) throw new Error(requestError.message);
+    if (!request) throw new Error("Payment correction request not found for pending receipt status.");
+
+    const { data: payment, error: paymentError } = await db.from("collections").select("*").eq("id", input.paymentId).maybeSingle();
+    if (paymentError) throw new Error(paymentError.message);
+    if (!payment) throw new Error("Payment record not found for pending receipt status.");
+
+    const companyId = String(payment.company_id ?? request.company_id);
+    const { data: existing, error: existingError } = await db
+        .from("payment_receipts")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("payment_type", "tenant_collection")
+        .eq("payment_id", input.paymentId)
+        .maybeSingle();
+    if (existingError || !existing?.id) {
+        if (existingError && !isMissingSchemaError(existingError)) throw new Error(existingError.message);
+        return null;
+    }
+
+    const previousSnapshot = existing.receipt_snapshot as PaymentReceiptSnapshot;
+    const requestedByName = await getUserName(db, request.requested_by);
+    const fieldLabel = correctionFieldLabel(request.correction_type);
+    const amendment: PaymentReceiptAmendmentSnapshot = {
+        amendmentType: String(request.correction_type ?? "payment_change"),
+        approvalDate: null,
+        approvedByName: null,
+        auditReference: `payment_correction:${request.id}:pending`,
+        changeDate: text(request.created_at),
+        changedByName: requestedByName,
+        fieldLabel,
+        newValue: correctionValueLabel(request.requested_value, request.correction_type),
+        previousValue: correctionValueLabel(request.original_value, request.correction_type),
+        reason: text(request.reason),
+        requestedAt: text(request.created_at),
+        requestedByName,
+        status: "pending",
+    };
+    const previousHistory = Array.isArray(previousSnapshot.amendmentHistory) ? previousSnapshot.amendmentHistory : [];
+    const updatedSnapshot: PaymentReceiptSnapshot = {
+        ...previousSnapshot,
+        amendmentHistory: [...previousHistory, amendment],
+        amendmentSummary: `${fieldLabel} change pending Admin approval`,
+        auditReference: amendment.auditReference,
+        changeDate: amendment.changeDate,
+        changeReason: amendment.reason,
+        changeRequestedByName: requestedByName,
+        changeType: fieldLabel,
+        changedByName: requestedByName,
+        preparedByName: previousSnapshot.preparedByName ?? previousSnapshot.recordedByName,
+        receiptStatus: "pending_correction",
+        status: "pending_correction",
+        statusLabel: receiptStatusLabel("pending_correction"),
+    };
+    const { data: updatedReceipt, error: updateError } = await db
+        .from("payment_receipts")
+        .update({ receipt_snapshot: updatedSnapshot, status: "pending_correction", updated_at: new Date().toISOString() })
+        .eq("id", existing.id)
+        .select("*")
+        .single();
+    if (updateError) throw new Error(updateError.message);
+
+    const { data: existingAmendment, error: amendmentLookupError } = await db
+        .from("payment_receipt_amendments")
+        .select("id")
+        .eq("audit_reference", amendment.auditReference)
+        .maybeSingle();
+    if (amendmentLookupError && !isMissingSchemaError(amendmentLookupError)) throw new Error(amendmentLookupError.message);
+    if (!existingAmendment?.id && !isMissingSchemaError(amendmentLookupError)) {
+        const { error: amendmentError } = await db.from("payment_receipt_amendments").insert({
+            amendment_type: amendment.amendmentType,
+            audit_reference: amendment.auditReference,
+            changed_at: amendment.changeDate,
+            changed_by: request.requested_by ?? null,
+            company_id: companyId,
+            new_snapshot: updatedSnapshot,
+            office_id: payment.office_id ?? request.office_id ?? null,
+            payment_id: input.paymentId,
+            previous_snapshot: previousSnapshot,
+            reason: amendment.reason,
+            receipt_id: existing.id,
+            requested_at: amendment.requestedAt,
+            requested_by: request.requested_by ?? null,
+            status: "pending",
+        });
+        if (amendmentError && !isMissingSchemaError(amendmentError)) throw new Error(amendmentError.message);
+    }
+
+    return receiptSummary(updatedReceipt);
 }
 
 export async function createLandlordPaymentReceipt(paymentId: string, options: { issuedBy?: string | null } = {}) {

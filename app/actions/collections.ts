@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { logUserAction } from "@/lib/auth/audit";
 import { hasPermission, requireAuth, requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissions";
 import { createNotificationWithEmail } from "@/lib/notifications/email";
-import { createTenantPaymentReceipt } from "@/lib/receipts/payment-receipts";
+import { createTenantPaymentReceipt, markTenantPaymentReceiptPendingCorrection, syncTenantPaymentReceiptForCorrection } from "@/lib/receipts/payment-receipts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { assertCurrentBusinessDate } from "@/lib/business-date";
@@ -1383,6 +1383,15 @@ export async function requestPaymentCorrection(input: {
         .single();
     if (error) throw new Error(error.message);
 
+    try {
+        await markTenantPaymentReceiptPendingCorrection({
+            paymentId: input.paymentId,
+            requestId: String(data.id),
+        });
+    } catch (receiptError) {
+        console.warn("Pending payment correction receipt status failed:", receiptError instanceof Error ? receiptError.message : receiptError);
+    }
+
     await notifyPaymentDateChange(db, {
         companyId: context.activeCompany.id,
         entityId: data.id,
@@ -1594,6 +1603,16 @@ export async function decidePaymentCorrection(input: {
         .select("*")
         .single();
     if (updateError) throw new Error(updateError.message);
+
+    try {
+        await syncTenantPaymentReceiptForCorrection({
+            decision: input.decision,
+            paymentId: String(request.payment_id),
+            requestId: String(updatedRequest.id),
+        });
+    } catch (receiptError) {
+        console.warn("Payment correction receipt sync failed:", receiptError instanceof Error ? receiptError.message : receiptError);
+    }
 
     await notifyPaymentDateChange(db, {
         companyId: context.activeCompany.id,
@@ -1853,6 +1872,17 @@ export async function adminCorrectPayment(input: {
         .single();
     if (correctionError) throw new Error(correctionError.message);
 
+    let syncedReceipt = null;
+    try {
+        syncedReceipt = await syncTenantPaymentReceiptForCorrection({
+            decision: "approved",
+            paymentId: input.paymentId,
+            requestId: String(correction.id),
+        });
+    } catch (receiptSyncError) {
+        console.warn("Admin payment correction receipt sync failed:", receiptSyncError instanceof Error ? receiptSyncError.message : receiptSyncError);
+    }
+
     await logUserAction({
         action: "admin_payment_corrected",
         entityType: "collection",
@@ -1863,9 +1893,9 @@ export async function adminCorrectPayment(input: {
         afterData: { payment: updatedPayment, correction },
     });
 
-    let receipt = null;
+    let receipt = syncedReceipt;
     let receiptError: string | null = null;
-    if (correctionType !== "remove_payment") {
+    if (!receipt && correctionType !== "remove_payment") {
         try {
             receipt = await createTenantPaymentReceipt(input.paymentId, { forceRefresh: true, issuedBy: context.profile?.id ?? null });
         } catch (error) {

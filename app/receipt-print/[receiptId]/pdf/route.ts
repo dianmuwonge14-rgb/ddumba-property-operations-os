@@ -65,6 +65,18 @@ function pairLines(label: string, value: string, max = 27) {
     return [label.toUpperCase(), ...wrap(value, max)];
 }
 
+function receiptStatusLines(receipt: Awaited<ReturnType<typeof loadPrintableReceipt>>) {
+    const snapshot = receipt.snapshot;
+    const status = String(snapshot.receiptStatus ?? receipt.status ?? snapshot.status ?? "issued").toLowerCase();
+    if (["corrected", "amended"].includes(status)) return ["AMENDED RECEIPT"];
+    if (["cancelled", "canceled", "voided", "void"].includes(status)) return ["CANCELLED RECEIPT"];
+    if (status === "reversed") return ["REVERSED RECEIPT"];
+    if (["replaced", "superseded"].includes(status)) return ["SUPERSEDED RECEIPT"];
+    if (["rejected", "rejected_change"].includes(status)) return ["REJECTED CHANGE RECORDED"];
+    if (["pending", "pending_correction", "pending_change"].includes(status)) return ["PENDING CORRECTION"];
+    return [];
+}
+
 function receiptTextLines(receipt: Awaited<ReturnType<typeof loadPrintableReceipt>>) {
     const snapshot = receipt.snapshot;
     const coverage = snapshot.coveragePeriods?.length
@@ -80,6 +92,8 @@ function receiptTextLines(receipt: Awaited<ReturnType<typeof loadPrintableReceip
     lines.push(
         { bold: true, center: true, size: 10, text: "TENANT PAYMENT RECEIPT" },
         { divider: true, text: "" },
+        ...receiptStatusLines(receipt).map((text) => ({ bold: true, center: true, size: 10, text })),
+        ...(receiptStatusLines(receipt).length ? [{ divider: true, text: "" }] : []),
         ...pairLines("Receipt", receipt.receiptNumber).map((text, index) => ({ bold: index === 0, text })),
         ...pairLines("Verify", receipt.verificationCode).map((text, index) => ({ bold: index === 0, text })),
         ...pairLines("Date", formatDateTime(snapshot.paymentDateTime)).map((text) => ({ text })),
@@ -115,16 +129,28 @@ function receiptTextLines(receipt: Awaited<ReturnType<typeof loadPrintableReceip
         ...pairLines("Method", safe(snapshot.paymentMethod?.replaceAll("_", " "), "Payment")).map((text) => ({ text })),
         ...pairLines("Reference", safe(snapshot.referenceNumber, "No reference")).map((text) => ({ text })),
         ...(safe(snapshot.securityDepositReceiptNumber) ? pairLines("Security receipt", safe(snapshot.securityDepositReceiptNumber)).map((text) => ({ text })) : []),
-        ...pairLines("Recorded by", safe(snapshot.recordedByName, "DDUMBA OS")).map((text) => ({ text })),
-        ...pairLines("Approved by", safe(snapshot.approvedByName ?? snapshot.recordedByName, "DDUMBA OS")).map((text) => ({ text })),
-        ...pairLines("Status", safe(snapshot.status, "issued")).map((text) => ({ text })),
+        ...pairLines("Prepared by", safe(snapshot.preparedByName ?? snapshot.recordedByName, "DDUMBA OS")).map((text) => ({ text })),
+        ...pairLines("Status", safe(snapshot.statusLabel ?? snapshot.receiptStatus ?? snapshot.status, "issued")).map((text) => ({ text })),
     );
     if (safe(snapshot.notes)) pairLines("Notes", safe(snapshot.notes)).forEach((text) => lines.push({ text }));
+    const latestAmendment = snapshot.amendmentHistory?.at(-1) ?? null;
+    if (latestAmendment) {
+        lines.push({ divider: true, text: "" }, { bold: true, text: "AMENDMENT HISTORY" });
+        pairLines("Changed field", safe(latestAmendment.fieldLabel, "Payment")).forEach((text) => lines.push({ text }));
+        if (safe(latestAmendment.previousValue)) pairLines("Previous", safe(latestAmendment.previousValue)).forEach((text) => lines.push({ text }));
+        if (safe(latestAmendment.newValue)) pairLines("New", safe(latestAmendment.newValue)).forEach((text) => lines.push({ text }));
+        if (safe(latestAmendment.requestedByName)) pairLines("Requested by", safe(latestAmendment.requestedByName)).forEach((text) => lines.push({ text }));
+        if (safe(latestAmendment.changedByName)) pairLines("Changed by", safe(latestAmendment.changedByName)).forEach((text) => lines.push({ text }));
+        if (safe(latestAmendment.approvedByName)) pairLines("Approved by", safe(latestAmendment.approvedByName)).forEach((text) => lines.push({ text }));
+        if (safe(latestAmendment.reason)) pairLines("Reason", safe(latestAmendment.reason)).forEach((text) => lines.push({ text }));
+        if (safe(latestAmendment.auditReference)) pairLines("Audit ref", safe(latestAmendment.auditReference)).forEach((text) => lines.push({ text }));
+    }
     lines.push(
         { divider: true, text: "" },
         { center: true, size: 8, text: "QR verification:" },
         { center: true, size: 8, text: receipt.verificationCode },
         { center: true, text: "Thank you for your payment" },
+        ...receiptStatusLines(receipt).map((text) => ({ bold: true, center: true, size: 9, text })),
         { center: true, size: 8, text: "DDUMBA OS" },
     );
     return lines;

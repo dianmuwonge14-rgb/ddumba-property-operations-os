@@ -23,9 +23,14 @@ function searchable(receipt: ReceiptHistoryItem) {
         receipt.tenantName,
         receipt.tenantPhone,
         receipt.officeName,
+        receipt.preparedByName,
         receipt.recordedByName,
+        receipt.changedByName,
+        receipt.approvedByName,
         receipt.issuedAt,
         receipt.verificationCode,
+        receipt.status,
+        receipt.amendmentSummary,
         snapshot.landlordName,
         snapshot.paymentMethod,
         snapshot.referenceNumber,
@@ -34,15 +39,54 @@ function searchable(receipt: ReceiptHistoryItem) {
     ].filter(Boolean).join(" ").toLowerCase();
 }
 
+const STATUS_FILTERS = [
+    { key: "all", label: "All" },
+    { key: "issued", label: "Normal" },
+    { key: "pending_correction", label: "Pending Change" },
+    { key: "corrected", label: "Corrected" },
+    { key: "cancelled", label: "Cancelled" },
+    { key: "reversed", label: "Reversed" },
+    { key: "superseded", label: "Superseded" },
+    { key: "rejected_change", label: "Rejected Changes" },
+] as const;
+
+function normalizeStatus(status: string | null | undefined) {
+    const value = String(status ?? "issued").toLowerCase();
+    if (["paid", "approved", "issued", "normal"].includes(value)) return "issued";
+    if (["corrected", "amended"].includes(value)) return "corrected";
+    if (["cancelled", "canceled", "voided", "void"].includes(value)) return "cancelled";
+    if (["replaced", "superseded"].includes(value)) return "superseded";
+    if (["rejected", "rejected_change"].includes(value)) return "rejected_change";
+    if (["pending", "pending_correction", "pending_change"].includes(value)) return "pending_correction";
+    return value;
+}
+
+function receiptStatusConfig(status: string | null | undefined) {
+    const normalized = normalizeStatus(status);
+    if (normalized === "pending_correction") return { card: "border-amber-300 bg-amber-50/80", badge: "bg-amber-100 text-amber-800", accent: "bg-amber-500", label: "Pending correction" };
+    if (normalized === "corrected") return { card: "border-blue-300 bg-blue-50/80", badge: "bg-blue-100 text-blue-800", accent: "bg-blue-500", label: "Corrected" };
+    if (normalized === "partially_adjusted") return { card: "border-purple-300 bg-purple-50/80", badge: "bg-purple-100 text-purple-800", accent: "bg-purple-500", label: "Partially adjusted" };
+    if (normalized === "cancelled") return { card: "border-red-300 bg-red-50/80", badge: "bg-red-100 text-red-800", accent: "bg-red-600", label: "Cancelled" };
+    if (normalized === "reversed") return { card: "border-rose-400 bg-rose-50/80", badge: "bg-rose-200 text-rose-950", accent: "bg-rose-900", label: "Reversed" };
+    if (normalized === "superseded") return { card: "border-slate-300 bg-slate-100/80", badge: "bg-slate-200 text-slate-700", accent: "bg-slate-500", label: "Superseded" };
+    if (normalized === "rejected_change") return { card: "border-orange-300 bg-orange-50/80", badge: "bg-orange-100 text-orange-800", accent: "bg-orange-500", label: "Rejected change" };
+    if (normalized === "refunded") return { card: "border-teal-300 bg-teal-50/80", badge: "bg-teal-100 text-teal-800", accent: "bg-teal-500", label: "Refunded" };
+    return { card: "border-slate-200 bg-white", badge: "bg-emerald-100 text-emerald-700", accent: "bg-emerald-500", label: "Issued" };
+}
+
 export default function ReceiptHistoryConsole({ error, receipts }: Props) {
     const [query, setQuery] = useState("");
+    const [statusFilter, setStatusFilter] = useState<(typeof STATUS_FILTERS)[number]["key"]>("all");
     const [pendingReceiptAction, setPendingReceiptAction] = useState<null | { channel: "download_pdf" | "print"; receiptId: string }>(null);
     const [selected, setSelected] = useState<ReceiptHistoryItem | null>(null);
     const visible = useMemo(() => {
         const normalized = query.trim().toLowerCase();
-        if (!normalized) return receipts;
-        return receipts.filter((receipt) => searchable(receipt).includes(normalized));
-    }, [query, receipts]);
+        return receipts.filter((receipt) => {
+            const matchesStatus = statusFilter === "all" || normalizeStatus(receipt.status) === statusFilter;
+            const matchesSearch = !normalized || searchable(receipt).includes(normalized);
+            return matchesStatus && matchesSearch;
+        });
+    }, [query, receipts, statusFilter]);
     useEffect(() => {
         if (!selected || !pendingReceiptAction || pendingReceiptAction.receiptId !== selected.id) return;
         let cancelled = false;
@@ -102,19 +146,36 @@ export default function ReceiptHistoryConsole({ error, receipts }: Props) {
                             <input value={query} onChange={(event) => setQuery(event.target.value)} className="h-12 w-full rounded-2xl border border-white/10 bg-white/10 pl-11 pr-4 text-sm font-bold text-white outline-none placeholder:text-slate-400" placeholder="Receipt, room, tenant, phone, date, office..." />
                         </label>
                     </div>
+                    <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+                        {STATUS_FILTERS.map((filter) => (
+                            <button
+                                key={filter.key}
+                                type="button"
+                                onClick={() => setStatusFilter(filter.key)}
+                                className={statusFilter === filter.key
+                                    ? "whitespace-nowrap rounded-full bg-cyan-300 px-3 py-1.5 text-xs font-black text-slate-950"
+                                    : "whitespace-nowrap rounded-full border border-white/10 bg-white/10 px-3 py-1.5 text-xs font-black text-slate-200 hover:bg-white/15"}
+                            >
+                                {filter.label}
+                            </button>
+                        ))}
+                    </div>
                 </section>
 
                 {error ? <p className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-black text-amber-900">{error}</p> : null}
 
                 <section className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                    {visible.length ? visible.map((receipt) => (
-                        <article key={receipt.id} className="min-w-0 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                    {visible.length ? visible.map((receipt) => {
+                        const status = receiptStatusConfig(receipt.status);
+                        return (
+                        <article key={receipt.id} className={`relative min-w-0 overflow-hidden rounded-3xl border p-4 shadow-sm ${status.card}`}>
+                            <span aria-hidden className={`absolute left-0 top-0 h-full w-1.5 ${status.accent}`} />
                             <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
                                     <p className="truncate text-lg font-black text-slate-950">{receipt.receiptNumber}</p>
                                     <p className="text-xs font-bold text-slate-500">{receipt.issuedAt ? new Date(receipt.issuedAt).toLocaleString() : "No timestamp"}</p>
                                 </div>
-                                <span className="whitespace-nowrap rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-black capitalize text-emerald-700">{receipt.status}</span>
+                                <span className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-black capitalize ${status.badge}`}>{status.label}</span>
                             </div>
                             <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
                                 <Info label="Room" value={receipt.roomNumber ?? "N/A"} />
@@ -123,7 +184,19 @@ export default function ReceiptHistoryConsole({ error, receipts }: Props) {
                                 <Info label="Office" value={receipt.officeName ?? "Office"} />
                                 <Info label="Amount" value={money(receipt.amountPaid)} />
                                 <Info label="Balance" value={money(receipt.remainingOutstandingBalance)} />
+                                <Info label="Prepared By" value={receipt.preparedByName ?? receipt.recordedByName ?? "DDUMBA OS"} />
+                                <Info label="Last Updated" value={receipt.lastUpdatedAt ? new Date(receipt.lastUpdatedAt).toLocaleString() : "Not changed"} />
                             </div>
+                            {receipt.amendmentSummary ? (
+                                <div className="mt-3 rounded-2xl border border-white/60 bg-white/75 px-3 py-2 text-xs font-black text-slate-700">
+                                    <p>{receipt.amendmentSummary}</p>
+                                    <p className="mt-1 text-[11px] text-slate-500">
+                                        {receipt.changedByName ? `Changed by: ${receipt.changedByName}` : null}
+                                        {receipt.changedByName && receipt.approvedByName ? " · " : null}
+                                        {receipt.approvedByName ? `Approved by: ${receipt.approvedByName}` : null}
+                                    </p>
+                                </div>
+                            ) : null}
                             <p className="mt-3 rounded-2xl bg-slate-50 px-3 py-2 text-xs font-black text-slate-600">Verification: {receipt.verificationCode}</p>
                             <div className="mt-3 grid grid-cols-3 gap-2 text-[10px] font-black uppercase text-slate-500">
                                 <DeliveryBadge label="Print" status={receipt.deliveryStatus.print} />
@@ -140,7 +213,7 @@ export default function ReceiptHistoryConsole({ error, receipts }: Props) {
                                 <a href={`/office/payments?history=${receipt.paymentId}`} className="inline-flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-700"><History size={13} /> Corrections</a>
                             </div>
                         </article>
-                    )) : (
+                    );}) : (
                         <div className="rounded-3xl border border-dashed border-slate-300 bg-white p-8 text-center md:col-span-2 xl:col-span-3">
                             <p className="font-black text-slate-800">No receipts found.</p>
                             <p className="mt-1 text-sm font-bold text-slate-500">Successful payment receipts will appear here after migration 0204 is applied.</p>
