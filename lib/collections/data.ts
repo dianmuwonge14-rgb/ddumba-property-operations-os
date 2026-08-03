@@ -9,6 +9,8 @@ import type {
     CollectionReportData,
     CollectionReportFilters,
     CollectionReportRow,
+    EmployeeCollectionPerformance,
+    EmployeeCollectionSummary,
     FastPaymentRecentItem,
     FastPaymentRecentResult,
     FastPaymentTenantSearchResult,
@@ -41,6 +43,33 @@ type CollectionWithContribution = CollectionRow & {
     payment_source?: "tenant" | "employer" | null;
 };
 
+type CollectionEmployeeRow = CollectionRow & {
+    collected_by_employee_id?: string | null;
+    prepared_by_employee_id?: string | null;
+    recorded_by_employee_id?: string | null;
+};
+
+type EmployeeOptionRow = {
+    id: string;
+    full_name: string | null;
+    phone: string | null;
+    employee_code: string | null;
+    role: string | null;
+    job_title: string | null;
+    office_id: string | null;
+    status: string | null;
+};
+
+type CollectionUserRow = {
+    id: string;
+    full_name: string | null;
+    email: string | null;
+    phone: string | null;
+    employee_id?: string | null;
+    account_type?: string | null;
+    default_office_id?: string | null;
+};
+
 function businessDateOnly(value: string | null | undefined) {
     if (!value) return "No date";
     const parts = new Intl.DateTimeFormat("en-GB", {
@@ -62,6 +91,28 @@ function collectionPaymentDate(row: CollectionRow) {
 
 function collectionRecordedTime(row: CollectionRow) {
     return row.created_at ?? row.paid_at;
+}
+
+function collectionEmployeeId(row: CollectionEmployeeRow, userById: Map<string, { employee_id?: string | null }>) {
+    const directId = row.collected_by_employee_id ?? row.prepared_by_employee_id ?? row.recorded_by_employee_id;
+    if (directId) return String(directId);
+    const userId = row.recorded_by ?? row.entered_by_account_id;
+    return userId ? userById.get(String(userId))?.employee_id ?? row.collector_id ?? null : row.collector_id ?? null;
+}
+
+function isRealActiveEmployee(employee: EmployeeOptionRow | null | undefined) {
+    if (!employee?.id) return false;
+    const status = String(employee.status ?? "active").toLowerCase();
+    if (["archived", "deleted", "inactive", "terminated"].includes(status)) return false;
+    const name = String(employee.full_name ?? "").toLowerCase();
+    const code = String(employee.employee_code ?? "").toLowerCase();
+    const role = String(employee.role ?? employee.job_title ?? "").toLowerCase();
+    return !name.includes("office account")
+        && !name.endsWith(" office login")
+        && !name.endsWith(" office qa")
+        && !code.startsWith("off-")
+        && !role.includes("office account")
+        && role !== "office user";
 }
 
 function businessTimeOnly(value: string | null | undefined) {
@@ -420,6 +471,9 @@ function collectionMethodBucket(method: string) {
 function emptyCollectionReport(filters: Required<Pick<CollectionReportFilters, "singleDate">> & CollectionReportFilters, generatedBy: string, companyName: string, activeOfficeName: string | null, isAdmin: boolean): CollectionReportData {
     return {
         rows: [],
+        employeeOptions: [],
+        selectedEmployeeSummary: null,
+        employeePerformance: [],
         totals: {
             totalAmount: 0,
             paymentCount: 0,
@@ -494,14 +548,36 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
     const tenantIds = uniqueIds(collections.map((row) => row.tenant_id));
     const roomIds = uniqueIds(collections.map((row) => row.room_id));
     const officeIds = uniqueIds(collections.map((row) => row.office_id));
-    const recordedByIds = uniqueIds(collections.map((row) => row.recorded_by ?? row.collector_id));
+    const recordedByIds = uniqueIds(collections.map((row) => row.recorded_by ?? row.collector_id ?? row.entered_by_account_id));
 
     const [{ data: tenants }, { data: rooms }, { data: offices }, { data: users }] = await Promise.all([
         tenantIds.length ? supabase.from("tenants").select("id, full_name, phone").eq("company_id", companyId).in("id", tenantIds) : { data: [] },
         roomIds.length ? supabase.from("rooms").select("id, room_number, landlord_id").eq("company_id", companyId).in("id", roomIds) : { data: [] },
         officeIds.length ? supabase.from("offices").select("id, office_name, name").eq("company_id", companyId).in("id", officeIds) : { data: [] },
-        recordedByIds.length ? supabase.from("users").select("id, full_name, email").eq("company_id", companyId).in("id", recordedByIds) : { data: [] },
+        recordedByIds.length ? (supabase as unknown as DynamicDb).from("users").select("id, full_name, email, phone, employee_id, account_type, default_office_id").eq("company_id", companyId).in("id", recordedByIds) : { data: [] },
     ]);
+    const collectionUsers = (users ?? []) as CollectionUserRow[];
+    const userById = new Map(collectionUsers.map((user) => [user.id, user]));
+    const directEmployeeIds = uniqueIds((collections as CollectionEmployeeRow[]).flatMap((row) => [
+        row.collected_by_employee_id,
+        row.prepared_by_employee_id,
+        row.recorded_by_employee_id,
+        row.collector_id,
+    ]));
+    const userEmployeeIds = uniqueIds(collectionUsers.map((user) => user.employee_id));
+    const employeeIds = uniqueIds([...directEmployeeIds, ...userEmployeeIds]);
+    const { data: employees } = employeeIds.length
+        ? await supabase
+            .from("employees")
+            .select("id, full_name, phone, employee_code, role, job_title, office_id, status")
+            .eq("company_id", companyId)
+            .in("id", employeeIds)
+        : { data: [] as EmployeeOptionRow[] };
+    const employeeOfficeIds = uniqueIds((employees ?? []).map((employee) => employee.office_id));
+    const missingOfficeIds = employeeOfficeIds.filter((id) => !officeIds.includes(id));
+    const { data: employeeOffices } = missingOfficeIds.length
+        ? await supabase.from("offices").select("id, office_name, name").eq("company_id", companyId).in("id", missingOfficeIds)
+        : { data: [] };
 
     const landlordIds = uniqueIds((rooms ?? []).map((room) => room.landlord_id));
     const { data: landlords } = landlordIds.length
@@ -510,24 +586,63 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
 
     const tenantById = new Map((tenants ?? []).map((tenant) => [tenant.id, tenant]));
     const roomById = new Map((rooms ?? []).map((room) => [room.id, room]));
-    const officeById = new Map((offices ?? []).map((office) => [office.id, office]));
-    const userById = new Map((users ?? []).map((user) => [user.id, user]));
+    const officeById = new Map([...(offices ?? []), ...(employeeOffices ?? [])].map((office) => [office.id, office]));
     const landlordById = new Map((landlords ?? []).map((landlord) => [landlord.id, landlord]));
+    const employeeById = new Map(((employees ?? []) as EmployeeOptionRow[]).filter(isRealActiveEmployee).map((employee) => [employee.id, employee]));
 
     const roomFilter = normalizeCollectionFilter(filters.room);
     const tenantFilter = normalizeCollectionFilter(filters.tenant);
+    const employeeFilterId = isAdmin ? String(filters.employeeId ?? "").trim() : "";
 
-    const rows: CollectionReportRow[] = collections
-        .map((row) => {
+    const collectionRowsWithEmployees = collections.map((row) => ({
+        collection: row,
+        employeeId: (() => {
+            const employeeId = collectionEmployeeId(row as CollectionEmployeeRow, userById);
+            return employeeId && employeeById.has(employeeId) ? employeeId : null;
+        })(),
+    }));
+
+    const employeeOptions = [...new Set(collectionRowsWithEmployees.map((row) => row.employeeId).filter(Boolean) as string[])]
+        .map((employeeId) => employeeById.get(employeeId))
+        .filter((employee): employee is EmployeeOptionRow => Boolean(employee))
+        .sort((left, right) => String(left.full_name ?? "").localeCompare(String(right.full_name ?? "")))
+        .map((employee) => {
+            const office = employee.office_id ? officeById.get(employee.office_id) : null;
+            const role = employee.role ?? employee.job_title ?? "Employee";
+            const officeName = office?.office_name ?? office?.name ?? "Unassigned";
+            const searchText = [employee.full_name, employee.phone, employee.employee_code, role, officeName].filter(Boolean).join(" ").toLowerCase();
+            return {
+                id: employee.id,
+                employeeCode: employee.employee_code ?? "",
+                name: employee.full_name ?? "Employee",
+                officeId: employee.office_id,
+                officeName,
+                phone: employee.phone ?? "",
+                role,
+                searchText,
+            };
+        });
+
+    const rows: CollectionReportRow[] = collectionRowsWithEmployees
+        .filter(({ employeeId }) => !employeeFilterId || employeeId === employeeFilterId)
+        .map(({ collection: row, employeeId }) => {
             const isAdminCashTransfer = String(row.type ?? "").toUpperCase() === "ADMIN_CASH_TRANSFER";
             const room = row.room_id ? roomById.get(row.room_id) : null;
             const tenant = row.tenant_id ? tenantById.get(row.tenant_id) : null;
             const office = row.office_id ? officeById.get(row.office_id) : null;
-            const user = row.recorded_by ? userById.get(row.recorded_by) : row.collector_id ? userById.get(row.collector_id) : null;
+            const user = row.recorded_by
+                ? userById.get(row.recorded_by)
+                : row.collector_id
+                    ? userById.get(row.collector_id)
+                    : row.entered_by_account_id
+                        ? userById.get(row.entered_by_account_id)
+                        : null;
             const landlord = room?.landlord_id ? landlordById.get(room.landlord_id) : null;
 
             return {
                 id: row.id,
+                employeeId,
+                receiptNumber: row.collection_number ?? row.reference_number ?? row.id.slice(0, 8),
                 paidAt: row.paid_at,
                 date: collectionPaymentDate(row),
                 time: businessTimeOnly(collectionRecordedTime(row)),
@@ -539,6 +654,7 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
                 remainingBalance: Number(row.balance ?? 0),
                 paymentMethod: isAdminCashTransfer ? "Admin Cash Transfer" : row.payment_method ?? "payment",
                 recordedBy: user?.full_name ?? user?.email ?? "System",
+                status: row.status ?? "paid",
             };
         })
         .filter((row) => {
@@ -573,9 +689,13 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
             outstandingBalanceRemaining: [...balanceByTenant.values()].reduce((total, value) => total + value, 0),
         },
     );
+    const employeeSummaries = buildEmployeeCollectionSummaries(rows, employeeOptions);
 
     return {
         rows,
+        employeeOptions,
+        selectedEmployeeSummary: employeeFilterId ? employeeSummaries.find((summary) => summary.employeeId === employeeFilterId) ?? null : null,
+        employeePerformance: employeeSummaries.map((summary, index) => ({ ...summary, rank: index + 1 })),
         totals,
         filters: resolvedFilters,
         generatedAt: new Date().toISOString(),
@@ -584,6 +704,44 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
         activeOfficeName: selectedOfficeId ? officeNameById.get(selectedOfficeId) ?? "Selected office" : isAdmin ? "All offices" : context.activeOffice?.office_name ?? context.activeOffice?.name ?? "Office",
         isAdmin,
     };
+}
+
+function buildEmployeeCollectionSummaries(rows: CollectionReportRow[], employeeOptions: CollectionReportData["employeeOptions"]): EmployeeCollectionPerformance[] {
+    const employeeById = new Map(employeeOptions.map((employee) => [employee.id, employee]));
+    const grouped = new Map<string, CollectionReportRow[]>();
+    for (const row of rows) {
+        if (!row.employeeId) continue;
+        grouped.set(row.employeeId, [...(grouped.get(row.employeeId) ?? []), row]);
+    }
+    const summaries: EmployeeCollectionSummary[] = [...grouped.entries()].map(([employeeId, employeeRows]) => {
+        const employee = employeeById.get(employeeId);
+        const totalCollected = employeeRows.reduce((total, row) => total + row.amountPaid, 0);
+        const largestPayment = employeeRows.reduce((largest, row) => Math.max(largest, row.amountPaid), 0);
+        const lastCollection = employeeRows.reduce<string | null>((latest, row) => {
+            const value = row.paidAt ?? row.date;
+            if (!value) return latest;
+            return !latest || value > latest ? value : latest;
+        }, null);
+        return {
+            employeeId,
+            employeeName: employee?.name ?? "Employee",
+            role: employee?.role ?? "Employee",
+            officeName: employee?.officeName ?? "Unassigned",
+            totalCollected,
+            paymentCount: employeeRows.length,
+            averagePayment: employeeRows.length ? Math.round(totalCollected / employeeRows.length) : 0,
+            largestPayment,
+            cashCollected: employeeRows.filter((row) => collectionMethodBucket(row.paymentMethod) === "cash").reduce((total, row) => total + row.amountPaid, 0),
+            mobileMoneyCollected: employeeRows.filter((row) => collectionMethodBucket(row.paymentMethod) === "mobile").reduce((total, row) => total + row.amountPaid, 0),
+            bankCollected: employeeRows.filter((row) => collectionMethodBucket(row.paymentMethod) === "bank").reduce((total, row) => total + row.amountPaid, 0),
+            lastCollection,
+            collectionTrend: "Live period",
+            amountCorrectedOrReversed: 0,
+        };
+    });
+    return summaries
+        .sort((left, right) => right.totalCollected - left.totalCollected || right.paymentCount - left.paymentCount)
+        .map((summary, index) => ({ ...summary, rank: index + 1 }));
 }
 
 export async function getCollectionsRecordsPageData(filters: CollectionReportFilters = {}): Promise<CollectionsRecordsPageData> {

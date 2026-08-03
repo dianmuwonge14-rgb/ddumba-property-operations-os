@@ -130,10 +130,13 @@ export type CollectionReportFilters = {
     room?: string;
     tenant?: string;
     paymentMethod?: string;
+    employeeId?: string;
 };
 
 export type CollectionReportRow = {
     id: string;
+    receiptNumber: string;
+    employeeId: string | null;
     paidAt: string | null;
     date: string;
     time: string;
@@ -145,6 +148,39 @@ export type CollectionReportRow = {
     remainingBalance: number;
     paymentMethod: string;
     recordedBy: string;
+    status: string;
+};
+
+export type CollectionEmployeeOption = {
+    id: string;
+    name: string;
+    phone: string;
+    employeeCode: string;
+    role: string;
+    officeId: string | null;
+    officeName: string;
+    searchText: string;
+};
+
+export type EmployeeCollectionSummary = {
+    employeeId: string;
+    employeeName: string;
+    role: string;
+    officeName: string;
+    totalCollected: number;
+    paymentCount: number;
+    averagePayment: number;
+    largestPayment: number;
+    cashCollected: number;
+    mobileMoneyCollected: number;
+    bankCollected: number;
+    lastCollection: string | null;
+    collectionTrend: string;
+    amountCorrectedOrReversed: number;
+};
+
+export type EmployeeCollectionPerformance = EmployeeCollectionSummary & {
+    rank: number;
 };
 
 export type CollectionReportTotals = {
@@ -161,6 +197,9 @@ export type CollectionReportTotals = {
 export type CollectionReportData = {
     rows: CollectionReportRow[];
     totals: CollectionReportTotals;
+    employeeOptions: CollectionEmployeeOption[];
+    selectedEmployeeSummary: EmployeeCollectionSummary | null;
+    employeePerformance: EmployeeCollectionPerformance[];
     filters: Required<Pick<CollectionReportFilters, "singleDate">> & CollectionReportFilters;
     generatedAt: string;
     generatedBy: string;

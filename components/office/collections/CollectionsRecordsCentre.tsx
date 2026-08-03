@@ -85,6 +85,8 @@ function StatCard({ label, value, hint, tone = "slate" }: { label: string; value
 export default function CollectionsRecordsCentre({ initialData }: Props) {
     const [filters, setFilters] = useState<CollectionReportFilters>(initialData.report.filters);
     const [report, setReport] = useState<CollectionReportData>(initialData.report);
+    const [employeeSearch, setEmployeeSearch] = useState("");
+    const [employeeSort, setEmployeeSort] = useState<"highest" | "lowest" | "most" | "latest" | "office">("highest");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [showPrintPreview, setShowPrintPreview] = useState(false);
@@ -104,6 +106,19 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
         return correctionPreview.rows.filter((row) => selected.has(row.id));
     }, [correctionPreview, selectedCorrectionIds]);
     const selectedCorrectionTotal = useMemo(() => selectedCorrectionRows.reduce((total, row) => total + row.amount, 0), [selectedCorrectionRows]);
+    const visibleEmployeeOptions = useMemo(() => {
+        const needle = employeeSearch.trim().toLowerCase();
+        if (!needle) return report.employeeOptions;
+        return report.employeeOptions.filter((employee) => employee.searchText.includes(needle));
+    }, [employeeSearch, report.employeeOptions]);
+    const sortedEmployeePerformance = useMemo(() => {
+        const rows = [...report.employeePerformance];
+        if (employeeSort === "lowest") return rows.sort((left, right) => left.totalCollected - right.totalCollected || left.employeeName.localeCompare(right.employeeName));
+        if (employeeSort === "most") return rows.sort((left, right) => right.paymentCount - left.paymentCount || right.totalCollected - left.totalCollected);
+        if (employeeSort === "latest") return rows.sort((left, right) => String(right.lastCollection ?? "").localeCompare(String(left.lastCollection ?? "")));
+        if (employeeSort === "office") return rows.sort((left, right) => left.officeName.localeCompare(right.officeName) || right.totalCollected - left.totalCollected);
+        return rows.sort((left, right) => right.totalCollected - left.totalCollected || right.paymentCount - left.paymentCount);
+    }, [employeeSort, report.employeePerformance]);
 
     useEffect(() => {
         const controller = new AbortController();
@@ -139,17 +154,22 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
         setFilters((current) => ({ ...current, [key]: value || undefined }));
     }
 
+    function scrollToLedger() {
+        document.getElementById("collections-ledger")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
     function toggleCorrectionRow(id: string) {
         setSelectedCorrectionIds((current) => current.includes(id) ? current.filter((rowId) => rowId !== id) : [...current, id]);
     }
 
     function exportCsv() {
-        const headers = ["Date", "Time", "Room", "Tenant", "Landlord", "Office", "Amount Paid", "Remaining Balance", "Payment Method", "Recorded By"];
+        const headers = ["Date", "Time", "Receipt", "Room", "Tenant", "Landlord", "Office", "Amount Paid", "Remaining Balance", "Payment Method", "Recorded By", "Status"];
         const lines = [
             headers.map(escapeCsv).join(","),
             ...report.rows.map((row) => [
                 row.date,
                 row.time,
+                row.receiptNumber,
                 row.roomNumber,
                 row.tenantName,
                 row.landlordName,
@@ -158,6 +178,7 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                 row.remainingBalance,
                 row.paymentMethod,
                 row.recordedBy,
+                row.status,
             ].map(escapeCsv).join(",")),
         ];
         const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
@@ -302,6 +323,34 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                                         </option>
                                     ))}
                                 </select>
+                            </label>
+                        ) : null}
+                        {initialData.isAdmin ? (
+                            <label className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55">
+                                Employee / Collected By
+                                <div className="mt-1 grid gap-2">
+                                    <div className="flex h-10 items-center rounded-md border border-white/10 bg-slate-950 px-3 focus-within:border-sky-300">
+                                        <Search className="mr-2 h-4 w-4 text-white/35" />
+                                        <input
+                                            value={employeeSearch}
+                                            onChange={(event) => setEmployeeSearch(event.target.value)}
+                                            placeholder="Name, phone, code, role, office"
+                                            className="w-full bg-transparent text-sm text-white outline-none placeholder:text-white/30"
+                                        />
+                                    </div>
+                                    <select
+                                        value={filters.employeeId ?? ""}
+                                        onChange={(event) => updateFilter("employeeId", event.target.value)}
+                                        className="h-10 w-full rounded-md border border-white/10 bg-slate-950 px-3 text-sm text-white outline-none focus:border-sky-300"
+                                    >
+                                        <option value="" className="bg-slate-950 text-white">All Employees</option>
+                                        {visibleEmployeeOptions.map((employee) => (
+                                            <option key={employee.id} value={employee.id} className="bg-slate-950 text-white">
+                                                {employee.name} · {employee.role} · {employee.officeName}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
                             </label>
                         ) : null}
                         <label className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55">
@@ -490,7 +539,83 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                     <StatCard label="Outstanding" value={formatMoney(report.totals.outstandingBalanceRemaining)} hint="Remaining balance from visible rows" tone="amber" />
                 </section>
 
-                <section className="overflow-hidden rounded-xl border border-white/10 bg-white/[0.04]">
+                {initialData.isAdmin && report.selectedEmployeeSummary ? (
+                    <section className="rounded-xl border border-emerald-300/20 bg-emerald-400/[0.06] p-4">
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                            <div>
+                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-100/70">Employee collection summary</p>
+                                <h2 className="mt-1 text-lg font-semibold text-white">{report.selectedEmployeeSummary.employeeName}</h2>
+                                <p className="text-sm text-white/60">{report.selectedEmployeeSummary.role} · {report.selectedEmployeeSummary.officeName}</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={scrollToLedger}
+                                className="rounded-lg border border-emerald-200/30 bg-emerald-300 px-4 py-3 text-left text-emerald-950 shadow-lg shadow-emerald-950/20 transition hover:-translate-y-0.5 hover:bg-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                            >
+                                <span className="block text-xs font-black uppercase tracking-[0.18em]">Total Collected By Employee</span>
+                                <span className="mt-1 block text-2xl font-black">{formatMoney(report.selectedEmployeeSummary.totalCollected)}</span>
+                                <span className="mt-1 block text-xs font-semibold">{report.selectedEmployeeSummary.paymentCount} payment(s). Open contributing records.</span>
+                            </button>
+                        </div>
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+                            <StatCard label="Average Payment" value={formatMoney(report.selectedEmployeeSummary.averagePayment)} hint="Visible filtered period" tone="slate" />
+                            <StatCard label="Largest Payment" value={formatMoney(report.selectedEmployeeSummary.largestPayment)} hint="Largest valid receipt" tone="blue" />
+                            <StatCard label="Cash Collected" value={formatMoney(report.selectedEmployeeSummary.cashCollected)} hint="Cash method only" tone="green" />
+                            <StatCard label="Mobile Money" value={formatMoney(report.selectedEmployeeSummary.mobileMoneyCollected)} hint="Mobile collections" tone="blue" />
+                            <StatCard label="Bank Collected" value={formatMoney(report.selectedEmployeeSummary.bankCollected)} hint="Bank method only" tone="slate" />
+                            <StatCard label="Corrected / Reversed" value={formatMoney(report.selectedEmployeeSummary.amountCorrectedOrReversed)} hint="Excluded from totals" tone="amber" />
+                        </div>
+                    </section>
+                ) : null}
+
+                {initialData.isAdmin && !filters.employeeId && sortedEmployeePerformance.length ? (
+                    <section className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <h2 className="text-base font-semibold text-white">All Employees Collection Performance</h2>
+                                <p className="text-xs text-white/50">Real employee-linked collection totals for the selected filters.</p>
+                            </div>
+                            <select
+                                value={employeeSort}
+                                onChange={(event) => setEmployeeSort(event.target.value as typeof employeeSort)}
+                                className="h-10 rounded-md border border-white/10 bg-slate-950 px-3 text-sm font-semibold text-white outline-none focus:border-sky-300"
+                            >
+                                <option value="highest" className="bg-slate-950 text-white">Highest collected</option>
+                                <option value="lowest" className="bg-slate-950 text-white">Lowest collected</option>
+                                <option value="most" className="bg-slate-950 text-white">Most payments</option>
+                                <option value="latest" className="bg-slate-950 text-white">Latest activity</option>
+                                <option value="office" className="bg-slate-950 text-white">Office</option>
+                            </select>
+                        </div>
+                        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                            {sortedEmployeePerformance.slice(0, 18).map((employee) => (
+                                <button
+                                    key={employee.employeeId}
+                                    type="button"
+                                    onClick={() => updateFilter("employeeId", employee.employeeId)}
+                                    className="rounded-lg border border-white/10 bg-slate-950/65 p-4 text-left transition hover:-translate-y-0.5 hover:border-emerald-200/40 hover:bg-white/[0.07] focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                                >
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <p className="break-words text-sm font-semibold text-white">{employee.employeeName}</p>
+                                            <p className="mt-1 text-xs text-white/50">{employee.role} · {employee.officeName}</p>
+                                        </div>
+                                        <span className="rounded-full border border-sky-200/25 px-2 py-1 text-xs font-bold text-sky-100">#{employee.rank}</span>
+                                    </div>
+                                    <p className="mt-3 text-xl font-black text-emerald-100">{formatMoney(employee.totalCollected)}</p>
+                                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-white/60">
+                                        <span>{employee.paymentCount} payment(s)</span>
+                                        <span>Avg {formatMoney(employee.averagePayment)}</span>
+                                        <span>Largest {formatMoney(employee.largestPayment)}</span>
+                                        <span>{employee.lastCollection ? `Last ${employee.lastCollection.slice(0, 10)}` : "No recent activity"}</span>
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    </section>
+                ) : null}
+
+                <section id="collections-ledger" className="overflow-hidden rounded-xl border border-white/10 bg-white/[0.04]">
                     <div className="flex flex-col gap-1 border-b border-white/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
                             <h2 className="text-base font-semibold text-white">Collection Ledger</h2>
@@ -504,6 +629,7 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                                 <tr>
                                     <th className="px-4 py-3">Date</th>
                                     <th className="px-4 py-3">Time</th>
+                                    <th className="px-4 py-3">Receipt</th>
                                     <th className="px-4 py-3">Room</th>
                                     <th className="px-4 py-3">Tenant</th>
                                     <th className="px-4 py-3">Landlord</th>
@@ -512,6 +638,8 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                                     <th className="px-4 py-3 text-right">Remaining Balance</th>
                                     <th className="px-4 py-3">Method</th>
                                     <th className="px-4 py-3">Recorded By</th>
+                                    <th className="px-4 py-3">Status</th>
+                                    <th className="px-4 py-3">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-white/5">
@@ -519,6 +647,7 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                                     <tr key={row.id} className="hover:bg-white/[0.04]">
                                         <td className="whitespace-nowrap px-4 py-3 text-white/75">{row.date}</td>
                                         <td className="whitespace-nowrap px-4 py-3 text-white/65">{row.time}</td>
+                                        <td className="whitespace-nowrap px-4 py-3 font-semibold text-sky-100">{row.receiptNumber}</td>
                                         <td className="whitespace-nowrap px-4 py-3 font-semibold text-white">{row.roomNumber}</td>
                                         <td className="whitespace-nowrap px-4 py-3 text-white/80">{row.tenantName}</td>
                                         <td className="whitespace-nowrap px-4 py-3 text-white/65">{row.landlordName}</td>
@@ -527,11 +656,24 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                                         <td className="whitespace-nowrap px-4 py-3 text-right text-amber-100">{formatMoney(row.remainingBalance)}</td>
                                         <td className="whitespace-nowrap px-4 py-3 text-white/65">{row.paymentMethod}</td>
                                         <td className="whitespace-nowrap px-4 py-3 text-white/65">{row.recordedBy}</td>
+                                        <td className="whitespace-nowrap px-4 py-3">
+                                            <span className="rounded-full border border-emerald-200/20 bg-emerald-300/10 px-2 py-1 text-xs font-semibold text-emerald-100">{row.status}</span>
+                                        </td>
+                                        <td className="whitespace-nowrap px-4 py-3">
+                                            <div className="flex flex-wrap gap-2">
+                                                <a href={`/office/receipts?search=${encodeURIComponent(row.receiptNumber)}`} className="rounded-md border border-white/10 px-2 py-1 text-xs font-semibold text-sky-100 hover:bg-white/10">
+                                                    View Receipt
+                                                </a>
+                                                <a href={`/office/payments?paymentId=${encodeURIComponent(row.id)}`} className="rounded-md border border-white/10 px-2 py-1 text-xs font-semibold text-emerald-100 hover:bg-white/10">
+                                                    Open Payment
+                                                </a>
+                                            </div>
+                                        </td>
                                     </tr>
                                 ))}
                                 {!report.rows.length ? (
                                     <tr>
-                                        <td colSpan={10} className="px-4 py-10 text-center text-sm text-white/50">
+                                        <td colSpan={13} className="px-4 py-10 text-center text-sm text-white/50">
                                             No collections found for the selected filters.
                                         </td>
                                     </tr>
@@ -539,10 +681,10 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                             </tbody>
                             <tfoot className="border-t border-white/15 bg-slate-950/80 font-semibold text-white">
                                 <tr>
-                                    <td colSpan={6} className="px-4 py-3">Totals</td>
+                                    <td colSpan={7} className="px-4 py-3">Totals</td>
                                     <td className="px-4 py-3 text-right text-emerald-200">{formatMoney(report.totals.totalAmount)}</td>
                                     <td className="px-4 py-3 text-right text-amber-100">{formatMoney(report.totals.outstandingBalanceRemaining)}</td>
-                                    <td colSpan={2} className="px-4 py-3 text-right text-white/60">{report.totals.paymentCount} payment(s)</td>
+                                    <td colSpan={4} className="px-4 py-3 text-right text-white/60">{report.totals.paymentCount} payment(s)</td>
                                 </tr>
                             </tfoot>
                         </table>

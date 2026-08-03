@@ -46,6 +46,10 @@ function collectionNumber() {
     return `COL-${Date.now()}`;
 }
 
+function authenticatedEmployeeId(context: Awaited<ReturnType<typeof requireAuth>>) {
+    return String((context.profile as unknown as { employee_id?: string | null } | null)?.employee_id ?? "") || null;
+}
+
 function revalidateOperationsPages() {
     revalidatePath("/office/collections");
     revalidatePath("/office/payments");
@@ -777,6 +781,7 @@ export async function recordCollection(input: RecordCollectionInput) {
     const paymentKind = input.paymentKind ?? (paymentSource === "employer" ? "employer_sponsor" : "tenant_normal");
     const paymentDate = assertCurrentPaymentDate(input.paymentDate);
     const paidAt = new Date().toISOString();
+    const employeeId = authenticatedEmployeeId(context);
     const employerBalanceAfter = paymentSource === "employer"
         ? Math.max(0, tenantContext.contribution.employerBalance - amount)
         : tenantContext.contribution.employerBalance;
@@ -813,6 +818,9 @@ export async function recordCollection(input: RecordCollectionInput) {
             payment_source: paymentSource,
             payer_name: input.payerName || (paymentSource === "employer" ? tenantContext.sponsor?.employer_name : tenantContext.tenant.full_name) || null,
             property_id: tenantContext.propertyId,
+            collected_by_employee_id: employeeId,
+            prepared_by_employee_id: employeeId,
+            recorded_by_employee_id: employeeId,
             recorded_by: context.profile?.id ?? null,
             reference_number: input.referenceNumber || null,
             room_id: tenantContext.room?.id ?? tenantContext.tenant.room_id,

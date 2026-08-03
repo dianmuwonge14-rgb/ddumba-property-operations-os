@@ -14,6 +14,7 @@ function readFilters(request: NextRequest): CollectionReportFilters {
         startMonth: search.get("startMonth") ?? undefined,
         endMonth: search.get("endMonth") ?? undefined,
         officeId: search.get("officeId") ?? undefined,
+        employeeId: search.get("employeeId") ?? undefined,
         room: search.get("room") ?? undefined,
         tenant: search.get("tenant") ?? undefined,
         paymentMethod: search.get("paymentMethod") ?? undefined,
