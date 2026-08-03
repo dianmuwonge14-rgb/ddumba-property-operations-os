@@ -210,6 +210,39 @@ async function loadProfiles(db: Db, companyId: string, employeeIds: string[], wa
     return new Map(rows.map((row) => [String(row.employee_id), row]));
 }
 
+async function resolvePersonalSalaryEmployee(db: Db, companyId: string, userId: string, profile: LooseRow | null, warnings: string[]) {
+    const [directEmployees, roleRows] = await Promise.all([
+        safeRows(db, "employees", (query) => query.select("*").eq("company_id", companyId).eq("user_id", userId).neq("status", "archived").limit(5), warnings),
+        safeRows(db, "user_office_roles", (query) => query
+            .select("employee_id,office_id,status,effective_from,effective_to")
+            .eq("company_id", companyId)
+            .eq("user_id", userId)
+            .is("effective_to", null)
+            .limit(20), warnings),
+    ]);
+    const profileEmployeeId = text(profile?.employee_id);
+    const roleEmployeeIds = roleRows
+        .filter((row) => lower(row.status || "active") === "active")
+        .map((row) => text(row.employee_id))
+        .filter(Boolean);
+    const candidateIds = [...new Set([
+        ...directEmployees.map((row) => text(row.id)).filter(Boolean),
+        profileEmployeeId,
+        ...roleEmployeeIds,
+    ])];
+    const linkedEmployees = candidateIds.length
+        ? await safeRows(db, "employees", (query) => query.select("*").eq("company_id", companyId).in("id", candidateIds).neq("status", "archived"), warnings)
+        : [];
+    const employeeById = new Map([...directEmployees, ...linkedEmployees].map((employee) => [String(employee.id), employee]));
+    const orderedCandidates = [
+        ...directEmployees.map((row) => text(row.id)).filter(Boolean),
+        profileEmployeeId,
+        ...roleEmployeeIds,
+    ].map((id) => employeeById.get(id)).filter(Boolean) as LooseRow[];
+    const eligibleEmployee = orderedCandidates.find((employee) => isPayrollEligibleEmployee(employee, profile));
+    return eligibleEmployee ?? null;
+}
+
 export async function getPersonalSalaryCentreData(): Promise<PersonalSalaryCentreData> {
     const context = await requireAuth();
     const { supabase } = await getScopedSupabase();
@@ -218,10 +251,9 @@ export async function getPersonalSalaryCentreData(): Promise<PersonalSalaryCentr
     const companyId = context.activeCompany?.id;
     const userId = context.profile?.id;
     if (!companyId || !userId) return { companyName: "Ddumba OS", employee: null, history: [], warnings: ["Signed-in account is required."] };
-    const employeeRows = await safeRows(db, "employees", (query) => query.select("*").eq("company_id", companyId).eq("user_id", userId).neq("status", "archived").limit(1), warnings);
-    const employee = employeeRows[0];
+    const linkedUser = context.profile as unknown as LooseRow;
+    const employee = await resolvePersonalSalaryEmployee(db, companyId, userId, linkedUser, warnings);
     if (!employee) return { companyName: context.activeCompany?.name ?? "Ddumba OS", employee: null, history: [], warnings: ["This account is not linked to an active employee profile."] };
-    const linkedUser = { account_type: context.profile?.account_type, full_name: context.profile?.full_name, status: context.profile?.status };
     if (!isPayrollEligibleEmployee(employee, linkedUser)) {
         return { companyName: context.activeCompany?.name ?? "Ddumba OS", employee: null, history: [], warnings: ["Operational account — not eligible for payroll."] };
     }

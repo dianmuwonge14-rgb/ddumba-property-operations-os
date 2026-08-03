@@ -9,9 +9,13 @@ const adminPage = readFileSync("app/office/admin/payroll/page.tsx", "utf8");
 const sidebar = readFileSync("components/office/shared/OfficeSidebar.tsx", "utf8");
 const migration = readFileSync("supabase/upgrade_migrations/0244_salary_centre.sql", "utf8");
 const payrollGuardMigration = readFileSync("supabase/upgrade_migrations/0246_salary_centre_genuine_employee_guard.sql", "utf8");
+const salaryLinkMigration = readFileSync("supabase/upgrade_migrations/0247_personal_salary_employee_linkage.sql", "utf8");
 
 test("personal salary centre is scoped to the authenticated employee only", () => {
   assert.match(dataSource, /eq\("user_id", userId\)/);
+  assert.match(dataSource, /resolvePersonalSalaryEmployee/);
+  assert.match(dataSource, /profile\?\.employee_id/);
+  assert.match(dataSource, /user_office_roles/);
   assert.match(dataSource, /This account is not linked to an active employee profile/);
   assert.match(personalPage, /getPersonalSalaryCentreData/);
 });
@@ -98,4 +102,13 @@ test("salary writes are blocked for operational accounts in app and database", (
   assert.match(payrollGuardMigration, /trg_employee_payroll_months_genuine_employee/);
   assert.match(payrollGuardMigration, /trg_employee_salary_payments_genuine_employee/);
   assert.match(payrollGuardMigration, /Operational account — not eligible for payroll/);
+});
+
+test("personal salary linkage migration adds user employee links and current salary periods", () => {
+  assert.match(salaryLinkMigration, /add column if not exists employee_id uuid references public\.employees/);
+  assert.match(salaryLinkMigration, /idx_users_employee_profile_link/);
+  assert.match(salaryLinkMigration, /user_office_roles uor/);
+  assert.match(salaryLinkMigration, /employee_payroll_months/);
+  assert.match(salaryLinkMigration, /date_trunc\('month', now\(\) at time zone 'Africa\/Kampala'\)::date/);
+  assert.match(salaryLinkMigration, /not exists \(\s*select 1\s*from public\.employee_payroll_months/s);
 });
