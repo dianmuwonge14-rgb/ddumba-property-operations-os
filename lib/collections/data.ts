@@ -58,6 +58,13 @@ type EmployeeOptionRow = {
     job_title: string | null;
     office_id: string | null;
     status: string | null;
+    user_id?: string | null;
+};
+
+type OfficeNameRow = {
+    id: string;
+    office_name: string | null;
+    name: string | null;
 };
 
 type CollectionUserRow = {
@@ -69,6 +76,8 @@ type CollectionUserRow = {
     account_type?: string | null;
     default_office_id?: string | null;
 };
+
+const NON_EMPLOYEE_ACCOUNT_TYPES = new Set(["admin_service", "office", "office_workspace", "service", "shared", "system"]);
 
 function businessDateOnly(value: string | null | undefined) {
     if (!value) return "No date";
@@ -100,8 +109,10 @@ function collectionEmployeeId(row: CollectionEmployeeRow, userById: Map<string, 
     return userId ? userById.get(String(userId))?.employee_id ?? row.collector_id ?? null : row.collector_id ?? null;
 }
 
-function isRealActiveEmployee(employee: EmployeeOptionRow | null | undefined) {
+function isRealActiveEmployee(employee: EmployeeOptionRow | null | undefined, linkedUser?: { account_type?: string | null } | null) {
     if (!employee?.id) return false;
+    const accountType = String(linkedUser?.account_type ?? "").toLowerCase();
+    if (NON_EMPLOYEE_ACCOUNT_TYPES.has(accountType)) return false;
     const status = String(employee.status ?? "active").toLowerCase();
     if (["archived", "deleted", "inactive", "terminated"].includes(status)) return false;
     const name = String(employee.full_name ?? "").toLowerCase();
@@ -110,9 +121,11 @@ function isRealActiveEmployee(employee: EmployeeOptionRow | null | undefined) {
     return !name.includes("office account")
         && !name.endsWith(" office login")
         && !name.endsWith(" office qa")
+        && name !== "nakiwogo office"
         && !code.startsWith("off-")
         && !role.includes("office account")
-        && role !== "office user";
+        && role !== "office user"
+        && role !== "office_user";
 }
 
 function businessTimeOnly(value: string | null | undefined) {
@@ -550,11 +563,19 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
     const officeIds = uniqueIds(collections.map((row) => row.office_id));
     const recordedByIds = uniqueIds(collections.map((row) => row.recorded_by ?? row.collector_id ?? row.entered_by_account_id));
 
-    const [{ data: tenants }, { data: rooms }, { data: offices }, { data: users }] = await Promise.all([
+    const [{ data: tenants }, { data: rooms }, { data: offices }, { data: users }, { data: activeEmployees }] = await Promise.all([
         tenantIds.length ? supabase.from("tenants").select("id, full_name, phone").eq("company_id", companyId).in("id", tenantIds) : { data: [] },
         roomIds.length ? supabase.from("rooms").select("id, room_number, landlord_id").eq("company_id", companyId).in("id", roomIds) : { data: [] },
         officeIds.length ? supabase.from("offices").select("id, office_name, name").eq("company_id", companyId).in("id", officeIds) : { data: [] },
         recordedByIds.length ? (supabase as unknown as DynamicDb).from("users").select("id, full_name, email, phone, employee_id, account_type, default_office_id").eq("company_id", companyId).in("id", recordedByIds) : { data: [] },
+        isAdmin
+            ? (supabase as unknown as DynamicDb)
+                .from("employees")
+                .select("id, full_name, phone, employee_code, role, job_title, office_id, status, user_id")
+                .eq("company_id", companyId)
+                .order("full_name", { ascending: true })
+                .limit(2000)
+            : { data: [] },
     ]);
     const collectionUsers = (users ?? []) as CollectionUserRow[];
     const userById = new Map(collectionUsers.map((user) => [user.id, user]));
@@ -565,14 +586,28 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
         row.collector_id,
     ]));
     const userEmployeeIds = uniqueIds(collectionUsers.map((user) => user.employee_id));
-    const employeeIds = uniqueIds([...directEmployeeIds, ...userEmployeeIds]);
+    const allActiveEmployees = ((activeEmployees ?? []) as EmployeeOptionRow[]).filter((employee) => isRealActiveEmployee(employee));
+    const employeeIds = uniqueIds([
+        ...directEmployeeIds,
+        ...userEmployeeIds,
+        ...allActiveEmployees.map((employee) => employee.id),
+    ]);
     const { data: employees } = employeeIds.length
         ? await supabase
             .from("employees")
-            .select("id, full_name, phone, employee_code, role, job_title, office_id, status")
+            .select("id, full_name, phone, employee_code, role, job_title, office_id, status, user_id")
             .eq("company_id", companyId)
             .in("id", employeeIds)
         : { data: [] as EmployeeOptionRow[] };
+    const linkedEmployeeUserIds = uniqueIds((employees ?? []).map((employee) => employee.user_id));
+    const { data: linkedEmployeeUsers } = linkedEmployeeUserIds.length
+        ? (supabase as unknown as DynamicDb)
+            .from("users")
+            .select("id, account_type")
+            .eq("company_id", companyId)
+            .in("id", linkedEmployeeUserIds)
+        : { data: [] };
+    const linkedEmployeeUserById = new Map(((linkedEmployeeUsers ?? []) as Array<{ id: string; account_type: string | null }>).map((user) => [user.id, user]));
     const employeeOfficeIds = uniqueIds((employees ?? []).map((employee) => employee.office_id));
     const missingOfficeIds = employeeOfficeIds.filter((id) => !officeIds.includes(id));
     const { data: employeeOffices } = missingOfficeIds.length
@@ -586,9 +621,11 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
 
     const tenantById = new Map((tenants ?? []).map((tenant) => [tenant.id, tenant]));
     const roomById = new Map((rooms ?? []).map((room) => [room.id, room]));
-    const officeById = new Map([...(offices ?? []), ...(employeeOffices ?? [])].map((office) => [office.id, office]));
+    const officeById = new Map([...(offices ?? []), ...(employeeOffices ?? [])].map((office) => [office.id, office] as [string, OfficeNameRow]));
     const landlordById = new Map((landlords ?? []).map((landlord) => [landlord.id, landlord]));
-    const employeeById = new Map(((employees ?? []) as EmployeeOptionRow[]).filter(isRealActiveEmployee).map((employee) => [employee.id, employee]));
+    const employeeById = new Map(((employees ?? []) as EmployeeOptionRow[])
+        .filter((employee) => isRealActiveEmployee(employee, employee.user_id ? linkedEmployeeUserById.get(String(employee.user_id)) ?? null : null))
+        .map((employee) => [employee.id, employee]));
 
     const roomFilter = normalizeCollectionFilter(filters.room);
     const tenantFilter = normalizeCollectionFilter(filters.tenant);
@@ -602,8 +639,7 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
         })(),
     }));
 
-    const employeeOptions = [...new Set(collectionRowsWithEmployees.map((row) => row.employeeId).filter(Boolean) as string[])]
-        .map((employeeId) => employeeById.get(employeeId))
+    const employeeOptions = [...employeeById.values()]
         .filter((employee): employee is EmployeeOptionRow => Boolean(employee))
         .sort((left, right) => String(left.full_name ?? "").localeCompare(String(right.full_name ?? "")))
         .map((employee) => {
@@ -653,7 +689,7 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
                 amountPaid: collectionAmount(row),
                 remainingBalance: Number(row.balance ?? 0),
                 paymentMethod: isAdminCashTransfer ? "Admin Cash Transfer" : row.payment_method ?? "payment",
-                recordedBy: user?.full_name ?? user?.email ?? "System",
+                recordedBy: employeeId ? employeeById.get(employeeId)?.full_name ?? user?.full_name ?? user?.email ?? "System" : user?.full_name ?? user?.email ?? "System",
                 status: row.status ?? "paid",
             };
         })
@@ -713,8 +749,10 @@ function buildEmployeeCollectionSummaries(rows: CollectionReportRow[], employeeO
         if (!row.employeeId) continue;
         grouped.set(row.employeeId, [...(grouped.get(row.employeeId) ?? []), row]);
     }
-    const summaries: EmployeeCollectionSummary[] = [...grouped.entries()].map(([employeeId, employeeRows]) => {
-        const employee = employeeById.get(employeeId);
+    const summaries: EmployeeCollectionSummary[] = employeeOptions.map((option) => {
+        const employeeId = option.id;
+        const employeeRows = grouped.get(employeeId) ?? [];
+        const employee = employeeById.get(employeeId) ?? option;
         const totalCollected = employeeRows.reduce((total, row) => total + row.amountPaid, 0);
         const largestPayment = employeeRows.reduce((largest, row) => Math.max(largest, row.amountPaid), 0);
         const lastCollection = employeeRows.reduce<string | null>((latest, row) => {

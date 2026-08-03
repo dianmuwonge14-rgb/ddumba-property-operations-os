@@ -28,8 +28,12 @@ test("admin collections report supports stable employee filters and summaries", 
   assert.match(dataSource, /recorded_by_employee_id/);
   assert.match(dataSource, /userById\.get\(String\(userId\)\)\?\.employee_id/);
   assert.match(dataSource, /isRealActiveEmployee/);
+  assert.match(dataSource, /activeEmployees/);
+  assert.match(dataSource, /\.from\("employees"\)[\s\S]*\.order\("full_name"/);
   assert.match(dataSource, /!employeeFilterId \|\| employeeId === employeeFilterId/);
   assert.match(dataSource, /uniqueFinanciallyEffectiveCollections/);
+  assert.doesNotMatch(dataSource, /\[\.\.\.new Set\(collectionRowsWithEmployees\.map\(\(row\) => row\.employeeId\)/);
+  assert.match(dataSource, /const employeeRows = grouped\.get\(employeeId\) \?\? \[\]/);
 });
 
 test("collections UI exposes employee filter, totals and drill-down without redesigning the page", () => {
@@ -65,5 +69,17 @@ test("new payments persist employee attribution and migration backfills indexed 
     "trg_ddumba_set_collection_employee_attribution",
   ]) {
     assert.match(migration, new RegExp(token));
+  }
+});
+
+test("employee filter indexes support active employee lookup beyond collection history", () => {
+  const indexMigration = readFileSync(new URL("../supabase/upgrade_migrations/0250_admin_collections_all_employee_filter_indexes.sql", import.meta.url), "utf8");
+  for (const token of [
+    "idx_employees_company_status_name",
+    "idx_employees_company_phone",
+    "idx_employees_company_code",
+    "idx_employees_company_role_office",
+  ]) {
+    assert.match(indexMigration, new RegExp(token));
   }
 });

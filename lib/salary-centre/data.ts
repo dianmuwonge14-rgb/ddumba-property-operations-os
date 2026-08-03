@@ -26,7 +26,7 @@ function isOfficeWorkspaceEmployee(employee: LooseRow, linkedUser?: LooseRow | n
     const accountType = lower(linkedUser?.account_type);
     const employeeName = lower(employee.full_name);
     const employeeCode = lower(employee.employee_code);
-    const roleName = lower(employee.role_name);
+    const roleName = lower(employee.role_name ?? employee.role);
     const jobTitle = lower(employee.job_title);
     if (NON_PAYROLL_ACCOUNT_TYPES.has(accountType)) return true;
     return employeeName.includes("office account")
@@ -35,6 +35,8 @@ function isOfficeWorkspaceEmployee(employee: LooseRow, linkedUser?: LooseRow | n
         || employeeName === "nakiwogo office"
         || employeeCode.startsWith("off-")
         || roleName.includes("office account")
+        || roleName === "office_user"
+        || roleName === "office user"
         || jobTitle === "office user";
 }
 
@@ -173,7 +175,7 @@ function buildSalaryCard(input: {
         employeeName: text(employee.full_name, "Employee"),
         employeeCode: text(employee.employee_code, String(employee.id).slice(0, 8)),
         employeePhotoUrl: text(employee.photo_url ?? employee.avatar_url ?? employee.profile_photo_url),
-        role: text(employee.role_name ?? employee.job_title, "Employee"),
+        role: text(employee.role_name ?? employee.role ?? employee.job_title, "Employee"),
         officeId: employee.office_id ? String(employee.office_id) : null,
         officeName: input.officeName,
         employmentStatus,
@@ -266,6 +268,9 @@ export async function getPersonalSalaryCentreData(): Promise<PersonalSalaryCentr
         safeRows(db, "employee_salary_payments", (query) => query.select("*").eq("company_id", companyId).eq("employee_id", employeeId).order("paid_at", { ascending: false }).limit(50), warnings),
     ]);
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+    if (!profiles.has(employeeId) && amount(employee.basic_salary) <= 0) {
+        warnings.push("Salary has not yet been configured.");
+    }
     const byMonth = new Map<string, LooseRow[]>();
     for (const row of paymentRows) {
         const key = text(row.month_key, currentMonth);

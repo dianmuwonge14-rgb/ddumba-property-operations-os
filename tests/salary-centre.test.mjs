@@ -12,11 +12,15 @@ const payrollGuardMigration = readFileSync("supabase/upgrade_migrations/0246_sal
 const salaryLinkMigration = readFileSync("supabase/upgrade_migrations/0247_personal_salary_employee_linkage.sql", "utf8");
 
 test("personal salary centre is scoped to the authenticated employee only", () => {
+  const personalComponent = readFileSync("components/office/salary/SalaryCentre.tsx", "utf8");
   assert.match(dataSource, /eq\("user_id", userId\)/);
   assert.match(dataSource, /resolvePersonalSalaryEmployee/);
   assert.match(dataSource, /profile\?\.employee_id/);
   assert.match(dataSource, /user_office_roles/);
   assert.match(dataSource, /This account is not linked to an active employee profile/);
+  assert.match(dataSource, /Salary has not yet been configured/);
+  assert.match(personalComponent, /Salary has not yet been configured/);
+  assert.doesNotMatch(personalComponent, /No salary activity attached/);
   assert.match(personalPage, /getPersonalSalaryCentreData/);
 });
 
@@ -87,6 +91,8 @@ test("salary centre excludes shared office and operational workspace accounts", 
   assert.match(dataSource, /loadLinkedUsers/);
   assert.match(dataSource, /account_type/);
   assert.match(dataSource, /office account/);
+  assert.match(dataSource, /employee\.role/);
+  assert.match(dataSource, /roleName === "office_user"/);
   assert.match(dataSource, /office user/);
   assert.match(dataSource, /Operational account — not eligible for payroll/);
 });
@@ -111,4 +117,13 @@ test("personal salary linkage migration adds user employee links and current sal
   assert.match(salaryLinkMigration, /employee_payroll_months/);
   assert.match(salaryLinkMigration, /date_trunc\('month', now\(\) at time zone 'Africa\/Kampala'\)::date/);
   assert.match(salaryLinkMigration, /not exists \(\s*select 1\s*from public\.employee_payroll_months/s);
+});
+
+test("configured employees get a current salary period without inventing missing salaries", () => {
+  const salaryPeriodRepair = readFileSync("supabase/upgrade_migrations/0251_current_salary_period_repair.sql", "utf8");
+  assert.match(salaryPeriodRepair, /from public\.payroll_profiles pp/);
+  assert.match(salaryPeriodRepair, /coalesce\(pp\.base_salary, 0\) > 0/);
+  assert.match(salaryPeriodRepair, /public\.ddumba_is_genuine_payroll_employee\(e\.id\)/);
+  assert.match(salaryPeriodRepair, /not exists \(\s*select 1\s*from public\.employee_payroll_months/s);
+  assert.match(salaryPeriodRepair, /Africa\/Kampala/);
 });

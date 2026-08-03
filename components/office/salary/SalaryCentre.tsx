@@ -63,7 +63,11 @@ export function SalaryCard({ employee }: { employee: SalaryCardData }) {
                         <div className="h-full rounded-full bg-gradient-to-r from-cyan-300 via-emerald-300 to-lime-300" style={{ width: `${progress}%` }} />
                     </div>
                     <p className="mt-3 text-sm font-bold text-slate-300">
-                        {employee.status === "paid" ? `Salary received for ${employee.salaryPeriod}.` : `Next salary date: ${employee.nextSalaryDate ?? "Not set"}`}
+                        {employee.status === "not_configured"
+                            ? "Salary has not yet been configured."
+                            : employee.status === "paid"
+                                ? `Salary received for ${employee.salaryPeriod}.`
+                                : `Next salary date: ${employee.nextSalaryDate ?? "Not set"}`}
                     </p>
                 </div>
             </div>
