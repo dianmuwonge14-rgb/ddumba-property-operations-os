@@ -13,6 +13,7 @@ import {
     CalendarCheck,
     ClipboardCheck,
     Crown,
+    FileBadge,
     Gauge,
     GitMerge,
     HandCoins,
@@ -77,6 +78,7 @@ const adminSections = [
             { href: "/office/excellence", label: "Office Excellence", icon: Medal },
             { href: "/office/ai", label: "AI Intelligence", icon: Bot },
             { href: "/office/admin/statements", label: "Statements Centre", icon: ReceiptText },
+            { href: "/office/admin/payroll", label: "Payroll Centre", icon: FileBadge },
             { href: "/office/admin/employees", label: "Employees", icon: UserCog },
             { href: "/office/admin", label: "Administration", icon: SlidersHorizontal },
         ],
@@ -121,6 +123,7 @@ const officeSections = [
             { href: "/office/landlord-payments", label: "Landlord Payments", icon: WalletCards },
             { href: "/office/bad-debt", label: "Bad Debt Recovery", icon: Archive },
             { href: "/office/attendance", label: "Attendance", icon: Gauge },
+            { href: "/office/salary", label: "My Salary", icon: FileBadge },
             { href: "/office/spreadsheet", label: "Daily Report", icon: Sheet },
             { href: "/office/employees", label: "Employees", icon: UserCog },
         ],
@@ -139,6 +142,7 @@ const collectorSections = [
             { href: "/office/collector/daily", label: "Collections", icon: HandCoins },
             { href: "/office/collector/defaulters", label: "Defaulters", icon: AlertTriangle },
             { href: "/office/collector/promises", label: "Promise Centre", icon: CalendarCheck },
+            { href: "/office/salary", label: "My Salary", icon: FileBadge },
             { href: "/office/collector/vacant-rooms", label: "Vacant Rooms", icon: HousePlus },
             { href: "/office/collector/tenant-relocation", label: "Tenant Relocation", icon: GitMerge },
             { href: "/office/expenses", label: "Expenses", icon: ReceiptText },
@@ -167,6 +171,7 @@ function themeForPath(pathname: string) {
     if (pathname.includes("/promises")) return "promises";
     if (pathname.includes("/expenses")) return "expenses";
     if (pathname.includes("/attendance")) return "attendance";
+    if (pathname.includes("/salary") || pathname.includes("/payroll")) return "employees";
     if (pathname.includes("/employees")) return "employees";
     if (pathname.includes("/properties")) return "properties";
     if (pathname.includes("/vacant-rooms")) return "vacant";
