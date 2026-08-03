@@ -6,6 +6,8 @@ type LooseRow = Record<string, any>;
 type Db = { from: (table: string) => any };
 
 const TZ = "Africa/Kampala";
+const NON_PAYROLL_ACCOUNT_TYPES = new Set(["office", "office_workspace", "service", "system", "shared"]);
+const INACTIVE_EMPLOYMENT_STATUSES = new Set(["archived", "deleted", "inactive", "terminated"]);
 
 function amount(value: unknown) {
     return Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -14,6 +16,53 @@ function amount(value: unknown) {
 function text(value: unknown, fallback = "") {
     const resolved = String(value ?? "").trim();
     return resolved || fallback;
+}
+
+function lower(value: unknown) {
+    return text(value).toLowerCase();
+}
+
+function isOfficeWorkspaceEmployee(employee: LooseRow, linkedUser?: LooseRow | null) {
+    const accountType = lower(linkedUser?.account_type);
+    const employeeName = lower(employee.full_name);
+    const employeeCode = lower(employee.employee_code);
+    const roleName = lower(employee.role_name);
+    const jobTitle = lower(employee.job_title);
+    if (NON_PAYROLL_ACCOUNT_TYPES.has(accountType)) return true;
+    return employeeName.includes("office account")
+        || employeeName.endsWith(" office login")
+        || employeeName.endsWith(" office qa")
+        || employeeName === "nakiwogo office"
+        || employeeCode.startsWith("off-")
+        || roleName.includes("office account")
+        || jobTitle === "office user";
+}
+
+function isPayrollEligibleEmployee(employee: LooseRow, linkedUser?: LooseRow | null) {
+    if (!employee?.id) return false;
+    if (INACTIVE_EMPLOYMENT_STATUSES.has(lower(employee.status))) return false;
+    if (isOfficeWorkspaceEmployee(employee, linkedUser)) return false;
+    return true;
+}
+
+async function loadLinkedUsers(db: Db, companyId: string, employeeRows: LooseRow[], warnings: string[]) {
+    const userIds = [...new Set(employeeRows.map((row) => text(row.user_id)).filter(Boolean))];
+    const rows = userIds.length
+        ? await safeRows(db, "users", (query) => query.select("id,account_type,full_name,status").eq("company_id", companyId).in("id", userIds), warnings)
+        : [];
+    return new Map(rows.map((row) => [String(row.id), row]));
+}
+
+function uniquePayrollEmployees(employeeRows: LooseRow[], userById: Map<string, LooseRow>) {
+    const byId = new Map<string, LooseRow>();
+    for (const employee of employeeRows) {
+        const employeeId = text(employee.id);
+        if (!employeeId || byId.has(employeeId)) continue;
+        const linkedUser = employee.user_id ? userById.get(String(employee.user_id)) ?? null : null;
+        if (!isPayrollEligibleEmployee(employee, linkedUser)) continue;
+        byId.set(employeeId, employee);
+    }
+    return [...byId.values()];
 }
 
 function kampalaParts(date = new Date()) {
@@ -172,6 +221,10 @@ export async function getPersonalSalaryCentreData(): Promise<PersonalSalaryCentr
     const employeeRows = await safeRows(db, "employees", (query) => query.select("*").eq("company_id", companyId).eq("user_id", userId).neq("status", "archived").limit(1), warnings);
     const employee = employeeRows[0];
     if (!employee) return { companyName: context.activeCompany?.name ?? "Ddumba OS", employee: null, history: [], warnings: ["This account is not linked to an active employee profile."] };
+    const linkedUser = { account_type: context.profile?.account_type, full_name: context.profile?.full_name, status: context.profile?.status };
+    if (!isPayrollEligibleEmployee(employee, linkedUser)) {
+        return { companyName: context.activeCompany?.name ?? "Ddumba OS", employee: null, history: [], warnings: ["Operational account — not eligible for payroll."] };
+    }
     const employeeId = String(employee.id);
     const currentMonth = salaryMonthKey();
     const officeNames = await loadOfficeNames(db, companyId, warnings);
@@ -211,7 +264,9 @@ export async function getAdminPayrollCentreData(): Promise<AdminPayrollCentreDat
         safeRows(db, "employees", (query) => query.select("*").eq("company_id", companyId).neq("status", "archived").order("full_name").limit(1000), warnings),
         loadOfficeNames(db, companyId, warnings),
     ]);
-    const employeeIds = employeeRows.map((row) => String(row.id));
+    const userById = await loadLinkedUsers(db, companyId, employeeRows, warnings);
+    const payrollEmployees = uniquePayrollEmployees(employeeRows, userById);
+    const employeeIds = payrollEmployees.map((row) => String(row.id));
     const [profiles, payrollRows, paymentRows] = await Promise.all([
         loadProfiles(db, companyId, employeeIds, warnings),
         employeeIds.length ? safeRows(db, "employee_payroll_months", (query) => query.select("*").eq("company_id", companyId).eq("month_key", monthKey).in("employee_id", employeeIds), warnings) : [],
@@ -224,7 +279,7 @@ export async function getAdminPayrollCentreData(): Promise<AdminPayrollCentreDat
         paymentsByEmployee.set(id, [...(paymentsByEmployee.get(id) ?? []), row]);
     }
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-    const employees = employeeRows
+    const employees = payrollEmployees
         .filter((employee) => String(employee.user_id ?? "").trim() || amount(employee.basic_salary) > 0)
         .map((employee) => buildSalaryCard({
             employee,

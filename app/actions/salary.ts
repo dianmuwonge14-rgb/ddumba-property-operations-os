@@ -22,6 +22,36 @@ function amount(value: unknown) {
     return Number.isFinite(numeric) ? numeric : 0;
 }
 
+const NON_PAYROLL_ACCOUNT_TYPES = new Set(["office", "office_workspace", "service", "system", "shared"]);
+const INACTIVE_EMPLOYMENT_STATUSES = new Set(["archived", "deleted", "inactive", "terminated"]);
+const OPERATIONAL_ACCOUNT_PAYROLL_MESSAGE = "Operational account — not eligible for payroll.";
+
+function lower(value: unknown) {
+    return text(value).toLowerCase();
+}
+
+function looksLikeOfficeWorkspaceEmployee(employee: Record<string, unknown>, linkedUser?: Record<string, unknown> | null) {
+    const accountType = lower(linkedUser?.account_type);
+    const employeeName = lower(employee.full_name);
+    const employeeCode = lower(employee.employee_code);
+    const roleName = lower(employee.role_name);
+    const jobTitle = lower(employee.job_title);
+    if (NON_PAYROLL_ACCOUNT_TYPES.has(accountType)) return true;
+    return employeeName.includes("office account")
+        || employeeName.endsWith(" office login")
+        || employeeName.endsWith(" office qa")
+        || employeeName === "nakiwogo office"
+        || employeeCode.startsWith("off-")
+        || roleName.includes("office account")
+        || jobTitle === "office user";
+}
+
+function assertPayrollEligibleEmployee(employee: Record<string, unknown>, linkedUser?: Record<string, unknown> | null) {
+    if (!employee?.id) throw new Error("Employee not found.");
+    if (INACTIVE_EMPLOYMENT_STATUSES.has(lower(employee.status))) throw new Error(OPERATIONAL_ACCOUNT_PAYROLL_MESSAGE);
+    if (looksLikeOfficeWorkspaceEmployee(employee, linkedUser)) throw new Error(OPERATIONAL_ACCOUNT_PAYROLL_MESSAGE);
+}
+
 function paymentDay(value: unknown) {
     return Math.min(31, Math.max(1, Math.round(amount(value) || 1)));
 }
@@ -64,6 +94,11 @@ export async function updateEmployeeSalaryConfiguration(formData: FormData) {
     const { data: employee, error: employeeError } = await dbClient.from("employees").select("*").eq("company_id", companyId).eq("id", employeeId).maybeSingle();
     if (employeeError) throw new Error(employeeError.message);
     if (!employee) throw new Error("Employee not found.");
+    const { data: linkedUser, error: linkedUserError } = employee.user_id
+        ? await dbClient.from("users").select("id,account_type,full_name,status").eq("company_id", companyId).eq("id", employee.user_id).maybeSingle()
+        : { data: null, error: null };
+    if (linkedUserError) throw new Error(linkedUserError.message);
+    assertPayrollEligibleEmployee(employee, linkedUser);
     const before = { basic_salary: employee.basic_salary, salary_payment_day: employee.salary_payment_day ?? employee.salary_receiving_day };
     const { data: updated, error: updateError } = await dbClient.from("employees").update({
         basic_salary: monthlySalary,
@@ -102,6 +137,11 @@ export async function recordSalaryPayment(formData: FormData) {
     const { data: employee, error: employeeError } = await dbClient.from("employees").select("*").eq("company_id", companyId).eq("id", employeeId).maybeSingle();
     if (employeeError) throw new Error(employeeError.message);
     if (!employee) throw new Error("Employee not found.");
+    const { data: linkedUser, error: linkedUserError } = employee.user_id
+        ? await dbClient.from("users").select("id,account_type,full_name,status").eq("company_id", companyId).eq("id", employee.user_id).maybeSingle()
+        : { data: null, error: null };
+    if (linkedUserError) throw new Error(linkedUserError.message);
+    assertPayrollEligibleEmployee(employee, linkedUser);
     const officeId = employee.office_id ?? (text(formData.get("officeId")) || null);
     const [bonusRows, expenseRows, advanceRows, fineRows, existingPayments] = await Promise.all([
         dbClient.from("employee_bonuses").select("amount").eq("company_id", companyId).eq("employee_id", employeeId).eq("month_key", monthKey).eq("active", true),

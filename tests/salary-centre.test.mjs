@@ -8,6 +8,7 @@ const personalPage = readFileSync("app/office/salary/page.tsx", "utf8");
 const adminPage = readFileSync("app/office/admin/payroll/page.tsx", "utf8");
 const sidebar = readFileSync("components/office/shared/OfficeSidebar.tsx", "utf8");
 const migration = readFileSync("supabase/upgrade_migrations/0244_salary_centre.sql", "utf8");
+const payrollGuardMigration = readFileSync("supabase/upgrade_migrations/0246_salary_centre_genuine_employee_guard.sql", "utf8");
 
 test("personal salary centre is scoped to the authenticated employee only", () => {
   assert.match(dataSource, /eq\("user_id", userId\)/);
@@ -73,4 +74,28 @@ test("admin salary totals include due week, paid employees, averages, allowances
   assert.match(dataSource, /averageSalary/);
   assert.match(dataSource, /totalAllowances/);
   assert.match(dataSource, /totalDeductions/);
+});
+
+test("salary centre excludes shared office and operational workspace accounts", () => {
+  assert.match(dataSource, /NON_PAYROLL_ACCOUNT_TYPES/);
+  assert.match(dataSource, /isPayrollEligibleEmployee/);
+  assert.match(dataSource, /uniquePayrollEmployees/);
+  assert.match(dataSource, /loadLinkedUsers/);
+  assert.match(dataSource, /account_type/);
+  assert.match(dataSource, /office account/);
+  assert.match(dataSource, /office user/);
+  assert.match(dataSource, /Operational account — not eligible for payroll/);
+});
+
+test("salary writes are blocked for operational accounts in app and database", () => {
+  assert.match(actionSource, /OPERATIONAL_ACCOUNT_PAYROLL_MESSAGE/);
+  assert.match(actionSource, /assertPayrollEligibleEmployee/);
+  assert.match(actionSource, /looksLikeOfficeWorkspaceEmployee/);
+  assert.match(actionSource, /users"\)\.select\("id,account_type,full_name,status"\)/);
+  assert.match(payrollGuardMigration, /ddumba_is_genuine_payroll_employee/);
+  assert.match(payrollGuardMigration, /ddumba_guard_salary_employee/);
+  assert.match(payrollGuardMigration, /trg_payroll_profiles_genuine_employee/);
+  assert.match(payrollGuardMigration, /trg_employee_payroll_months_genuine_employee/);
+  assert.match(payrollGuardMigration, /trg_employee_salary_payments_genuine_employee/);
+  assert.match(payrollGuardMigration, /Operational account — not eligible for payroll/);
 });
