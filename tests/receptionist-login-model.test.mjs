@@ -52,6 +52,11 @@ test("admin creates receptionist accounts instead of new shared office accounts"
   assert.match(adminActions, /Employee .* is already linked to an active login account/);
 });
 
+test("linking an existing receptionist preserves employee identity fields", () => {
+  assert.match(adminActions, /employee_code: employee\.employee_code \|\| input\.loginIdentifier/);
+  assert.match(adminActions, /phone: employee\.phone \|\| input\.phone/);
+});
+
 test("receptionist role is office-scoped and inherits current office permissions", () => {
   assert.match(migration, /'receptionist'/);
   assert.match(migration, /Personal office receptionist login/);

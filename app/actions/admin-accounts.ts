@@ -192,7 +192,7 @@ async function linkReceptionistEmployee(input: {
     const admin = createSupabaseAdminClient();
     const { data: employee, error: employeeError } = await admin
         .from("employees")
-        .select("id, office_id, full_name, user_id")
+        .select("id, office_id, full_name, user_id, employee_code, phone")
         .eq("company_id", input.companyId)
         .eq("id", input.employeeId)
         .maybeSingle();
@@ -205,8 +205,8 @@ async function linkReceptionistEmployee(input: {
             office_id: input.officeId,
             primary_office_id: input.officeId,
             user_id: input.userId,
-            employee_code: input.loginIdentifier?.trim() || undefined,
-            phone: input.phone?.trim() || undefined,
+            employee_code: employee.employee_code || input.loginIdentifier?.trim() || undefined,
+            phone: employee.phone || input.phone?.trim() || undefined,
             status: "active",
             updated_at: new Date().toISOString(),
         })
@@ -219,8 +219,8 @@ async function linkReceptionistEmployee(input: {
             .update({
                 office_id: input.officeId,
                 user_id: input.userId,
-                employee_code: input.loginIdentifier?.trim() || undefined,
-                phone: input.phone?.trim() || undefined,
+                employee_code: employee.employee_code || input.loginIdentifier?.trim() || undefined,
+                phone: employee.phone || input.phone?.trim() || undefined,
                 status: "active",
                 updated_at: new Date().toISOString(),
             })
