@@ -23,6 +23,7 @@ export type SalaryCardData = {
     employeeId: string;
     employeeName: string;
     employeeCode: string;
+    employeePhotoUrl: string;
     role: string;
     officeId: string | null;
     officeName: string;
@@ -64,7 +65,13 @@ export type AdminPayrollCentreData = {
         paidSalaries: number;
         outstandingSalaries: number;
         dueToday: number;
+        dueThisWeek: number;
         overdueSalaries: number;
+        employeesPaid: number;
+        employeesAwaitingSalary: number;
+        averageSalary: number;
+        totalAllowances: number;
+        totalDeductions: number;
         partiallyPaid: number;
         notConfigured: number;
     };

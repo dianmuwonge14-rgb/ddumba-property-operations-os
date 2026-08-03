@@ -78,7 +78,7 @@ const adminSections = [
             { href: "/office/excellence", label: "Office Excellence", icon: Medal },
             { href: "/office/ai", label: "AI Intelligence", icon: Bot },
             { href: "/office/admin/statements", label: "Statements Centre", icon: ReceiptText },
-            { href: "/office/admin/payroll", label: "Payroll Centre", icon: FileBadge },
+            { href: "/office/admin/payroll", label: "Salary Centre", icon: FileBadge },
             { href: "/office/admin/employees", label: "Employees", icon: UserCog },
             { href: "/office/admin", label: "Administration", icon: SlidersHorizontal },
         ],

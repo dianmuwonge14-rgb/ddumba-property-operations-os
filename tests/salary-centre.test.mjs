@@ -43,7 +43,7 @@ test("navigation exposes personal salary and admin payroll pages", () => {
   assert.match(sidebar, /\/office\/salary/);
   assert.match(sidebar, /My Salary/);
   assert.match(sidebar, /\/office\/admin\/payroll/);
-  assert.match(sidebar, /Payroll Centre/);
+  assert.match(sidebar, /Salary Centre/);
 });
 
 test("migration adds sensitive salary ledgers and own-employee RLS", () => {
@@ -52,4 +52,25 @@ test("migration adds sensitive salary ledgers and own-employee RLS", () => {
   assert.match(migration, /payroll_profiles/);
   assert.match(migration, /e\.user_id = auth\.uid\(\)/);
   assert.match(migration, /ddumba_v1_is_company_admin/);
+});
+
+test("admin salary centre includes executive dashboard, AI, calendar and office comparison", () => {
+  const adminComponent = readFileSync("components/office/salary/AdminPayrollCentre.tsx", "utf8");
+  assert.match(adminComponent, /Salary Centre/);
+  assert.match(adminComponent, /AI Payroll Director/);
+  assert.match(adminComponent, /Payroll Calendar/);
+  assert.match(adminComponent, /Office Payroll Comparison/);
+  assert.match(adminComponent, /Total Monthly Payroll/);
+  assert.match(adminComponent, /Salaries Due This Week/);
+  assert.match(adminComponent, /Cash Needed 7 Days/);
+  assert.match(adminComponent, /Pay Salary \/ Record Partial Payment/);
+});
+
+test("admin salary totals include due week, paid employees, averages, allowances and deductions", () => {
+  assert.match(dataSource, /dueThisWeek/);
+  assert.match(dataSource, /employeesPaid/);
+  assert.match(dataSource, /employeesAwaitingSalary/);
+  assert.match(dataSource, /averageSalary/);
+  assert.match(dataSource, /totalAllowances/);
+  assert.match(dataSource, /totalDeductions/);
 });

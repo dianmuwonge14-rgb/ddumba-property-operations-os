@@ -123,6 +123,7 @@ function buildSalaryCard(input: {
         employeeId: String(employee.id),
         employeeName: text(employee.full_name, "Employee"),
         employeeCode: text(employee.employee_code, String(employee.id).slice(0, 8)),
+        employeePhotoUrl: text(employee.photo_url ?? employee.avatar_url ?? employee.profile_photo_url),
         role: text(employee.role_name ?? employee.job_title, "Employee"),
         officeId: employee.office_id ? String(employee.office_id) : null,
         officeName: input.officeName,
@@ -239,11 +240,22 @@ export async function getAdminPayrollCentreData(): Promise<AdminPayrollCentreDat
         acc.paidSalaries += employee.salaryAlreadyPaid;
         acc.outstandingSalaries += employee.remainingSalaryBalance;
         if (employee.status === "due_today") acc.dueToday += 1;
+        if (employee.salaryPaymentDate) {
+            const todayTime = Date.parse(`${today}T00:00:00Z`);
+            const dueTime = Date.parse(`${employee.salaryPaymentDate}T00:00:00Z`);
+            const dayGap = Math.round((dueTime - todayTime) / 86400000);
+            if (dayGap >= 0 && dayGap <= 7 && employee.remainingSalaryBalance > 0) acc.dueThisWeek += 1;
+        }
         if (employee.status === "overdue") acc.overdueSalaries += 1;
+        if (employee.status === "paid") acc.employeesPaid += 1;
+        if (employee.status !== "paid" && employee.status !== "suspended" && employee.status !== "not_configured") acc.employeesAwaitingSalary += 1;
+        acc.totalAllowances += employee.allowances;
+        acc.totalDeductions += employee.deductions;
         if (employee.status === "partially_paid") acc.partiallyPaid += 1;
         if (employee.status === "not_configured") acc.notConfigured += 1;
         return acc;
     }, emptyTotals());
+    totals.averageSalary = employees.length ? Math.round(totals.totalMonthlyPayroll / employees.length) : 0;
     return {
         companyName: context.activeCompany?.name ?? "Ddumba OS",
         monthKey,
@@ -260,7 +272,13 @@ function emptyTotals() {
         paidSalaries: 0,
         outstandingSalaries: 0,
         dueToday: 0,
+        dueThisWeek: 0,
         overdueSalaries: 0,
+        employeesPaid: 0,
+        employeesAwaitingSalary: 0,
+        averageSalary: 0,
+        totalAllowances: 0,
+        totalDeductions: 0,
         partiallyPaid: 0,
         notConfigured: 0,
     };
