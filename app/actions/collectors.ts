@@ -30,6 +30,17 @@ function today() {
     return new Date().toISOString().slice(0, 10);
 }
 
+function normalizePhone(value: string) {
+    const digits = value.replace(/\D/g, "");
+    if (digits.startsWith("256")) return digits.slice(3);
+    if (digits.startsWith("0")) return digits.slice(1);
+    return digits;
+}
+
+function normalizeName(value: string) {
+    return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 async function setPinCredential(userId: string, pin: string, adminUserId: string | null) {
     const supabase = (await createSupabaseServerClient()) as unknown as DynamicDb;
     const { error } = await supabase.rpc("ddumba_v1_set_pin_credential", {
@@ -68,6 +79,33 @@ export async function createFieldCollectorAccount(formData: FormData) {
     assertPin(pin);
 
     const admin = createSupabaseAdminClient();
+    const normalizedCollectorName = normalizeName(fullName);
+    const normalizedCollectorPhone = normalizePhone(phone);
+    if (!normalizedCollectorPhone) throw new Error("Collector phone is required.");
+
+    const { data: candidateEmployees, error: employeeError } = await admin
+        .from("employees")
+        .select("id, full_name, phone, status, user_id")
+        .eq("company_id", context.activeCompany.id)
+        .not("phone", "is", null)
+        .limit(2000);
+    if (employeeError) throw new Error(employeeError.message);
+    const matchingEmployees = (candidateEmployees ?? []).filter((employee) => {
+        const isActive = !["archived", "deleted", "inactive", "terminated"].includes(String(employee.status ?? "active").toLowerCase());
+        return isActive
+            && normalizePhone(String(employee.phone ?? "")) === normalizedCollectorPhone
+            && normalizeName(String(employee.full_name ?? "")) === normalizedCollectorName;
+    });
+    if (matchingEmployees.length !== 1) {
+        throw new Error(matchingEmployees.length > 1
+            ? "Multiple employees match this collector. Open the existing employee and link the correct one."
+            : "Create or link a real employee before creating a Field Collector account.");
+    }
+    const linkedEmployee = matchingEmployees[0];
+    if (linkedEmployee.user_id) {
+        throw new Error("This employee is already linked to a login account.");
+    }
+
     const { data: role, error: roleError } = await admin
         .from("roles")
         .select("id")
@@ -90,6 +128,7 @@ export async function createFieldCollectorAccount(formData: FormData) {
         company_id: context.activeCompany.id,
         default_office_id: null,
         email,
+        employee_id: linkedEmployee.id,
         full_name: fullName,
         id: authUser.user.id,
         phone: phone || null,
@@ -99,11 +138,13 @@ export async function createFieldCollectorAccount(formData: FormData) {
     const { error: userError } = await (admin as unknown as DynamicDb).from("users").upsert(userPayload);
     if (userError) throw new Error(userError.message);
 
-    const { error: assignmentError } = await admin.from("user_office_roles").insert({
+    const { error: assignmentError } = await (admin as unknown as DynamicDb).from("user_office_roles").insert({
         company_id: context.activeCompany.id,
+        employee_id: linkedEmployee.id,
         office_id: null,
         role_id: role.id,
         scope: "company",
+        status: "active",
         user_id: authUser.user.id,
     });
     if (assignmentError && !/duplicate key/i.test(assignmentError.message)) throw new Error(assignmentError.message);
@@ -114,6 +155,7 @@ export async function createFieldCollectorAccount(formData: FormData) {
         cash_balance: 0,
         company_id: context.activeCompany.id,
         created_by: context.profile?.id ?? null,
+        employee_id: linkedEmployee.id,
         email,
         full_name: fullName,
         phone: phone || null,
@@ -123,12 +165,20 @@ export async function createFieldCollectorAccount(formData: FormData) {
     });
     if (profileError) throw new Error(profileError.message);
 
+    const { error: linkEmployeeError } = await admin
+        .from("employees")
+        .update({ user_id: authUser.user.id, updated_at: new Date().toISOString() })
+        .eq("company_id", context.activeCompany.id)
+        .eq("id", linkedEmployee.id)
+        .is("user_id", null);
+    if (linkEmployeeError) throw new Error(linkEmployeeError.message);
+
     await logUserAction({
         action: "field_collector_created",
         entityType: "user",
         entityId: authUser.user.id,
         companyId: context.activeCompany.id,
-        afterData: { email, full_name: fullName, account_type: "field_collector" },
+        afterData: { email, employee_id: linkedEmployee.id, full_name: fullName, account_type: "field_collector" },
     });
     revalidatePath("/office/admin");
 }

@@ -8,9 +8,11 @@ const defaultersConsole = readFileSync(new URL("../components/office/defaulters/
 const collectorDefaultersPage = readFileSync(new URL("../app/office/collector/defaulters/page.tsx", import.meta.url), "utf8");
 const collectorDefaultersError = readFileSync(new URL("../app/office/collector/defaulters/error.tsx", import.meta.url), "utf8");
 const receiptsAction = readFileSync(new URL("../app/actions/receipts.ts", import.meta.url), "utf8");
+const collectorsAction = readFileSync(new URL("../app/actions/collectors.ts", import.meta.url), "utf8");
 const collectionData = readFileSync(new URL("../lib/collections/data.ts", import.meta.url), "utf8");
 const migration = readFileSync(new URL("../supabase/upgrade_migrations/0219_collector_receipt_history_and_defaulters_access.sql", import.meta.url), "utf8");
 const musakiraRepairMigration = readFileSync(new URL("../supabase/upgrade_migrations/0248_field_collector_musakira_permission_repair.sql", import.meta.url), "utf8");
+const leopardRepairMigration = readFileSync(new URL("../supabase/upgrade_migrations/0252_leopard_collector_employee_salary_linkage.sql", import.meta.url), "utf8");
 
 test("collector navigation includes defaulters in the agreed operational order", () => {
   const collectorNav = sidebarSource.slice(sidebarSource.indexOf("const collectorSections"));
@@ -109,4 +111,27 @@ test("Musakira collector repair normalises the existing account without duplicat
   assert.match(musakiraRepairMigration, /office_id = null/);
   assert.doesNotMatch(musakiraRepairMigration, /insert into public\.employees/i);
   assert.doesNotMatch(musakiraRepairMigration, /insert into public\.users/i);
+});
+
+test("field collector creation requires and stores a real employee linkage", () => {
+  assert.match(collectorsAction, /Create or link a real employee before creating a Field Collector account/);
+  assert.match(collectorsAction, /Multiple employees match this collector/);
+  assert.match(collectorsAction, /employee_id: linkedEmployee\.id/);
+  assert.match(collectorsAction, /\.from\("employees"\)/);
+  assert.match(collectorsAction, /\.update\(\{ user_id: authUser\.user\.id/);
+});
+
+test("Leopard collector repair links the existing account and backfills collection attribution only", () => {
+  assert.match(leopardRepairMigration, /lower\(regexp_replace\(coalesce\(e\.full_name, ''\), '\\s\+', ' ', 'g'\)\) = 'leopard'/);
+  assert.match(leopardRepairMigration, /lower\(regexp_replace\(coalesce\(u\.full_name, ''\), '\\s\+', ' ', 'g'\)\) = 'leopold nanjiibwa'/);
+  assert.match(leopardRepairMigration, /update public\.users u/);
+  assert.match(leopardRepairMigration, /update public\.field_collector_profiles fcp/);
+  assert.match(leopardRepairMigration, /update public\.user_office_roles uor/);
+  assert.match(leopardRepairMigration, /update public\.collections c/);
+  assert.match(leopardRepairMigration, /collected_by_employee_id = coalesce\(c\.collected_by_employee_id, v_employee_id\)/);
+  assert.match(leopardRepairMigration, /on conflict \(company_id, employee_id, month_key\) do nothing/);
+  assert.doesNotMatch(leopardRepairMigration, /insert into public\.employees/i);
+  assert.doesNotMatch(leopardRepairMigration, /insert into public\.users/i);
+  assert.doesNotMatch(leopardRepairMigration, /set amount/i);
+  assert.doesNotMatch(leopardRepairMigration, /set amount_paid/i);
 });
