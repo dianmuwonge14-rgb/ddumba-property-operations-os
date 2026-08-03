@@ -826,7 +826,8 @@ export async function searchFastPaymentTenants(query: string, paymentDate?: stri
     const companyId = context.activeCompany?.id;
     const activeOfficeId = context.activeOffice?.id;
 
-    const canAccessCompanyWide = context.canAccessAllOffices || context.isCompanyAdmin;
+    const isFieldCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector" || role.role?.key === "collector");
+    const canAccessCompanyWide = context.canAccessAllOffices || context.isCompanyAdmin || isFieldCollector;
     const requestedOfficeId = options.officeId?.trim() || null;
     const allowedOfficeIds = new Set(context.offices.map((office) => office.id));
     const selectedOfficeId = canAccessCompanyWide && requestedOfficeId && allowedOfficeIds.has(requestedOfficeId)
@@ -881,7 +882,8 @@ export async function lookupPaymentRoom(roomNumber: string, paymentDate?: string
     const companyId = context.activeCompany?.id;
     const activeOfficeId = context.activeOffice?.id;
 
-    const canAccessCompanyWide = context.canAccessAllOffices || context.isCompanyAdmin;
+    const isFieldCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector" || role.role?.key === "collector");
+    const canAccessCompanyWide = context.canAccessAllOffices || context.isCompanyAdmin || isFieldCollector;
     const requestedOfficeId = options.officeId?.trim() || null;
     const allowedOfficeIds = new Set(context.offices.map((office) => office.id));
     const selectedOfficeId = canAccessCompanyWide && requestedOfficeId && allowedOfficeIds.has(requestedOfficeId)

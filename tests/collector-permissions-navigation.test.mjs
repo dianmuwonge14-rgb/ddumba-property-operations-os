@@ -8,7 +8,9 @@ const defaultersConsole = readFileSync(new URL("../components/office/defaulters/
 const collectorDefaultersPage = readFileSync(new URL("../app/office/collector/defaulters/page.tsx", import.meta.url), "utf8");
 const collectorDefaultersError = readFileSync(new URL("../app/office/collector/defaulters/error.tsx", import.meta.url), "utf8");
 const receiptsAction = readFileSync(new URL("../app/actions/receipts.ts", import.meta.url), "utf8");
+const collectionData = readFileSync(new URL("../lib/collections/data.ts", import.meta.url), "utf8");
 const migration = readFileSync(new URL("../supabase/upgrade_migrations/0219_collector_receipt_history_and_defaulters_access.sql", import.meta.url), "utf8");
+const musakiraRepairMigration = readFileSync(new URL("../supabase/upgrade_migrations/0248_field_collector_musakira_permission_repair.sql", import.meta.url), "utf8");
 
 test("collector navigation includes defaulters in the agreed operational order", () => {
   const collectorNav = sidebarSource.slice(sidebarSource.indexOf("const collectorSections"));
@@ -88,4 +90,23 @@ test("database policies allow field collectors to select company receipt history
   assert.match(migration, /drop policy if exists payment_receipts_select/);
   assert.match(migration, /drop policy if exists payment_receipt_delivery_logs_select/);
   assert.doesNotMatch(migration, /alter table public\.payment_receipts disable row level security/);
+});
+
+test("field collectors use the company-wide payment search scope", () => {
+  assert.match(collectionData, /const isFieldCollector = context\.authMode === "collector"/);
+  assert.match(collectionData, /role\.role\?\.key === "field_collector"/);
+  assert.match(collectionData, /context\.canAccessAllOffices \|\| context\.isCompanyAdmin \|\| isFieldCollector/);
+  assert.match(collectionData, /p_search_all: canSearchAllOffices/);
+});
+
+test("Musakira collector repair normalises the existing account without duplicates", () => {
+  assert.match(musakiraRepairMigration, /alter table public\.field_collector_profiles\s+add column if not exists employee_id/);
+  assert.match(musakiraRepairMigration, /'collections\.read'/);
+  assert.match(musakiraRepairMigration, /'collections\.payment\.post'/);
+  assert.match(musakiraRepairMigration, /'defaulters\.view'/);
+  assert.match(musakiraRepairMigration, /lower\(regexp_replace\(coalesce\(e\.full_name, ''\), '\\s\+', ' ', 'g'\)\) = 'musakira adam'/);
+  assert.match(musakiraRepairMigration, /scope = 'company'/);
+  assert.match(musakiraRepairMigration, /office_id = null/);
+  assert.doesNotMatch(musakiraRepairMigration, /insert into public\.employees/i);
+  assert.doesNotMatch(musakiraRepairMigration, /insert into public\.users/i);
 });
