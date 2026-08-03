@@ -58,6 +58,14 @@ type OfficeWithLoginInput = OfficeInput & {
     requirePasswordChange?: boolean;
 };
 
+type ReceptionistEmployeeRow = {
+    id: string;
+    office_id: string | null;
+    full_name: string | null;
+    phone?: string | null;
+    user_id: string | null;
+};
+
 type UpdateOfficeInput = OfficeInput & {
     officeId: string;
 };
@@ -86,6 +94,14 @@ function normalizeCode(value: string) {
 function suggestedLoginEmail(loginName: string, companyId: string) {
     const safe = loginName.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, ".").replace(/^\.+|\.+$/g, "") || `office-${Date.now()}`;
     return `${safe}+${companyId.slice(0, 8)}@ddumba.local`;
+}
+
+function normalizePhone(value: string | null | undefined) {
+    return String(value ?? "").replace(/\D/g, "");
+}
+
+function normalizeName(value: string | null | undefined) {
+    return String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function isPendingLockoutSchemaError(error: { message?: string } | null) {
@@ -213,6 +229,110 @@ async function linkReceptionistEmployee(input: {
     return employee;
 }
 
+async function resolveReceptionistEmployee(input: {
+    companyId: string;
+    employeeId?: string;
+    fullName: string;
+    loginIdentifier?: string;
+    officeId: string;
+    phone?: string;
+    userId: string;
+}) {
+    const admin = createSupabaseAdminClient();
+    const normalizedPhone = normalizePhone(input.phone);
+    const normalizedName = normalizeName(input.fullName);
+
+    let employee: ReceptionistEmployeeRow | null = null;
+    if (input.employeeId) {
+        const { data, error } = await admin
+            .from("employees")
+            .select("id, office_id, full_name, user_id")
+            .eq("company_id", input.companyId)
+            .eq("id", input.employeeId)
+            .maybeSingle();
+        if (error) throw new Error(error.message);
+        employee = data ?? null;
+        if (!employee?.id) throw new Error("Selected employee could not be found.");
+    }
+
+    if (!employee && normalizedPhone) {
+        const { data, error } = await admin
+            .from("employees")
+            .select("id, office_id, full_name, user_id, phone")
+            .eq("company_id", input.companyId)
+            .eq("status", "active");
+        if (error) throw new Error(error.message);
+        employee = ((data ?? []) as ReceptionistEmployeeRow[]).find((row) => normalizePhone(row.phone) === normalizedPhone) ?? null;
+    }
+
+    if (!employee && normalizedName) {
+        const { data, error } = await admin
+            .from("employees")
+            .select("id, office_id, full_name, user_id")
+            .eq("company_id", input.companyId)
+            .eq("status", "active")
+            .ilike("full_name", input.fullName.trim())
+            .limit(1)
+            .maybeSingle();
+        if (error) throw new Error(error.message);
+        employee = data ?? null;
+    }
+
+    if (employee?.user_id && employee.user_id !== input.userId) {
+        const { data: linkedUser, error } = await admin
+            .from("users")
+            .select("id, full_name, status")
+            .eq("company_id", input.companyId)
+            .eq("id", employee.user_id)
+            .maybeSingle();
+        if (error) throw new Error(error.message);
+        if (linkedUser?.id && String(linkedUser.status ?? "active").toLowerCase() === "active") {
+            throw new Error(`Employee ${employee.full_name ?? input.fullName} is already linked to an active login account.`);
+        }
+    }
+
+    if (!employee) {
+        const employeeCode = input.loginIdentifier?.trim() || `REC-${Date.now()}`;
+        const payload: Record<string, unknown> = {
+            company_id: input.companyId,
+            employee_code: employeeCode,
+            full_name: input.fullName.trim(),
+            job_title: "Receptionist",
+            role: "Receptionist",
+            office_id: input.officeId,
+            primary_office_id: input.officeId,
+            phone: input.phone?.trim() || null,
+            status: "active",
+            user_id: input.userId,
+            updated_at: new Date().toISOString(),
+        };
+        const { data, error } = await admin.from("employees").insert(payload as never).select("id, office_id, full_name, user_id").single();
+        if (error && /primary_office_id|role|schema cache/i.test(error.message)) {
+            const fallbackPayload = { ...payload };
+            delete fallbackPayload.primary_office_id;
+            delete fallbackPayload.role;
+            const fallback = await admin.from("employees").insert(fallbackPayload as never).select("id, office_id, full_name, user_id").single();
+            if (fallback.error) throw new Error(fallback.error.message);
+            employee = fallback.data ?? null;
+        } else if (error) {
+            throw new Error(error.message);
+        } else {
+            employee = data ?? null;
+        }
+    } else {
+        await linkReceptionistEmployee({
+            companyId: input.companyId,
+            employeeId: employee.id,
+            loginIdentifier: input.loginIdentifier,
+            officeId: input.officeId,
+            phone: input.phone,
+            userId: input.userId,
+        });
+    }
+
+    return employee;
+}
+
 async function assignRole(input: {
     companyId: string;
     employeeId?: string | null;
@@ -326,10 +446,12 @@ async function activeSuperAdminCount(companyId: string) {
 export async function createOfficeAccount(input: OfficeAccountInput) {
     const context = await requirePermission("settings.manage");
     if (!context.activeCompany?.id) throw new Error("Active company is required.");
-    if (typeof input.confirmPin === "string" && input.pin.trim() !== input.confirmPin.trim()) {
+    const pin = input.pin.trim();
+    const confirmPin = input.confirmPin?.trim() || pin;
+    if (pin !== confirmPin) {
         throw new Error("PIN confirmation does not match.");
     }
-    assertOfficePin(input.pin);
+    assertOfficePin(pin);
 
     const loginName = input.fullName.trim();
     const loginIdentifier = input.loginIdentifier?.trim() || loginName;
@@ -344,93 +466,126 @@ export async function createOfficeAccount(input: OfficeAccountInput) {
 
     const admin = createSupabaseAdminClient();
     const supabase = await createSupabaseServerClient();
-    const [{ data: existingEmail }, { data: existingLoginName }] = await Promise.all([
+    const effectiveRoleId = accountType === "receptionist" ? await defaultReceptionistRoleId(context.activeCompany.id) : input.roleId;
+    if (!effectiveRoleId) throw new Error("Receptionist role is missing. Apply default roles migration first.");
+    const { data: office, error: officeError } = await admin
+        .from("offices")
+        .select("id, office_name, name, status, merged_into_office_id")
+        .eq("company_id", context.activeCompany.id)
+        .eq("id", input.officeId)
+        .maybeSingle();
+    if (officeError) throw new Error(officeError.message);
+    const officeRow = office as { id?: string; merged_into_office_id?: string | null; status?: string | null } | null;
+    if (!officeRow?.id || String(officeRow.status ?? "active").toLowerCase() !== "active" || officeRow.merged_into_office_id) {
+        throw new Error("Assigned office must be active.");
+    }
+    const normalizedPhone = normalizePhone(input.phone);
+    const [{ data: existingEmail }, { data: existingLoginName }, { data: usersWithPhone }] = await Promise.all([
         admin.from("users").select("id").eq("company_id", context.activeCompany.id).eq("email", email).limit(1).maybeSingle(),
         admin.from("users").select("id").eq("company_id", context.activeCompany.id).ilike("full_name", loginName).limit(1).maybeSingle(),
+        normalizedPhone
+            ? admin.from("users").select("id, phone, status").eq("company_id", context.activeCompany.id).eq("status", "active")
+            : Promise.resolve({ data: [] }),
     ]);
-    if (existingEmail?.id || existingLoginName?.id) throw new Error("Login name already exists.");
+    const phoneInUse = normalizedPhone && ((usersWithPhone ?? []) as Array<{ phone?: string | null }>).some((user) => normalizePhone(user.phone) === normalizedPhone);
+    if (existingEmail?.id || existingLoginName?.id || phoneInUse) throw new Error("Login name or phone already exists.");
 
-    const { data: authUser, error: authError } = await admin.auth.admin.createUser({
-        email,
-        password: input.pin,
-        email_confirm: true,
-        user_metadata: {
-            full_name: loginName,
+    let createdUserId: string | null = null;
+
+    try {
+        const { data: authUser, error: authError } = await admin.auth.admin.createUser({
+            email,
+            password: pin,
+            email_confirm: true,
+            user_metadata: {
+                full_name: loginName,
+                default_office_id: input.officeId,
+                account_type: accountType,
+                login_name: loginName,
+                login_identifier: loginIdentifier,
+            },
+        });
+
+        if (authError || !authUser.user) {
+            throw new Error(authError?.message ?? "Could not create Supabase Auth user.");
+        }
+        createdUserId = authUser.user.id;
+
+        const { error: userError } = await admin.from("users").upsert({
+            id: authUser.user.id,
+            company_id: context.activeCompany.id,
             default_office_id: input.officeId,
+            email,
+            full_name: loginName,
+            employee_code: loginIdentifier,
+            phone: input.phone?.trim() || null,
             account_type: accountType,
-            login_name: loginName,
-            login_identifier: loginIdentifier,
-        },
-    });
+            status,
+            updated_at: new Date().toISOString(),
+        });
 
-    if (authError || !authUser.user) {
-        throw new Error(authError?.message ?? "Could not create Supabase Auth user.");
-    }
+        if (userError) throw new Error(userError.message);
 
-    const { error: userError } = await admin.from("users").upsert({
-        id: authUser.user.id,
-        company_id: context.activeCompany.id,
-        default_office_id: input.officeId,
-        email,
-        full_name: loginName,
-        employee_code: loginIdentifier,
-        phone: input.phone?.trim() || null,
-        account_type: accountType,
-        status,
-        updated_at: new Date().toISOString(),
-    });
+        const linkedEmployee = accountType === "receptionist"
+            ? await resolveReceptionistEmployee({
+                companyId: context.activeCompany.id,
+                employeeId: input.employeeId,
+                fullName: loginName,
+                loginIdentifier,
+                officeId: input.officeId,
+                phone: input.phone,
+                userId: authUser.user.id,
+            })
+            : null;
 
-    if (userError) throw new Error(userError.message);
+        await setPinCredential(authUser.user.id, pin, status === "locked" ? "locked" : "active", context.profile?.id ?? null);
+        const scope = await roleScope(supabase, effectiveRoleId);
 
-    const linkedEmployee = accountType === "receptionist"
-        ? await linkReceptionistEmployee({
+        await assignRole({
             companyId: context.activeCompany.id,
-            employeeId: input.employeeId,
-            loginIdentifier,
+            employeeId: linkedEmployee?.id ?? input.employeeId ?? null,
+            effectiveFrom: input.effectiveStartDate?.trim() || new Date().toISOString().slice(0, 10),
             officeId: input.officeId,
-            phone: input.phone,
+            roleId: effectiveRoleId,
+            scope,
+            status,
             userId: authUser.user.id,
-        })
-        : null;
+        });
 
-    await setPinCredential(authUser.user.id, input.pin, status === "locked" ? "locked" : "active", context.profile?.id ?? null);
-    const scope = await roleScope(supabase, input.roleId);
+        await admin.from("security_events").insert({
+            company_id: context.activeCompany.id,
+            office_id: input.officeId,
+            user_id: authUser.user.id,
+            event_type: accountType === "receptionist" ? "receptionist_account_created" : "office_account_created",
+            severity: "info",
+            metadata: {
+                account_type: accountType,
+                employee_id: linkedEmployee?.id ?? input.employeeId ?? null,
+                role_id: effectiveRoleId,
+                created_by: context.profile?.id ?? null,
+            },
+        });
 
-    await assignRole({
-        companyId: context.activeCompany.id,
-        employeeId: linkedEmployee?.id ?? input.employeeId ?? null,
-        effectiveFrom: input.effectiveStartDate?.trim() || new Date().toISOString().slice(0, 10),
-        officeId: input.officeId,
-        roleId: input.roleId,
-        scope,
-        status,
-        userId: authUser.user.id,
-    });
+        await logUserAction({
+            action: accountType === "receptionist" ? "receptionist_account_created" : "office_account_created",
+            entityType: "user",
+            entityId: authUser.user.id,
+            companyId: context.activeCompany.id,
+            officeId: input.officeId,
+            afterData: { account_type: accountType, email, employee_id: linkedEmployee?.id ?? input.employeeId ?? null, full_name: loginName, role_id: effectiveRoleId },
+        });
 
-    await admin.from("security_events").insert({
-        company_id: context.activeCompany.id,
-        office_id: input.officeId,
-        user_id: authUser.user.id,
-        event_type: accountType === "receptionist" ? "receptionist_account_created" : "office_account_created",
-        severity: "info",
-        metadata: {
-            account_type: accountType,
-            employee_id: linkedEmployee?.id ?? input.employeeId ?? null,
-            role_id: input.roleId,
-            created_by: context.profile?.id ?? null,
-        },
-    });
-
-    await logUserAction({
-        action: accountType === "receptionist" ? "receptionist_account_created" : "office_account_created",
-        entityType: "user",
-        entityId: authUser.user.id,
-        companyId: context.activeCompany.id,
-        officeId: input.officeId,
-        afterData: { account_type: accountType, email, employee_id: linkedEmployee?.id ?? input.employeeId ?? null, full_name: loginName, role_id: input.roleId },
-    });
-
-    revalidatePath("/office/admin");
+        revalidatePath("/office/admin");
+    } catch (error) {
+        if (createdUserId) {
+            await admin.auth.admin.deleteUser(createdUserId).catch(() => undefined);
+            await ignoreCleanupError(admin.from("users").delete().eq("id", createdUserId));
+            await ignoreCleanupError(admin.from("pin_credentials").delete().eq("user_id", createdUserId));
+            await ignoreCleanupError(admin.from("user_office_roles").delete().eq("user_id", createdUserId));
+            await ignoreCleanupError(admin.from("employees").update({ user_id: null, updated_at: new Date().toISOString() }).eq("user_id", createdUserId));
+        }
+        throw error instanceof Error ? error : new Error("Receptionist account could not be created.");
+    }
 }
 
 export async function updateOfficeAccount(input: UpdateOfficeAccountInput) {

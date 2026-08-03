@@ -45,6 +45,11 @@ test("admin creates receptionist accounts instead of new shared office accounts"
   assert.match(adminActions, /Direct office accounts are no longer available\. Create a Receptionist account instead\./);
   assert.match(adminActions, /receptionist_account_created/);
   assert.match(adminActions, /linkReceptionistEmployee/);
+  assert.match(adminActions, /resolveReceptionistEmployee/);
+  assert.match(adminActions, /const confirmPin = input\.confirmPin\?\.trim\(\) \|\| pin/);
+  assert.match(adminActions, /defaultReceptionistRoleId\(context\.activeCompany\.id\)/);
+  assert.match(adminActions, /normalizePhone/);
+  assert.match(adminActions, /Employee .* is already linked to an active login account/);
 });
 
 test("receptionist role is office-scoped and inherits current office permissions", () => {
