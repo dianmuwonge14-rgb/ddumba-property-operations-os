@@ -1,4 +1,4 @@
-import { requireCompanyAdminMode } from "@/lib/auth/permissions";
+import { requireCompanyReadMode } from "@/lib/auth/permissions";
 import { getScopedSupabase } from "@/lib/auth/query";
 import { collectionAmount, isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
 import type {
@@ -171,7 +171,7 @@ function parseFilters(searchParams: Record<string, string | string[] | undefined
 }
 
 export async function getStatementsCentreData(searchParams: Record<string, string | string[] | undefined>): Promise<StatementsCentreData> {
-    const context = await requireCompanyAdminMode();
+    const context = await requireCompanyReadMode();
     const { supabase } = await getScopedSupabase();
     const companyId = context.activeCompany?.id ?? DEFAULT_COMPANY_ID;
     const filters = parseFilters(searchParams);
@@ -217,7 +217,7 @@ export async function getStatementsCentreData(searchParams: Record<string, strin
 }
 
 export async function getStatementsCentreShell(searchParams: Record<string, string | string[] | undefined>): Promise<StatementsCentreData> {
-    const context = await requireCompanyAdminMode();
+    const context = await requireCompanyReadMode();
     const { supabase } = await getScopedSupabase();
     const companyId = context.activeCompany?.id ?? DEFAULT_COMPANY_ID;
     const filters = parseFilters(searchParams);

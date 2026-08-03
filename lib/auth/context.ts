@@ -120,7 +120,11 @@ export const getAuthContext = cache(async (): Promise<AuthContext> => {
         roleKeys.includes("company_admin") ||
         roleKeys.includes("super_admin") ||
         rawPermissionKeys.includes("settings.manage");
-    const requestedAdminWideAccess = requestedAuthMode === "admin" && rawIsCompanyAdmin;
+    const rawIsCompanyReadOnlyManager =
+        roleKeys.includes("company_manager_read_only") ||
+        roleKeys.includes("executive_manager_read_only") ||
+        rawPermissionKeys.includes("admin.dashboard.read");
+    const requestedAdminWideAccess = requestedAuthMode === "admin" && (rawIsCompanyAdmin || rawIsCompanyReadOnlyManager);
     const officeIds = unique([
         profile.default_office_id,
         requestedAuthMode === "office" ? requestedOfficeId : null,
@@ -154,8 +158,9 @@ export const getAuthContext = cache(async (): Promise<AuthContext> => {
 
     const isOfficeMode = requestedAuthMode === "office";
     const isCollectorMode = requestedAuthMode === "collector";
-    const canAccessAllOffices = !isOfficeMode && (rawCanAccessAllOffices || rawIsCompanyAdmin);
+    const canAccessAllOffices = !isOfficeMode && (rawCanAccessAllOffices || rawIsCompanyAdmin || rawIsCompanyReadOnlyManager);
     const isCompanyAdmin = !isOfficeMode && !isCollectorMode && rawIsCompanyAdmin;
+    const isCompanyReadOnlyManager = !isOfficeMode && !isCollectorMode && rawIsCompanyReadOnlyManager && !rawIsCompanyAdmin;
     const permissionKeys = isOfficeMode
         ? rawPermissionKeys.filter((permission) => !["settings.view", "settings.manage", "reports.manage"].includes(permission))
         : rawPermissionKeys;
@@ -172,6 +177,7 @@ export const getAuthContext = cache(async (): Promise<AuthContext> => {
         permissions: permissionKeys,
         isAuthenticated: true,
         isCompanyAdmin,
+        isCompanyReadOnlyManager,
         canAccessAllOffices,
         isOfficeMode,
     };
@@ -190,6 +196,7 @@ export function emptyAuthContext(): AuthContext {
         permissions: [],
         isAuthenticated: false,
         isCompanyAdmin: false,
+        isCompanyReadOnlyManager: false,
         canAccessAllOffices: false,
         isOfficeMode: false,
     };

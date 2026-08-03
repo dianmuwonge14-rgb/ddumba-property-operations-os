@@ -1,4 +1,4 @@
-import { requireCompanyAdminMode } from "@/lib/auth/permissions";
+import { requireCompanyReadMode } from "@/lib/auth/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export type LandlordPortfolioAuditRow = {
@@ -46,7 +46,7 @@ type QueryBuilder = {
 } & Promise<{ data: Record<string, unknown>[] | null; error: { message: string } | null }>;
 
 export async function getLandlordPortfolioAuditData(): Promise<LandlordPortfolioAuditData> {
-    const context = await requireCompanyAdminMode();
+    const context = await requireCompanyReadMode();
     if (!context.activeCompany?.id) return emptyData();
     const supabase = await createSupabaseServerClient();
     const db = supabase as unknown as LooseDb;

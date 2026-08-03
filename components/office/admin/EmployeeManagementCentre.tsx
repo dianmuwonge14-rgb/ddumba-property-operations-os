@@ -96,6 +96,7 @@ export default function EmployeeManagementCentre({ data }: { data: EmployeeManag
     }, [assignmentFilter, data.employees, query]);
 
     const selectedEmployee = data.employees.find((employee) => employee.id === selectedEmployeeId) ?? filteredEmployees[0] ?? data.employees[0] ?? null;
+    const canManage = data.canManage !== false;
 
     return (
         <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.2),transparent_28%),radial-gradient(circle_at_80%_0%,rgba(16,185,129,0.18),transparent_26%),linear-gradient(135deg,#020617_0%,#0f172a_45%,#111827_100%)] px-4 pb-10 pt-5 text-slate-100 sm:px-6 lg:px-8">
@@ -105,7 +106,7 @@ export default function EmployeeManagementCentre({ data }: { data: EmployeeManag
                         <div>
                             <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-xs font-black uppercase tracking-wide text-cyan-100">
                                 <UsersRound size={14} />
-                                Admin Only
+                                {canManage ? "Admin Only" : "Read-Only Manager"}
                             </div>
                             <h1 className="text-3xl font-black tracking-tight text-white md:text-4xl">Employee Management Centre</h1>
                             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">
@@ -127,6 +128,7 @@ export default function EmployeeManagementCentre({ data }: { data: EmployeeManag
                         <p className="mt-2 text-amber-50/80">{data.warnings.slice(0, 3).join(" | ")}</p>
                     </div>
                 )}
+                {!canManage ? <ReadOnlyNotice /> : null}
 
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                     <Kpi icon={<UsersRound size={19} />} label="Total Employees" value={data.totals.totalEmployees.toLocaleString()} hint="Company employee directory" tone="blue" />
@@ -211,16 +213,16 @@ export default function EmployeeManagementCentre({ data }: { data: EmployeeManag
                         </div>
 
                         {activeTab === "overview" && <Overview data={data} selectedEmployee={selectedEmployee} />}
-                        {activeTab === "employees" && <EmployeeForms data={data} selectedEmployee={selectedEmployee} />}
-                        {activeTab === "payroll" && <PayrollPanel selectedEmployee={selectedEmployee} />}
-                        {activeTab === "advances" && <AdvanceRequestsPanel data={data} selectedEmployee={selectedEmployee} />}
+                        {activeTab === "employees" && (canManage ? <EmployeeForms data={data} selectedEmployee={selectedEmployee} /> : <ReadOnlyEmployeePanel selectedEmployee={selectedEmployee} />)}
+                        {activeTab === "payroll" && (canManage ? <PayrollPanel selectedEmployee={selectedEmployee} /> : <ReadOnlyPayrollPanel selectedEmployee={selectedEmployee} />)}
+                        {activeTab === "advances" && <AdvanceRequestsPanel canManage={canManage} data={data} selectedEmployee={selectedEmployee} />}
                         {activeTab === "expenses" && <ExpenseReviewPanel data={data} selectedEmployee={selectedEmployee} />}
-                        {activeTab === "fines" && <PayrollItemPanel selectedEmployee={selectedEmployee} itemType="fine" title="Employee Fines" description="Late arrival, absence, misconduct, unauthorized leave, or custom fines." />}
-                        {activeTab === "off-days" && <OffDaysPanel data={data} selectedEmployee={selectedEmployee} />}
+                        {activeTab === "fines" && (canManage ? <PayrollItemPanel selectedEmployee={selectedEmployee} itemType="fine" title="Employee Fines" description="Late arrival, absence, misconduct, unauthorized leave, or custom fines." /> : <ReadOnlyPayrollPanel selectedEmployee={selectedEmployee} />)}
+                        {activeTab === "off-days" && <OffDaysPanel canManage={canManage} data={data} selectedEmployee={selectedEmployee} />}
                         {activeTab === "performance" && <PerformanceLeague data={data} />}
-                        {activeTab === "contracts" && <ContractsPanel selectedEmployee={selectedEmployee} />}
-                        {activeTab === "documents" && <DocumentsPanel selectedEmployee={selectedEmployee} />}
-                        {activeTab === "terminations" && <TerminationPanel selectedEmployee={selectedEmployee} />}
+                        {activeTab === "contracts" && <ContractsPanel canManage={canManage} selectedEmployee={selectedEmployee} />}
+                        {activeTab === "documents" && <DocumentsPanel canManage={canManage} selectedEmployee={selectedEmployee} />}
+                        {activeTab === "terminations" && (canManage ? <TerminationPanel selectedEmployee={selectedEmployee} /> : <ReadOnlyEmployeePanel selectedEmployee={selectedEmployee} />)}
                         {activeTab === "audit" && <AuditPanel />}
                     </section>
                 </div>
@@ -441,7 +443,53 @@ function PayrollItemPanel({ selectedEmployee, itemType, title, description }: { 
     );
 }
 
-function AdvanceRequestsPanel({ data, selectedEmployee }: { data: EmployeeManagementData; selectedEmployee: EmployeeProfile | null }) {
+function ReadOnlyEmployeePanel({ selectedEmployee }: { selectedEmployee: EmployeeProfile | null }) {
+    return (
+        <div className="grid gap-4 2xl:grid-cols-[1fr_420px]">
+            <GlassPanel title="Employee Record" icon={<ContactRound size={18} />}>
+                <ReadOnlyNotice compact />
+                {selectedEmployee ? (
+                    <div className="mt-4 grid gap-2 md:grid-cols-2">
+                        <MetricLine label="Employee" value={selectedEmployee.fullName} />
+                        <MetricLine label="Employee ID" value={selectedEmployee.employeeCode} />
+                        <MetricLine label="Phone" value={selectedEmployee.phone || "Not recorded"} />
+                        <MetricLine label="Email" value={selectedEmployee.email || "Not recorded"} />
+                        <MetricLine label="Office" value={selectedEmployee.officeName} />
+                        <MetricLine label="Role" value={selectedEmployee.roleName} />
+                        <MetricLine label="Status" value={selectedEmployee.status} />
+                        <MetricLine label="Start Date" value={selectedEmployee.startDate || "Not recorded"} />
+                    </div>
+                ) : <Empty label="Select an employee first." />}
+            </GlassPanel>
+            <EmployeeSnapshot employee={selectedEmployee} />
+        </div>
+    );
+}
+
+function ReadOnlyPayrollPanel({ selectedEmployee }: { selectedEmployee: EmployeeProfile | null }) {
+    return (
+        <div className="grid gap-4 2xl:grid-cols-[1fr_420px]">
+            <GlassPanel title="Payroll Details" icon={<Banknote size={18} />}>
+                <ReadOnlyNotice compact />
+                {selectedEmployee ? (
+                    <div className="mt-4 grid gap-2 md:grid-cols-2">
+                        <MetricLine label="Basic Salary" value={money(selectedEmployee.finance.basicSalary)} />
+                        <MetricLine label="Bonuses" value={money(selectedEmployee.finance.bonuses)} />
+                        <MetricLine label="Expenses" value={`-${money(selectedEmployee.finance.expenses)}`} />
+                        <MetricLine label="Advances" value={`-${money(selectedEmployee.finance.advances)}`} />
+                        <MetricLine label="Fines" value={`-${money(selectedEmployee.finance.fines)}`} />
+                        <MetricLine label="Paid This Month" value={money(selectedEmployee.finance.paidThisMonth)} />
+                        <MetricLine label="Final Salary Payable" value={money(selectedEmployee.finance.finalSalary)} important />
+                        <MetricLine label="Payment Status" value={selectedEmployee.finance.status} />
+                    </div>
+                ) : <Empty label="Select an employee first." />}
+            </GlassPanel>
+            <EmployeeSnapshot employee={selectedEmployee} />
+        </div>
+    );
+}
+
+function AdvanceRequestsPanel({ canManage, data, selectedEmployee }: { canManage: boolean; data: EmployeeManagementData; selectedEmployee: EmployeeProfile | null }) {
     const requests = selectedEmployee ? data.advanceRequests.filter((request) => request.employeeId === selectedEmployee.id) : data.advanceRequests;
     const pendingRequests = requests.filter((request) => request.status === "pending");
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -478,19 +526,21 @@ function AdvanceRequestsPanel({ data, selectedEmployee }: { data: EmployeeManage
             <GlassPanel title="Advance Approval Queue" icon={<Banknote size={18} />}>
                 <p className="mb-4 text-sm text-slate-300">Office accounts request advances. Admin approval is required before an advance becomes a payroll deduction.</p>
                 {message ? <p className="mb-3 rounded-2xl bg-white/10 px-4 py-3 text-sm font-black text-cyan-100">{message}</p> : null}
-                <EmployeeBulkControls
-                    disabled={isPending}
-                    pendingIds={pendingRequests.map((request) => request.id)}
-                    selectedIds={selectedIds}
-                    onBulk={(decision, ids) => setBulkModal({ decision, ids })}
-                    onChangeSelected={setSelectedIds}
-                />
+                {canManage ? (
+                    <EmployeeBulkControls
+                        disabled={isPending}
+                        pendingIds={pendingRequests.map((request) => request.id)}
+                        selectedIds={selectedIds}
+                        onBulk={(decision, ids) => setBulkModal({ decision, ids })}
+                        onChangeSelected={setSelectedIds}
+                    />
+                ) : <ReadOnlyNotice compact />}
                 <div className="space-y-3">
                     {requests.length ? requests.map((request) => (
-                        <RequestCard key={request.id} request={request} selected={selectedIds.includes(request.id)} type="advance" onToggleSelected={() => setSelectedIds((current) => current.includes(request.id) ? current.filter((id) => id !== request.id) : [...current, request.id])} />
+                        <RequestCard key={request.id} canManage={canManage} request={request} selected={selectedIds.includes(request.id)} type="advance" onToggleSelected={() => setSelectedIds((current) => current.includes(request.id) ? current.filter((id) => id !== request.id) : [...current, request.id])} />
                     )) : <Empty label="No employee advance requests found." />}
                 </div>
-                <EmployeeBulkModal comment={bulkComment} isPending={isPending} modal={bulkModal} onChangeComment={setBulkComment} onClose={() => setBulkModal(null)} onConfirm={runBulk} />
+                {canManage ? <EmployeeBulkModal comment={bulkComment} isPending={isPending} modal={bulkModal} onChangeComment={setBulkComment} onClose={() => setBulkModal(null)} onConfirm={runBulk} /> : null}
             </GlassPanel>
             <EmployeeSnapshot employee={selectedEmployee} />
         </div>
@@ -524,7 +574,7 @@ function ExpenseReviewPanel({ data, selectedEmployee }: { data: EmployeeManageme
     );
 }
 
-function OffDaysPanel({ data, selectedEmployee }: { data: EmployeeManagementData; selectedEmployee: EmployeeProfile | null }) {
+function OffDaysPanel({ canManage, data, selectedEmployee }: { canManage: boolean; data: EmployeeManagementData; selectedEmployee: EmployeeProfile | null }) {
     const requests = selectedEmployee ? data.offDayRequests.filter((request) => request.employeeId === selectedEmployee.id) : data.offDayRequests;
     const pendingRequests = requests.filter((request) => request.status === "pending");
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -561,7 +611,7 @@ function OffDaysPanel({ data, selectedEmployee }: { data: EmployeeManagementData
             <div className="mb-4 rounded-2xl border border-cyan-300/20 bg-cyan-300/10 p-4 text-sm text-cyan-50">
                 Each employee receives 4 off days per month. Unused days carry forward, but one approved leave period cannot exceed 7 days. Long carried requests must be submitted at least 2 weeks earlier.
             </div>
-            {selectedEmployee ? (
+            {canManage && selectedEmployee ? (
                 <form action={updateEmployee} className="grid gap-3 md:grid-cols-2">
                     <input type="hidden" name="employeeId" value={selectedEmployee.id} />
                     <input type="hidden" name="fullName" value={selectedEmployee.fullName} />
@@ -589,20 +639,22 @@ function OffDaysPanel({ data, selectedEmployee }: { data: EmployeeManagementData
                     <TextInput name="offDays" label="Assigned off days" defaultValue={selectedEmployee.offDays.join(", ")} placeholder="Sunday, Monday" />
                     <SubmitButton label="Save Off Days" className="md:col-span-2" />
                 </form>
-            ) : <Empty label="Select an employee first." />}
+            ) : selectedEmployee ? <ReadOnlyNotice compact /> : <Empty label="Select an employee first." />}
             <div className="mt-4 space-y-3">
                 <p className="text-xs font-black uppercase text-slate-400">Off-day approval requests</p>
                 {message ? <p className="rounded-2xl bg-white/10 px-4 py-3 text-sm font-black text-cyan-100">{message}</p> : null}
-                <EmployeeBulkControls
-                    disabled={isPending}
-                    pendingIds={pendingRequests.map((request) => request.id)}
-                    selectedIds={selectedIds}
-                    onBulk={(decision, ids) => setBulkModal({ decision, ids })}
-                    onChangeSelected={setSelectedIds}
-                />
-                {requests.length ? requests.map((request) => <RequestCard key={request.id} request={request} selected={selectedIds.includes(request.id)} type="off_day" onToggleSelected={() => setSelectedIds((current) => current.includes(request.id) ? current.filter((id) => id !== request.id) : [...current, request.id])} />) : <Empty label="No off-day requests found." />}
+                {canManage ? (
+                    <EmployeeBulkControls
+                        disabled={isPending}
+                        pendingIds={pendingRequests.map((request) => request.id)}
+                        selectedIds={selectedIds}
+                        onBulk={(decision, ids) => setBulkModal({ decision, ids })}
+                        onChangeSelected={setSelectedIds}
+                    />
+                ) : <ReadOnlyNotice compact />}
+                {requests.length ? requests.map((request) => <RequestCard key={request.id} canManage={canManage} request={request} selected={selectedIds.includes(request.id)} type="off_day" onToggleSelected={() => setSelectedIds((current) => current.includes(request.id) ? current.filter((id) => id !== request.id) : [...current, request.id])} />) : <Empty label="No off-day requests found." />}
             </div>
-            <EmployeeBulkModal comment={bulkComment} isPending={isPending} modal={bulkModal} onChangeComment={setBulkComment} onClose={() => setBulkModal(null)} onConfirm={runBulk} />
+            {canManage ? <EmployeeBulkModal comment={bulkComment} isPending={isPending} modal={bulkModal} onChangeComment={setBulkComment} onClose={() => setBulkModal(null)} onConfirm={runBulk} /> : null}
             <div className="mt-4 grid gap-2 md:grid-cols-3">
                 {data.employees.slice(0, 9).map((employee) => (
                     <div key={employee.id} className="rounded-2xl border border-white/10 bg-white/[0.045] p-3">
@@ -658,18 +710,27 @@ function PerformanceLeague({ data }: { data: EmployeeManagementData }) {
     );
 }
 
-function ContractsPanel({ selectedEmployee }: { selectedEmployee: EmployeeProfile | null }) {
+function ContractsPanel({ canManage, selectedEmployee }: { canManage: boolean; selectedEmployee: EmployeeProfile | null }) {
     return (
         <GlassPanel title="AI Contract Generator" icon={<FileBadge size={18} />}>
             {selectedEmployee ? (
                 <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
-                    <form action={generateEmployeeContract} className="space-y-3">
-                        <input type="hidden" name="employeeId" value={selectedEmployee.id} />
-                        <MetricLine label="Employee" value={selectedEmployee.fullName} />
-                        <MetricLine label="Role" value={selectedEmployee.roleName} />
-                        <MetricLine label="Salary" value={money(selectedEmployee.basicSalary)} />
-                        <SubmitButton label="Generate Contract Draft" />
-                    </form>
+                    {canManage ? (
+                        <form action={generateEmployeeContract} className="space-y-3">
+                            <input type="hidden" name="employeeId" value={selectedEmployee.id} />
+                            <MetricLine label="Employee" value={selectedEmployee.fullName} />
+                            <MetricLine label="Role" value={selectedEmployee.roleName} />
+                            <MetricLine label="Salary" value={money(selectedEmployee.basicSalary)} />
+                            <SubmitButton label="Generate Contract Draft" />
+                        </form>
+                    ) : (
+                        <div className="space-y-3">
+                            <MetricLine label="Employee" value={selectedEmployee.fullName} />
+                            <MetricLine label="Role" value={selectedEmployee.roleName} />
+                            <MetricLine label="Salary" value={money(selectedEmployee.basicSalary)} />
+                            <ReadOnlyNotice compact />
+                        </div>
+                    )}
                     <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
                         <p className="text-xs font-black uppercase text-slate-400">Print-ready contract content</p>
                         <pre className="mt-3 whitespace-pre-wrap rounded-2xl bg-white p-5 text-sm leading-6 text-slate-950">{`${selectedEmployee.fullName} Employment Contract\n\nRole: ${selectedEmployee.roleName}\nOffice: ${selectedEmployee.officeName}\nBasic salary: ${money(selectedEmployee.basicSalary)}\nStart date: ${selectedEmployee.startDate || "To be confirmed"}\nOff days: ${selectedEmployee.offDays.join(", ") || "As assigned"}\n\nDuties, confidentiality, attendance expectations, termination rules, and signature fields are generated into the saved contract record.`}</pre>
@@ -680,7 +741,7 @@ function ContractsPanel({ selectedEmployee }: { selectedEmployee: EmployeeProfil
     );
 }
 
-function DocumentsPanel({ selectedEmployee }: { selectedEmployee: EmployeeProfile | null }) {
+function DocumentsPanel({ canManage, selectedEmployee }: { canManage: boolean; selectedEmployee: EmployeeProfile | null }) {
     return (
         <GlassPanel title="CVs, Contracts & Documents" icon={<UploadCloud size={18} />}>
             {selectedEmployee ? (
@@ -693,22 +754,24 @@ function DocumentsPanel({ selectedEmployee }: { selectedEmployee: EmployeeProfil
                             </a>
                         )) : <Empty label="No documents linked yet." />}
                     </div>
-                    <form action={addEmployeeDocument} className="grid gap-3 md:grid-cols-2">
-                        <input type="hidden" name="employeeId" value={selectedEmployee.id} />
-                        <input type="hidden" name="officeId" value={selectedEmployee.officeId ?? ""} />
-                        <SelectInput name="documentType" label="Document type" options={[
-                            { value: "cv", label: "CV" },
-                            { value: "national_id", label: "National ID Copy" },
-                            { value: "signed_contract", label: "Signed Contract" },
-                            { value: "warning_letter", label: "Warning Letter" },
-                            { value: "certificate", label: "Certificate" },
-                            { value: "other", label: "Other" },
-                        ]} />
-                        <TextInput name="fileName" label="Document name" required />
-                        <TextInput name="fileUrl" label="Supabase Storage / file URL" />
-                        <Textarea name="notes" label="Notes" />
-                        <SubmitButton label="Link Document" className="md:col-span-2" />
-                    </form>
+                    {canManage ? (
+                        <form action={addEmployeeDocument} className="grid gap-3 md:grid-cols-2">
+                            <input type="hidden" name="employeeId" value={selectedEmployee.id} />
+                            <input type="hidden" name="officeId" value={selectedEmployee.officeId ?? ""} />
+                            <SelectInput name="documentType" label="Document type" options={[
+                                { value: "cv", label: "CV" },
+                                { value: "national_id", label: "National ID Copy" },
+                                { value: "signed_contract", label: "Signed Contract" },
+                                { value: "warning_letter", label: "Warning Letter" },
+                                { value: "certificate", label: "Certificate" },
+                                { value: "other", label: "Other" },
+                            ]} />
+                            <TextInput name="fileName" label="Document name" required />
+                            <TextInput name="fileUrl" label="Supabase Storage / file URL" />
+                            <Textarea name="notes" label="Notes" />
+                            <SubmitButton label="Link Document" className="md:col-span-2" />
+                        </form>
+                    ) : <ReadOnlyNotice compact />}
                 </div>
             ) : <Empty label="Select an employee first." />}
         </GlassPanel>
@@ -740,6 +803,15 @@ function AuditPanel() {
                 Employee actions write to the live Audit Centre: employee creation, profile edits, references, payroll items, salary payments, document links, contract generation, and terminations.
             </div>
         </GlassPanel>
+    );
+}
+
+function ReadOnlyNotice({ compact = false }: { compact?: boolean }) {
+    return (
+        <div className={`rounded-2xl border border-cyan-300/25 bg-cyan-300/10 ${compact ? "p-3" : "p-4"} text-sm font-bold text-cyan-50`}>
+            <p className="font-black">Read-Only Manager</p>
+            <p className="mt-1 text-cyan-100/80">You have company-wide viewing access but cannot create, edit, approve, reject, pay, terminate, or configure employee records.</p>
+        </div>
     );
 }
 
@@ -776,11 +848,11 @@ function EmployeeSnapshot({ employee }: { employee: EmployeeProfile | null }) {
     );
 }
 
-function RequestCard({ onToggleSelected, request, selected = false, type }: { onToggleSelected?: () => void; request: EmployeeManagementData["advanceRequests"][number]; selected?: boolean; type: "advance" | "off_day" }) {
+function RequestCard({ canManage, onToggleSelected, request, selected = false, type }: { canManage: boolean; onToggleSelected?: () => void; request: EmployeeManagementData["advanceRequests"][number]; selected?: boolean; type: "advance" | "off_day" }) {
     const action = type === "advance" ? decideEmployeeAdvanceRequest : decideEmployeeOffDayRequest;
     return (
         <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-4">
-            {request.status === "pending" && onToggleSelected ? (
+            {canManage && request.status === "pending" && onToggleSelected ? (
                 <label className="mb-3 inline-flex items-center gap-2 text-xs font-black text-cyan-100">
                     <input checked={selected} type="checkbox" onChange={onToggleSelected} className="h-4 w-4 rounded border-cyan-200 text-cyan-700" />
                     Select request
@@ -801,7 +873,7 @@ function RequestCard({ onToggleSelected, request, selected = false, type }: { on
                         {type === "off_day" ? <MetricLine label="Requested Days" value={`${request.requestedDays ?? 0} days`} /> : null}
                     </div>
                 </div>
-                {request.status === "pending" ? (
+                {canManage && request.status === "pending" ? (
                     <div className="grid min-w-[260px] gap-2">
                         <form action={action} className="grid gap-2">
                             <input type="hidden" name="requestId" value={request.id} />

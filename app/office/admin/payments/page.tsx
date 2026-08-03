@@ -1,16 +1,17 @@
-import { requireCompanyAdminMode } from "@/lib/auth/permissions";
+import { requireCompanyReadMode } from "@/lib/auth/permissions";
 import FastPaymentsEntry from "@/components/office/payments/FastPaymentsEntry";
 
 export default async function AdminPaymentsPage() {
-    const context = await requireCompanyAdminMode();
+    const context = await requireCompanyReadMode();
+    const readOnly = context.isCompanyReadOnlyManager;
 
     return (
         <FastPaymentsEntry
             activeCompany={context.activeCompany}
             activeOffice={context.activeOffice}
             profile={context.profile}
-            canPostPayments
-            isAdmin
+            canPostPayments={!readOnly}
+            isAdmin={!readOnly}
             searchOffices={context.offices}
         />
     );

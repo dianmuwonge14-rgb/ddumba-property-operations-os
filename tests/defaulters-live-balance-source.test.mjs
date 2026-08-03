@@ -27,8 +27,8 @@ test("active defaulters exclude vacated rooms and corrected collection rows", ()
   assert.match(dataSource, /collectionAmount\(lastPayment\)/);
 });
 
-test("admin remains company-wide while offices and collectors are scoped", () => {
-  assert.match(dataSource, /const isAdmin = Boolean\(options\.admin && context\.isCompanyAdmin && !context\.isOfficeMode\)/);
+test("admin and read-only managers remain company-wide while offices and collectors are scoped", () => {
+  assert.match(dataSource, /const isAdmin = Boolean\(options\.admin && \(context\.isCompanyAdmin \|\| context\.isCompanyReadOnlyManager\) && !context\.isOfficeMode\)/);
   assert.match(dataSource, /const readSupabase = isAdmin \? createSupabaseAdminClient\(\) : supabase/);
   assert.match(dataSource, /pagedRows<TenantRow>/);
   assert.match(dataSource, /pagedRows<RoomRow>/);

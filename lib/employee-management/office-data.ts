@@ -190,6 +190,7 @@ export async function getOfficeEmployeeCentreData(): Promise<EmployeeManagementD
     totals.companySavingsFromFines = totals.totalFines;
 
     return {
+        canManage: true,
         companyName: context.activeCompany?.name ?? "Ddumba OS",
         monthKey: currentMonth,
         offices: [{ id: officeId, name: officeName }],
@@ -205,6 +206,7 @@ export async function getOfficeEmployeeCentreData(): Promise<EmployeeManagementD
 
 function emptyData(companyName: string, currentMonth: string, warnings: string[]): EmployeeManagementData {
     return {
+        canManage: false,
         companyName,
         monthKey: currentMonth,
         offices: [],

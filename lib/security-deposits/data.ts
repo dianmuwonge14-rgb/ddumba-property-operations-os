@@ -35,7 +35,9 @@ export async function getSecurityDepositsPageData(): Promise<SecurityDepositPage
     }
     const canView =
         context.isCompanyAdmin ||
+        context.isCompanyReadOnlyManager ||
         context.permissions.includes("collections.manage") ||
+        context.permissions.includes("security_deposits.read") ||
         context.permissions.includes("collections.payment.post") ||
         context.permissions.includes("reports.read");
     if (!canView) {
@@ -88,7 +90,7 @@ export async function getSecurityDepositsPageData(): Promise<SecurityDepositPage
     return {
         activeOfficeId: context.activeOffice?.id ?? null,
         deposits: rows,
-        isAdmin: context.isCompanyAdmin || context.canAccessAllOffices,
+        isAdmin: context.isCompanyAdmin && !context.isCompanyReadOnlyManager,
         summary,
         warnings,
     };

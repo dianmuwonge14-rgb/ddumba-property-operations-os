@@ -24,9 +24,10 @@ test("personal salary centre is scoped to the authenticated employee only", () =
   assert.match(personalPage, /getPersonalSalaryCentreData/);
 });
 
-test("admin payroll centre requires company admin mode", () => {
-  assert.match(adminPage, /requireCompanyAdminMode/);
+test("admin payroll centre allows admin and read-only manager read mode", () => {
+  assert.match(adminPage, /requireCompanyReadMode/);
   assert.match(dataSource, /getAdminPayrollCentreData/);
+  assert.match(dataSource, /canManage: context\.isCompanyAdmin && !context\.isCompanyReadOnlyManager/);
 });
 
 test("salary date uses Kampala timezone and handles short months", () => {

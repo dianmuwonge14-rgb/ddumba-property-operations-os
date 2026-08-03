@@ -56,6 +56,7 @@ export type PersonalSalaryCentreData = {
 };
 
 export type AdminPayrollCentreData = {
+    canManage: boolean;
     companyName: string;
     monthKey: string;
     employees: SalaryCardData[];

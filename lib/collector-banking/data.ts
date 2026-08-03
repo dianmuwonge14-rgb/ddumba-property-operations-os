@@ -1,4 +1,4 @@
-import { requireCompanyAdminMode } from "@/lib/auth/permissions";
+import { requireCompanyReadMode } from "@/lib/auth/permissions";
 import { requireCollectorContext } from "@/lib/collectors/data";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
@@ -80,7 +80,7 @@ export async function getCollectorBankingPageData() {
 }
 
 export async function getAdminCollectorBankingData() {
-    const context = await requireCompanyAdminMode();
+    const context = await requireCompanyReadMode();
     const db = createSupabaseAdminClient() as unknown as DynamicDb;
     const companyId = context.activeCompany!.id;
     const [submissionsResult, collectorsResult, officesResult, profilesResult] = await Promise.all([
@@ -107,6 +107,7 @@ export async function getAdminCollectorBankingData() {
     const pendingAmount = submissions.filter((row) => PENDING_STATUSES.includes(String(row.status))).reduce((total, row) => total + amount(row.amount), 0);
     const verifiedAmount = submissions.filter((row) => row.status === "verified").reduce((total, row) => total + amount(row.amount), 0);
     return {
+        canManage: context.isCompanyAdmin && !context.isCompanyReadOnlyManager,
         submissions,
         totals: {
             pendingAmount,

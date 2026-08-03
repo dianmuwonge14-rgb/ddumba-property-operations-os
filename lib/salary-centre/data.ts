@@ -1,4 +1,4 @@
-import { requireAuth, requireCompanyAdminMode } from "@/lib/auth/permissions";
+import { requireAuth, requireCompanyReadMode } from "@/lib/auth/permissions";
 import { getScopedSupabase } from "@/lib/auth/query";
 import type { AdminPayrollCentreData, PersonalSalaryCentreData, SalaryCardData, SalaryPaymentRecord, SalaryStatus } from "./types";
 
@@ -290,13 +290,13 @@ export async function getPersonalSalaryCentreData(): Promise<PersonalSalaryCentr
 }
 
 export async function getAdminPayrollCentreData(): Promise<AdminPayrollCentreData> {
-    const context = await requireCompanyAdminMode();
+    const context = await requireCompanyReadMode();
     const { supabase } = await getScopedSupabase();
     const db = supabase as unknown as Db;
     const warnings: string[] = [];
     const companyId = context.activeCompany?.id;
     const monthKey = salaryMonthKey();
-    if (!companyId) return { companyName: "Company", monthKey, offices: [], employees: [], totals: emptyTotals(), warnings: ["Active company is required."] };
+    if (!companyId) return { canManage: false, companyName: "Company", monthKey, offices: [], employees: [], totals: emptyTotals(), warnings: ["Active company is required."] };
     const [employeeRows, officeNames] = await Promise.all([
         safeRows(db, "employees", (query) => query.select("*").eq("company_id", companyId).neq("status", "archived").order("full_name").limit(1000), warnings),
         loadOfficeNames(db, companyId, warnings),
@@ -349,6 +349,7 @@ export async function getAdminPayrollCentreData(): Promise<AdminPayrollCentreDat
     }, emptyTotals());
     totals.averageSalary = employees.length ? Math.round(totals.totalMonthlyPayroll / employees.length) : 0;
     return {
+        canManage: context.isCompanyAdmin && !context.isCompanyReadOnlyManager,
         companyName: context.activeCompany?.name ?? "Ddumba OS",
         monthKey,
         offices: [...officeNames.entries()].map(([id, name]) => ({ id, name })),

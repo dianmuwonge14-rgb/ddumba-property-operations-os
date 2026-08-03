@@ -155,6 +155,7 @@ const collectorSections = [
 type Props = {
     isCollector?: boolean;
     isAdmin: boolean;
+    isReadOnlyManager?: boolean;
     officeName: string | null;
     attendance: AttendanceGateStatus;
     notificationCount: number;
@@ -184,7 +185,7 @@ function themeForPath(pathname: string) {
     return "admin";
 }
 
-export default function OfficeSidebar({ isAdmin, isCollector = false, officeName, attendance, notificationCount }: Props) {
+export default function OfficeSidebar({ isAdmin, isCollector = false, isReadOnlyManager = false, officeName, attendance, notificationCount }: Props) {
     const pathname = usePathname();
     const moduleTheme = themeForPath(pathname);
     const sections = isCollector ? collectorSections : isAdmin ? adminSections : officeSections;
@@ -223,7 +224,7 @@ export default function OfficeSidebar({ isAdmin, isCollector = false, officeName
                             <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
                                 <p className="whitespace-nowrap text-xs font-black tracking-wide text-white sm:text-sm">DDUMBA OS</p>
                                 <span className="mobile-nowrap rounded-full border border-white/10 bg-white/10 px-2 py-0.5 text-[9px] font-black uppercase text-cyan-100 sm:px-2.5 sm:py-1 sm:text-[10px]">
-                                    {isAdmin ? "Admin" : isCollector ? "Collector" : "Office"}
+                                    {isReadOnlyManager ? "Read-Only Manager" : isAdmin ? "Admin" : isCollector ? "Collector" : "Office"}
                                 </span>
                             </div>
                             <p className="max-w-[58vw] truncate text-[11px] font-bold text-slate-400 sm:max-w-none sm:text-xs">{activeItem?.label ?? "Enterprise"} · {officeName ?? "Company"}</p>

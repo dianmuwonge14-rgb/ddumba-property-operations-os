@@ -58,7 +58,7 @@ export async function getTenantRelocationPageData(options: { admin?: boolean } =
     const db = supabase as unknown as DynamicDb;
     const companyId = context.activeCompany?.id;
     const activeOfficeId = context.activeOffice?.id;
-    const isAdmin = Boolean(options.admin && context.isCompanyAdmin && !context.isOfficeMode);
+    const isAdmin = Boolean(options.admin && (context.isCompanyAdmin || context.isCompanyReadOnlyManager) && !context.isOfficeMode);
     const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
     const canViewAllOffices = isAdmin || isCollector;
 
@@ -183,7 +183,7 @@ export async function getTenantRelocationPageData(options: { admin?: boolean } =
         company: context.activeCompany,
         activeOffice: context.activeOffice,
         isAdmin,
-        canSubmit: isAdmin || isCollector || hasPermission(context, "collections.manage") || hasPermission(context, "properties.manage"),
+        canSubmit: !context.isCompanyReadOnlyManager && (isAdmin || isCollector || hasPermission(context, "collections.manage") || hasPermission(context, "properties.manage")),
         canApprove: isAdmin,
         tenants: tenantItems,
         vacantRooms,

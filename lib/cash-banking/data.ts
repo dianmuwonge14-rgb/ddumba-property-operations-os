@@ -180,11 +180,13 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
     if (!companyId) throw new Error("Active company is required.");
 
     const filters = resolveFilters(filtersInput);
-    const isAdmin = context.isCompanyAdmin && !context.isOfficeMode;
-    const canManage = isAdmin
+    const isAdmin = (context.isCompanyAdmin || context.isCompanyReadOnlyManager) && !context.isOfficeMode;
+    const canManage = !context.isCompanyReadOnlyManager && (
+        isAdmin
         || hasPermission(context, "cash.manage")
         || hasPermission(context, "collections.manage")
-        || hasPermission(context, "expenses.manage");
+        || hasPermission(context, "expenses.manage")
+    );
     const allowedOfficeIds = isAdmin
         ? null
         : new Set(context.offices.map((office) => office.id).filter(Boolean));

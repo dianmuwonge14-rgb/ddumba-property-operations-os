@@ -39,9 +39,9 @@ function displayedSelectedPeriodOfficeCash(input) {
   };
 }
 
-test("cash position centre is an admin-only live Supabase page", () => {
+test("cash position centre is an admin/read-only manager live Supabase page", () => {
   assert.match(pageSource, /getCashPositionCentreData/);
-  assert.match(dataSource, /requireCompanyAdminMode\(\)/);
+  assert.match(dataSource, /requireCompanyReadMode\(\)/);
   assert.match(dataSource, /createSupabaseAdminClient\(\)/);
   assert.match(dataSource, /\.from\("collections"\)/);
   assert.match(dataSource, /\.from\("cash_transactions"\)/);
@@ -50,14 +50,14 @@ test("cash position centre is an admin-only live Supabase page", () => {
   assert.doesNotMatch(componentSource, /placeholder/i);
 });
 
-test("admin landing opens Dashboard while Cash Position Centre remains available", () => {
+test("admin landing opens Dashboard while Cash Position Centre remains first in navigation", () => {
   const cashPosition = sidebarSource.indexOf('/office/admin/cash-position", label: "Cash Position Centre"');
   const dashboard = sidebarSource.indexOf('/office", label: "Dashboard"');
   assert.ok(cashPosition > 0, "Cash Position Centre nav entry should exist");
   assert.ok(cashPosition < dashboard, "Cash Position Centre should be first for Admin");
   assert.match(sidebarSource, /pathname\.includes\("\/cash-position"\)/);
   assert.match(sidebarSource, /logoHref = isAdmin \? "\/office\/admin\/cash-position"/);
-  assert.match(loginSource, /isAdmin \? "\/office"/);
+  assert.match(loginSource, /isAdmin \? "\/office\/admin\/cash-position"/);
   assert.doesNotMatch(officeHomeSource, /redirect\("\/office\/admin\/cash-position"\)/);
   assert.match(officeHomeSource, /getDashboardLiveData/);
 });

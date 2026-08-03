@@ -63,7 +63,7 @@ export async function getVacantRoomsPageData(options: { admin?: boolean } = {}):
     const db = supabase as unknown as DynamicDb;
     const companyId = context.activeCompany?.id;
     const activeOfficeId = context.activeOffice?.id;
-    const isAdmin = Boolean(options.admin && context.isCompanyAdmin && !context.isOfficeMode);
+    const isAdmin = Boolean(options.admin && (context.isCompanyAdmin || context.isCompanyReadOnlyManager) && !context.isOfficeMode);
     const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
     const canViewAllOffices = isAdmin || isCollector;
 
@@ -171,7 +171,7 @@ export async function getVacantRoomsPageData(options: { admin?: boolean } = {}):
         activeOffice: context.activeOffice,
         isAdmin,
         canFilterOffices: canViewAllOffices,
-        canManageOccupancy: !isCollector && (context.isCompanyAdmin || hasPermission(context, "properties.manage") || hasPermission(context, "collections.manage") || hasPermission(context, "landlords.manage")),
+        canManageOccupancy: !context.isCompanyReadOnlyManager && !isCollector && (context.isCompanyAdmin || hasPermission(context, "properties.manage") || hasPermission(context, "collections.manage") || hasPermission(context, "landlords.manage")),
         offices: offices.map((office) => ({ id: office.id, name: officeName(office) })).sort((a, b) => a.name.localeCompare(b.name)),
         landlords: landlords.map((landlord) => ({ id: landlord.id, name: landlord.full_name ?? "No landlord" })).sort((a, b) => a.name.localeCompare(b.name)),
         locations: [...new Set(items.map((item) => item.location).filter(Boolean))].sort(),

@@ -60,6 +60,16 @@ export async function requireCompanyAdminMode() {
     return context;
 }
 
+export async function requireCompanyReadMode() {
+    const context = await requireAuth();
+
+    if ((context.isOfficeMode || (!context.isCompanyAdmin && !context.isCompanyReadOnlyManager))) {
+        redirect("/office");
+    }
+
+    return context;
+}
+
 export async function requireOfficeAccess(officeId: string) {
     const context = await requireAuth();
 

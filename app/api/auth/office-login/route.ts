@@ -34,6 +34,11 @@ type VerifyPersonalOfficeRpc = (
     args: { p_identifier: string; p_secret: string; p_user_agent: string | null },
 ) => Promise<{ data: LoginIdentity[] | null; error: { message: string } | null }>;
 
+type VerifyReadOnlyManagerRpc = (
+    fn: "ddumba_v1_verify_read_only_manager_login",
+    args: { p_identifier: string; p_secret: string; p_user_agent: string | null },
+) => Promise<{ data: LoginIdentity[] | null; error: { message: string } | null }>;
+
 type DirectOfficeLoginRpc = (
     fn: "ddumba_v1_check_direct_office_login",
     args: { p_secret: string; p_identifier?: string | null },
@@ -262,6 +267,23 @@ export async function POST(request: Request) {
                 data = personal.data;
                 error = personal.error;
             }
+            if (!data?.[0]?.user_id && !error) {
+                const managerRpc = supabase.rpc.bind(supabase) as unknown as VerifyReadOnlyManagerRpc;
+                const manager = await withLoginTimeout("read_only_manager_credential_rpc", PROFILE_TIMEOUT_MS, managerRpc("ddumba_v1_verify_read_only_manager_login", {
+                    p_identifier: identifier,
+                    p_secret: secret,
+                    p_user_agent: userAgent,
+                })).catch((managerError) => {
+                    if (/function .*ddumba_v1_verify_read_only_manager_login/i.test(managerError instanceof Error ? managerError.message : String(managerError))) {
+                        return { data: null, error: null };
+                    }
+                    throw managerError;
+                });
+                if (manager.error || manager.data?.[0]?.user_id) {
+                    data = manager.data;
+                    error = manager.error;
+                }
+            }
         }
         if (!data?.[0]?.user_id && !error) {
             const rpc = supabase.rpc.bind(supabase) as unknown as VerifyPinRpc;
@@ -420,20 +442,21 @@ export async function POST(request: Request) {
 
         const isAdmin = identity.auth_mode === "admin";
         const isCollector = identity.auth_mode === "collector";
+        const isReadOnlyManager = isAdmin && !identity.is_company_admin;
 
         return NextResponse.json({
             ok: true,
-            message: isAdmin ? "Logged into Admin Account" : isCollector ? `Logged into ${identity.full_name ?? "Field Collector"}` : `Logged into ${identity.office_name ?? "Office"}`,
+            message: isReadOnlyManager ? `Logged into ${identity.full_name ?? "Read-Only Manager"}` : isAdmin ? "Logged into Admin Account" : isCollector ? `Logged into ${identity.full_name ?? "Field Collector"}` : `Logged into ${identity.office_name ?? "Office"}`,
             user: {
                 id: identity.user_id,
-                name: isAdmin ? "Admin Account" : (identity.full_name ?? (isCollector ? "Field Collector" : "Office Account")),
-                isCompanyAdmin: isAdmin || identity.is_company_admin,
+                name: isReadOnlyManager ? (identity.full_name ?? "Read-Only Manager") : isAdmin ? "Admin Account" : (identity.full_name ?? (isCollector ? "Field Collector" : "Office Account")),
+                isCompanyAdmin: identity.is_company_admin,
             },
             office: {
                 id: identity.office_id,
                 name: identity.office_name ?? "Office",
             },
-            redirectTo: isAdmin ? "/office" : identity.redirect_to ?? (isCollector ? "/office/collector" : "/office"),
+            redirectTo: identity.redirect_to ?? (isAdmin ? "/office/admin/cash-position" : isCollector ? "/office/collector" : "/office"),
         });
     } catch (error) {
         const errorRef = errorReference();

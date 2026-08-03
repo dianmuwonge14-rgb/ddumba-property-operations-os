@@ -1,6 +1,6 @@
 import "server-only";
 
-import { requireCompanyAdminMode } from "@/lib/auth/permissions";
+import { requireCompanyReadMode } from "@/lib/auth/permissions";
 import { collectionAmount as validCollectionAmount, isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type {
@@ -410,7 +410,7 @@ function buildInsights(input: {
 }
 
 export async function getCashPositionCentreData(filtersInput: CashPositionFilters = {}): Promise<CashPositionData> {
-    const context = await requireCompanyAdminMode();
+    const context = await requireCompanyReadMode();
     const companyId = context.activeCompany?.id;
     if (!companyId) throw new Error("Active company is required.");
     const filters = resolveFilters(filtersInput);

@@ -25,6 +25,7 @@ export type AuthContext = {
     permissions: string[];
     isAuthenticated: boolean;
     isCompanyAdmin: boolean;
+    isCompanyReadOnlyManager: boolean;
     canAccessAllOffices: boolean;
     isOfficeMode: boolean;
 };

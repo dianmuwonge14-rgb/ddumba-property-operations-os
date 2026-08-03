@@ -234,7 +234,7 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
     const { supabase } = await getScopedSupabase();
     const companyId = context.activeCompany?.id;
     const activeOfficeId = context.activeOffice?.id;
-    const isAdmin = Boolean(options.admin && context.isCompanyAdmin && !context.isOfficeMode);
+    const isAdmin = Boolean(options.admin && (context.isCompanyAdmin || context.isCompanyReadOnlyManager) && !context.isOfficeMode);
     const isCollector = isCollectorContext(context);
     const collectorOfficeIds = isCollector ? context.offices.map((office) => office.id).filter(Boolean) : [];
     const requestedOfficeId = options.officeId?.trim() || null;

@@ -13,6 +13,7 @@ type Row = Record<string, unknown> & {
 
 type Props = {
     data: {
+        canManage?: boolean;
         submissions: Row[];
         totals: Record<string, number>;
     };
@@ -70,7 +71,7 @@ export default function AdminCollectorBankingConsole({ data }: Props) {
                 {message ? <p className="mt-4 rounded-2xl bg-white/10 px-4 py-3 text-sm font-black text-cyan-100">{message}</p> : null}
 
                 <section className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
-                    {filtered.length ? filtered.map((row) => <SlipCard key={String(row.id)} row={row} onSelect={setSelected} onMessage={setMessage} />) : <p className="rounded-3xl border border-white/10 bg-white/5 p-6 text-sm font-bold text-slate-300">No collector banking records match this filter.</p>}
+                    {filtered.length ? filtered.map((row) => <SlipCard canManage={data.canManage !== false} key={String(row.id)} row={row} onSelect={setSelected} onMessage={setMessage} />) : <p className="rounded-3xl border border-white/10 bg-white/5 p-6 text-sm font-bold text-slate-300">No collector banking records match this filter.</p>}
                 </section>
             </section>
             {selected ? <SlipModal row={selected} onClose={() => setSelected(null)} /> : null}
@@ -88,11 +89,11 @@ function Kpi({ icon, label, tone, value }: { icon: React.ReactNode; label: strin
     return <div className={`min-w-0 rounded-3xl border p-4 ${tones[tone]}`}><div className="flex items-center justify-between gap-2">{icon}<span className="text-[10px] font-black uppercase opacity-75">Live</span></div><p className="mt-3 text-xs font-black uppercase tracking-wide opacity-80">{label}</p><p className="mt-2 break-words text-[clamp(1.05rem,3vw,1.45rem)] font-black text-white">{value}</p></div>;
 }
 
-function SlipCard({ onMessage, onSelect, row }: { onMessage: (value: string) => void; onSelect: (row: Row) => void; row: Row }) {
+function SlipCard({ canManage, onMessage, onSelect, row }: { canManage: boolean; onMessage: (value: string) => void; onSelect: (row: Row) => void; row: Row }) {
     const [reason, setReason] = useState("");
     const [isPending, startTransition] = useTransition();
     const status = String(row.status ?? "pending_verification");
-    const canReview = ["pending_verification", "needs_clearer_image", "correction_requested"].includes(status);
+    const canReview = canManage && ["pending_verification", "needs_clearer_image", "correction_requested"].includes(status);
     function decide(decision: "verified" | "rejected" | "needs_clearer_image" | "correction_requested") {
         startTransition(async () => {
             try {
@@ -127,7 +128,9 @@ function SlipCard({ onMessage, onSelect, row }: { onMessage: (value: string) => 
                 <p>File: <span className="text-white">{String(row.slip_original_name ?? "Slip")}</span></p>
                 <p>Size: <span className="text-white">{Math.round(Number(row.slip_file_size ?? 0) / 1024).toLocaleString()} KB</span></p>
             </div>
-            {canReview ? (
+            {!canManage ? (
+                <p className="mt-3 rounded-2xl border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-xs font-black text-cyan-100">Read-Only Manager: you can inspect this banking request but cannot verify, reject, or request changes.</p>
+            ) : canReview ? (
                 <div className="mt-3 grid gap-2">
                     <input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Reason required for reject/correction requests" className="rounded-2xl border border-white/10 bg-slate-900 px-3 py-3 text-sm font-black text-white outline-none placeholder:text-slate-500" />
                     <div className="grid gap-2 sm:grid-cols-2">

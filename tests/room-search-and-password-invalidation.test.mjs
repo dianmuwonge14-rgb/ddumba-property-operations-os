@@ -50,7 +50,7 @@ test("payments entry uses a lightweight indexed room search before hydrating ful
 });
 
 test("login and payments entry avoid duplicate startup work", () => {
-  assert.match(loginRoute, /redirectTo: isAdmin \? "\/office"/);
+  assert.match(loginRoute, /redirectTo: identity\.redirect_to \?\? \(isAdmin \? "\/office\/admin\/cash-position"/);
   assert.doesNotMatch(loginForm, /router\.refresh\(\)/);
   assert.match(loginForm, /LOGIN_TIMEOUT_MS/);
   assert.match(loginForm, /safeLoginError/);

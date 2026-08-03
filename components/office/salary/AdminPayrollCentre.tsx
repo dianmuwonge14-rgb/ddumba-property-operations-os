@@ -83,6 +83,7 @@ export default function AdminPayrollCentre({ data }: { data: AdminPayrollCentreD
     const calendarDays = useMemo(() => buildPayrollCalendar(filtered), [filtered]);
     const insights = useMemo(() => buildPayrollInsights(data, filtered, officeComparison), [data, filtered, officeComparison]);
     const forecast = useMemo(() => buildForecast(data, officeComparison), [data, officeComparison]);
+    const canManage = data.canManage !== false;
 
     return (
         <main className="min-h-screen px-4 pb-10 pt-5 text-white sm:px-6 lg:px-8">
@@ -90,6 +91,7 @@ export default function AdminPayrollCentre({ data }: { data: AdminPayrollCentreD
                 <Hero data={data} forecast={forecast} />
 
                 {data.warnings.length ? <div className="rounded-2xl border border-amber-300/30 bg-amber-300/10 p-4 text-sm font-bold text-amber-100">{data.warnings.join(" | ")}</div> : null}
+                {!canManage ? <ReadOnlyNotice /> : null}
 
                 <ExecutiveCards data={data} />
 
@@ -123,7 +125,7 @@ export default function AdminPayrollCentre({ data }: { data: AdminPayrollCentreD
                         {filtered.length === 0 ? <div className="rounded-[24px] border border-dashed border-white/10 bg-white/[0.04] p-8 text-center text-sm font-bold text-slate-400 md:col-span-2 2xl:col-span-3">No employees match the active payroll filters.</div> : null}
                     </section>
                     <aside className="min-w-0 space-y-4">
-                        {selected ? <EmployeeDetails employee={selected} /> : <div className="rounded-[24px] border border-dashed border-white/10 bg-white/[0.04] p-5 text-sm text-slate-400">Select an employee to open salary history, payslip, payment history, deductions, allowances, corrections, and audit trail.</div>}
+                        {selected ? <EmployeeDetails canManage={canManage} employee={selected} /> : <div className="rounded-[24px] border border-dashed border-white/10 bg-white/[0.04] p-5 text-sm text-slate-400">Select an employee to open salary history, payslip, payment history, deductions, allowances, corrections, and audit trail.</div>}
                     </aside>
                 </div>
             </section>
@@ -329,19 +331,21 @@ function EmployeeSalaryCard({ employee, selected, onSelect }: { employee: Salary
     );
 }
 
-function EmployeeDetails({ employee }: { employee: SalaryCardData }) {
+function EmployeeDetails({ canManage, employee }: { canManage: boolean; employee: SalaryCardData }) {
     return (
         <>
             <Panel title="Quick Actions" icon={<Banknote size={18} />}>
-                <form action={recordSalaryPayment} className="grid gap-3">
-                    <input type="hidden" name="employeeId" value={employee.employeeId} />
-                    <input type="hidden" name="officeId" value={employee.officeId ?? ""} />
-                    <Input label="Amount Paid" name="paidAmount" type="number" max={employee.remainingSalaryBalance || undefined} required />
-                    <SelectField label="Payment Method" name="paymentMethod"><option value="cash">Cash</option><option value="bank">Bank</option><option value="mobile_money">Mobile Money</option></SelectField>
-                    <Input label="Reference" name="reference" />
-                    <Textarea label="Notes" name="notes" />
-                    <button className="h-11 rounded-2xl bg-emerald-300 px-4 text-sm font-black text-slate-950">Pay Salary / Record Partial Payment</button>
-                </form>
+                {canManage ? (
+                    <form action={recordSalaryPayment} className="grid gap-3">
+                        <input type="hidden" name="employeeId" value={employee.employeeId} />
+                        <input type="hidden" name="officeId" value={employee.officeId ?? ""} />
+                        <Input label="Amount Paid" name="paidAmount" type="number" max={employee.remainingSalaryBalance || undefined} required />
+                        <SelectField label="Payment Method" name="paymentMethod"><option value="cash">Cash</option><option value="bank">Bank</option><option value="mobile_money">Mobile Money</option></SelectField>
+                        <Input label="Reference" name="reference" />
+                        <Textarea label="Notes" name="notes" />
+                        <button className="h-11 rounded-2xl bg-emerald-300 px-4 text-sm font-black text-slate-950">Pay Salary / Record Partial Payment</button>
+                    </form>
+                ) : <ReadOnlyNotice compact />}
                 <div className="mt-3 grid grid-cols-2 gap-2">
                     <Action icon={<FileText size={15} />} label="View Payslip" />
                     <Action icon={<Printer size={15} />} label="Print" />
@@ -350,15 +354,17 @@ function EmployeeDetails({ employee }: { employee: SalaryCardData }) {
                 </div>
             </Panel>
             <Panel title="Edit Salary Setup" icon={<UsersRound size={18} />}>
-                <form action={updateEmployeeSalaryConfiguration} className="grid gap-3">
-                    <input type="hidden" name="employeeId" value={employee.employeeId} />
-                    <Input label="Monthly Salary" name="monthlySalary" type="number" defaultValue={employee.monthlySalary} required />
-                    <Input label="Salary Payment Day" name="salaryPaymentDay" type="number" min={1} max={31} defaultValue={employee.salaryPaymentDay} required />
-                    <SelectField label="Salary Type" name="salaryType" defaultValue="monthly"><option value="monthly">Fixed Salary</option><option value="contract">Contract</option><option value="allowance">Allowance based</option></SelectField>
-                    <SelectField label="Employment Status" name="employmentStatus" defaultValue={employee.employmentStatus}><option value="active">Active</option><option value="suspended">Suspended</option><option value="inactive">Inactive</option><option value="terminated">Terminated</option></SelectField>
-                    <Input label="Payment Method" name="paymentMethod" placeholder="Cash, bank, mobile money..." />
-                    <button className="h-11 rounded-2xl bg-cyan-300 px-4 text-sm font-black text-slate-950">Save Salary / Date</button>
-                </form>
+                {canManage ? (
+                    <form action={updateEmployeeSalaryConfiguration} className="grid gap-3">
+                        <input type="hidden" name="employeeId" value={employee.employeeId} />
+                        <Input label="Monthly Salary" name="monthlySalary" type="number" defaultValue={employee.monthlySalary} required />
+                        <Input label="Salary Payment Day" name="salaryPaymentDay" type="number" min={1} max={31} defaultValue={employee.salaryPaymentDay} required />
+                        <SelectField label="Salary Type" name="salaryType" defaultValue="monthly"><option value="monthly">Fixed Salary</option><option value="contract">Contract</option><option value="allowance">Allowance based</option></SelectField>
+                        <SelectField label="Employment Status" name="employmentStatus" defaultValue={employee.employmentStatus}><option value="active">Active</option><option value="suspended">Suspended</option><option value="inactive">Inactive</option><option value="terminated">Terminated</option></SelectField>
+                        <Input label="Payment Method" name="paymentMethod" placeholder="Cash, bank, mobile money..." />
+                        <button className="h-11 rounded-2xl bg-cyan-300 px-4 text-sm font-black text-slate-950">Save Salary / Date</button>
+                    </form>
+                ) : <ReadOnlyNotice compact />}
             </Panel>
             <Panel title="Employee Details" icon={<ReceiptText size={18} />}>
                 <div className="space-y-2 text-sm">
@@ -382,6 +388,15 @@ function EmployeeDetails({ employee }: { employee: SalaryCardData }) {
                 </div>
             </Panel>
         </>
+    );
+}
+
+function ReadOnlyNotice({ compact = false }: { compact?: boolean }) {
+    return (
+        <div className={`rounded-2xl border border-cyan-300/25 bg-cyan-300/10 ${compact ? "p-3" : "p-4"} text-sm font-bold text-cyan-50`}>
+            <p className="font-black">Read-Only Manager</p>
+            <p className="mt-1 text-cyan-100/80">You have company-wide viewing access but cannot change, approve, pay, or configure payroll records.</p>
+        </div>
     );
 }
 

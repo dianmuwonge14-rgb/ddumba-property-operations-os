@@ -1,4 +1,4 @@
-import { requireCompanyAdminMode } from "@/lib/auth/permissions";
+import { requireCompanyReadMode } from "@/lib/auth/permissions";
 import { getScopedSupabase } from "@/lib/auth/query";
 import type { EmployeeManagementData, EmployeePerformanceRow, EmployeeProfile, EmployeeRequestItem } from "./types";
 
@@ -43,7 +43,7 @@ function groupSum(rows: LooseRow[], key: string, valueKey = "amount") {
 }
 
 export async function getEmployeeManagementData(): Promise<EmployeeManagementData> {
-    const context = await requireCompanyAdminMode();
+    const context = await requireCompanyReadMode();
     const { supabase } = await getScopedSupabase();
     const companyId = context.activeCompany?.id;
     const warnings: string[] = [];
@@ -279,6 +279,7 @@ export async function getEmployeeManagementData(): Promise<EmployeeManagementDat
     totals.companySavingsFromFines = totals.totalFines;
 
     return {
+        canManage: context.isCompanyAdmin && !context.isCompanyReadOnlyManager,
         companyName: context.activeCompany?.name ?? "Ddumba OS",
         monthKey: currentMonth,
         offices,
@@ -294,6 +295,7 @@ export async function getEmployeeManagementData(): Promise<EmployeeManagementDat
 
 function emptyData(companyName: string, currentMonth: string, warnings: string[]): EmployeeManagementData {
     return {
+        canManage: false,
         companyName,
         monthKey: currentMonth,
         offices: [],

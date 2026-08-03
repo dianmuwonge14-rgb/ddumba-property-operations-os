@@ -90,6 +90,7 @@ export type EmployeePerformanceRow = {
 };
 
 export type EmployeeManagementData = {
+    canManage: boolean;
     companyName: string;
     monthKey: string;
     offices: EmployeeManagementOffice[];

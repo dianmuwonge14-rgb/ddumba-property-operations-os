@@ -29,11 +29,12 @@ export async function getPropertiesPageData(): Promise<PropertiesPageData> {
     const companyId = context.activeCompany?.id;
     const officeId = context.activeOffice?.id;
 
-    if (!companyId || !officeId) {
+    const isAdminAcrossOffices = (context.isCompanyAdmin || context.isCompanyReadOnlyManager) && !context.isOfficeMode;
+
+    if (!companyId || (!officeId && !isAdminAcrossOffices)) {
         return emptyData();
     }
 
-    const isAdminAcrossOffices = context.isCompanyAdmin && !context.isOfficeMode;
     const officesPromise = isAdminAcrossOffices
         ? supabase
             .from("offices")
@@ -53,32 +54,39 @@ export async function getPropertiesPageData(): Promise<PropertiesPageData> {
 
     const landlordsPromise = fetchAllCompanyLandlords(db, companyId);
 
-    const [propertiesResult, roomsResult, leasesResult, tenantsResult, landlordsResult, officesResult, bulkRequestsResult] = await Promise.all([
-        supabase
+    let propertiesQuery = supabase
             .from("properties")
             .select("*")
             .eq("company_id", companyId)
-            .eq("office_id", officeId)
             .neq("status", "archived")
-            .order("property_name", { ascending: true, nullsFirst: false }),
-        supabase
+            .order("property_name", { ascending: true, nullsFirst: false });
+    let roomsQuery = supabase
             .from("rooms")
             .select("id,company_id,office_id,property_id,landlord_id,room_number,monthly_rent,outstanding_balance,status,floor")
             .eq("company_id", companyId)
-            .eq("office_id", officeId)
-            .order("room_number", { ascending: true, nullsFirst: false }),
-        supabase
+            .order("room_number", { ascending: true, nullsFirst: false });
+    let leasesQuery = supabase
             .from("leases")
             .select("id,company_id,office_id,property_id,room_id,tenant_id,monthly_rent,status,end_date")
             .eq("company_id", companyId)
-            .eq("office_id", officeId)
-            .eq("status", "active"),
-        supabase
+            .eq("status", "active");
+    let tenantsQuery = supabase
             .from("tenants")
             .select("id,company_id,office_id,property_id,room_id,full_name,phone,balance,status")
             .eq("company_id", companyId)
-            .eq("office_id", officeId)
-            .eq("status", "active"),
+            .eq("status", "active");
+    if (!isAdminAcrossOffices && officeId) {
+        propertiesQuery = propertiesQuery.eq("office_id", officeId);
+        roomsQuery = roomsQuery.eq("office_id", officeId);
+        leasesQuery = leasesQuery.eq("office_id", officeId);
+        tenantsQuery = tenantsQuery.eq("office_id", officeId);
+    }
+
+    const [propertiesResult, roomsResult, leasesResult, tenantsResult, landlordsResult, officesResult, bulkRequestsResult] = await Promise.all([
+        propertiesQuery,
+        roomsQuery,
+        leasesQuery,
+        tenantsQuery,
         landlordsPromise,
         officesPromise,
         db
