@@ -103,10 +103,25 @@ function collectionRecordedTime(row: CollectionRow) {
 }
 
 function collectionEmployeeId(row: CollectionEmployeeRow, userById: Map<string, { employee_id?: string | null }>) {
+    if (String(row.type ?? "").toUpperCase() === "ADMIN_CAPITAL_INJECTION") return null;
     const directId = row.collected_by_employee_id ?? row.prepared_by_employee_id ?? row.recorded_by_employee_id;
     if (directId) return String(directId);
     const userId = row.recorded_by ?? row.entered_by_account_id;
     return userId ? userById.get(String(userId))?.employee_id ?? row.collector_id ?? null : row.collector_id ?? null;
+}
+
+function collectionSourceKey(row: CollectionRow) {
+    const type = String(row.type ?? "").toUpperCase();
+    if (type === "ADMIN_CAPITAL_INJECTION") return "admin_capital_injection";
+    if (type === "ADMIN_CASH_TRANSFER") return "other";
+    return "tenant";
+}
+
+function collectionSourceLabel(row: CollectionRow) {
+    const key = collectionSourceKey(row);
+    if (key === "admin_capital_injection") return "Admin Capital Injection";
+    if (key === "other") return "Other Sources";
+    return "Tenant Collections";
 }
 
 function isRealActiveEmployee(employee: EmployeeOptionRow | null | undefined, linkedUser?: { account_type?: string | null } | null) {
@@ -303,6 +318,7 @@ export async function getFastPaymentRecentPayments(paymentDate: string, options?
 
     const payments = rows.map((row): FastPaymentRecentItem => {
         const isAdminCashTransfer = String(row.type ?? "").toUpperCase() === "ADMIN_CASH_TRANSFER";
+        const isAdminCapitalInjection = String(row.type ?? "").toUpperCase() === "ADMIN_CAPITAL_INJECTION";
         const room = row.room_id ? roomById.get(row.room_id) : null;
         const tenant = row.tenant_id ? tenantById.get(row.tenant_id) : null;
         const office = row.office_id ? officeById.get(row.office_id) : null;
@@ -321,12 +337,12 @@ export async function getFastPaymentRecentPayments(paymentDate: string, options?
             paymentDate: collectionPaymentDate(row),
             roomId: row.room_id ?? null,
             tenantId: row.tenant_id ?? null,
-            roomNumber: isAdminCashTransfer ? "Office cash" : room?.room_number ?? "Unknown room",
-            tenantName: isAdminCashTransfer ? "Cash from Admin" : tenant?.full_name ?? "Unnamed tenant",
-            landlordName: isAdminCashTransfer ? "Treasury" : landlord?.full_name ?? "No landlord",
+            roomNumber: isAdminCashTransfer || isAdminCapitalInjection ? "Office cash" : room?.room_number ?? "Unknown room",
+            tenantName: isAdminCapitalInjection ? "Admin Capital Injection" : isAdminCashTransfer ? "Cash from Admin" : tenant?.full_name ?? "Unnamed tenant",
+            landlordName: isAdminCashTransfer || isAdminCapitalInjection ? "Treasury" : landlord?.full_name ?? "No landlord",
             officeName: office?.office_name ?? office?.name ?? "No office",
             amount: collectionAmount(row),
-            method: isAdminCashTransfer ? "Admin Cash Transfer" : row.payment_method ?? "payment",
+            method: isAdminCapitalInjection ? "Admin Capital Injection" : isAdminCashTransfer ? "Admin Cash Transfer" : row.payment_method ?? "payment",
             paymentType: row.type ?? "rent",
             recordedBy: user?.full_name ?? "System",
             balanceAfter: Number(row.balance ?? 0),
@@ -630,6 +646,7 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
     const roomFilter = normalizeCollectionFilter(filters.room);
     const tenantFilter = normalizeCollectionFilter(filters.tenant);
     const employeeFilterId = isAdmin ? String(filters.employeeId ?? "").trim() : "";
+    const collectionSourceFilter = isAdmin ? String(filters.collectionSource ?? "").trim() : "";
 
     const collectionRowsWithEmployees = collections.map((row) => ({
         collection: row,
@@ -661,8 +678,10 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
 
     const rows: CollectionReportRow[] = collectionRowsWithEmployees
         .filter(({ employeeId }) => !employeeFilterId || employeeId === employeeFilterId)
+        .filter(({ collection }) => !collectionSourceFilter || collectionSourceKey(collection) === collectionSourceFilter)
         .map(({ collection: row, employeeId }) => {
             const isAdminCashTransfer = String(row.type ?? "").toUpperCase() === "ADMIN_CASH_TRANSFER";
+            const isAdminCapitalInjection = String(row.type ?? "").toUpperCase() === "ADMIN_CAPITAL_INJECTION";
             const room = row.room_id ? roomById.get(row.room_id) : null;
             const tenant = row.tenant_id ? tenantById.get(row.tenant_id) : null;
             const office = row.office_id ? officeById.get(row.office_id) : null;
@@ -682,13 +701,14 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
                 paidAt: row.paid_at,
                 date: collectionPaymentDate(row),
                 time: businessTimeOnly(collectionRecordedTime(row)),
-                roomNumber: isAdminCashTransfer ? "Office cash" : room?.room_number ?? "Unknown room",
-                tenantName: isAdminCashTransfer ? "Cash from Admin" : tenant?.full_name ?? "Unnamed tenant",
-                landlordName: isAdminCashTransfer ? "Treasury" : landlord?.full_name ?? "No landlord",
+                roomNumber: isAdminCashTransfer || isAdminCapitalInjection ? "Office cash" : room?.room_number ?? "Unknown room",
+                tenantName: isAdminCapitalInjection ? "Admin Capital Injection" : isAdminCashTransfer ? "Cash from Admin" : tenant?.full_name ?? "Unnamed tenant",
+                landlordName: isAdminCashTransfer || isAdminCapitalInjection ? "Treasury" : landlord?.full_name ?? "No landlord",
                 officeName: office?.office_name ?? office?.name ?? (row.office_id ? officeNameById.get(row.office_id) : null) ?? "No office",
                 amountPaid: collectionAmount(row),
                 remainingBalance: Number(row.balance ?? 0),
-                paymentMethod: isAdminCashTransfer ? "Admin Cash Transfer" : row.payment_method ?? "payment",
+                paymentMethod: isAdminCapitalInjection ? "Admin Capital Injection" : isAdminCashTransfer ? "Admin Cash Transfer" : row.payment_method ?? "payment",
+                collectionSource: collectionSourceLabel(row),
                 recordedBy: employeeId ? employeeById.get(employeeId)?.full_name ?? user?.full_name ?? user?.email ?? "System" : user?.full_name ?? user?.email ?? "System",
                 status: row.status ?? "paid",
             };
@@ -1363,7 +1383,7 @@ async function hydrateFastPaymentRpcResults(rows: Array<Record<string, unknown>>
             .select("*")
             .eq("company_id", companyId)
             .in("office_id", officeIds)
-            .eq("type", "ADMIN_CASH_TRANSFER")
+            .in("type", ["ADMIN_CASH_TRANSFER", "ADMIN_CAPITAL_INJECTION"])
             .gte("payment_date", monthStart)
             .lt("payment_date", nextMonth)
             .order("payment_date", { ascending: false })

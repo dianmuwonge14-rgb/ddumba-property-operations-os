@@ -77,8 +77,8 @@ test("admin money to office uses the atomic transfer RPC and defaults to Admin C
   assert.match(giveMoneyBody, /p_office_id: input\.officeId/);
   assert.match(giveMoneyBody, /p_source: input\.source/);
   assert.doesNotMatch(giveMoneyBody, /\.from\("cash_transfers"\)\s*\.insert\(\{/);
-  assert.match(component, /source: "admin_cash" as "bank" \| "admin_cash"/);
-  assert.match(component, /optionValues=\{\["bank", "admin_cash"\]\}/);
+  assert.match(component, /source: "admin_cash" as "bank" \| "admin_cash" \| "admin_capital_injection"/);
+  assert.match(component, /optionValues=\{\["bank", "admin_cash", "admin_capital_injection"\]\}/);
   assert.match(migration, /create or replace function public\.ddumba_v1_admin_cash_transfer_to_office/);
   assert.match(migration, /pg_advisory_xact_lock/);
   assert.match(migration, /raise exception '% is insufficient\. Available: UGX %\.'/);

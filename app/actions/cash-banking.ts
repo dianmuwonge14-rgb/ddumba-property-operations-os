@@ -68,7 +68,7 @@ type TreasuryDecisionInput = {
 type GiveMoneyInput = {
     officeId: string;
     amount: number;
-    source: "bank" | "admin_cash";
+    source: "bank" | "admin_cash" | "admin_capital_injection";
     movementDate: string;
     backdatingReason?: string | null;
     reason: string;
@@ -536,7 +536,10 @@ export async function giveMoneyToOffice(input: GiveMoneyInput) {
         input.source,
         input.referenceNumber?.trim() || input.reason.trim().toLowerCase(),
     ].join(":");
-    const { data, error } = await (db as unknown as { rpc: (name: string, args?: Record<string, unknown>) => Promise<{ data: Record<string, unknown> | null; error: { message: string } | null }> }).rpc("ddumba_v1_admin_cash_transfer_to_office", {
+    const rpcName = input.source === "admin_capital_injection"
+        ? "ddumba_v1_admin_capital_injection_to_office"
+        : "ddumba_v1_admin_cash_transfer_to_office";
+    const { data, error } = await (db as unknown as { rpc: (name: string, args?: Record<string, unknown>) => Promise<{ data: Record<string, unknown> | null; error: { message: string } | null }> }).rpc(rpcName, {
         p_admin_id: actorId(context),
         p_amount: amount,
         p_company_id: companyId,
@@ -551,8 +554,9 @@ export async function giveMoneyToOffice(input: GiveMoneyInput) {
         p_reference: input.referenceNumber?.trim() || null,
         p_source: input.source,
     });
-    if (error) throw new Error(`Admin Cash Transfer to Office failed: ${error.message}`);
-    if (!data?.ok) throw new Error("Admin Cash Transfer to Office failed: Supabase RPC returned no success payload.");
+    const label = input.source === "admin_capital_injection" ? "Admin Capital Injection" : "Admin Cash Transfer to Office";
+    if (error) throw new Error(`${label} failed: ${error.message}`);
+    if (!data?.ok) throw new Error(`${label} failed: Supabase RPC returned no success payload.`);
 
     revalidateCashPages();
     return { ok: true, transferId: String(data.transfer_id ?? ""), duplicate: Boolean(data.duplicate), reference: String(data.reference ?? "") };

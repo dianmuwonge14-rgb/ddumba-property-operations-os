@@ -294,14 +294,17 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
 
     const ledgerRows: CashLedgerRow[] = [];
     for (const row of periodCollections) {
+        const collectionType = String(row.type ?? "").toUpperCase();
+        const isAdminCashTransfer = collectionType === "ADMIN_CASH_TRANSFER";
+        const isAdminCapitalInjection = collectionType === "ADMIN_CAPITAL_INJECTION";
         ledgerRows.push({
             id: `collection-${row.id}`,
             date: collectionDate(row),
             time: timeOnly(row.created_at ?? row.paid_at),
             officeId: row.office_id ?? null,
             officeName: officeById.get(row.office_id) ?? "Office",
-            transactionType: "collection",
-            label: "Tenant collection",
+            transactionType: isAdminCapitalInjection ? "admin_capital_injection" : isAdminCashTransfer ? "admin_float" : "collection",
+            label: isAdminCapitalInjection ? "Admin Capital Injection" : isAdminCashTransfer ? "Admin cash transfer" : "Tenant collection",
             amountIn: cashAmount(row),
             amountOut: 0,
             runningBalance: 0,

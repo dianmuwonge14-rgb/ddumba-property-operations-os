@@ -30,7 +30,7 @@ export type CashLedgerRow = {
     time: string;
     officeId: string | null;
     officeName: string;
-    transactionType: "collection" | "bank_deposit" | "admin_float" | "admin_cash" | "expense" | "cash_adjustment";
+    transactionType: "collection" | "bank_deposit" | "admin_float" | "admin_capital_injection" | "admin_cash" | "expense" | "cash_adjustment";
     label: string;
     amountIn: number;
     amountOut: number;

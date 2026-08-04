@@ -163,7 +163,7 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
     }
 
     function exportCsv() {
-        const headers = ["Date", "Time", "Receipt", "Room", "Tenant", "Landlord", "Office", "Amount Paid", "Remaining Balance", "Payment Method", "Recorded By", "Status"];
+        const headers = ["Date", "Time", "Receipt", "Room", "Tenant", "Landlord", "Office", "Amount Paid", "Remaining Balance", "Payment Method", "Collection Source", "Recorded By", "Status"];
         const lines = [
             headers.map(escapeCsv).join(","),
             ...report.rows.map((row) => [
@@ -177,6 +177,7 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                 row.amountPaid,
                 row.remainingBalance,
                 row.paymentMethod,
+                row.collectionSource,
                 row.recordedBy,
                 row.status,
             ].map(escapeCsv).join(",")),
@@ -191,6 +192,12 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
     }
 
     const methodOptions = ["", "cash", "bank", "mobile money", "cheque"];
+    const sourceOptions = [
+        { value: "", label: "All" },
+        { value: "tenant", label: "Tenant Collections" },
+        { value: "admin_capital_injection", label: "Admin Capital Injection" },
+        { value: "other", label: "Other Sources" },
+    ];
 
     return (
         <main className="min-h-screen bg-[#07111f] px-4 py-5 text-white sm:px-6 lg:px-8">
@@ -281,6 +288,22 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                                 ))}
                             </select>
                         </label>
+                        {initialData.isAdmin ? (
+                            <label className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55">
+                                Collection Source
+                                <select
+                                    value={filters.collectionSource ?? ""}
+                                    onChange={(event) => updateFilter("collectionSource", event.target.value)}
+                                    className="mt-1 h-10 w-full rounded-md border border-white/10 bg-slate-950 px-3 text-sm text-white outline-none focus:border-sky-300"
+                                >
+                                    {sourceOptions.map((source) => (
+                                        <option key={source.value || "all"} value={source.value} className="bg-slate-950 text-white">
+                                            {source.label}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                        ) : null}
                         <label className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55">
                             Single month
                             <input
@@ -637,6 +660,7 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                                     <th className="px-4 py-3 text-right">Amount Paid</th>
                                     <th className="px-4 py-3 text-right">Remaining Balance</th>
                                     <th className="px-4 py-3">Method</th>
+                                    <th className="px-4 py-3">Source</th>
                                     <th className="px-4 py-3">Recorded By</th>
                                     <th className="px-4 py-3">Status</th>
                                     <th className="px-4 py-3">Actions</th>
@@ -655,6 +679,7 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                                         <td className="whitespace-nowrap px-4 py-3 text-right font-semibold text-emerald-200">{formatMoney(row.amountPaid)}</td>
                                         <td className="whitespace-nowrap px-4 py-3 text-right text-amber-100">{formatMoney(row.remainingBalance)}</td>
                                         <td className="whitespace-nowrap px-4 py-3 text-white/65">{row.paymentMethod}</td>
+                                        <td className="whitespace-nowrap px-4 py-3 text-white/65">{row.collectionSource}</td>
                                         <td className="whitespace-nowrap px-4 py-3 text-white/65">{row.recordedBy}</td>
                                         <td className="whitespace-nowrap px-4 py-3">
                                             <span className="rounded-full border border-emerald-200/20 bg-emerald-300/10 px-2 py-1 text-xs font-semibold text-emerald-100">{row.status}</span>
@@ -758,6 +783,7 @@ function PrintPreview({ report, onClose }: { report: CollectionReportData; onClo
                                 <th className="border border-slate-200 px-2 py-2 text-right">Paid</th>
                                 <th className="border border-slate-200 px-2 py-2 text-right">Balance</th>
                                 <th className="border border-slate-200 px-2 py-2">Method</th>
+                                <th className="border border-slate-200 px-2 py-2">Source</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -771,6 +797,7 @@ function PrintPreview({ report, onClose }: { report: CollectionReportData; onClo
                                     <td className="border border-slate-200 px-2 py-2 text-right font-semibold">{formatMoney(row.amountPaid)}</td>
                                     <td className="border border-slate-200 px-2 py-2 text-right">{formatMoney(row.remainingBalance)}</td>
                                     <td className="border border-slate-200 px-2 py-2">{row.paymentMethod}</td>
+                                    <td className="border border-slate-200 px-2 py-2">{row.collectionSource}</td>
                                 </tr>
                             ))}
                         </tbody>
@@ -779,7 +806,7 @@ function PrintPreview({ report, onClose }: { report: CollectionReportData; onClo
                                 <td colSpan={5} className="border border-slate-200 px-2 py-2">Totals</td>
                                 <td className="border border-slate-200 px-2 py-2 text-right">{formatMoney(report.totals.totalAmount)}</td>
                                 <td className="border border-slate-200 px-2 py-2 text-right">{formatMoney(report.totals.outstandingBalanceRemaining)}</td>
-                                <td className="border border-slate-200 px-2 py-2">{report.totals.paymentCount} rows</td>
+                                <td colSpan={2} className="border border-slate-200 px-2 py-2">{report.totals.paymentCount} rows</td>
                             </tr>
                         </tfoot>
                     </table>

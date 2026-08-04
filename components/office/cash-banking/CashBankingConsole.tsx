@@ -65,7 +65,7 @@ export default function CashBankingConsole({ data }: Props) {
     const [floatForm, setFloatForm] = useState({
         officeId: data.offices[0]?.id ?? "",
         amount: "",
-        source: "admin_cash" as "bank" | "admin_cash",
+        source: "admin_cash" as "bank" | "admin_cash" | "admin_capital_injection",
         movementDate: today(),
         reason: "",
         referenceNumber: "",
@@ -338,7 +338,7 @@ export default function CashBankingConsole({ data }: Props) {
                                     <Select label="Choose Office" value={floatForm.officeId} onChange={(value) => setFloatForm((current) => ({ ...current, officeId: value }))} options={data.offices.map((office) => office.name)} optionValues={data.offices.map((office) => office.id)} />
                                     <Input label="Amount to Send" value={floatForm.amount} onChange={(value) => setFloatForm((current) => ({ ...current, amount: value }))} type="number" />
                                     <Input label="Current Date" value={floatForm.movementDate} onChange={() => undefined} type="date" readOnly />
-                                    <Select label="Source" value={floatForm.source} onChange={(value) => setFloatForm((current) => ({ ...current, source: value as "bank" | "admin_cash" }))} options={["Bank Account", "Admin Cash"]} optionValues={["bank", "admin_cash"]} />
+                                    <Select label="Source" value={floatForm.source} onChange={(value) => setFloatForm((current) => ({ ...current, source: value as "bank" | "admin_cash" | "admin_capital_injection" }))} options={["Bank Account", "Admin Cash", "Admin Capital Injection"]} optionValues={["bank", "admin_cash", "admin_capital_injection"]} />
                                     <Input label="Reference" value={floatForm.referenceNumber} onChange={(value) => setFloatForm((current) => ({ ...current, referenceNumber: value }))} />
                                     <Input label="Notes" value={floatForm.notes} onChange={(value) => setFloatForm((current) => ({ ...current, notes: value }))} />
                                     <button disabled={isPending || !floatForm.officeId} onClick={submitFloat} className="mt-5 inline-flex h-[46px] items-center justify-center gap-2 rounded-2xl bg-blue-300 px-5 text-sm font-black text-slate-950 shadow-lg shadow-blue-900/20 transition hover:bg-blue-200 disabled:opacity-60">

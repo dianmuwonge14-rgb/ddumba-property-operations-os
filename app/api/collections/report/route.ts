@@ -18,6 +18,7 @@ function readFilters(request: NextRequest): CollectionReportFilters {
         room: search.get("room") ?? undefined,
         tenant: search.get("tenant") ?? undefined,
         paymentMethod: search.get("paymentMethod") ?? undefined,
+        collectionSource: (search.get("collectionSource") as CollectionReportFilters["collectionSource"]) ?? undefined,
     };
 }
 

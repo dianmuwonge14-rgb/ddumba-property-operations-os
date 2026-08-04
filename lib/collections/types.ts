@@ -131,6 +131,7 @@ export type CollectionReportFilters = {
     tenant?: string;
     paymentMethod?: string;
     employeeId?: string;
+    collectionSource?: "tenant" | "admin_capital_injection" | "other" | "";
 };
 
 export type CollectionReportRow = {
@@ -147,6 +148,7 @@ export type CollectionReportRow = {
     amountPaid: number;
     remainingBalance: number;
     paymentMethod: string;
+    collectionSource: string;
     recordedBy: string;
     status: string;
 };
