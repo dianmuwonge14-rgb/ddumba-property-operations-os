@@ -202,6 +202,7 @@ export type CollectionReportData = {
     employeeOptions: CollectionEmployeeOption[];
     selectedEmployeeSummary: EmployeeCollectionSummary | null;
     employeePerformance: EmployeeCollectionPerformance[];
+    canUseEmployeeFilter: boolean;
     filters: Required<Pick<CollectionReportFilters, "singleDate">> & CollectionReportFilters;
     generatedAt: string;
     generatedBy: string;

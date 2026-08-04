@@ -17,6 +17,7 @@ test("admin collections report supports stable employee filters and summaries", 
     "employeeOptions",
     "selectedEmployeeSummary",
     "employeePerformance",
+    "canUseEmployeeFilter",
   ]) {
     assert.match(typesSource, new RegExp(token));
   }
@@ -34,6 +35,18 @@ test("admin collections report supports stable employee filters and summaries", 
   assert.match(dataSource, /uniqueFinanciallyEffectiveCollections/);
   assert.doesNotMatch(dataSource, /\[\.\.\.new Set\(collectionRowsWithEmployees\.map\(\(row\) => row\.employeeId\)/);
   assert.match(dataSource, /const employeeRows = grouped\.get\(employeeId\) \?\? \[\]/);
+});
+
+test("office receptionist collections report exposes only office-scoped employee filters", () => {
+  assert.match(dataSource, /const canUseEmployeeFilter = isAdmin \|\| Boolean\(officeId\)/);
+  assert.match(dataSource, /employeeFilterId = canUseEmployeeFilter \? String\(filters\.employeeId/);
+  assert.match(dataSource, /\.from\("user_office_roles"\)[\s\S]*\.eq\("office_id", officeId\)/);
+  assert.match(dataSource, /officeAssignedEmployeeIds/);
+  assert.match(dataSource, /isAdmin[\s\S]*directEmployeeIds[\s\S]*collectionUserEmployeeIds[\s\S]*officeAssignedEmployeeIds/);
+  assert.match(uiSource, /report\.canUseEmployeeFilter \? \(/);
+  assert.match(uiSource, /All Office Employees/);
+  assert.match(uiSource, /All Office Employees Collection Performance/);
+  assert.doesNotMatch(uiSource, /initialData\.isAdmin && report\.selectedEmployeeSummary/);
 });
 
 test("collections UI exposes employee filter, totals and drill-down without redesigning the page", () => {

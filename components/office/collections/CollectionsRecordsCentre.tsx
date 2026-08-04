@@ -348,7 +348,7 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                                 </select>
                             </label>
                         ) : null}
-                        {initialData.isAdmin ? (
+                        {report.canUseEmployeeFilter ? (
                             <label className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55">
                                 Employee / Collected By
                                 <div className="mt-1 grid gap-2">
@@ -366,7 +366,7 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                                         onChange={(event) => updateFilter("employeeId", event.target.value)}
                                         className="h-10 w-full rounded-md border border-white/10 bg-slate-950 px-3 text-sm text-white outline-none focus:border-sky-300"
                                     >
-                                        <option value="" className="bg-slate-950 text-white">All Employees</option>
+                                        <option value="" className="bg-slate-950 text-white">{initialData.isAdmin ? "All Employees" : "All Office Employees"}</option>
                                         {visibleEmployeeOptions.map((employee) => (
                                             <option key={employee.id} value={employee.id} className="bg-slate-950 text-white">
                                                 {employee.name} · {employee.role} · {employee.officeName}
@@ -562,7 +562,7 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                     <StatCard label="Outstanding" value={formatMoney(report.totals.outstandingBalanceRemaining)} hint="Remaining balance from visible rows" tone="amber" />
                 </section>
 
-                {initialData.isAdmin && report.selectedEmployeeSummary ? (
+                {report.canUseEmployeeFilter && report.selectedEmployeeSummary ? (
                     <section className="rounded-xl border border-emerald-300/20 bg-emerald-400/[0.06] p-4">
                         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                             <div>
@@ -591,11 +591,11 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                     </section>
                 ) : null}
 
-                {initialData.isAdmin && !filters.employeeId && sortedEmployeePerformance.length ? (
+                {report.canUseEmployeeFilter && !filters.employeeId && sortedEmployeePerformance.length ? (
                     <section className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <div>
-                                <h2 className="text-base font-semibold text-white">All Employees Collection Performance</h2>
+                                <h2 className="text-base font-semibold text-white">{initialData.isAdmin ? "All Employees Collection Performance" : "All Office Employees Collection Performance"}</h2>
                                 <p className="text-xs text-white/50">Real employee-linked collection totals for the selected filters.</p>
                             </div>
                             <select
