@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { AlertTriangle, Banknote, Bot, CheckCircle2, Download, Edit3, Eye, FileText, History, Loader2, Printer, ReceiptText, Search, Trash2, UserRound, WalletCards, X } from "lucide-react";
 import { decideTreasuryCashRequest, submitTreasuryCashRequest } from "@/app/actions/cash-banking";
-import { adminEditExpenseDirect, adminSafeDeleteExpense, approveExpense, createEmployeeExpenseFromExpenses, createExpense, createLandlordPaidExpenseRequest, decideEmployeeExpenseRequest, decideExpenseChangeRequest, decideLandlordExpenseEditRequest, previewEmployeeExpense, previewLandlordPaymentExpense, rejectExpense, submitExpenseChangeRequest, submitLandlordExpenseEdit } from "@/app/actions/expenses";
+import { adminEditExpenseDirect, adminSafeDeleteExpense, approveExpense, createEmployeeExpenseFromExpenses, createExpense, createLandlordPaidExpenseRequest, decideEmployeeExpenseRequest, decideExpenseChangeRequest, decideLandlordExpenseEditRequest, decideLandlordPaidExpenseRequest, previewEmployeeExpense, previewLandlordPaymentExpense, rejectExpense, submitExpenseChangeRequest, submitLandlordExpenseEdit } from "@/app/actions/expenses";
 import { currentBusinessDate, formatBusinessDate } from "@/lib/business-date";
 import type { EmployeeExpensePreview, ExpenseBalanceReport, ExpenseChangePayload, ExpenseItem, ExpensePeriodMode, ExpensesPageData, LandlordExpenseEditRequestType } from "@/lib/expenses/types";
 
@@ -2211,7 +2212,11 @@ function AgreementField({ children, label }: { children: ReactNode; label: strin
 }
 
 function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requests }: { activeOfficeName: string; isAdmin: boolean; offices: ExpensesPageData["offices"]; requests: ExpensesPageData["landlordPaymentRequests"] }) {
+    const router = useRouter();
     const [filters, setFilters] = useState<RecordTableFilters>(() => defaultRecordTableFilters());
+    const [isPending, startTransition] = useTransition();
+    const [message, setMessage] = useState<string | null>(null);
+    const [pendingDecisionId, setPendingDecisionId] = useState<string | null>(null);
     const [selected, setSelected] = useState<ExpensesPageData["landlordPaymentRequests"][number] | null>(null);
     const range = useMemo(() => resolveRecordFilterRange(filters), [filters]);
     const visibleRequests = useMemo(() => requests.filter((request) => {
@@ -2220,12 +2225,39 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
     }), [filters.officeId, isAdmin, range, requests]);
     const total = useMemo(() => visibleRequests.reduce((sum, request) => sum + Number(request.amount ?? 0), 0), [visibleRequests]);
     const officeLabel = isAdmin && filters.officeId ? offices.find((office) => office.id === filters.officeId)?.name ?? "Selected office" : isAdmin ? "All Offices" : activeOfficeName;
+    function decide(request: ExpensesPageData["landlordPaymentRequests"][number], decision: "approved" | "rejected") {
+        if (pendingDecisionId) return;
+        const comment = decision === "rejected"
+            ? window.prompt("Enter the rejection reason for this landlord payment request.") ?? ""
+            : window.prompt("Confirm approval note. Leave blank if not needed.") ?? "";
+        if (decision === "rejected" && !comment.trim()) {
+            setMessage("A rejection reason is required.");
+            return;
+        }
+        setMessage(null);
+        setPendingDecisionId(request.id);
+        startTransition(async () => {
+            try {
+                await decideLandlordPaidExpenseRequest({ requestId: request.id, decision, comment });
+                setMessage(decision === "approved"
+                    ? `Landlord payment of ${money(request.amount)} for ${request.landlordName} was approved successfully.`
+                    : `Landlord payment request for ${request.landlordName} was rejected.`);
+                setSelected(null);
+                router.refresh();
+            } catch (error) {
+                setMessage(error instanceof Error ? error.message : "Unable to process landlord payment request.");
+            } finally {
+                setPendingDecisionId(null);
+            }
+        });
+    }
     if (!requests.length) return null;
     return (
         <section className="mx-auto mt-5 max-w-6xl overflow-hidden rounded-[26px] border border-white/70 bg-white shadow-2xl shadow-slate-950/15">
             <div className="border-b border-slate-200 px-4 py-3">
                 <p className="text-xs font-black uppercase tracking-wide text-amber-600">Landlord payment approval queue</p>
                 <h2 className="text-lg font-black text-slate-950">Expense-routed Landlord Payments</h2>
+                {message ? <p className="mt-2 rounded-2xl border border-amber-100 bg-amber-50 px-3 py-2 text-sm font-black text-slate-800">{message}</p> : null}
                 <RecordTableFilterBar
                     activeOfficeName={activeOfficeName}
                     filters={filters}
@@ -2254,25 +2286,41 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
                         </tr>
                     </thead>
                     <tbody>
-                        {visibleRequests.map((request) => (
-                            <tr key={`landlord-payment-expense-request:${request.id}`} onClick={() => setSelected(request)} className="cursor-pointer border-b border-slate-100 hover:bg-amber-50/70">
-                                <td className="px-4 py-3 font-bold text-slate-500">{request.paymentDate}</td>
-                                <td className="px-4 py-3 font-black text-slate-950">{request.landlordName}</td>
-                                <td className="px-4 py-3 font-bold text-slate-500">{request.officeName}</td>
-                                <td className="px-4 py-3 text-right font-black text-slate-950">{money(request.amount)}</td>
-                                <td className="px-4 py-3 text-right font-black text-emerald-700">{money(request.cashPaymentAmount)}</td>
-                                <td className="px-4 py-3 text-right font-black text-indigo-700">{money(request.advanceRecoveryAmount)}</td>
-                                <td className="px-4 py-3 text-right font-black text-amber-700">{money(request.advanceAmount)}</td>
-                                <td className="px-4 py-3 font-bold capitalize text-slate-500">{request.paymentMethod.replaceAll("_", " ")}</td>
-                                <td className="px-4 py-3"><StatusBadge status={request.status} /></td>
-                                <td className="px-4 py-3 font-bold text-slate-500">{request.adminComment ?? request.notes ?? "No comment"}</td>
-                                <td className="px-4 py-3">
-                                    <button type="button" onClick={(event) => { event.stopPropagation(); setSelected(request); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-amber-100">
-                                        View
-                                    </button>
-                                </td>
-                            </tr>
-                        ))}
+                        {visibleRequests.map((request) => {
+                            const busy = isPending && pendingDecisionId === request.id;
+                            const isPendingRequest = String(request.status).toLowerCase() === "pending";
+                            return (
+                                <tr key={`landlord-payment-expense-request:${request.id}`} onClick={() => setSelected(request)} className="cursor-pointer border-b border-slate-100 hover:bg-amber-50/70">
+                                    <td className="px-4 py-3 font-bold text-slate-500">{request.paymentDate}</td>
+                                    <td className="px-4 py-3 font-black text-slate-950">{request.landlordName}</td>
+                                    <td className="px-4 py-3 font-bold text-slate-500">{request.officeName}</td>
+                                    <td className="px-4 py-3 text-right font-black text-slate-950">{money(request.amount)}</td>
+                                    <td className="px-4 py-3 text-right font-black text-emerald-700">{money(request.cashPaymentAmount)}</td>
+                                    <td className="px-4 py-3 text-right font-black text-indigo-700">{money(request.advanceRecoveryAmount)}</td>
+                                    <td className="px-4 py-3 text-right font-black text-amber-700">{money(request.advanceAmount)}</td>
+                                    <td className="px-4 py-3 font-bold capitalize text-slate-500">{request.paymentMethod.replaceAll("_", " ")}</td>
+                                    <td className="px-4 py-3"><StatusBadge status={request.status} /></td>
+                                    <td className="px-4 py-3 font-bold text-slate-500">{request.adminComment ?? request.notes ?? "No comment"}</td>
+                                    <td className="px-4 py-3">
+                                        <div className="flex flex-wrap gap-2">
+                                            <button type="button" onClick={(event) => { event.stopPropagation(); setSelected(request); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-amber-100">
+                                                View
+                                            </button>
+                                            {isAdmin && isPendingRequest ? (
+                                                <>
+                                                    <button type="button" disabled={isPending} onClick={(event) => { event.stopPropagation(); decide(request, "approved"); }} className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-black text-white shadow-lg shadow-emerald-900/15 hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus:ring-4 focus:ring-emerald-100">
+                                                        {busy ? "Approving..." : "Approve"}
+                                                    </button>
+                                                    <button type="button" disabled={isPending} onClick={(event) => { event.stopPropagation(); decide(request, "rejected"); }} className="rounded-xl bg-rose-700 px-3 py-2 text-xs font-black text-white shadow-lg shadow-rose-900/15 hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus:ring-4 focus:ring-rose-100">
+                                                        Reject
+                                                    </button>
+                                                </>
+                                            ) : null}
+                                        </div>
+                                    </td>
+                                </tr>
+                            );
+                        })}
                     </tbody>
                 </table>
             </div>

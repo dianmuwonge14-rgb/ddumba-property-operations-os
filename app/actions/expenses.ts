@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireAuth, requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissions";
+import { hasPermission, requireAuth, requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
 import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createLandlordPaymentReceipt } from "@/lib/receipts/payment-receipts";
@@ -121,6 +121,31 @@ function currentExpenseDate(context: Awaited<ReturnType<typeof requireAuth>>, va
         currentDateMessage: "Expenses can only be recorded for the current date.",
         entryLabel: "Expense",
     });
+}
+
+function landlordPaymentRequestStateMessage(status: unknown) {
+    const normalized = String(status ?? "").trim().toLowerCase();
+    if (normalized === "approved") return "This landlord payment has already been approved.";
+    if (normalized === "rejected") return "This landlord payment request has already been rejected.";
+    if (normalized === "cancelled") return "This landlord payment request has been cancelled.";
+    if (normalized === "failed") return "This landlord payment approval previously failed. Review the failure note before trying again.";
+    if (normalized === "processing") return "This landlord payment approval is already being processed.";
+    return "This landlord payment request has already been reviewed.";
+}
+
+function landlordPaymentBusinessError(error: unknown) {
+    const raw = error instanceof Error ? error.message : String(error ?? "Unable to process landlord payment request.");
+    const message = raw.toLowerCase();
+    if (message.includes("current date")) return "Approval failed because the request date is outside the permitted financial-entry date rules. Admin backdating migration or a backdating reason is required.";
+    if (message.includes("backdating reason")) return "A backdating reason is required before approving this backdated landlord payment.";
+    if (message.includes("only admin may")) return "Only Admin may approve a past-date landlord payment.";
+    if (message.includes("future-dated")) return "The selected payment date is invalid because future-dated entries are not permitted.";
+    if (message.includes("duplicate") || message.includes("unique")) return "A duplicate landlord payment already exists.";
+    if (message.includes("permission") || message.includes("not authorized") || message.includes("unauthorized")) return "You do not have permission to approve landlord payments.";
+    if (message.includes("violates foreign key")) return "Approval failed because a linked landlord, office, or payable record no longer exists.";
+    if (message.includes("no live monthly payable")) return "No live monthly payable record was found for this landlord payment.";
+    if (message.includes("office cash")) return raw;
+    return raw || "Unable to process landlord payment request.";
 }
 
 function validUuid(value: unknown): value is string {
@@ -1356,6 +1381,9 @@ export async function decideEmployeeExpenseRequest(input: DecideEmployeeExpenseR
 
 export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaidExpenseRequestInput) {
     const context = await requireCompanyAdminMode();
+    if (!hasPermission(context, "landlord_payments.approve")) {
+        throw new Error("You do not have permission to approve landlord payments.");
+    }
     const db = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
     const companyId = context.activeCompany?.id;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
@@ -1363,18 +1391,19 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
     if (!companyId) throw new Error("Active company is required.");
     if (!input.requestId) throw new Error("Request id is required.");
 
-    const { data: request, error: requestError } = await db
+    const { data: loadedRequest, error: requestError } = await db
         .from("landlord_payment_expense_requests")
         .select("*")
         .eq("id", input.requestId)
         .eq("company_id", companyId)
         .maybeSingle();
     if (requestError) throw new Error(requestError.message);
-    if (!request) throw new Error("Landlord payment request not found.");
-    if (request.status !== "pending") throw new Error("This landlord payment request has already been reviewed.");
+    if (!loadedRequest) throw new Error("Landlord payment request not found.");
+    if (loadedRequest.status !== "pending") throw new Error(landlordPaymentRequestStateMessage(loadedRequest.status));
 
     const reviewedAt = new Date().toISOString();
     if (input.decision === "rejected") {
+        if (!input.comment?.trim()) throw new Error("A rejection reason is required.");
         const { data, error } = await db
             .from("landlord_payment_expense_requests")
             .update({
@@ -1385,38 +1414,67 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
                 admin_comment: input.comment || null,
                 updated_at: reviewedAt,
             })
-            .eq("id", request.id)
+            .eq("id", loadedRequest.id)
             .eq("status", "pending")
             .select("*")
             .maybeSingle();
         if (error) throw new Error(error.message);
-        if (!data) throw new Error("This landlord payment request has already been reviewed.");
+        if (!data) throw new Error(landlordPaymentRequestStateMessage(loadedRequest.status));
         await markLandlordPaymentApprovalNotificationsReviewed(db, {
             companyId,
-            requestId: request.id,
+            requestId: loadedRequest.id,
             reviewedAt,
         });
         await createOfficeDecisionNotification(db, {
             companyId,
-            officeId: request.office_id,
-            requestId: request.id,
+            officeId: loadedRequest.office_id,
+            requestId: loadedRequest.id,
             title: "Landlord payment rejected",
-            message: `Admin rejected landlord payment of UGX ${Math.round(Number(request.requested_amount ?? 0)).toLocaleString()}${input.comment ? `: ${input.comment}` : "."}`,
+            message: `Admin rejected landlord payment of UGX ${Math.round(Number(loadedRequest.requested_amount ?? 0)).toLocaleString()}${input.comment ? `: ${input.comment}` : "."}`,
             severity: "error",
         });
         await logUserAction({
             action: "landlord_payment_expense_rejected",
             entityType: "landlord_payment_expense_request",
-            entityId: request.id,
+            entityId: loadedRequest.id,
             companyId,
-            officeId: request.office_id,
-            beforeData: request,
+            officeId: loadedRequest.office_id,
+            beforeData: loadedRequest,
             afterData: data,
         });
         revalidateExpenseSurfaces();
         return data;
     }
 
+    const { data: request, error: claimError } = await db
+        .from("landlord_payment_expense_requests")
+        .update({
+            reviewed_by: actorId,
+            reviewed_at: reviewedAt,
+            admin_comment: input.comment || null,
+            updated_at: reviewedAt,
+        })
+        .eq("id", loadedRequest.id)
+        .eq("company_id", companyId)
+        .eq("status", "pending")
+        .is("reviewed_at", null)
+        .select("*")
+        .maybeSingle();
+    if (claimError) throw new Error(claimError.message);
+    if (!request) {
+        const { data: currentRequest } = await db
+            .from("landlord_payment_expense_requests")
+            .select("status, reviewed_at")
+            .eq("id", loadedRequest.id)
+            .eq("company_id", companyId)
+            .maybeSingle();
+        if (currentRequest?.status && currentRequest.status !== "pending") {
+            throw new Error(landlordPaymentRequestStateMessage(currentRequest.status));
+        }
+        throw new Error("This landlord payment approval is already being processed.");
+    }
+
+    try {
     const reference = `EXP-LP-${request.id.slice(0, 8)}`;
     const storedNormalPaymentAmount = Math.max(0, Number(request.normal_payment_amount ?? 0));
     const storedAdvanceAmount = Math.max(0, Number(request.advance_amount ?? 0));
@@ -1467,26 +1525,82 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
     let approvedExpenseId: string | null = request.expense_id ?? null;
     let payableId = approvalPlan.currentMonthPayableId ?? approvalPlan.oldestUnpaidPayableId ?? request.monthly_payable_id ?? null;
 
-    const { data: approvedExpense, error: approvedExpenseError } = await db
-        .from("expenses")
-        .insert({
-            amount: requestedAmount,
-            approved_at: reviewedAt,
-            approved_by: expenseActorId,
-            category: "Landlord Paid",
-            company_id: companyId,
-            description: `[landlord_payment_approved] ${request.notes ?? ""} ${input.comment ? `Admin: ${input.comment}` : ""}`.trim(),
-            expense_date: request.payment_date ?? reviewedAt.slice(0, 10),
-            expense_number: expenseNumber(),
-            item: `Landlord Paid - approval ${request.id.slice(0, 8)}`,
-            office_id: request.office_id,
-            submitted_by: request.submitted_by ?? actorId,
-            vendor: null,
-        })
-        .select("id")
-        .single();
-    if (approvedExpenseError) throw new Error(approvedExpenseError.message);
-    approvedExpenseId = approvedExpense.id;
+    if (!approvedExpenseId) {
+        const expenseItem = `Landlord Paid - approval ${request.id.slice(0, 8)}`;
+        const existingExpense = await db
+            .from("expenses")
+            .select("id")
+            .eq("company_id", companyId)
+            .eq("office_id", request.office_id)
+            .eq("item", expenseItem)
+            .limit(1)
+            .maybeSingle();
+        if (existingExpense.error && !isMissingSchemaError(existingExpense.error)) throw new Error(existingExpense.error.message);
+        if (existingExpense.data?.id) {
+            approvedExpenseId = existingExpense.data.id;
+        } else {
+            let approvedExpenseInsert = await db
+                .from("expenses")
+                .insert({
+                    amount: requestedAmount,
+                    approved_at: reviewedAt,
+                    approved_by: actorId,
+                    backdated_by: actorId,
+                    backdating_reason: request.payment_date && request.payment_date < currentBusinessDate()
+                        ? "Admin approval of pending landlord payment request."
+                        : null,
+                    category: "Landlord Paid",
+                    company_id: companyId,
+                    description: [
+                        "[landlord_payment_approved]",
+                        request.notes ?? "",
+                        input.comment ? `Admin: ${input.comment}` : "",
+                        request.payment_date && request.payment_date < currentBusinessDate()
+                            ? `BACKDATED ADMIN ENTRY | Entered on: ${currentBusinessDate()} | Reason: Admin approval of pending landlord payment request.`
+                            : "",
+                    ].filter(Boolean).join(" ").trim(),
+                    entered_on_date: currentBusinessDate(),
+                    expense_date: request.payment_date ?? reviewedAt.slice(0, 10),
+                    expense_number: expenseNumber(),
+                    item: expenseItem,
+                    office_id: request.office_id,
+                    submitted_by: request.submitted_by ?? actorId,
+                    vendor: null,
+                })
+                .select("id")
+                .single();
+            if (approvedExpenseInsert.error && isMissingSchemaError(approvedExpenseInsert.error)) {
+                approvedExpenseInsert = await db
+                    .from("expenses")
+                    .insert({
+                        amount: requestedAmount,
+                        approved_at: reviewedAt,
+                        approved_by: expenseActorId,
+                        category: "Landlord Paid",
+                        company_id: companyId,
+                        description: [
+                            "[landlord_payment_approved]",
+                            request.notes ?? "",
+                            input.comment ? `Admin: ${input.comment}` : "",
+                            request.payment_date && request.payment_date < currentBusinessDate()
+                                ? `BACKDATED ADMIN ENTRY | Entered on: ${currentBusinessDate()} | Reason: Admin approval of pending landlord payment request.`
+                                : "",
+                        ].filter(Boolean).join(" ").trim(),
+                        expense_date: request.payment_date ?? reviewedAt.slice(0, 10),
+                        expense_number: expenseNumber(),
+                        item: expenseItem,
+                        office_id: request.office_id,
+                        submitted_by: request.submitted_by ?? actorId,
+                        vendor: null,
+                    })
+                    .select("id")
+                    .single();
+            }
+            const { data: approvedExpense, error: approvedExpenseError } = approvedExpenseInsert;
+            if (approvedExpenseError) throw new Error(approvedExpenseError.message);
+            approvedExpenseId = approvedExpense.id;
+        }
+    }
     await insertOptional(db, "office_cash_movements", {
         amount: requestedAmount,
         company_id: companyId,
@@ -1511,7 +1625,23 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
         transactionDate: request.payment_date ?? reviewedAt.slice(0, 10),
     });
 
-    if (normalPaymentAmount > 0) {
+    const existingApprovedPayment = await db
+        .from("landlord_payments")
+        .select("id")
+        .eq("company_id", companyId)
+        .eq("office_id", request.office_id)
+        .eq("landlord_id", request.landlord_id)
+        .eq("payout_reference", reference)
+        .limit(1)
+        .maybeSingle();
+    if (existingApprovedPayment.error && !isMissingSchemaError(existingApprovedPayment.error)) {
+        throw new Error(existingApprovedPayment.error.message);
+    }
+    if (existingApprovedPayment.data?.id) {
+        approvedPaymentId = existingApprovedPayment.data.id;
+    }
+
+    if (!approvedPaymentId && normalPaymentAmount > 0) {
         if (!payableId) {
             const payable = await findPayableForLandlordPayment({
                 companyId,
@@ -1541,7 +1671,7 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
             startingMonthlyPayableId: payableId,
             notes: `Approved from Expenses landlord payment request. ${request.notes ?? ""}`.trim(),
         });
-    } else if (approvalPlan.advanceRecoveryAmount > 0) {
+    } else if (!approvedPaymentId && approvalPlan.advanceRecoveryAmount > 0) {
         approvedPaymentId = await applyApprovedLandlordPaymentToLedger({
             advanceRecoveryAmount: approvalPlan.advanceRecoveryAmount,
             amount: 0,
@@ -1603,6 +1733,7 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
         .update(approvalUpdatePayload)
         .eq("id", request.id)
         .eq("status", "pending")
+        .eq("reviewed_at", reviewedAt)
         .select("*")
         .maybeSingle();
     if (approvalUpdate.error && isMissingSchemaError(approvalUpdate.error)) {
@@ -1618,12 +1749,13 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
             .update(fallbackApprovalUpdate)
             .eq("id", request.id)
             .eq("status", "pending")
+            .eq("reviewed_at", reviewedAt)
             .select("*")
             .maybeSingle();
     }
     const { data, error } = approvalUpdate;
     if (error) throw new Error(error.message);
-    if (!data) throw new Error("This landlord payment request has already been reviewed.");
+    if (!data) throw new Error("This landlord payment approval could not be completed because the request changed while approval was processing.");
     await markLandlordPaymentApprovalNotificationsReviewed(db, {
         companyId,
         requestId: request.id,
@@ -1653,6 +1785,40 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
 
     revalidateExpenseSurfaces();
     return data;
+    } catch (error) {
+        const safeMessage = landlordPaymentBusinessError(error);
+        console.error("Landlord payment approval failed:", error instanceof Error ? error.message : error, {
+            requestId: request.id,
+            companyId,
+            officeId: request.office_id,
+        });
+        const failedUpdate = await db
+            .from("landlord_payment_expense_requests")
+            .update({
+                status: "failed",
+                admin_comment: safeMessage,
+                reviewed_by: actorId,
+                reviewed_at: reviewedAt,
+                updated_at: new Date().toISOString(),
+            })
+            .eq("id", request.id)
+            .eq("company_id", companyId)
+            .eq("status", "pending");
+        if (failedUpdate.error) {
+            await db
+                .from("landlord_payment_expense_requests")
+                .update({
+                    admin_comment: `[approval_failed] ${safeMessage}`,
+                    reviewed_by: null,
+                    reviewed_at: null,
+                    updated_at: new Date().toISOString(),
+                })
+                .eq("id", request.id)
+                .eq("company_id", companyId)
+                .eq("status", "pending");
+        }
+        throw new Error(safeMessage);
+    }
 }
 
 async function createApprovedLandlordAdvanceFromExpenseRequest(input: {
@@ -1959,6 +2125,19 @@ async function applyApprovedLandlordPaymentToLedger(input: {
     });
     if ((plan.normalPaymentAmount <= 0 && plan.advanceRecoveryAmount <= 0) || plan.lines.length === 0) {
         throw new Error("No genuine unpaid landlord payable was found for this payment.");
+    }
+
+    const existingAllocation = await input.db
+        .from("landlord_monthly_payable_payments")
+        .select("id")
+        .eq("company_id", input.companyId)
+        .eq("office_id", input.officeId)
+        .eq("landlord_id", input.landlordId)
+        .eq("reference", input.reference)
+        .limit(1);
+    if (existingAllocation.error && !isMissingSchemaError(existingAllocation.error)) throw new Error(existingAllocation.error.message);
+    if ((existingAllocation.data ?? []).length) {
+        throw new Error("A duplicate landlord payment allocation already exists for this approval reference. Review the request before trying again.");
     }
 
     const rowsById = new Map(((rowsResult.data ?? []) as Record<string, unknown>[]).map((row) => [String(row.id), row]));

@@ -280,6 +280,17 @@ test("landlord payment approval paths do not overwrite canonical monthly payable
   assert.doesNotMatch(directPaymentBody, /reconcileLandlordPayableWithLiveNet/);
 });
 
+test("landlord payment approval claims the pending request and blocks duplicate posting", () => {
+  const expensesSource = readFileSync(new URL("../app/actions/expenses.ts", import.meta.url), "utf8");
+  const expenseApprovalBody = expensesSource.slice(expensesSource.indexOf("export async function decideLandlordPaidExpenseRequest"), expensesSource.indexOf("async function createApprovedLandlordAdvanceFromExpenseRequest"));
+  assert.match(expenseApprovalBody, /landlord_payments\.approve/);
+  assert.match(expenseApprovalBody, /\.eq\("status", "pending"\)\s*\.is\("reviewed_at", null\)/s);
+  assert.match(expenseApprovalBody, /This landlord payment approval is already being processed/);
+  assert.match(expenseApprovalBody, /\.eq\("reviewed_at", reviewedAt\)/);
+  assert.match(expenseApprovalBody, /payout_reference", reference/);
+  assert.match(expensesSource, /A duplicate landlord payment allocation already exists/);
+});
+
 test("controlled landlord advance recovery reduces payable without creating a new advance", () => {
   const plan = allocationPlan(500000, [{ settlement_month: "2026-07-01", monthly_net_payable: 800000, amount_paid: 0 }], 300000);
   assert.equal(plan.advanceRecovery, 300000);
