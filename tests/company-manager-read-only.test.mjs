@@ -12,18 +12,30 @@ const payrollData = readFileSync(new URL("../lib/salary-centre/data.ts", import.
 const payrollCentre = readFileSync(new URL("../components/office/salary/AdminPayrollCentre.tsx", import.meta.url), "utf8");
 const employeeData = readFileSync(new URL("../lib/employee-management/data.ts", import.meta.url), "utf8");
 const employeeCentre = readFileSync(new URL("../components/office/admin/EmployeeManagementCentre.tsx", import.meta.url), "utf8");
+const collectorsData = readFileSync(new URL("../lib/collectors/data.ts", import.meta.url), "utf8");
 const migration = readFileSync(new URL("../supabase/upgrade_migrations/0253_jimmy_company_manager_read_only.sql", import.meta.url), "utf8");
 
 test("read-only manager enters the admin viewing shell without becoming a company admin", () => {
   assert.match(loginRoute, /ddumba_v1_verify_read_only_manager_login/);
   assert.match(loginRoute, /read_only_manager_credential_rpc/);
+  assert.ok(
+    loginRoute.indexOf("read_only_manager_credential_rpc") < loginRoute.indexOf("personal_office_credential_rpc"),
+    "read-only manager credentials must be checked before personal office credentials",
+  );
+  assert.match(loginRoute, /managerIdentityOverride/);
+  assert.match(loginRoute, /auth_mode: "admin"/);
   assert.match(loginRoute, /const isReadOnlyManager = isAdmin && !identity\.is_company_admin/);
   assert.match(loginRoute, /isCompanyAdmin: identity\.is_company_admin/);
   assert.match(loginRoute, /redirectTo: identity\.redirect_to \?\? \(isAdmin \? "\/office\/admin\/cash-position"/);
+  assert.match(authContext, /isRoleAssignmentActive/);
+  assert.match(authContext, /const activeAssignments = \(assignments \?\? \[\]\)\.filter\(isRoleAssignmentActive\)/);
+  assert.match(authContext, /const effectiveAuthMode = rawIsCompanyAdmin \|\| rawIsCompanyReadOnlyManager \? "admin" : requestedAuthMode/);
   assert.match(authContext, /rawIsCompanyReadOnlyManager/);
   assert.match(authContext, /roleKeys\.includes\("company_manager_read_only"\)/);
   assert.match(authContext, /isCompanyReadOnlyManager = !isOfficeMode && !isCollectorMode/);
   assert.match(permissions, /requireCompanyReadMode/);
+  assert.match(collectorsData, /context\.isCompanyReadOnlyManager \|\| context\.isCompanyAdmin/);
+  assert.match(collectorsData, /redirect\(context\.isCompanyReadOnlyManager \? "\/office\/admin\/cash-position" : "\/office"\)/);
 });
 
 test("admin layout displays the manager badge but keeps write gates separate", () => {

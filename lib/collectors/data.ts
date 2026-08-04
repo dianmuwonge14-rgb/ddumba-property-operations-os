@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { requireAuth } from "@/lib/auth/permissions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
@@ -7,13 +8,14 @@ type DynamicDb = {
 type Row = Record<string, unknown>;
 
 export function isCollectorContext(context: Awaited<ReturnType<typeof requireAuth>>) {
+    if (context.isCompanyReadOnlyManager || context.isCompanyAdmin) return false;
     return context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
 }
 
 export async function requireCollectorContext() {
     const context = await requireAuth();
     if (!isCollectorContext(context) || !context.activeCompany?.id || !context.profile?.id) {
-        throw new Error("Field Collector account required.");
+        redirect(context.isCompanyReadOnlyManager ? "/office/admin/cash-position" : "/office");
     }
     return context;
 }

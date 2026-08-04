@@ -1,7 +1,7 @@
 import { cache } from "react";
 import { cookies } from "next/headers";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import type { AuthContext, Company, Office, Permission, Role, RoleAssignment } from "./types";
+import type { AuthContext, Company, Office, Permission, Role, RoleAssignment, UserOfficeRole } from "./types";
 
 const ACTIVE_COMPANY_COOKIE = "ddumba_active_company_id";
 const ACTIVE_OFFICE_COOKIE = "ddumba_active_office_id";
@@ -13,6 +13,18 @@ function unique(values: Array<string | null | undefined>) {
 
 function hasCompanyWideScope(role: RoleAssignment) {
     return !role.office_id || role.scope === "company" || role.scope === "headquarters";
+}
+
+function isRoleAssignmentActive(assignment: UserOfficeRole) {
+    const row = assignment as UserOfficeRole & { effective_from?: string | null; effective_to?: string | null; status?: string | null };
+    const status = String(row.status ?? "active").toLowerCase();
+    if (!["active", "approved", "current"].includes(status)) return false;
+    const today = new Date().toISOString().slice(0, 10);
+    const effectiveFrom = row.effective_from ? String(row.effective_from).slice(0, 10) : null;
+    const effectiveTo = row.effective_to ? String(row.effective_to).slice(0, 10) : null;
+    if (effectiveFrom && effectiveFrom > today) return false;
+    if (effectiveTo && effectiveTo < today) return false;
+    return true;
 }
 
 function isInvalidRefreshTokenError(error: unknown) {
@@ -62,7 +74,8 @@ export const getAuthContext = cache(async (): Promise<AuthContext> => {
         .eq("user_id", profile.id)
         .eq("company_id", profile.company_id);
 
-    const roleIds = unique(assignments?.map((assignment) => assignment.role_id) ?? []);
+    const activeAssignments = (assignments ?? []).filter(isRoleAssignmentActive);
+    const roleIds = unique(activeAssignments.map((assignment) => assignment.role_id));
 
     const { data: roles } = roleIds.length
         ? await supabase.from("roles").select("*").in("id", roleIds)
@@ -86,7 +99,7 @@ export const getAuthContext = cache(async (): Promise<AuthContext> => {
     }
 
     const roleById = new Map((roles ?? []).map((role) => [role.id, role]));
-    const roleAssignments: RoleAssignment[] = (assignments ?? []).map((assignment) => ({
+    const roleAssignments: RoleAssignment[] = activeAssignments.map((assignment) => ({
         ...assignment,
         role: roleById.get(assignment.role_id) ?? null,
         permissions: permissionsByRole.get(assignment.role_id) ?? [],
@@ -115,7 +128,7 @@ export const getAuthContext = cache(async (): Promise<AuthContext> => {
     const rawPermissionKeys = unique(
         companyRoles.flatMap((assignment) => assignment.permissions.map((permission) => permission.key)),
     );
-    const roleKeys = unique(companyRoles.map((assignment) => assignment.role?.key));
+    const roleKeys = unique(companyRoles.map((assignment) => assignment.role?.key?.toLowerCase()));
     const rawIsCompanyAdmin =
         roleKeys.includes("company_admin") ||
         roleKeys.includes("super_admin") ||
@@ -124,15 +137,16 @@ export const getAuthContext = cache(async (): Promise<AuthContext> => {
         roleKeys.includes("company_manager_read_only") ||
         roleKeys.includes("executive_manager_read_only") ||
         rawPermissionKeys.includes("admin.dashboard.read");
-    const requestedAdminWideAccess = requestedAuthMode === "admin" && (rawIsCompanyAdmin || rawIsCompanyReadOnlyManager);
+    const effectiveAuthMode = rawIsCompanyAdmin || rawIsCompanyReadOnlyManager ? "admin" : requestedAuthMode;
+    const requestedAdminWideAccess = effectiveAuthMode === "admin" && (rawIsCompanyAdmin || rawIsCompanyReadOnlyManager);
     const officeIds = unique([
         profile.default_office_id,
-        requestedAuthMode === "office" ? requestedOfficeId : null,
+        effectiveAuthMode === "office" ? requestedOfficeId : null,
         ...companyRoles.map((assignment) => assignment.office_id),
     ]);
 
     let offices: Office[] = [];
-    if (activeCompany && (requestedAuthMode === "collector" || (requestedAuthMode === "admin" && (rawCanAccessAllOffices || requestedAdminWideAccess)))) {
+    if (activeCompany && (effectiveAuthMode === "collector" || (effectiveAuthMode === "admin" && (rawCanAccessAllOffices || requestedAdminWideAccess)))) {
         const { data } = await supabase
             .from("offices")
             .select("*")
@@ -156,8 +170,8 @@ export const getAuthContext = cache(async (): Promise<AuthContext> => {
         offices[0] ??
         null;
 
-    const isOfficeMode = requestedAuthMode === "office";
-    const isCollectorMode = requestedAuthMode === "collector";
+    const isOfficeMode = effectiveAuthMode === "office";
+    const isCollectorMode = effectiveAuthMode === "collector";
     const canAccessAllOffices = !isOfficeMode && (rawCanAccessAllOffices || rawIsCompanyAdmin || rawIsCompanyReadOnlyManager);
     const isCompanyAdmin = !isOfficeMode && !isCollectorMode && rawIsCompanyAdmin;
     const isCompanyReadOnlyManager = !isOfficeMode && !isCollectorMode && rawIsCompanyReadOnlyManager && !rawIsCompanyAdmin;
@@ -168,7 +182,7 @@ export const getAuthContext = cache(async (): Promise<AuthContext> => {
     return {
         authUser,
         profile,
-        authMode: requestedAuthMode,
+        authMode: effectiveAuthMode,
         activeCompany,
         activeOffice,
         companies: companies ?? [],

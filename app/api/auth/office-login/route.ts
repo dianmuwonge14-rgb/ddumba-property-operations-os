@@ -235,6 +235,46 @@ async function isSharedOfficeAccount(userId: string, companyId: string | null) {
     return String(user?.account_type ?? "").toLowerCase() === "office" && !roleKeys.some((key) => privileged.has(key));
 }
 
+async function managerIdentityOverride(identity: LoginIdentity | undefined): Promise<LoginIdentity | undefined> {
+    if (!identity?.user_id || !identity.company_id) return identity;
+    const admin = createSupabaseAdminClient();
+    const dynamicAdmin = admin as unknown as { from: (table: string) => any };
+    const { data: row } = await dynamicAdmin
+        .from("user_office_roles")
+        .select("roles(key), employee_id")
+        .eq("user_id", identity.user_id)
+        .eq("company_id", identity.company_id)
+        .eq("status", "active")
+        .is("office_id", null)
+        .in("scope", ["company", "headquarters"])
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+    const role = row?.roles as { key?: string | null } | { key?: string | null }[] | null | undefined;
+    const roleKey = String(Array.isArray(role) ? role[0]?.key ?? "" : role?.key ?? "").toLowerCase();
+    if (!["company_manager_read_only", "executive_manager_read_only"].includes(roleKey)) return identity;
+
+    const employeeId = typeof row?.employee_id === "string" ? row.employee_id : null;
+    const [{ data: userRow }, { data: employeeRow }] = await Promise.all([
+        admin.from("users").select("email,full_name").eq("id", identity.user_id).eq("company_id", identity.company_id).maybeSingle(),
+        employeeId
+            ? admin.from("employees").select("full_name").eq("id", employeeId).eq("company_id", identity.company_id).maybeSingle()
+            : Promise.resolve({ data: null }),
+    ]);
+    return {
+        ...identity,
+        email: userRow?.email ?? identity.email,
+        office_id: null,
+        office_name: null,
+        full_name: employeeRow?.full_name ?? userRow?.full_name ?? identity.full_name,
+        is_company_admin: false,
+        auth_mode: "admin",
+        redirect_to: "/office/admin/cash-position",
+        login_status: "success",
+    };
+}
+
 export async function POST(request: Request) {
     const startedAt = Date.now();
     const headerStore = await headers();
@@ -255,33 +295,33 @@ export async function POST(request: Request) {
         let data: LoginIdentity[] | null = null;
         let error: { message: string } | null = null;
         if (identifier) {
-            const personalRpc = supabase.rpc.bind(supabase) as unknown as VerifyPersonalOfficeRpc;
-            const personal = await withLoginTimeout("personal_office_credential_rpc", PROFILE_TIMEOUT_MS, personalRpc("ddumba_v1_verify_personal_office_login", {
+            const managerRpc = supabase.rpc.bind(supabase) as unknown as VerifyReadOnlyManagerRpc;
+            const manager = await withLoginTimeout("read_only_manager_credential_rpc", PROFILE_TIMEOUT_MS, managerRpc("ddumba_v1_verify_read_only_manager_login", {
                 p_identifier: identifier,
                 p_secret: secret,
                 p_user_agent: userAgent,
-            })).catch((personalError) => {
-                throw personalError;
+            })).catch((managerError) => {
+                if (/function .*ddumba_v1_verify_read_only_manager_login/i.test(managerError instanceof Error ? managerError.message : String(managerError))) {
+                    return { data: null, error: null };
+                }
+                throw managerError;
             });
-            if (personal.error || personal.data?.[0]?.user_id) {
-                data = personal.data;
-                error = personal.error;
+            if (manager.error || manager.data?.[0]?.user_id) {
+                data = manager.data;
+                error = manager.error;
             }
+            const personalRpc = supabase.rpc.bind(supabase) as unknown as VerifyPersonalOfficeRpc;
             if (!data?.[0]?.user_id && !error) {
-                const managerRpc = supabase.rpc.bind(supabase) as unknown as VerifyReadOnlyManagerRpc;
-                const manager = await withLoginTimeout("read_only_manager_credential_rpc", PROFILE_TIMEOUT_MS, managerRpc("ddumba_v1_verify_read_only_manager_login", {
+                const personal = await withLoginTimeout("personal_office_credential_rpc", PROFILE_TIMEOUT_MS, personalRpc("ddumba_v1_verify_personal_office_login", {
                     p_identifier: identifier,
                     p_secret: secret,
                     p_user_agent: userAgent,
-                })).catch((managerError) => {
-                    if (/function .*ddumba_v1_verify_read_only_manager_login/i.test(managerError instanceof Error ? managerError.message : String(managerError))) {
-                        return { data: null, error: null };
-                    }
-                    throw managerError;
+                })).catch((personalError) => {
+                    throw personalError;
                 });
-                if (manager.error || manager.data?.[0]?.user_id) {
-                    data = manager.data;
-                    error = manager.error;
+                if (personal.error || personal.data?.[0]?.user_id) {
+                    data = personal.data;
+                    error = personal.error;
                 }
             }
         }
@@ -311,7 +351,7 @@ export async function POST(request: Request) {
             );
         }
 
-        const identity = data?.[0];
+        const identity = await managerIdentityOverride(data?.[0]);
         const loginStatus = identity?.login_status ?? (identity?.email ? "success" : "invalid");
         const attemptsRemaining = Math.max(0, identity?.attempts_remaining ?? 2);
 
