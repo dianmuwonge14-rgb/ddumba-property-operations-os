@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requirePermission } from "@/lib/auth/permissions";
+import { businessErrorResponse } from "@/lib/errors/business-response";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type DynamicDb = {
@@ -40,7 +41,6 @@ export async function GET(request: NextRequest) {
 
         return NextResponse.json({ history: data ?? [] }, { headers: { "Cache-Control": "no-store" } });
     } catch (error) {
-        const message = error instanceof Error ? error.message : "Payment correction history could not load.";
-        return NextResponse.json({ error: message }, { status: 400 });
+        return businessErrorResponse(error, "Payment correction history could not load.");
     }
 }

@@ -7,6 +7,7 @@ const dataSource = readFileSync(new URL("../lib/cash-position-centre/data.ts", i
 const typesSource = readFileSync(new URL("../lib/cash-position-centre/types.ts", import.meta.url), "utf8");
 const componentSource = readFileSync(new URL("../components/office/cash-position/CashPositionCentre.tsx", import.meta.url), "utf8");
 const errorBoundarySource = readFileSync(new URL("../app/office/admin/cash-position/error.tsx", import.meta.url), "utf8");
+const sharedBusinessErrorNoticeSource = readFileSync(new URL("../components/shared/BusinessErrorNotice.tsx", import.meta.url), "utf8");
 const expensesActionSource = readFileSync(new URL("../app/actions/expenses.ts", import.meta.url), "utf8");
 const expensesDataSource = readFileSync(new URL("../lib/expenses/data.ts", import.meta.url), "utf8");
 const expensesComponentSource = readFileSync(new URL("../components/office/expenses/ExpensesConsole.tsx", import.meta.url), "utf8");
@@ -268,10 +269,10 @@ test("cash position data loader names query failures and uses production-safe en
 });
 
 test("cash position route has a safe retryable error boundary", () => {
-  assert.match(errorBoundarySource, /Cash Position data could not be loaded/);
-  assert.match(errorBoundarySource, /Error reference ID/);
-  assert.match(errorBoundarySource, /Retry/);
-  assert.match(errorBoundarySource, /Return to Dashboard/);
+  assert.match(errorBoundarySource, /businessErrorFromUnknown/);
+  assert.match(errorBoundarySource, /BusinessErrorNotice/);
+  assert.match(errorBoundarySource, /Cash Position Centre/);
+  assert.match(sharedBusinessErrorNoticeSource, /Retry/);
   assert.doesNotMatch(errorBoundarySource, /error\.message/);
 });
 

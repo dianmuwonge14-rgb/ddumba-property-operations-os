@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requirePermission } from "@/lib/auth/permissions";
+import { businessErrorResponse } from "@/lib/errors/business-response";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { normalizeRoomNumberForUniqueness } from "@/lib/rooms/room-number";
 
@@ -59,8 +60,6 @@ export async function GET(request: Request) {
             normalizedRoomNumber,
         });
     } catch (error) {
-        const message = error instanceof Error ? error.message : "Room availability check failed.";
-        const status = /NEXT_REDIRECT|auth|login|session|permission|unauthor/i.test(message) ? 401 : 500;
-        return NextResponse.json({ error: message }, { status });
+        return businessErrorResponse(error, "Room availability check failed.");
     }
 }

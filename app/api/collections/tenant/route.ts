@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getTenantCollectionContext } from "@/lib/collections/data";
+import { businessErrorResponse } from "@/lib/errors/business-response";
 
 export async function GET(request: NextRequest) {
     const tenantId = request.nextUrl.searchParams.get("id") ?? "";
@@ -24,7 +25,6 @@ export async function GET(request: NextRequest) {
             },
         );
     } catch (error) {
-        const message = error instanceof Error ? error.message : "Unable to open tenant.";
-        return NextResponse.json({ error: message }, { status: 400 });
+        return businessErrorResponse(error, "Unable to open tenant.");
     }
 }

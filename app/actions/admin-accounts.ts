@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { logUserAction } from "@/lib/auth/audit";
 import { requirePermission } from "@/lib/auth/permissions";
+import { businessErrorFromUnknown } from "@/lib/errors/business-errors";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -585,6 +586,16 @@ export async function createOfficeAccount(input: OfficeAccountInput) {
 
         revalidatePath("/office/admin");
     } catch (error) {
+        const businessError = businessErrorFromUnknown(error, "Receptionist account could not be created.");
+        console.error("createOfficeAccount failed", {
+            accountType,
+            businessCode: businessError.code,
+            employeeId: input.employeeId ?? null,
+            message: error instanceof Error ? error.message : String(error),
+            officeId: input.officeId,
+            phone: input.phone ?? null,
+            reference: businessError.reference,
+        });
         if (createdUserId) {
             await admin.auth.admin.deleteUser(createdUserId).catch(() => undefined);
             await ignoreCleanupError(admin.from("users").delete().eq("id", createdUserId));
@@ -592,7 +603,7 @@ export async function createOfficeAccount(input: OfficeAccountInput) {
             await ignoreCleanupError(admin.from("user_office_roles").delete().eq("user_id", createdUserId));
             await ignoreCleanupError(admin.from("employees").update({ user_id: null, updated_at: new Date().toISOString() }).eq("user_id", createdUserId));
         }
-        throw error instanceof Error ? error : new Error("Receptionist account could not be created.");
+        throw new Error(businessError.message);
     }
 }
 
@@ -1057,11 +1068,14 @@ export async function createOfficeWithLogin(input: OfficeWithLoginInput) {
             createdBy: context.profile?.full_name ?? context.profile?.email ?? "Admin",
         };
     } catch (error) {
+        const businessError = businessErrorFromUnknown(error, "Office was not created because login setup failed.");
         console.error("createOfficeWithLogin failed", {
+            businessCode: businessError.code,
             message: error instanceof Error ? error.message : String(error),
             officeName,
             officeCode,
             loginName,
+            reference: businessError.reference,
             createdOfficeId,
             createdUserId,
         });
@@ -1074,7 +1088,7 @@ export async function createOfficeWithLogin(input: OfficeWithLoginInput) {
         if (createdOfficeId) {
             await ignoreCleanupError(admin.from("offices").delete().eq("id", createdOfficeId).eq("company_id", companyId));
         }
-        throw error instanceof Error ? error : new Error("Office was not created because login setup failed.");
+        throw new Error(businessError.message);
     }
 }
 

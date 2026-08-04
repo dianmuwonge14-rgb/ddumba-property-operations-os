@@ -73,9 +73,9 @@ test("collector defaulters UI exposes dependent assigned-office and searchable l
 });
 
 test("collector defaulters permission errors are safe and resettable", () => {
-  assert.match(collectorDefaultersError, /Defaulters data could not be loaded/);
-  assert.match(collectorDefaultersError, /selected office or landlord filter may not be authorised/);
-  assert.match(collectorDefaultersError, /Reset Filters/);
+  assert.match(collectorDefaultersError, /businessErrorFromUnknown/);
+  assert.match(collectorDefaultersError, /BusinessErrorNotice/);
+  assert.match(collectorDefaultersError, /Collector defaulters/);
   assert.doesNotMatch(collectorDefaultersError, /error\.message/);
 });
 
