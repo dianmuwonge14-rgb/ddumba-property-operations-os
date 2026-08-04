@@ -56,8 +56,16 @@ export function ReceiptA4({ receipt }: { receipt: TenantReceiptViewModel }) {
                 <Info label="Property" value={snapshot.propertyName ?? "Property not set"} />
                 <Info label="Office" value={snapshot.officeName ?? "Office"} />
                 <Info label="Landlord" value={snapshot.landlordName ?? "No landlord"} />
-                <Info label="Date & Time" value={formatDateTime(snapshot.paymentDateTime)} />
+                <Info label="Payment Date" value={snapshot.paymentTransactionDate?.slice(0, 10) ?? formatDateTime(snapshot.paymentDateTime)} />
+                <Info label="Prepared/Entered Date" value={formatDateTime(snapshot.enteredAt ?? snapshot.paymentDateTime)} />
             </section>
+
+            {snapshot.isBackdated ? (
+                <section className="receipt-a4-section receipt-a4-status receipt-a4-status-warning">
+                    <strong>BACKDATED ADMIN ENTRY</strong>
+                    <span>{snapshot.backdatingReason ? `Reason: ${snapshot.backdatingReason}` : "Entered by Admin after the business transaction date."}</span>
+                </section>
+            ) : null}
 
             <section className="receipt-a4-section">
                 <h2>Payment Breakdown</h2>
@@ -75,6 +83,8 @@ export function ReceiptA4({ receipt }: { receipt: TenantReceiptViewModel }) {
                 <h2>Prepared By</h2>
                 <div className="receipt-a4-grid receipt-a4-meta">
                     <Info label="Prepared By" value={snapshot.preparedByName ?? snapshot.recordedByName ?? "Authenticated employee"} strongValue />
+                    {snapshot.isBackdated ? <Info label="Backdated By" value={snapshot.preparedByName ?? snapshot.recordedByName ?? "Admin"} /> : null}
+                    {snapshot.isBackdated ? <Info label="Backdating Reason" value={snapshot.backdatingReason ?? "Admin backdated entry"} /> : null}
                     <Info label="Role" value={snapshot.preparedByRole ?? "Employee"} />
                     <Info label="Office" value={snapshot.officeName ?? "Office"} />
                 </div>

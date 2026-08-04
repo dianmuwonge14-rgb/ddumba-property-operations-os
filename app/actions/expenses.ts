@@ -5,7 +5,7 @@ import { requireAuth, requireCompanyAdminMode, requirePermission } from "@/lib/a
 import { logUserAction } from "@/lib/auth/audit";
 import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createLandlordPaymentReceipt } from "@/lib/receipts/payment-receipts";
-import { assertCurrentBusinessDate, currentBusinessDate } from "@/lib/business-date";
+import { assertFinancialEntryDate, currentBusinessDate } from "@/lib/business-date";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getExpenseInActiveOffice } from "@/lib/expenses/data";
@@ -115,8 +115,12 @@ function monthStart(value: string | null | undefined) {
     return `${source}-01`;
 }
 
-function currentExpenseDate(value: string | null | undefined) {
-    return assertCurrentBusinessDate(value || currentBusinessDate(), "Expenses can only be recorded for the current date.");
+function currentExpenseDate(context: Awaited<ReturnType<typeof requireAuth>>, value: string | null | undefined, backdatingReason?: string | null) {
+    return assertFinancialEntryDate(value || currentBusinessDate(), context, {
+        backdatingReason,
+        currentDateMessage: "Expenses can only be recorded for the current date.",
+        entryLabel: "Expense",
+    });
 }
 
 function validUuid(value: unknown): value is string {
@@ -133,6 +137,12 @@ function normalizedEmployeeRole(value: unknown) {
 
 function isAllRounderEmployee(row: Record<string, unknown>) {
     return [row.employee_assignment_type, row.role, row.job_title].some((value) => normalizedEmployeeRole(value) === "allrounder");
+}
+
+function isEligibleAuthorisedExpenseEmployee(row: Record<string, unknown>, submittingOfficeId: string) {
+    if (String(row.status ?? "active").toLowerCase() !== "active") return false;
+    const employeeOfficeId = typeof row.office_id === "string" ? row.office_id : null;
+    return employeeOfficeId === submittingOfficeId || isAllRounderEmployee(row);
 }
 
 function itemName(value: string | null | undefined) {
@@ -378,7 +388,8 @@ export async function createExpense(input: CreateExpenseInput) {
     const amount = Number(input.amount);
     assertAmount(amount);
 
-    const expenseDate = currentExpenseDate(input.expenseDate);
+    const expenseEntryDate = currentExpenseDate(context, input.expenseDate, input.backdatingReason);
+    const expenseDate = expenseEntryDate.date;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
     const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
     const expensePayload = {
@@ -390,7 +401,10 @@ export async function createExpense(input: CreateExpenseInput) {
         cash_source_id: context.activeOffice!.id,
         cash_source_type: "office_cash",
         company_id: context.activeCompany!.id,
-        description: input.description || null,
+        description: [
+            input.description || null,
+            expenseEntryDate.isBackdated ? `BACKDATED ADMIN ENTRY | Entered on: ${expenseEntryDate.enteredOnDate} | Reason: ${expenseEntryDate.backdatingReason}` : null,
+        ].filter(Boolean).join(" | ") || null,
         expense_date: expenseDate,
         expense_number: expenseNumber(),
         item: input.item || null,
@@ -597,7 +611,8 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
     const amount = Number(input.amount);
     assertAmount(amount);
     if (!input.landlordId) throw new Error("Select landlord.");
-    const paymentDate = currentExpenseDate(input.expenseDate);
+    const paymentEntryDate = currentExpenseDate(context, input.expenseDate, input.backdatingReason);
+    const paymentDate = paymentEntryDate.date;
     const paymentMonth = monthStart(input.paymentMonth || paymentDate);
     const officeId = await resolveLandlordPaymentOfficeId({
         activeOfficeId: context.activeOffice!.id,
@@ -684,7 +699,10 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
             payment_month: preview.paymentMonth,
             payment_date: paymentDate,
             payment_method: paymentMethod,
-            notes: input.notes || null,
+            notes: [
+                input.notes || null,
+                paymentEntryDate.isBackdated ? `BACKDATED ADMIN ENTRY | Entered on: ${paymentEntryDate.enteredOnDate} | Reason: ${paymentEntryDate.backdatingReason}` : null,
+            ].filter(Boolean).join(" | ") || null,
             status: "pending",
             submitted_by: actorId,
         };
@@ -847,8 +865,8 @@ async function loadEmployeeExpensePreview(input: {
     if (attendanceResult.error && !/does not exist|schema cache/i.test(attendanceResult.error.message ?? "")) throw new Error(attendanceResult.error.message);
     const employee = employeeResult.data as Record<string, unknown> | null;
     if (!employee) throw new Error("Employee not found.");
-    if (String(employee.status ?? "active").toLowerCase() !== "active" || !isAllRounderEmployee(employee)) {
-        throw new Error("Only active All Rounders can be selected for authorised employee expenses.");
+    if (!isEligibleAuthorisedExpenseEmployee(employee, input.officeId)) {
+        throw new Error("Only active employees in your office or company-wide All Rounders can be selected for authorised employee expenses.");
     }
     const role = itemKey(String(employee.role ?? employee.job_title ?? ""));
     const allowances = (allowanceResult.data ?? []) as Array<Record<string, unknown>>;
@@ -959,7 +977,8 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
     assertAmount(value);
     if (!input.employeeId) throw new Error("Select employee.");
     if (!input.expenseItem) throw new Error("Select expense item.");
-    const expenseDate = currentExpenseDate(input.expenseDate);
+    const expenseEntryDate = currentExpenseDate(context, input.expenseDate, input.backdatingReason);
+    const expenseDate = expenseEntryDate.date;
     const preview = await loadEmployeeExpensePreview({
         amount: value,
         companyId,
@@ -1045,7 +1064,10 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
                 approved_by: expenseActorId,
                 category: "Employee Expense",
                 company_id: companyId,
-                description: `[employee_expense_allowed] ${input.note ?? ""}`.trim(),
+                description: [
+                    `[employee_expense_allowed] ${input.note ?? ""}`.trim(),
+                    expenseEntryDate.isBackdated ? `BACKDATED ADMIN ENTRY | Entered on: ${expenseEntryDate.enteredOnDate} | Reason: ${expenseEntryDate.backdatingReason}` : null,
+                ].filter(Boolean).join(" | ") || null,
                 employee_id: input.employeeId,
                 employee_home_office_id: employeeHomeOfficeId,
                 expense_date: expenseDate,

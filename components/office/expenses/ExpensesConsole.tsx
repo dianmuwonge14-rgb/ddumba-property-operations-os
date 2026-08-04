@@ -219,7 +219,8 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
         endMonth: thisMonth(),
         officeId: "",
     });
-    const [expenseDate] = useState(today());
+    const [expenseDate, setExpenseDate] = useState(today());
+    const [backdatingReason, setBackdatingReason] = useState("");
     const [entryMode, setEntryMode] = useState<ExpenseEntryMode>("landlord_payment");
     const [authorisedType, setAuthorisedType] = useState<AuthorisedExpenseType>("employee_lunch");
     const [expenseItem, setExpenseItem] = useState("");
@@ -298,6 +299,9 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
     const isBankingMode = entryMode === "banking";
     const isCashHandoverMode = entryMode === "cash_handover_admin";
     const isEmployeeExpenseMode = isAuthorisedMode && authorisedType === "employee_lunch";
+    const currentKampalaDate = today();
+    const adminBackdatedExpense = isAdmin && expenseDate < currentKampalaDate;
+    const trimmedBackdatingReason = backdatingReason.trim();
     const activeAuthorisedExpense = AUTHORISED_EXPENSES.find((item) => item.value === authorisedType) ?? AUTHORISED_EXPENSES[0];
     const selectedLandlordOption = selectedLandlordDetail;
     const selectedEmployeeOption = selectedEmployeeDetail;
@@ -632,6 +636,14 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
         const trimmedItem = expenseItem.trim();
         const authorisedLabel = activeAuthorisedExpense.label;
         const value = Number(amount);
+        if (isAdmin && expenseDate > currentKampalaDate) {
+            setMessage("Future-dated entries are not permitted.");
+            return;
+        }
+        if (adminBackdatedExpense && !trimmedBackdatingReason) {
+            setMessage("A backdating reason is required.");
+            return;
+        }
         if (isCashHandoverMode) {
             if (!selectedBankingSummary?.officeId) {
                 setMessage("Select the office handing cash to Admin.");
@@ -662,6 +674,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                     setMessage(null);
                     const result = await submitTreasuryCashRequest({
                         amount: value,
+                        backdatingReason: adminBackdatedExpense ? trimmedBackdatingReason : null,
                         businessDate: expenseDate,
                         handedOverBy: handoverBy,
                         notes,
@@ -709,6 +722,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                     const idempotentReference = bankingReference.trim() || `EXP-BANK-${selectedBankingSummary.officeId.slice(0, 8)}-${expenseDate}-${value}`;
                     const result = await submitTreasuryCashRequest({
                         amount: value,
+                        backdatingReason: adminBackdatedExpense ? trimmedBackdatingReason : null,
                         bankAccountName: bankingBankAccount.trim(),
                         businessDate: expenseDate,
                         method: bankingMethod || "Bank deposit",
@@ -803,6 +817,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                             reason: notes || "Expense overpayment converted to landlord advance",
                         } : undefined,
                         amount: value,
+                        backdatingReason: adminBackdatedExpense ? trimmedBackdatingReason : null,
                         expenseDate,
                         landlordId,
                         officeId: selectedLandlordOption?.officeId ?? null,
@@ -817,6 +832,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                 } else if (isEmployeeExpenseMode) {
                     const result = await createEmployeeExpenseFromExpenses({
                         amount: value,
+                        backdatingReason: adminBackdatedExpense ? trimmedBackdatingReason : null,
                         employeeId,
                         expenseDate,
                         expenseItem: "Lunch",
@@ -833,6 +849,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                     const categoryName = entryMode === "unauthorised" ? "Unauthorised Expenses" : "Authorised Expenses";
                     const saved = await createExpense({
                         amount: value,
+                        backdatingReason: adminBackdatedExpense ? trimmedBackdatingReason : null,
                         category: categoryName,
                         description: notes || undefined,
                         expenseDate,
@@ -938,14 +955,20 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                         </div>
                         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[170px_150px_150px_150px]">
                             <label className="block">
-                                <span className="text-xs font-black uppercase tracking-wide text-slate-300">Current Date</span>
+                                <span className="text-xs font-black uppercase tracking-wide text-slate-300">{isAdmin ? "Entry Date" : "Current Date"}</span>
                                 <input
                                     type="date"
                                     value={expenseDate}
-                                    readOnly
-                                    aria-label={`Current Date, ${formatBusinessDate(expenseDate)}`}
-                                    className="mt-1 h-12 w-full cursor-not-allowed rounded-2xl border border-white/10 bg-white/90 px-4 text-sm font-black text-slate-700 outline-none"
+                                    max={currentKampalaDate}
+                                    onChange={(event) => {
+                                        if (!isAdmin) return;
+                                        setExpenseDate(event.target.value);
+                                    }}
+                                    readOnly={!isAdmin}
+                                    aria-label={`${isAdmin ? "Entry Date" : "Current Date"}, ${formatBusinessDate(expenseDate)}`}
+                                    className={`mt-1 h-12 w-full rounded-2xl border border-white/10 bg-white/90 px-4 text-sm font-black text-slate-700 outline-none ${isAdmin ? "cursor-pointer focus:ring-4 focus:ring-cyan-300/30" : "cursor-not-allowed"}`}
                                 />
+                                {isAdmin ? <span className="mt-2 inline-flex rounded-full border border-cyan-300/30 bg-cyan-400/10 px-2 py-1 text-[10px] font-black uppercase text-cyan-100">Admin backdate authority</span> : null}
                             </label>
                             <label className="block">
                                 <span className="text-xs font-black uppercase tracking-wide text-slate-300">View</span>
@@ -977,6 +1000,17 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                                 </label>
                             ) : null}
                         </div>
+                        {adminBackdatedExpense ? (
+                            <label className="mt-4 block">
+                                <span className="text-xs font-black uppercase tracking-wide text-amber-100">Backdating Reason</span>
+                                <textarea
+                                    value={backdatingReason}
+                                    onChange={(event) => setBackdatingReason(event.target.value)}
+                                    placeholder="Example: Previous-day transaction omitted"
+                                    className="mt-1 min-h-20 w-full rounded-2xl border border-amber-200/40 bg-white px-4 py-3 text-sm font-bold text-slate-950 outline-none focus:ring-4 focus:ring-amber-300/30"
+                                />
+                            </label>
+                        ) : null}
                     </div>
                 </section>
 

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { canAccessOffice, hasPermission, requireAuth, requireCompanyAdminMode } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
-import { assertCurrentBusinessDate } from "@/lib/business-date";
+import { assertFinancialEntryDate } from "@/lib/business-date";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type DynamicDb = {
@@ -19,6 +19,7 @@ export type RecordSecurityDepositInput = {
     paymentMethod: string;
     referenceNumber?: string | null;
     notes?: string | null;
+    backdatingReason?: string | null;
 };
 
 export type UseSecurityFundsInput = {
@@ -75,8 +76,12 @@ function assertDate(value: string, label: string) {
     return candidate;
 }
 
-function assertCurrentSecurityDepositDate(value: string) {
-    return assertCurrentBusinessDate(assertDate(value, "Security deposit date"), "Security deposits can only be recorded for the current date.");
+function assertSecurityDepositEntryDate(context: Awaited<ReturnType<typeof requireAuth>>, value: string, backdatingReason?: string | null) {
+    return assertFinancialEntryDate(assertDate(value, "Security deposit date"), context, {
+        backdatingReason,
+        currentDateMessage: "Security deposits can only be recorded for the current date.",
+        entryLabel: "Security deposit",
+    });
 }
 
 function assertAmount(value: number, label: string) {
@@ -98,7 +103,8 @@ export async function recordSecurityDeposit(input: RecordSecurityDepositInput) {
     const companyId = context.activeCompany.id;
     const tenantId = input.tenantId.trim();
     const amount = assertAmount(input.amount, "Security deposit amount");
-    const paymentDate = assertCurrentSecurityDepositDate(input.paymentDate);
+    const paymentEntryDate = assertSecurityDepositEntryDate(context, input.paymentDate, input.backdatingReason);
+    const paymentDate = paymentEntryDate.date;
     if (!tenantId) throw new Error("Tenant is required.");
 
     const db = createSupabaseAdminClient() as unknown as DynamicDb;
@@ -117,7 +123,10 @@ export async function recordSecurityDeposit(input: RecordSecurityDepositInput) {
     const { data, error } = await db.rpc("record_tenant_security_deposit", {
         p_amount: amount,
         p_company_id: companyId,
-        p_notes: input.notes?.trim() || null,
+        p_notes: [
+            input.notes?.trim() || null,
+            paymentEntryDate.isBackdated ? `BACKDATED ADMIN ENTRY | Entered on: ${paymentEntryDate.enteredOnDate} | Reason: ${paymentEntryDate.backdatingReason}` : null,
+        ].filter(Boolean).join(" | ") || null,
         p_office_id: officeId,
         p_payment_date: paymentDate,
         p_payment_method: input.paymentMethod?.trim() || "cash",
@@ -134,7 +143,13 @@ export async function recordSecurityDeposit(input: RecordSecurityDepositInput) {
         entityId: String((data as Record<string, unknown>)?.id ?? ""),
         companyId,
         officeId,
-        afterData: data as never,
+        afterData: {
+            ...(data as Record<string, unknown>),
+            backdated: paymentEntryDate.isBackdated,
+            backdatingReason: paymentEntryDate.backdatingReason,
+            enteredOnDate: paymentEntryDate.enteredOnDate,
+            transactionDate: paymentDate,
+        } as never,
     }).catch(() => null);
 
     revalidateSecurityPaths();

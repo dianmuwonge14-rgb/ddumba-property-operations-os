@@ -255,6 +255,7 @@ export default function FastPaymentsEntry({
 }: Props) {
     const router = useRouter();
     const [paymentDate, setPaymentDate] = useState(today());
+    const [backdatingReason, setBackdatingReason] = useState("");
     const [roomQuery, setRoomQuery] = useState("");
     const [adminSearchOfficeId, setAdminSearchOfficeId] = useState("all");
     const [results, setResults] = useState<FastPaymentTenantSearchResult[]>([]);
@@ -361,6 +362,10 @@ export default function FastPaymentsEntry({
         (selectedTenant.office?.id ?? selectedTenant.room?.office_id ?? selectedTenant.tenant.office_id) !== activeOffice.id,
     );
     const actorLabel = entryMode === "collector" ? `collector ${profile?.full_name ?? "Field Collector"}` : profile?.full_name ?? "Current user";
+    const currentKampalaDate = today();
+    const adminBackdatedPayment = isAdmin && paymentDate < currentKampalaDate;
+    const adminBackdatedSecurity = isAdmin && securityDepositForm.paymentDate < currentKampalaDate;
+    const trimmedBackdatingReason = backdatingReason.trim();
 
     useEffect(() => {
         roomInputRef.current?.focus();
@@ -693,12 +698,21 @@ export default function FastPaymentsEntry({
             setSecurityDepositMessage("Select a valid security payment date.");
             return;
         }
+        if (isAdmin && securityDepositForm.paymentDate > currentKampalaDate) {
+            setSecurityDepositMessage("Future-dated entries are not permitted.");
+            return;
+        }
+        if (adminBackdatedSecurity && !trimmedBackdatingReason) {
+            setSecurityDepositMessage("A backdating reason is required.");
+            return;
+        }
         const selected = selectedTenant;
         startTransition(async () => {
             try {
                 setSecurityDepositMessage(null);
                 const deposit = await recordSecurityDeposit({
                     amount: depositAmount,
+                    backdatingReason: adminBackdatedSecurity ? trimmedBackdatingReason : null,
                     notes: securityDepositForm.notes || null,
                     paymentDate: securityDepositForm.paymentDate,
                     paymentMethod: securityDepositForm.paymentMethod || "cash",
@@ -819,10 +833,18 @@ export default function FastPaymentsEntry({
             return;
         }
         const monthlyRent = Number(newTenantForm.monthlyRent);
-        if (!Number.isFinite(monthlyRent) || monthlyRent <= 0) {
-            setNewTenantError("Monthly rent must be greater than zero.");
-            return;
-        }
+                if (!Number.isFinite(monthlyRent) || monthlyRent <= 0) {
+                    setNewTenantError("Monthly rent must be greater than zero.");
+                    return;
+                }
+                if (isAdmin && newTenantForm.moveInDate > currentKampalaDate) {
+                    setNewTenantError("Future-dated entries are not permitted.");
+                    return;
+                }
+                if (isAdmin && newTenantForm.moveInDate < currentKampalaDate && !trimmedBackdatingReason) {
+                    setNewTenantError("A backdating reason is required.");
+                    return;
+                }
         const paymentMade = Number(newTenantForm.paymentMade || 0);
         if (!Number.isFinite(paymentMade) || paymentMade < 0) {
             setNewTenantError("Payment made must be zero or greater.");
@@ -886,6 +908,7 @@ export default function FastPaymentsEntry({
                 if (newTenantForm.securityRequired && Number(newTenantForm.securityPaid || 0) > 0) {
                     await recordSecurityDeposit({
                         amount: Number(newTenantForm.securityPaid),
+                        backdatingReason: isAdmin && newTenantForm.moveInDate < currentKampalaDate ? trimmedBackdatingReason : null,
                         notes: newTenantForm.securityNotes || "Security deposit recorded during new tenant entry.",
                         paymentDate: newTenantForm.moveInDate,
                         paymentMethod: newTenantForm.paymentMethod || "cash",
@@ -1043,6 +1066,14 @@ export default function FastPaymentsEntry({
             setMessage("Select a valid payment date before recording.");
             return;
         }
+        if (isAdmin && paymentDate > currentKampalaDate) {
+            setMessage("Future-dated entries are not permitted.");
+            return;
+        }
+        if (adminBackdatedPayment && !trimmedBackdatingReason) {
+            setMessage("A backdating reason is required.");
+            return;
+        }
         if (selectedOfficeMismatch) {
             setMessage("This room is outside your active office.");
             return;
@@ -1075,6 +1106,7 @@ export default function FastPaymentsEntry({
                     : await recordCollection({
                         tenantId: selectedTenant.tenant.id,
                         amount: paidAmount,
+                        backdatingReason: adminBackdatedPayment ? trimmedBackdatingReason : undefined,
                         paymentDate,
                         paymentMethod: "cash",
                         paymentKind: "tenant_normal",
@@ -1255,16 +1287,34 @@ export default function FastPaymentsEntry({
                             </p>
                         </div>
                         <label className="block sm:w-60">
-                            <span className="text-xs font-black uppercase tracking-wide text-slate-300">Current Date</span>
+                            <span className="text-xs font-black uppercase tracking-wide text-slate-300">{isAdmin ? "Payment Date" : "Current Date"}</span>
                             <input
                                 type="date"
                                 value={paymentDate}
-                                readOnly
-                                aria-label={`Current Date, ${formatBusinessDate(paymentDate)}`}
-                                className="mt-1 h-13 w-full cursor-not-allowed rounded-2xl border border-white/10 bg-white/90 px-4 text-base font-black text-slate-950 outline-none"
+                                max={currentKampalaDate}
+                                onChange={(event) => {
+                                    if (!isAdmin) return;
+                                    setPaymentDate(event.target.value);
+                                    setSecurityDepositForm((current) => ({ ...current, paymentDate: event.target.value }));
+                                }}
+                                readOnly={!isAdmin}
+                                aria-label={`${isAdmin ? "Payment Date" : "Current Date"}, ${formatBusinessDate(paymentDate)}`}
+                                className={`mt-1 h-13 w-full rounded-2xl border border-white/10 bg-white/90 px-4 text-base font-black text-slate-950 outline-none ${isAdmin ? "cursor-pointer focus:ring-4 focus:ring-cyan-300/30" : "cursor-not-allowed"}`}
                             />
+                            {isAdmin ? <span className="mt-2 inline-flex rounded-full border border-cyan-300/30 bg-cyan-400/10 px-2 py-1 text-[10px] font-black uppercase text-cyan-100">Admin backdate authority</span> : null}
                         </label>
                     </div>
+                    {adminBackdatedPayment ? (
+                        <label className="mt-4 block">
+                            <span className="text-xs font-black uppercase tracking-wide text-amber-100">Backdating Reason</span>
+                            <textarea
+                                value={backdatingReason}
+                                onChange={(event) => setBackdatingReason(event.target.value)}
+                                placeholder="Example: Late entry of verified physical receipt"
+                                className="mt-1 min-h-20 w-full rounded-2xl border border-amber-200/40 bg-white px-4 py-3 text-sm font-bold text-slate-950 outline-none focus:ring-4 focus:ring-amber-300/30"
+                            />
+                        </label>
+                    ) : null}
                 </section>
 
                 <section className="mx-auto mt-5 max-w-6xl rounded-[30px] border border-white/70 bg-white p-5 shadow-2xl shadow-slate-950/20">
@@ -1448,7 +1498,16 @@ export default function FastPaymentsEntry({
                             </div>
                             <div className="mt-4 grid gap-3 md:grid-cols-5">
                                 <TextField label="Amount paid" type="number" value={securityDepositForm.amount} onChange={(value) => setSecurityDepositForm((current) => ({ ...current, amount: value }))} placeholder="UGX" />
-                                <TextField label="Current Date" type="date" value={securityDepositForm.paymentDate} onChange={() => undefined} readOnly />
+                                <TextField
+                                    label={isAdmin ? "Security Date" : "Current Date"}
+                                    type="date"
+                                    value={securityDepositForm.paymentDate}
+                                    onChange={(value) => {
+                                        if (!isAdmin) return;
+                                        setSecurityDepositForm((current) => ({ ...current, paymentDate: value }));
+                                    }}
+                                    readOnly={!isAdmin}
+                                />
                                 <label className="block">
                                     <span className="text-xs font-black uppercase text-emerald-700">Method</span>
                                     <select

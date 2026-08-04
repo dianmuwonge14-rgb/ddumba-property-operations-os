@@ -234,6 +234,7 @@ export type RecordCollectionInput = {
     paymentSource?: CollectionPaymentSource;
     paymentKind?: "tenant_normal" | "tenant_top_up" | "employer_sponsor" | "arrears" | "advance";
     paymentDate?: string;
+    backdatingReason?: string;
     payerName?: string;
     referenceNumber?: string;
     chequeReference?: string;

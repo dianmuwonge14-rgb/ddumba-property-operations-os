@@ -7,7 +7,7 @@ import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createTenantPaymentReceipt, markTenantPaymentReceiptPendingCorrection, syncTenantPaymentReceiptForCorrection } from "@/lib/receipts/payment-receipts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { assertCurrentBusinessDate } from "@/lib/business-date";
+import { assertFinancialEntryDate } from "@/lib/business-date";
 import { getTenantCollectionContext } from "@/lib/collections/data";
 import { buildTenantPaymentCoverageAllocations } from "@/lib/collections/move-in-allocation";
 import { recordCollectionLedgerAndCash } from "@/lib/collections/payment-ledger";
@@ -103,8 +103,12 @@ function normalizePaymentDate(value: string | undefined) {
     return dateOnly;
 }
 
-function assertCurrentPaymentDate(value: string | undefined) {
-    return assertCurrentBusinessDate(normalizePaymentDate(value), "Payments can only be recorded for the current date.");
+function assertPaymentEntryDate(context: Awaited<ReturnType<typeof requireAuth>>, value: string | undefined, backdatingReason?: string | null) {
+    return assertFinancialEntryDate(normalizePaymentDate(value), context, {
+        backdatingReason,
+        currentDateMessage: "Payments can only be recorded for the current date.",
+        entryLabel: "Payment",
+    });
 }
 
 async function getFastTenantPaymentContext(input: {
@@ -779,7 +783,8 @@ export async function recordCollection(input: RecordCollectionInput) {
     const usedToClearOutstanding = Math.min(balanceBefore, amount);
     const paymentSource = input.paymentSource === "employer" || input.paymentKind === "employer_sponsor" ? "employer" : "tenant";
     const paymentKind = input.paymentKind ?? (paymentSource === "employer" ? "employer_sponsor" : "tenant_normal");
-    const paymentDate = assertCurrentPaymentDate(input.paymentDate);
+    const paymentEntryDate = assertPaymentEntryDate(context, input.paymentDate, input.backdatingReason);
+    const paymentDate = paymentEntryDate.date;
     const paidAt = new Date().toISOString();
     const employeeId = authenticatedEmployeeId(context);
     const employerBalanceAfter = paymentSource === "employer"
@@ -792,6 +797,7 @@ export async function recordCollection(input: RecordCollectionInput) {
     const noteParts = [
         input.notes?.trim(),
         input.collectorName?.trim() ? `Collector: ${input.collectorName.trim()}` : null,
+        paymentEntryDate.isBackdated ? `BACKDATED ADMIN ENTRY | Entered on: ${paymentEntryDate.enteredOnDate} | Reason: ${paymentEntryDate.backdatingReason}` : null,
     ].filter(Boolean);
     const savedNotes = noteParts.length ? noteParts.join(" | ") : null;
     const { data, error } = await (supabase as unknown as DynamicDb)
@@ -1000,7 +1006,13 @@ export async function recordCollection(input: RecordCollectionInput) {
             entityId: data.id,
             companyId: context.activeCompany.id,
             officeId: resolvedOfficeId,
-            afterData: data,
+            afterData: {
+                ...(data as Record<string, unknown>),
+                backdated: paymentEntryDate.isBackdated,
+                backdatingReason: paymentEntryDate.backdatingReason,
+                enteredOnDate: paymentEntryDate.enteredOnDate,
+                transactionDate: paymentDate,
+            },
         }),
     ];
 

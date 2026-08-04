@@ -60,6 +60,10 @@ export type PaymentReceiptSnapshot = {
     approvedByName: string | null;
     collectorName: string | null;
     paymentDateTime: string | null;
+    paymentTransactionDate?: string | null;
+    enteredAt?: string | null;
+    isBackdated?: boolean;
+    backdatingReason?: string | null;
     paymentMethod: string | null;
     previousOutstandingBalance: number;
     receiptNumber: string;
@@ -200,6 +204,7 @@ function receiptBrandForOffice(office: LooseRow | null | undefined, fallback: st
 
 function receiptSummary(row: LooseRow): PaymentReceiptSummary {
     const snapshot = row.receipt_snapshot as PaymentReceiptSnapshot;
+
     return {
         companyId: String(row.company_id),
         id: String(row.id),
@@ -322,6 +327,10 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
         .reduce((total, row) => total + amount(row.amount_allocated), 0) || Math.max(0, amount(payment.amount_paid ?? payment.amount) - amountAppliedToOutstanding - advanceBalance);
     const collectorName = /collector/i.test(String(recordedBy.data?.account_type ?? "")) ? text(recordedBy.data?.full_name) : null;
     const issuer = await resolveReceiptIssuer(db, companyId, payment, recordedBy.data);
+    const paymentNotes = text(payment.notes);
+    const backdatingMatch = paymentNotes?.match(/BACKDATED ADMIN ENTRY\s*\|\s*Entered on:\s*([^|]+)\|\s*Reason:\s*(.+)$/i);
+    const enteredAt = text(payment.paid_at) ?? text(payment.created_at);
+    const paymentTransactionDate = text(payment.payment_date) ?? enteredAt;
 
     return {
         advanceBalance,
@@ -336,13 +345,17 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
         coveragePeriods,
         landlordName: text(landlord?.full_name),
         monthlyRent: amount(room?.monthly_rent ?? tenant?.monthly_rent),
-        notes: text(payment.notes),
+        notes: paymentNotes,
         officeName: text(office?.office_name) ?? text(office?.name),
         propertyName: text(property?.property_name) ?? text(property?.name) ?? text(property?.location),
         approvedAt: text(payment.approved_at) ?? text(payment.paid_at) ?? text(payment.payment_date),
         approvedByName: text(payment.approved_by_name) ?? null,
         collectorName,
-        paymentDateTime: text(payment.paid_at) ?? text(payment.payment_date),
+        paymentDateTime: enteredAt ?? paymentTransactionDate,
+        paymentTransactionDate,
+        enteredAt,
+        isBackdated: Boolean(backdatingMatch) || Boolean(paymentTransactionDate && enteredAt && paymentTransactionDate.slice(0, 10) < enteredAt.slice(0, 10)),
+        backdatingReason: backdatingMatch?.[2]?.trim() ?? null,
         paymentMethod: text(payment.payment_method),
         preparedByName: issuer.name,
         preparedByRole: issuer.role,

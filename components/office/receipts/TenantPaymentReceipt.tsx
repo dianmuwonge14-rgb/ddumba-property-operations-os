@@ -1216,7 +1216,10 @@ function buildEscPosReceipt(receipt: TenantReceiptViewModel, settings: ReceiptPr
         escPosLine("-".repeat(width), width),
         escPosAlign("left"),
         escPosPair("Receipt", receipt.receiptNumber, width),
-        escPosPair("Date", formatDateTime(snapshot.paymentDateTime), width),
+        escPosPair("Payment Date", snapshot.paymentTransactionDate?.slice(0, 10) ?? formatDateTime(snapshot.paymentDateTime), width),
+        escPosPair("Entered", formatDateTime(snapshot.enteredAt ?? snapshot.paymentDateTime), width),
+        snapshot.isBackdated ? escPosLine("BACKDATED ADMIN ENTRY", width) : "",
+        snapshot.isBackdated && snapshot.backdatingReason ? escPosPair("Reason", snapshot.backdatingReason, width) : "",
         escPosPair("Office", snapshot.officeName ?? "Office", width),
         escPosPair("Room", snapshot.roomNumber ?? "No room", width),
         escPosPair("Tenant", snapshot.tenantName ?? "Unnamed tenant", width),
@@ -1791,7 +1794,9 @@ export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptVi
             <section className="receipt-section">
                 <ReceiptRow label="Receipt No" value={receipt.receiptNumber} strong />
                 <ReceiptRow label="Verification" value={receipt.verificationCode} />
-                <ReceiptRow label="Date/Time" value={formatDateTime(snapshot.paymentDateTime)} />
+                <ReceiptRow label="Payment Date" value={snapshot.paymentTransactionDate?.slice(0, 10) ?? formatDateTime(snapshot.paymentDateTime)} />
+                <ReceiptRow label="Prepared/Entered Date" value={formatDateTime(snapshot.enteredAt ?? snapshot.paymentDateTime)} />
+                {snapshot.isBackdated ? <ReceiptRow label="BACKDATED ADMIN ENTRY" value={snapshot.backdatingReason ?? "Admin backdated entry"} stacked strong /> : null}
                 <ReceiptRow label="Office" value={snapshot.officeName ?? "Office"} stackWhenLong />
                 <ReceiptRow label="Room" value={snapshot.roomNumber ?? "No room"} strong />
                 {safeText(snapshot.propertyName) ? <ReceiptRow label="Property" value={safeText(snapshot.propertyName) ?? ""} stackWhenLong /> : null}
@@ -1815,6 +1820,7 @@ export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptVi
             <section className="receipt-section">
                 <p className="receipt-section-title font-black">Prepared By</p>
                 <ReceiptRow label="Prepared By" value={snapshot.preparedByName ?? snapshot.recordedByName ?? "Authenticated employee"} stacked strong />
+                {snapshot.isBackdated ? <ReceiptRow label="Backdated By" value={snapshot.preparedByName ?? snapshot.recordedByName ?? "Admin"} stacked /> : null}
                 <ReceiptRow label="Role" value={snapshot.preparedByRole ?? "Employee"} />
                 <ReceiptRow label="Office" value={snapshot.officeName ?? "Office"} stackWhenLong />
             </section>

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireAuth, requireCompanyAdminMode, hasPermission, canAccessOffice } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
-import { assertCurrentBusinessDate } from "@/lib/business-date";
+import { assertFinancialEntryDate } from "@/lib/business-date";
 import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { AuthContext } from "@/lib/auth/types";
@@ -13,6 +13,7 @@ type CashAccountType = "office_cash" | "bank" | "hq_cash";
 type BankMoneyInput = {
     amount: number;
     bankingDate: string;
+    backdatingReason?: string | null;
     bankName: string;
     channel: string;
     officeId?: string | null;
@@ -44,6 +45,7 @@ type TreasuryRequestType = "banking" | "cash_handover_admin";
 
 type TreasuryCashRequestInput = {
     amount: number;
+    backdatingReason?: string | null;
     bankAccountName?: string | null;
     businessDate: string;
     handedOverBy?: string | null;
@@ -68,6 +70,7 @@ type GiveMoneyInput = {
     amount: number;
     source: "bank" | "admin_cash";
     movementDate: string;
+    backdatingReason?: string | null;
     reason: string;
     referenceNumber?: string | null;
     notes?: string | null;
@@ -77,6 +80,7 @@ type AdminCashMovementInput = {
     movementType: "cash_received" | "cash_out" | "bank_deposit";
     amount: number;
     movementDate: string;
+    backdatingReason?: string | null;
     source?: string | null;
     category?: string | null;
     recipient?: string | null;
@@ -114,8 +118,12 @@ function assertDate(value: string, label: string) {
     }
 }
 
-function assertCurrentTreasuryDate(value: string) {
-    return assertCurrentBusinessDate(value, "Expenses can only be recorded for the current date.");
+function assertTreasuryEntryDate(context: AuthContext, value: string, backdatingReason?: string | null) {
+    return assertFinancialEntryDate(value, context, {
+        backdatingReason,
+        currentDateMessage: "Expenses can only be recorded for the current date.",
+        entryLabel: "Treasury entry",
+    });
 }
 
 function actorId(context: AuthContext) {
@@ -249,7 +257,8 @@ async function createTreasuryCashRequest(context: AuthContext, input: TreasuryCa
     const amount = amountValue(input.amount);
     assertAmount(amount);
     assertDate(input.businessDate, input.requestType === "banking" ? "Banking date" : "Handover date");
-    const businessDate = assertCurrentTreasuryDate(input.businessDate);
+    const treasuryDate = assertTreasuryEntryDate(context, input.businessDate, input.backdatingReason);
+    const businessDate = treasuryDate.date;
     if (!input.reason?.trim()) throw new Error("Reason is required.");
 
     const db = createSupabaseAdminClient();
@@ -272,7 +281,10 @@ async function createTreasuryCashRequest(context: AuthContext, input: TreasuryCa
             handed_over_by: input.handedOverBy?.trim() || context.profile?.full_name || null,
             idempotency_key: idempotencyKey,
             method: input.method?.trim() || (input.requestType === "banking" ? "Bank deposit" : "Cash"),
-            notes: input.notes?.trim() || null,
+            notes: [
+                input.notes?.trim() || null,
+                treasuryDate.isBackdated ? `BACKDATED ADMIN ENTRY | Entered on: ${treasuryDate.enteredOnDate} | Reason: ${treasuryDate.backdatingReason}` : null,
+            ].filter(Boolean).join(" | ") || null,
             office_id: officeId,
             reason: input.reason.trim(),
             received_by_admin: input.receivedByAdminId || null,
@@ -306,7 +318,15 @@ async function createTreasuryCashRequest(context: AuthContext, input: TreasuryCa
         entityId: String(request.id),
         companyId,
         officeId,
-        afterData: { ...input, amount, status: "pending" },
+        afterData: {
+            ...input,
+            amount,
+            backdated: treasuryDate.isBackdated,
+            backdatingReason: treasuryDate.backdatingReason,
+            enteredOnDate: treasuryDate.enteredOnDate,
+            status: "pending",
+            transactionDate: businessDate,
+        },
     });
     revalidateCashPages();
     return request as Record<string, unknown>;
@@ -397,7 +417,8 @@ export async function depositOfficeCashToBank(input: BankMoneyInput): Promise<De
     const amount = amountValue(input.amount);
     assertAmount(amount);
     assertDate(input.bankingDate, "Banking date");
-    const bankingDate = assertCurrentTreasuryDate(input.bankingDate);
+    const bankingEntryDate = assertTreasuryEntryDate(context, input.bankingDate, input.backdatingReason);
+    const bankingDate = bankingEntryDate.date;
     if (!input.bankName?.trim()) throw new Error("Bank/mobile money account is required.");
 
     if (!isAdminContext(context)) {
@@ -405,6 +426,7 @@ export async function depositOfficeCashToBank(input: BankMoneyInput): Promise<De
             amount,
             bankAccountName: input.bankName.trim(),
             businessDate: bankingDate,
+            backdatingReason: input.backdatingReason,
             method: input.channel || "Bank",
             notes: input.notes,
             officeId,
@@ -447,7 +469,10 @@ export async function depositOfficeCashToBank(input: BankMoneyInput): Promise<De
         p_deposit_date: bankingDate,
         p_deposit_method: input.channel || "Bank",
         p_deposit_reference: input.referenceNumber || null,
-        p_notes: input.notes || null,
+        p_notes: [
+            input.notes || null,
+            bankingEntryDate.isBackdated ? `BACKDATED ADMIN ENTRY | Entered on: ${bankingEntryDate.enteredOnDate} | Reason: ${bankingEntryDate.backdatingReason}` : null,
+        ].filter(Boolean).join(" | ") || null,
         p_office_id: officeId,
         p_recorded_by: actorId(context),
     });
@@ -497,7 +522,8 @@ export async function giveMoneyToOffice(input: GiveMoneyInput) {
     const amount = amountValue(input.amount);
     assertAmount(amount);
     assertDate(input.movementDate, "Movement date");
-    const movementDate = assertCurrentTreasuryDate(input.movementDate);
+    const movementEntryDate = assertTreasuryEntryDate(context, input.movementDate, input.backdatingReason);
+    const movementDate = movementEntryDate.date;
     if (!input.reason?.trim()) throw new Error("Reason is required.");
 
     const db = createSupabaseAdminClient();
@@ -516,7 +542,10 @@ export async function giveMoneyToOffice(input: GiveMoneyInput) {
         p_company_id: companyId,
         p_idempotency_key: idempotencyKey,
         p_movement_date: movementDate,
-        p_notes: input.notes ?? null,
+        p_notes: [
+            input.notes ?? null,
+            movementEntryDate.isBackdated ? `BACKDATED ADMIN ENTRY | Entered on: ${movementEntryDate.enteredOnDate} | Reason: ${movementEntryDate.backdatingReason}` : null,
+        ].filter(Boolean).join(" | ") || null,
         p_office_id: input.officeId,
         p_reason: input.reason.trim(),
         p_reference: input.referenceNumber?.trim() || null,
@@ -538,7 +567,8 @@ export async function recordAdminCashMovement(input: AdminCashMovementInput) {
     const amount = amountValue(input.amount);
     assertAmount(amount);
     assertDate(input.movementDate, "Movement date");
-    const movementDate = assertCurrentTreasuryDate(input.movementDate);
+    const movementEntryDate = assertTreasuryEntryDate(context, input.movementDate, input.backdatingReason);
+    const movementDate = movementEntryDate.date;
 
     const db = createSupabaseAdminClient();
     const actor = actorId(context);
@@ -604,7 +634,10 @@ export async function recordAdminCashMovement(input: AdminCashMovementInput) {
             company_id: companyId,
             movement_date: movementDate,
             movement_type: movementType === "cash_received" ? "admin_cash_received" : movementType === "cash_out" ? "admin_cash_out" : "admin_bank_deposit",
-            notes: input.notes ?? null,
+            notes: [
+                input.notes ?? null,
+                movementEntryDate.isBackdated ? `BACKDATED ADMIN ENTRY | Entered on: ${movementEntryDate.enteredOnDate} | Reason: ${movementEntryDate.backdatingReason}` : null,
+            ].filter(Boolean).join(" | ") || null,
             office_id: null,
             recorded_by: actor,
             reference: input.referenceNumber?.trim() || null,
@@ -706,6 +739,10 @@ export async function recordAdminCashMovement(input: AdminCashMovementInput) {
             admin_cash_after: movementType === "cash_received" ? adminCashBefore + amount : adminCashBefore - amount,
             bank_before: bankBefore,
             bank_after: movementType === "bank_deposit" ? bankBefore + amount : bankBefore,
+            backdated: movementEntryDate.isBackdated,
+            backdatingReason: movementEntryDate.backdatingReason,
+            enteredOnDate: movementEntryDate.enteredOnDate,
+            transactionDate: movementDate,
         },
     });
     revalidateCashPages();

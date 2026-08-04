@@ -249,6 +249,7 @@ export type ExpenseBalanceReport = {
 
 export type CreateExpenseInput = {
     amount: number;
+    backdatingReason?: string | null;
     categoryId?: string;
     category?: string;
     propertyId?: string;
@@ -264,6 +265,7 @@ export type CreateLandlordPaidExpenseRequestInput = {
     amount: number;
     advanceAgreement?: Record<string, unknown>;
     advanceRecoveryAmount?: number;
+    backdatingReason?: string | null;
     expenseDate: string;
     landlordId: string;
     officeId?: string | null;
@@ -299,6 +301,7 @@ export type EmployeeExpensePreview = {
 
 export type CreateEmployeeExpenseInput = {
     amount: number;
+    backdatingReason?: string | null;
     employeeId: string;
     expenseDate: string;
     expenseItem: string;
