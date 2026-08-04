@@ -101,12 +101,21 @@ test("payment entry tenant summary shows outstanding balance first", () => {
   assert.ok(tenantBalanceSource.indexOf("onClick={onEditOutstanding}") > positions[0], "Outstanding Balance keeps the Admin edit button");
 });
 
-test("tenant receipts include supermarket-style coverage and print scope", () => {
+test("tenant receipts snapshot allocation details but render prepared-by instead of rent coverage", () => {
   assert.match(receiptService, /coverage_start/);
   assert.match(receiptService, /coveragePeriods/);
   assert.match(receiptService, /amountAppliedToOutstanding/);
   assert.match(receiptService, /amountAppliedToCurrentRent/);
   assert.match(receiptService, /advanceAmount/);
+  assert.match(receiptService, /resolveReceiptIssuer/);
+  assert.match(receiptService, /preparedByRole/);
+  assert.match(sharedReceipt, /Prepared By/);
+  assert.match(sharedReceipt, /snapshot\.preparedByRole/);
+  assert.match(sharedReceipt, /snapshot\.officeName/);
+  assert.doesNotMatch(sharedReceipt, /<p className="receipt-section-title font-black">Coverage<\/p>/);
+  assert.doesNotMatch(sharedReceipt, /escPosLine\("COVERAGE"/);
+  assert.doesNotMatch(receiptA4, /Rent Coverage/);
+  assert.doesNotMatch(receiptPrintPdfRoute, /COVERAGE/);
   assert.match(receiptStyles, /print-tenant-payment-receipt/);
   assert.match(receiptStyles, /#tenant-receipt-print-root/);
   assert.match(receiptStyles, /size: 80mm auto/);
@@ -147,9 +156,9 @@ test("receipt modal supports safe close interactions and focus restoration", () 
   assert.match(sharedReceipt, /document\.body\.style\.overflow = "hidden"/);
 });
 
-test("receipt layout protects long values, coverage rows, and print scope", () => {
+test("receipt layout protects long values, prepared-by rows, and print scope", () => {
   assert.match(sharedReceipt, /receipt-row-stacked/);
-  assert.match(sharedReceipt, /receipt-coverage-card/);
+  assert.match(sharedReceipt, /Prepared By/);
   assert.match(sharedReceipt, /ReceiptMoneyRow/);
   assert.match(sharedReceipt, /api\.qrserver\.com\/v1\/create-qr-code/);
   assert.match(receiptStyles, /grid-template-columns: minmax\(0, 42%\) minmax\(0, 58%\)/);
@@ -244,7 +253,7 @@ test("receipt print typography is bold and high contrast on A4 and thermal recei
   assert.match(sharedReceipt, /receipt-company/);
   assert.match(sharedReceipt, /receipt-heading/);
   assert.match(sharedReceipt, /receipt-amount/);
-  assert.match(sharedReceipt, /coverage-row/);
+  assert.match(sharedReceipt, /Prepared By/);
   assert.match(receiptPrintPage, /#tenant-receipt-print-root,\s*\n#tenant-receipt-print-root \*/);
   assert.match(receiptPrintPage, /font-weight: 700 !important/);
   assert.match(receiptPrintPage, /font-size: \$\{widthMm === 58 \? 16 : 20\}px !important/);

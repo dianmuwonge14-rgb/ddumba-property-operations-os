@@ -79,12 +79,6 @@ function receiptStatusLines(receipt: Awaited<ReturnType<typeof loadPrintableRece
 
 function receiptTextLines(receipt: Awaited<ReturnType<typeof loadPrintableReceipt>>) {
     const snapshot = receipt.snapshot;
-    const coverage = snapshot.coveragePeriods?.length
-        ? snapshot.coveragePeriods.filter((period) => period.label && Number(period.amount) > 0)
-        : snapshot.coveragePeriod
-            ? [{ amount: snapshot.amountApplied, label: snapshot.coveragePeriod, type: "coverage" }]
-            : [];
-
     const lines: Array<{ bold?: boolean; center?: boolean; divider?: boolean; size?: number; text: string }> = [
         { bold: true, center: true, size: 13, text: safe(snapshot.companyName, "DDUMBA OS") },
     ];
@@ -116,20 +110,15 @@ function receiptTextLines(receipt: Awaited<ReturnType<typeof loadPrintableReceip
         ...pairLines("Advance bal", money(snapshot.advanceBalance)).map((text) => ({ text })),
         { divider: true, text: "" },
     );
-    if (coverage.length) {
-        lines.push({ bold: true, text: "COVERAGE" });
-        coverage.forEach((period, index) => {
-            lines.push({ bold: true, text: `Period ${index + 1}` });
-            wrap(period.label, 27).forEach((text) => lines.push({ text }));
-            lines.push({ text: `Amount: ${money(period.amount)}` });
-        });
-        lines.push({ divider: true, text: "" });
-    }
     lines.push(
+        { bold: true, text: "PREPARED BY" },
+        ...pairLines("Prepared By", safe(snapshot.preparedByName ?? snapshot.recordedByName, "Authenticated employee")).map((text) => ({ text })),
+        ...pairLines("Role", safe(snapshot.preparedByRole, "Employee")).map((text) => ({ text })),
+        ...pairLines("Office", safe(snapshot.officeName, "Office")).map((text) => ({ text })),
+        { divider: true, text: "" },
         ...pairLines("Method", safe(snapshot.paymentMethod?.replaceAll("_", " "), "Payment")).map((text) => ({ text })),
         ...pairLines("Reference", safe(snapshot.referenceNumber, "No reference")).map((text) => ({ text })),
         ...(safe(snapshot.securityDepositReceiptNumber) ? pairLines("Security receipt", safe(snapshot.securityDepositReceiptNumber)).map((text) => ({ text })) : []),
-        ...pairLines("Prepared by", safe(snapshot.preparedByName ?? snapshot.recordedByName, "DDUMBA OS")).map((text) => ({ text })),
         ...pairLines("Status", safe(snapshot.statusLabel ?? snapshot.receiptStatus ?? snapshot.status, "issued")).map((text) => ({ text })),
     );
     if (safe(snapshot.notes)) pairLines("Notes", safe(snapshot.notes)).forEach((text) => lines.push({ text }));

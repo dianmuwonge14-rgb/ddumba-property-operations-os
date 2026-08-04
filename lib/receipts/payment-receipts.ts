@@ -75,6 +75,7 @@ export type PaymentReceiptSnapshot = {
     changeType?: string | null;
     changedByName?: string | null;
     preparedByName?: string | null;
+    preparedByRole?: string | null;
     receiptStatus?: string;
     statusLabel?: string;
     recordedByName: string | null;
@@ -234,13 +235,54 @@ async function getUserName(db: Db, id: unknown) {
     return text(data?.full_name) ?? text(data?.email) ?? text(data?.phone);
 }
 
+function accountTypeAllowsReceiptIssuer(accountType: unknown) {
+    const value = String(accountType ?? "").toLowerCase();
+    return !/(office|workspace|shared|system|service)/i.test(value);
+}
+
+function roleLabel(value: unknown) {
+    const textValue = text(value);
+    if (!textValue) return null;
+    return textValue
+        .replaceAll("_", " ")
+        .replaceAll("-", " ")
+        .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+async function resolveReceiptIssuer(db: Db, companyId: string, payment: LooseRow, recordedBy: LooseRow | null | undefined) {
+    const employeeId =
+        text(payment.prepared_by_employee_id) ??
+        text(payment.collected_by_employee_id) ??
+        text(payment.recorded_by_employee_id) ??
+        text(recordedBy?.employee_id);
+
+    if (employeeId) {
+        const employee = await getOne(db, "employees", employeeId, companyId, "*");
+        if (employee?.id) {
+            return {
+                name: text(employee.full_name) ?? text(employee.phone),
+                role: roleLabel(employee.role_name ?? employee.role ?? employee.job_title ?? employee.position),
+            };
+        }
+    }
+
+    if (recordedBy?.id && accountTypeAllowsReceiptIssuer(recordedBy.account_type)) {
+        return {
+            name: text(recordedBy.full_name) ?? text(recordedBy.email) ?? text(recordedBy.phone),
+            role: roleLabel(recordedBy.account_type),
+        };
+    }
+
+    return { name: null, role: null };
+}
+
 async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumber: string, verificationCode: string): Promise<PaymentReceiptSnapshot> {
     const companyId = String(payment.company_id);
     const [company, tenant, room, recordedBy] = await Promise.all([
         getOne(db, "companies", payment.company_id, companyId, "*"),
         getOne(db, "tenants", payment.tenant_id, companyId, "*"),
         getOne(db, "rooms", payment.room_id, companyId, "*"),
-        payment.recorded_by ? db.from("users").select("id,full_name,email,phone,account_type").eq("id", payment.recorded_by).maybeSingle() : Promise.resolve({ data: null, error: null }),
+        payment.recorded_by ? db.from("users").select("id,employee_id,full_name,email,phone,account_type").eq("id", payment.recorded_by).maybeSingle() : Promise.resolve({ data: null, error: null }),
     ]);
     if (recordedBy.error && !isMissingSchemaError(recordedBy.error)) throw new Error(recordedBy.error.message);
 
@@ -279,6 +321,7 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
         .filter((row) => /current|rent/i.test(String(row.allocation_type ?? "")))
         .reduce((total, row) => total + amount(row.amount_allocated), 0) || Math.max(0, amount(payment.amount_paid ?? payment.amount) - amountAppliedToOutstanding - advanceBalance);
     const collectorName = /collector/i.test(String(recordedBy.data?.account_type ?? "")) ? text(recordedBy.data?.full_name) : null;
+    const issuer = await resolveReceiptIssuer(db, companyId, payment, recordedBy.data);
 
     return {
         advanceBalance,
@@ -301,9 +344,11 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
         collectorName,
         paymentDateTime: text(payment.paid_at) ?? text(payment.payment_date),
         paymentMethod: text(payment.payment_method),
+        preparedByName: issuer.name,
+        preparedByRole: issuer.role,
         previousOutstandingBalance: amount(payment.balance_before_payment ?? payment.expected_amount),
         receiptNumber,
-        recordedByName: text(payment.entered_by_name) ?? text(recordedBy.data?.full_name),
+        recordedByName: issuer.name ?? text(payment.entered_by_name) ?? (accountTypeAllowsReceiptIssuer(recordedBy.data?.account_type) ? text(recordedBy.data?.full_name) : null),
         referenceNumber: text(payment.reference_number ?? payment.cheque_reference ?? payment.collection_number),
         remainingOutstandingBalance: amount(payment.balance_after_payment ?? payment.balance),
         roomNumber: text(room?.room_number),
@@ -445,6 +490,7 @@ export async function syncTenantPaymentReceiptForCorrection(input: {
         changeType: fieldLabel,
         changedByName,
         preparedByName: previousSnapshot.preparedByName ?? previousSnapshot.recordedByName ?? currentSnapshot.recordedByName,
+        preparedByRole: previousSnapshot.preparedByRole ?? currentSnapshot.preparedByRole ?? null,
         receiptStatus,
         status: receiptStatus,
         statusLabel: receiptStatusLabel(receiptStatus),
@@ -580,6 +626,7 @@ export async function markTenantPaymentReceiptPendingCorrection(input: {
         changeType: fieldLabel,
         changedByName: requestedByName,
         preparedByName: previousSnapshot.preparedByName ?? previousSnapshot.recordedByName,
+        preparedByRole: previousSnapshot.preparedByRole ?? null,
         receiptStatus: "pending_correction",
         status: "pending_correction",
         statusLabel: receiptStatusLabel("pending_correction"),

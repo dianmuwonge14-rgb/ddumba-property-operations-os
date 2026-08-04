@@ -45,11 +45,12 @@ test("receipt history loads amendments and exposes premium status filters", () =
 test("printed and downloaded receipts display status and amendment history", () => {
   assert.match(thermalReceipt, /Amendment History/);
   assert.match(thermalReceipt, /Cancelled Receipt/);
-  assert.match(thermalReceipt, /Prepared by/);
+  assert.match(thermalReceipt, /Prepared By/);
+  assert.match(thermalReceipt, /snapshot\.preparedByRole/);
   assert.match(a4Receipt, /AMENDED RECEIPT/);
   assert.match(a4Receipt, /CANCELLED RECEIPT/);
   assert.match(a4Receipt, /Prepared By/);
   assert.match(pdfRoute, /AMENDMENT HISTORY/);
   assert.match(pdfRoute, /CANCELLED RECEIPT/);
-  assert.match(pdfRoute, /Prepared by/);
+  assert.match(pdfRoute, /Prepared By/);
 });

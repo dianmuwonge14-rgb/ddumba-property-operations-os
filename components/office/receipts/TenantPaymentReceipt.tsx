@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type React from "react";
 import { Download, Mail, MessageCircle, Printer, X } from "lucide-react";
 import { desktopReceiptPrintUrl, isDesktopOperatingSystem } from "@/components/office/receipts/DesktopPrint";
@@ -1204,7 +1204,6 @@ function formatDiagnosticSteps(result: ReceiptPrintDiagnosticResult) {
 
 function buildEscPosReceipt(receipt: TenantReceiptViewModel, settings: ReceiptPrinterSettings) {
     const snapshot = receipt.snapshot;
-    const coverage = snapshot.coveragePeriods?.length ? snapshot.coveragePeriods : snapshot.coveragePeriod ? [{ amount: snapshot.amountApplied, label: snapshot.coveragePeriod, type: "coverage" }] : [];
     const width = escPosLineWidth(settings);
     const lines = [
         escPosInit(),
@@ -1236,18 +1235,16 @@ function buildEscPosReceipt(receipt: TenantReceiptViewModel, settings: ReceiptPr
         escPosPair("Advance bal", money(snapshot.advanceBalance), width),
         escPosLine("-".repeat(width), width),
     ];
-    if (coverage.length) {
-        lines.push(escPosLine("COVERAGE", width));
-        coverage.forEach((period, index) => {
-            lines.push(escPosLine(`${index + 1}. ${safeEscPos(period.label) ?? "Period"}`, width));
-            lines.push(escPosPair("Amount", money(period.amount), width));
-        });
-        lines.push(escPosLine("-".repeat(width), width));
-    }
     lines.push(
+        escPosBold(true),
+        escPosLine("PREPARED BY", width),
+        escPosBold(false),
+        escPosPair("Prepared By", snapshot.preparedByName ?? snapshot.recordedByName ?? "Authenticated employee", width),
+        escPosPair("Role", snapshot.preparedByRole ?? "Employee", width),
+        escPosPair("Office", snapshot.officeName ?? "Office", width),
+        escPosLine("-".repeat(width), width),
         escPosPair("Method", snapshot.paymentMethod?.replaceAll("_", " ") ?? "Payment", width),
         escPosPair("Reference", snapshot.referenceNumber ?? "No reference", width),
-        escPosPair("Recorded by", snapshot.recordedByName ?? "DDUMBA OS", width),
         escPosPair("Verification", receipt.verificationCode, width),
     );
     if (settings.printQrCode) {
@@ -1772,11 +1769,6 @@ export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptVi
     const receiptStatus = receiptStatusPresentation(snapshot.receiptStatus ?? receipt.status ?? snapshot.status);
     const amendments = snapshot.amendmentHistory ?? [];
     const latestAmendment = amendments.at(-1) ?? null;
-    const coveragePeriods = useMemo(() => {
-        if (snapshot.coveragePeriods?.length) return snapshot.coveragePeriods.filter((period) => period.label && Number(period.amount) > 0);
-        if (snapshot.coveragePeriod) return [{ amount: snapshot.amountApplied, label: snapshot.coveragePeriod, type: "coverage" }];
-        return [];
-    }, [snapshot.amountApplied, snapshot.coveragePeriod, snapshot.coveragePeriods]);
     const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=128x128&margin=10&data=${encodeURIComponent(receiptVerificationUrl(receipt))}`;
 
     return (
@@ -1820,27 +1812,17 @@ export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptVi
                 <ReceiptMoneyRow label="Advance balance" value={snapshot.advanceBalance} />
             </section>
 
-            {coveragePeriods.length ? (
-                <section className="receipt-section">
-                    <p className="receipt-section-title font-black">Coverage</p>
-                    <div className="space-y-1.5">
-                        {coveragePeriods.map((period, index) => (
-                            <div key={`${period.label}-${period.type}-${index}`} className="receipt-coverage-card coverage-row">
-                                <p className="text-[9px] font-black uppercase text-slate-500">Period {index + 1}</p>
-                                <p className="mt-0.5 text-[10px] font-black leading-tight">{period.label}</p>
-                                <p className="mt-0.5 text-[10px] font-black tabular-nums">Amount: {money(period.amount)}</p>
-                                {period.type ? <p className="mt-0.5 text-[8px] font-bold uppercase text-slate-500">{period.type}</p> : null}
-                            </div>
-                        ))}
-                    </div>
-                </section>
-            ) : null}
+            <section className="receipt-section">
+                <p className="receipt-section-title font-black">Prepared By</p>
+                <ReceiptRow label="Prepared By" value={snapshot.preparedByName ?? snapshot.recordedByName ?? "Authenticated employee"} stacked strong />
+                <ReceiptRow label="Role" value={snapshot.preparedByRole ?? "Employee"} />
+                <ReceiptRow label="Office" value={snapshot.officeName ?? "Office"} stackWhenLong />
+            </section>
 
             <section className="receipt-section">
                 <ReceiptRow label="Method" value={snapshot.paymentMethod?.replaceAll("_", " ") ?? "Payment"} />
                 <ReceiptRow label="Reference" value={snapshot.referenceNumber ?? "No reference"} stacked />
                 {safeText(snapshot.securityDepositReceiptNumber) ? <ReceiptRow label="Security receipt" value={safeText(snapshot.securityDepositReceiptNumber) ?? ""} stacked /> : null}
-                <ReceiptRow label="Prepared by" value={snapshot.preparedByName ?? snapshot.recordedByName ?? "DDUMBA OS"} stacked />
                 {snapshot.collectorName ? <ReceiptRow label="Collector" value={snapshot.collectorName} stacked /> : null}
                 <ReceiptRow label="Status" value={receiptStatus.label} />
                 <ReceiptRow label="Notes" value={snapshot.notes ?? "No notes"} stacked />
