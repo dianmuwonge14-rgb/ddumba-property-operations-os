@@ -284,7 +284,7 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
     const hasPaymentQueue = visiblePaymentDateRequests.length > 0 || paymentDateRequests.length > 0;
     const hasBalanceQueue = visibleBalanceAdjustmentRequests.length > 0 || safeData.tenantBalanceAdjustmentRequests.length > 0;
     const hasPromiseQueue = visiblePromiseChangeRequests.length > 0 || safeData.promiseChangeRequests.length > 0;
-    const hasLandlordPaymentQueue = visibleLandlordPaymentRequests.length > 0 || landlordPaymentRequests.length > 0;
+    const hasLandlordPaymentQueue = visibleLandlordPaymentRequests.length > 0;
     const hasLandlordBulkRoomQueue = visibleLandlordBulkRoomRequests.length > 0 || safeData.landlordBulkRoomRequests.length > 0;
     const hasLandlordPaymentDetailQueue = visibleLandlordPaymentDetailRequests.length > 0 || safeData.landlordPaymentDetailRequests.length > 0;
     const hasExpenseQueue = visibleExpenseRequests.length > 0 || safeData.expenseApprovalRequests.length > 0;
@@ -449,6 +449,11 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
     }
 
     function executeLandlordPaymentDecision(request: NotificationLandlordPaymentRequest, decision: "approved" | "rejected", comment: string) {
+        if (request.status !== "pending") {
+            const status = String(request.status || "reviewed").replaceAll("_", " ");
+            setMessage(`This landlord payment request is already ${status}. Open its history instead of approving it again.`);
+            return;
+        }
         if (decision === "rejected" && !comment.trim()) {
             setMessage("Rejection reason is required.");
             return;

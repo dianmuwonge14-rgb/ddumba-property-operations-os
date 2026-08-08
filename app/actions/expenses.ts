@@ -189,10 +189,17 @@ function landlordPaymentRequestStateMessage(status: unknown) {
 function landlordPaymentBusinessError(error: unknown) {
     const raw = error instanceof Error ? error.message : String(error ?? "Unable to process landlord payment request.");
     const message = raw.toLowerCase();
+    if (message.includes("already been approved")) return "This landlord payment has already been approved.";
+    if (message.includes("already been rejected")) return "This landlord payment request has already been rejected.";
+    if (message.includes("has been cancelled")) return "This landlord payment request has been cancelled.";
+    if (message.includes("previously failed")) return "This landlord payment approval previously failed. Review the failure note before trying again.";
     if (message.includes("current date")) return "Approval failed because the request date is outside the permitted financial-entry date rules. Admin backdating migration or a backdating reason is required.";
     if (message.includes("backdating reason")) return "A backdating reason is required before approving this backdated landlord payment.";
     if (message.includes("only admin may")) return "Only Admin may approve a past-date landlord payment.";
     if (message.includes("future-dated")) return "The selected payment date is invalid because future-dated entries are not permitted.";
+    if (message.includes("invalid payment amount")) return "Invalid payment amount.";
+    if (message.includes("landlord no longer exists")) return "The landlord no longer exists.";
+    if (message.includes("office is inactive") || message.includes("office was merged")) return raw;
     if (message.includes("duplicate") || message.includes("unique")) return "A duplicate landlord payment already exists.";
     if (message.includes("permission") || message.includes("not authorized") || message.includes("unauthorized")) return "You do not have permission to approve landlord payments.";
     if (message.includes("violates foreign key")) return "Approval failed because a linked landlord, office, or payable record no longer exists.";
@@ -356,6 +363,48 @@ async function postOfficeCashOutflow(input: {
     });
     if (error && !isMissingSchemaError(error)) {
         throw new Error(`Office cash ledger update failed: ${error.message}`);
+    }
+}
+
+async function assertLandlordPaymentApprovalPreflight(input: {
+    companyId: string;
+    db: { from: (table: string) => any };
+    request: Record<string, any>;
+}) {
+    const requestedAmount = Number(input.request.requested_amount ?? 0);
+    if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
+        throw new Error("Invalid payment amount.");
+    }
+
+    const [landlordResult, officeResult] = await Promise.all([
+        input.db
+            .from("landlords")
+            .select("id,status")
+            .eq("company_id", input.companyId)
+            .eq("id", input.request.landlord_id)
+            .maybeSingle(),
+        input.db
+            .from("offices")
+            .select("id,status,merged_into_office_id")
+            .eq("company_id", input.companyId)
+            .eq("id", input.request.office_id)
+            .maybeSingle(),
+    ]);
+
+    if (landlordResult.error) throw new Error(landlordResult.error.message);
+    if (officeResult.error) throw new Error(officeResult.error.message);
+    if (!landlordResult.data?.id) throw new Error("The landlord no longer exists.");
+    if (!officeResult.data?.id) throw new Error("The office no longer exists.");
+
+    const officeStatus = String(officeResult.data.status ?? "active").toLowerCase();
+    if (officeStatus !== "active") {
+        const mergedInto = officeResult.data.merged_into_office_id ? ` It was merged into office ${officeResult.data.merged_into_office_id}.` : "";
+        throw new Error(`The office is inactive or merged.${mergedInto}`);
+    }
+
+    const landlordStatus = String(landlordResult.data.status ?? "active").toLowerCase();
+    if (["deleted", "archived", "inactive"].includes(landlordStatus)) {
+        throw new Error("The landlord no longer exists.");
     }
 }
 
@@ -1548,6 +1597,12 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
         revalidateExpenseSurfaces();
         return data;
     }
+
+    await assertLandlordPaymentApprovalPreflight({
+        companyId,
+        db,
+        request: loadedRequest,
+    });
 
     const { data: request, error: claimError } = await db
         .from("landlord_payment_expense_requests")

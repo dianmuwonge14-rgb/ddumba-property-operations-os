@@ -291,6 +291,24 @@ test("landlord payment approval claims the pending request and blocks duplicate 
   assert.match(expensesSource, /A duplicate landlord payment allocation already exists/);
 });
 
+test("landlord payment approval preflights business validity before financial posting", () => {
+  const expensesSource = readFileSync(new URL("../app/actions/expenses.ts", import.meta.url), "utf8");
+  const expenseApprovalBody = expensesSource.slice(expensesSource.indexOf("export async function decideLandlordPaidExpenseRequest"), expensesSource.indexOf("async function createApprovedLandlordAdvanceFromExpenseRequest"));
+  assert.match(expensesSource, /assertLandlordPaymentApprovalPreflight/);
+  assert.match(expenseApprovalBody, /await assertLandlordPaymentApprovalPreflight/);
+  assert.match(expensesSource, /Invalid payment amount/);
+  assert.match(expensesSource, /The landlord no longer exists/);
+  assert.match(expensesSource, /The office is inactive or merged/);
+});
+
+test("notifications only expose landlord payment approval actions for truly pending rows", () => {
+  const notificationsSource = readFileSync(new URL("../components/office/notifications/NotificationsCentre.tsx", import.meta.url), "utf8");
+  assert.match(notificationsSource, /request\.status !== "pending"/);
+  assert.match(notificationsSource, /Open its history instead of approving it again/);
+  assert.match(notificationsSource, /const hasLandlordPaymentQueue = visibleLandlordPaymentRequests\.length > 0;/);
+  assert.match(notificationsSource, /request\.status === "pending" \? \(/);
+});
+
 test("controlled landlord advance recovery reduces payable without creating a new advance", () => {
   const plan = allocationPlan(500000, [{ settlement_month: "2026-07-01", monthly_net_payable: 800000, amount_paid: 0 }], 300000);
   assert.equal(plan.advanceRecovery, 300000);
