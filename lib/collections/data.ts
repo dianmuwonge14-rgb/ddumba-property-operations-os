@@ -77,6 +77,20 @@ type CollectionUserRow = {
     default_office_id?: string | null;
 };
 
+type OfficeRoleAssignmentRow = {
+    user_id?: string | null;
+    employee_id?: string | null;
+    office_id?: string | null;
+    status?: string | null;
+};
+
+type FieldCollectorProfileRow = {
+    id?: string | null;
+    user_id?: string | null;
+    employee_id?: string | null;
+    status?: string | null;
+};
+
 const NON_EMPLOYEE_ACCOUNT_TYPES = new Set(["admin_service", "office", "office_workspace", "service", "shared", "system"]);
 
 function businessDateOnly(value: string | null | undefined) {
@@ -150,6 +164,11 @@ function isRealActiveEmployee(employee: EmployeeOptionRow | null | undefined, li
         && !role.includes("office account")
         && role !== "office user"
         && role !== "office_user";
+}
+
+function isActiveAssignmentStatus(value: string | null | undefined) {
+    const status = String(value ?? "active").toLowerCase();
+    return !["archived", "deleted", "disabled", "expired", "inactive", "revoked", "suspended", "terminated"].includes(status);
 }
 
 function businessTimeOnly(value: string | null | undefined) {
@@ -598,26 +617,39 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
         if (!isAdmin && officeId) query = query.eq("office_id", officeId);
         return query.order("full_name", { ascending: true }).limit(2000);
     })();
+    const officeRoleAssignmentsRequest = !isAdmin && officeId
+        ? optionalRows((supabase as unknown as DynamicDb)
+            .from("user_office_roles")
+            .select("user_id, employee_id, office_id, status")
+            .eq("company_id", companyId)
+            .eq("office_id", officeId)
+            .limit(2000))
+        : Promise.resolve([]);
+    const collectorProfilesRequest = !isAdmin && officeId
+        ? optionalRows((supabase as unknown as DynamicDb)
+            .from("field_collector_profiles")
+            .select("id, user_id, employee_id, status")
+            .eq("company_id", companyId)
+            .limit(2000))
+        : Promise.resolve([]);
 
-    const [{ data: tenants }, { data: rooms }, { data: offices }, { data: users }, { data: activeEmployees }, { data: officeRoleAssignments }] = await Promise.all([
+    const [{ data: tenants }, { data: rooms }, { data: offices }, { data: users }, { data: activeEmployees }, officeRoleAssignments, collectorProfiles] = await Promise.all([
         tenantIds.length ? supabase.from("tenants").select("id, full_name, phone").eq("company_id", companyId).in("id", tenantIds) : { data: [] },
         roomIds.length ? supabase.from("rooms").select("id, room_number, landlord_id").eq("company_id", companyId).in("id", roomIds) : { data: [] },
         officeIds.length ? supabase.from("offices").select("id, office_name, name").eq("company_id", companyId).in("id", officeIds) : { data: [] },
         recordedByIds.length ? (supabase as unknown as DynamicDb).from("users").select("id, full_name, email, phone, employee_id, account_type, default_office_id").eq("company_id", companyId).in("id", recordedByIds) : { data: [] },
         employeeLookupRequest,
-        !isAdmin && officeId
-            ? (supabase as unknown as DynamicDb)
-                .from("user_office_roles")
-                .select("user_id")
-                .eq("company_id", companyId)
-                .eq("office_id", officeId)
-                .limit(2000)
-            : { data: [] },
+        officeRoleAssignmentsRequest,
+        collectorProfilesRequest,
     ]);
     const collectionUsers = (users ?? []) as CollectionUserRow[];
     const userById = new Map(collectionUsers.map((user) => [user.id, user]));
-    const officeRoleUserIds = uniqueIds(((officeRoleAssignments ?? []) as Array<{ user_id?: string | null }>).map((row) => row.user_id));
-    const missingOfficeRoleUserIds = officeRoleUserIds.filter((id) => !userById.has(id));
+    const activeOfficeRoleAssignments = ((officeRoleAssignments ?? []) as OfficeRoleAssignmentRow[]).filter((row) => isActiveAssignmentStatus(row.status));
+    const activeCollectorProfiles = ((collectorProfiles ?? []) as FieldCollectorProfileRow[]).filter((row) => isActiveAssignmentStatus(row.status));
+    const officeRoleUserIds = uniqueIds(activeOfficeRoleAssignments.map((row) => row.user_id));
+    const collectorProfileUserIds = uniqueIds(activeCollectorProfiles.map((row) => row.user_id));
+    const extraOfficeUserIds = uniqueIds([...officeRoleUserIds, ...collectorProfileUserIds]);
+    const missingOfficeRoleUserIds = extraOfficeUserIds.filter((id) => !userById.has(id));
     const { data: officeRoleUsers } = missingOfficeRoleUserIds.length
         ? (supabase as unknown as DynamicDb)
             .from("users")
@@ -635,7 +667,15 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
         row.collector_id,
     ]));
     const collectionUserEmployeeIds = uniqueIds(collectionUsers.map((user) => user.employee_id));
-    const officeAssignedEmployeeIds = uniqueIds(((officeRoleUsers ?? []) as CollectionUserRow[]).map((user) => user.employee_id));
+    const officeRoleEmployeeIds = uniqueIds(activeOfficeRoleAssignments.map((row) => row.employee_id));
+    const officeAssignedEmployeeIds = uniqueIds(((officeRoleUsers ?? []) as CollectionUserRow[])
+        .filter((user) => !officeId || user.default_office_id === officeId || officeRoleUserIds.includes(user.id))
+        .map((user) => user.employee_id));
+    const collectorProfileEmployeeIds = uniqueIds(activeCollectorProfiles.flatMap((profile) => {
+        const linkedUser = profile.user_id ? userById.get(String(profile.user_id)) : null;
+        const userIsOfficeScoped = !officeId || linkedUser?.default_office_id === officeId || officeRoleUserIds.includes(String(profile.user_id ?? ""));
+        return userIsOfficeScoped ? [profile.employee_id, linkedUser?.employee_id] : [];
+    }));
     const allActiveEmployees = ((activeEmployees ?? []) as EmployeeOptionRow[]).filter((employee) => isRealActiveEmployee(employee));
     const employeeIds = isAdmin
         ? uniqueIds([
@@ -644,7 +684,11 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
             ...allActiveEmployees.map((employee) => employee.id),
         ])
         : uniqueIds([
+            ...directEmployeeIds,
+            ...collectionUserEmployeeIds,
+            ...officeRoleEmployeeIds,
             ...officeAssignedEmployeeIds,
+            ...collectorProfileEmployeeIds,
             ...allActiveEmployees.map((employee) => employee.id),
         ]);
     const { data: employees } = employeeIds.length
@@ -699,15 +743,16 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
         .filter((employee): employee is EmployeeOptionRow => Boolean(employee))
         .sort((left, right) => String(left.full_name ?? "").localeCompare(String(right.full_name ?? "")))
         .map((employee) => {
-            const office = employee.office_id ? officeById.get(employee.office_id) : null;
+            const optionOfficeId = !isAdmin && officeId ? officeId : employee.office_id;
+            const office = optionOfficeId ? officeById.get(optionOfficeId) : null;
             const role = employee.role ?? employee.job_title ?? "Employee";
-            const officeName = office?.office_name ?? office?.name ?? "Unassigned";
+            const officeName = office?.office_name ?? office?.name ?? (!isAdmin && officeId ? context.activeOffice?.office_name ?? context.activeOffice?.name : null) ?? "Unassigned";
             const searchText = [employee.full_name, employee.phone, employee.employee_code, role, officeName].filter(Boolean).join(" ").toLowerCase();
             return {
                 id: employee.id,
                 employeeCode: employee.employee_code ?? "",
                 name: employee.full_name ?? "Employee",
-                officeId: employee.office_id,
+                officeId: optionOfficeId,
                 officeName,
                 phone: employee.phone ?? "",
                 role,
