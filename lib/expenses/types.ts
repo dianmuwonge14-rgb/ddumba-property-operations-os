@@ -259,6 +259,14 @@ export type CreateExpenseInput = {
     expenseDate?: string;
     paymentMethod?: string;
     receiptUrl?: string;
+    supportingProof?: ExpenseProofUploadInput | null;
+};
+
+export type ExpenseProofUploadInput = {
+    base64: string;
+    fileName: string;
+    fileSize: number;
+    mimeType: string;
 };
 
 export type CreateLandlordPaidExpenseRequestInput = {

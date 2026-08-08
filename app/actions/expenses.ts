@@ -1,5 +1,6 @@
 "use server";
 
+import { createHash, randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
 import { hasPermission, requireAuth, requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
@@ -28,6 +29,17 @@ import type {
     SubmitLandlordExpenseEditInput,
     SubmitExpenseChangeRequestInput,
 } from "@/lib/expenses/types";
+
+const EXPENSE_PROOF_BUCKET = "expense-proofs";
+const ALLOWED_EXPENSE_PROOF_TYPES = new Set([
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/heic",
+    "image/heif",
+    "application/pdf",
+]);
+const MAX_EXPENSE_PROOF_BYTES = 10 * 1024 * 1024;
 
 async function activeWriteContext() {
     const context = await requirePermission("expenses.manage");
@@ -104,6 +116,47 @@ function assertAmount(amount: number) {
 
 function expenseNumber() {
     return `EXP-${Date.now()}`;
+}
+
+function expenseProofExtension(input: { fileName?: string | null; mimeType?: string | null }) {
+    const extension = String(input.fileName ?? "").split(".").pop()?.toLowerCase() ?? "";
+    if (["jpg", "jpeg", "png", "heic", "heif", "pdf"].includes(extension)) return extension === "jpeg" ? "jpg" : extension;
+    if (input.mimeType === "image/jpeg" || input.mimeType === "image/jpg") return "jpg";
+    if (input.mimeType === "image/png") return "png";
+    if (input.mimeType === "image/heic") return "heic";
+    if (input.mimeType === "image/heif") return "heif";
+    if (input.mimeType === "application/pdf") return "pdf";
+    return "bin";
+}
+
+function decodeExpenseProof(input: CreateExpenseInput["supportingProof"]) {
+    if (!input) return null;
+    const mimeType = String(input.mimeType ?? "").trim().toLowerCase();
+    const fileName = String(input.fileName ?? "expense-proof").trim() || "expense-proof";
+    const fileSize = Number(input.fileSize ?? 0);
+    if (!ALLOWED_EXPENSE_PROOF_TYPES.has(mimeType)) {
+        throw new Error("Supporting proof must be JPG, JPEG, PNG, HEIC or PDF.");
+    }
+    if (!Number.isFinite(fileSize) || fileSize <= 0) {
+        throw new Error("Supporting proof is empty. Replace it or remove it before submitting.");
+    }
+    if (fileSize > MAX_EXPENSE_PROOF_BYTES) {
+        throw new Error("Supporting proof is too large. Upload a file under 10 MB.");
+    }
+    const base64 = String(input.base64 ?? "").replace(/^data:[^;]+;base64,/, "");
+    const buffer = Buffer.from(base64, "base64");
+    if (!buffer.length) throw new Error("Supporting proof could not be read. Replace it or remove it before submitting.");
+    if (buffer.length > MAX_EXPENSE_PROOF_BYTES) {
+        throw new Error("Supporting proof is too large. Upload a file under 10 MB.");
+    }
+    return {
+        buffer,
+        checksum: createHash("sha256").update(buffer).digest("hex"),
+        extension: expenseProofExtension({ fileName, mimeType }),
+        fileName,
+        fileSize: buffer.length,
+        mimeType,
+    };
 }
 
 function amount(value: unknown) {
@@ -409,14 +462,28 @@ async function getLandlordPaymentPreview(input: {
 export async function createExpense(input: CreateExpenseInput) {
     const context = await activeWriteContext();
     const supabase = await createSupabaseServerClient();
-    const adminDb = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
+    const adminClient = createSupabaseAdminClient();
+    const adminDb = adminClient as unknown as { from: (table: string) => any; storage: any };
     const amount = Number(input.amount);
     assertAmount(amount);
 
     const expenseEntryDate = currentExpenseDate(context, input.expenseDate, input.backdatingReason);
     const expenseDate = expenseEntryDate.date;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    const actorEmployeeId = await resolveExpenseEmployeeActorId(context);
     const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
+    const expenseId = randomUUID();
+    const proof = decodeExpenseProof(input.supportingProof ?? null);
+    const proofPath = proof
+        ? `${context.activeCompany!.id}/${context.activeOffice!.id}/${actorId ?? "unknown"}/${expenseDate.slice(0, 4)}/${expenseDate.slice(5, 7)}/${expenseId}.${proof.extension}`
+        : null;
+    if (proof && proofPath) {
+        const upload = await adminDb.storage.from(EXPENSE_PROOF_BUCKET).upload(proofPath, proof.buffer, {
+            contentType: proof.mimeType,
+            upsert: false,
+        });
+        if (upload.error) throw new Error(`Supporting proof upload failed: ${upload.error.message}`);
+    }
     const expensePayload = {
         amount,
         approved_at: isDirectAdmin ? new Date().toISOString() : null,
@@ -432,12 +499,23 @@ export async function createExpense(input: CreateExpenseInput) {
         ].filter(Boolean).join(" | ") || null,
         expense_date: expenseDate,
         expense_number: expenseNumber(),
+        id: expenseId,
         item: input.item || null,
         office_id: context.activeOffice!.id,
         payment_method: input.paymentMethod || null,
         property_id: input.propertyId || null,
         receipt_url: input.receiptUrl || null,
         status: isDirectAdmin ? "approved" : "pending",
+        ...(proof && proofPath ? {
+            supporting_document: proofPath,
+            supporting_document_checksum: proof.checksum,
+            supporting_document_file_size: proof.fileSize,
+            supporting_document_mime_type: proof.mimeType,
+            supporting_document_original_name: proof.fileName,
+            supporting_document_uploaded_at: new Date().toISOString(),
+            supporting_document_uploaded_by: actorId,
+            supporting_document_uploaded_by_employee_id: actorEmployeeId,
+        } : {}),
         submitted_by: actorId,
         vendor: input.vendor || null,
     };
@@ -449,9 +527,14 @@ export async function createExpense(input: CreateExpenseInput) {
         .single();
 
     if (insertResult.error && !isMissingSchemaError(insertResult.error)) {
+        if (proofPath) await adminDb.storage.from(EXPENSE_PROOF_BUCKET).remove([proofPath]);
         throw new Error(`Expense could not be saved: ${insertResult.error.message}`);
     }
     if (insertResult.error) {
+        if (proofPath) {
+            await adminDb.storage.from(EXPENSE_PROOF_BUCKET).remove([proofPath]);
+            throw new Error("Expense proof storage is not ready. Apply the expense proof migration before submitting attachments.");
+        }
         const fallbackPayload = { ...expensePayload };
         delete (fallbackPayload as Partial<typeof fallbackPayload>).payment_method;
         delete (fallbackPayload as Partial<typeof fallbackPayload>).cash_source_id;
@@ -467,6 +550,7 @@ export async function createExpense(input: CreateExpenseInput) {
     }
 
     if (insertResult.error || !insertResult.data) {
+        if (proofPath) await adminDb.storage.from(EXPENSE_PROOF_BUCKET).remove([proofPath]);
         throw new Error(`Expense could not be saved: ${insertResult.error?.message ?? "No saved expense returned."}`);
     }
     const data = insertResult.data;
@@ -492,11 +576,11 @@ export async function createExpense(input: CreateExpenseInput) {
             entity_id: data.id,
             entity_type: "expense",
             is_read: false,
-            message: `Expense approval requested for ${input.item || input.category || "office expense"}: UGX ${Math.round(amount).toLocaleString()} on ${expenseDate}.`,
+            message: `Expense approval requested for ${input.item || input.category || "office expense"}: UGX ${Math.round(amount).toLocaleString()} on ${expenseDate}.${proofPath ? " Supporting proof attached." : ""}`,
             office_id: context.activeOffice!.id,
             recipient_type: "admin",
             severity: "warning",
-            title: "Expense pending Admin approval",
+            title: proofPath ? "Expense pending Admin approval - Proof attached" : "Expense pending Admin approval",
         });
     }
 
@@ -508,6 +592,25 @@ export async function createExpense(input: CreateExpenseInput) {
         officeId: context.activeOffice!.id,
         afterData: data,
     });
+    if (proofPath) {
+        await logUserAction({
+            action: "expense_supporting_proof_uploaded",
+            entityType: "expense",
+            entityId: data.id,
+            companyId: context.activeCompany!.id,
+            officeId: context.activeOffice!.id,
+            afterData: {
+                expense_request_id: data.id,
+                file_path: proofPath,
+                file_size: proof?.fileSize ?? null,
+                mime_type: proof?.mimeType ?? null,
+                original_name: proof?.fileName ?? null,
+                uploaded_by_employee_id: actorEmployeeId,
+                uploaded_by_user_id: actorId,
+                uploaded_at: data.supporting_document_uploaded_at ?? new Date().toISOString(),
+            },
+        });
+    }
 
     revalidateExpenseSurfaces();
     return data;

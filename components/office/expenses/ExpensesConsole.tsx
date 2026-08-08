@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Banknote, Bot, CheckCircle2, Download, Edit3, Eye, FileText, History, Loader2, Printer, ReceiptText, Search, Trash2, UserRound, WalletCards, X } from "lucide-react";
+import { AlertTriangle, Banknote, Bot, Camera, CheckCircle2, Download, Edit3, Eye, FileText, History, Loader2, Paperclip, Printer, ReceiptText, Search, Trash2, Upload, UserRound, WalletCards, X } from "lucide-react";
 import { decideTreasuryCashRequest, submitTreasuryCashRequest } from "@/app/actions/cash-banking";
 import { adminEditExpenseDirect, adminSafeDeleteExpense, approveExpense, createEmployeeExpenseFromExpenses, createExpense, createLandlordPaidExpenseRequest, decideEmployeeExpenseRequest, decideExpenseChangeRequest, decideLandlordExpenseEditRequest, decideLandlordPaidExpenseRequest, previewEmployeeExpense, previewLandlordPaymentExpense, rejectExpense, submitExpenseChangeRequest, submitLandlordExpenseEdit } from "@/app/actions/expenses";
 import { currentBusinessDate, formatBusinessDate } from "@/lib/business-date";
@@ -38,6 +38,38 @@ function startOfWeek(dateValue: string) {
 
 function money(value: number | string | null | undefined) {
     return `UGX ${Math.round(Number(value ?? 0)).toLocaleString()}`;
+}
+
+const EXPENSE_PROOF_ACCEPT = "image/jpeg,image/jpg,image/png,image/heic,image/heif,application/pdf";
+
+type ProofPayload = {
+    base64: string;
+    fileName: string;
+    fileSize: number;
+    mimeType: string;
+};
+
+function fileSizeLabel(bytes: number) {
+    if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
+    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function proofPayloadFromFile(file: File): Promise<ProofPayload> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("Supporting proof could not be read. Replace it or remove it before submitting."));
+        reader.onload = () => {
+            const dataUrl = String(reader.result ?? "");
+            resolve({
+                base64: dataUrl.includes(",") ? dataUrl.split(",").pop() ?? "" : dataUrl,
+                fileName: file.name,
+                fileSize: file.size,
+                mimeType: file.type || "application/octet-stream",
+            });
+        };
+        reader.readAsDataURL(file);
+    });
 }
 
 function expenseTime(expense: ExpenseItem) {
@@ -241,6 +273,8 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
     const [handoverBy, setHandoverBy] = useState("");
     const [handoverReceivedBy, setHandoverReceivedBy] = useState("");
     const [notes, setNotes] = useState("");
+    const [proofFile, setProofFile] = useState<File | null>(null);
+    const [proofPreviewUrl, setProofPreviewUrl] = useState<string | null>(null);
     const [employeeId, setEmployeeId] = useState("");
     const [employeeSearch, setEmployeeSearch] = useState("");
     const [employeeSearchResults, setEmployeeSearchResults] = useState<EntrySearchResult[]>([]);
@@ -279,6 +313,8 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
     const [isPending, startTransition] = useTransition();
     const itemInputRef = useRef<HTMLInputElement | null>(null);
     const amountInputRef = useRef<HTMLInputElement | null>(null);
+    const proofCameraInputRef = useRef<HTMLInputElement | null>(null);
+    const proofUploadInputRef = useRef<HTMLInputElement | null>(null);
     const bottomRef = useRef<HTMLTableRowElement | null>(null);
     const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const abortRef = useRef<AbortController | null>(null);
@@ -366,6 +402,29 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
             if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
         };
     }, []);
+
+    useEffect(() => {
+        return () => {
+            if (proofPreviewUrl) URL.revokeObjectURL(proofPreviewUrl);
+        };
+    }, [proofPreviewUrl]);
+
+    function selectProofFile(file: File | null) {
+        if (proofPreviewUrl) URL.revokeObjectURL(proofPreviewUrl);
+        if (!file) {
+            setProofFile(null);
+            setProofPreviewUrl(null);
+            return;
+        }
+        setProofFile(file);
+        setProofPreviewUrl(file.type.startsWith("image/") ? URL.createObjectURL(file) : null);
+    }
+
+    function clearProofFile() {
+        selectProofFile(null);
+        if (proofCameraInputRef.current) proofCameraInputRef.current.value = "";
+        if (proofUploadInputRef.current) proofUploadInputRef.current.value = "";
+    }
 
     useEffect(() => {
         const query = employeeSearch.trim();
@@ -629,6 +688,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
         setExpenseItem("");
         setAmount("");
         setNotes("");
+        clearProofFile();
         if (!isLandlordPaidMode) setLandlordId("");
         requestAnimationFrame(() => itemInputRef.current?.focus());
     }
@@ -848,6 +908,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                 } else {
                     const itemName = entryMode === "unauthorised" ? trimmedItem : authorisedLabel;
                     const categoryName = entryMode === "unauthorised" ? "Unauthorised Expenses" : "Authorised Expenses";
+                    const supportingProof = entryMode === "unauthorised" && proofFile ? await proofPayloadFromFile(proofFile) : null;
                     const saved = await createExpense({
                         amount: value,
                         backdatingReason: adminBackdatedExpense ? trimmedBackdatingReason : null,
@@ -855,6 +916,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                         description: notes || undefined,
                         expenseDate,
                         item: itemName,
+                        supportingProof,
                     });
                     flashExpense(saved.id);
                     setMessage(isAdmin
@@ -1399,13 +1461,69 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                             <label className="block">
                                 <span className="text-xs font-black uppercase tracking-wide text-slate-500">{entryMode === "unauthorised" || isCashHandoverMode ? "Reason / Supporting Notes" : isBankingMode ? "Banking Notes" : "Supporting Notes"}</span>
                                 <input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder={entryMode === "unauthorised" ? "Reason and notes required..." : isCashHandoverMode ? "Reason for handing cash to Admin..." : isBankingMode ? "Controlled banking notes..." : "Optional notes..."} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
-                                {entryMode === "unauthorised" ? <span className="mt-1 block text-xs font-bold text-slate-500">Optional Attachment can be added to the approval request from Admin review.</span> : null}
+                                {entryMode === "unauthorised" ? <span className="mt-1 block text-xs font-bold text-slate-500">Optional - attach a receipt, slip, invoice or other proof for Admin review.</span> : null}
                             </label>
                             <label className="block">
                                 <span className="text-xs font-black uppercase tracking-wide text-slate-500">{isCashHandoverMode ? "Handover Amount" : isBankingMode ? "Amount to Bank" : "Amount"}</span>
                                 <input ref={amountInputRef} value={amount} onChange={(event) => setAmount(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveExpense(); }} type="number" min="0" placeholder="UGX" className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-2xl font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
                             </label>
                         </div>
+
+                        {entryMode === "unauthorised" ? (
+                            <section className="mt-4 rounded-3xl border border-dashed border-blue-200 bg-blue-50/70 p-4">
+                                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                    <div className="min-w-0">
+                                        <p className="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-blue-700"><Paperclip size={15} />Attach Proof - Optional</p>
+                                        <p className="mt-1 text-sm font-bold text-slate-600">Optional - attach a receipt, slip, invoice or other proof for Admin review.</p>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        <button type="button" onClick={() => proofCameraInputRef.current?.click()} className="inline-flex h-10 items-center gap-2 rounded-2xl bg-slate-950 px-4 text-xs font-black text-white">
+                                            <Camera size={15} />Take Photo
+                                        </button>
+                                        <button type="button" onClick={() => proofUploadInputRef.current?.click()} className="inline-flex h-10 items-center gap-2 rounded-2xl border border-blue-200 bg-white px-4 text-xs font-black text-blue-800">
+                                            <Upload size={15} />Upload Photo / Slip
+                                        </button>
+                                    </div>
+                                </div>
+                                <input
+                                    ref={proofCameraInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    capture="environment"
+                                    className="hidden"
+                                    onChange={(event) => selectProofFile(event.target.files?.[0] ?? null)}
+                                />
+                                <input
+                                    ref={proofUploadInputRef}
+                                    type="file"
+                                    accept={EXPENSE_PROOF_ACCEPT}
+                                    className="hidden"
+                                    onChange={(event) => selectProofFile(event.target.files?.[0] ?? null)}
+                                />
+                                {proofFile ? (
+                                    <div className="mt-4 grid gap-3 rounded-2xl border border-blue-100 bg-white p-3 sm:grid-cols-[96px_minmax(0,1fr)_auto] sm:items-center">
+                                        {proofPreviewUrl ? (
+                                            <img src={proofPreviewUrl} alt="Selected expense proof preview" className="h-24 w-24 rounded-2xl border border-slate-200 object-cover" />
+                                        ) : (
+                                            <div className="flex h-24 w-24 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-500">
+                                                <FileText size={30} />
+                                            </div>
+                                        )}
+                                        <div className="min-w-0">
+                                            <p className="break-words text-sm font-black text-slate-950">{proofFile.name}</p>
+                                            <p className="mt-1 text-xs font-bold text-slate-500">{proofFile.type || "Unknown type"} · {fileSizeLabel(proofFile.size)}</p>
+                                            <p className="mt-1 text-xs font-semibold text-slate-500">This proof will be stored privately for Admin review.</p>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2 sm:justify-end">
+                                            <button type="button" onClick={() => proofUploadInputRef.current?.click()} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Replace</button>
+                                            <button type="button" onClick={clearProofFile} className="rounded-xl bg-rose-50 px-3 py-2 text-xs font-black text-rose-700">Remove</button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <p className="mt-3 rounded-2xl bg-white px-3 py-2 text-xs font-bold text-slate-500">No attachment selected. You can still submit this unauthorised expense.</p>
+                                )}
+                            </section>
+                        ) : null}
 
                         {message ? <p className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">{message}</p> : null}
                         <div className="mt-5 flex flex-wrap items-center gap-3">
@@ -2159,6 +2277,11 @@ function GenericExpenseApprovalQueue({ isAdmin, onReviewed, requests }: { isAdmi
                 {requests.map((expense) => {
                     const note = comments[expense.id] ?? "";
                     const busy = isPending && pendingId === expense.id;
+                    const proofPath = String((expense as ExpenseItem & { supporting_document?: string | null }).supporting_document ?? "");
+                    const proofName = String((expense as ExpenseItem & { supporting_document_original_name?: string | null }).supporting_document_original_name ?? "Supporting proof");
+                    const proofMime = String((expense as ExpenseItem & { supporting_document_mime_type?: string | null }).supporting_document_mime_type ?? "");
+                    const hasProof = Boolean(proofPath);
+                    const proofUrl = `/api/expenses/proof/${encodeURIComponent(expense.id)}`;
                     return (
                         <article key={`generic-expense-approval:${expense.id}`} className="min-w-0 rounded-3xl border border-slate-200 bg-slate-50 p-4">
                             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -2166,7 +2289,12 @@ function GenericExpenseApprovalQueue({ isAdmin, onReviewed, requests }: { isAdmi
                                     <p className="break-words text-base font-black text-slate-950">{expense.item ?? expense.expense_number ?? "Office expense"}</p>
                                     <p className="mt-1 text-xs font-bold text-slate-500">{expense.officeName ?? "Office"} · Submitted by {expense.submittedByName ?? "account"} · {expense.expense_date ?? "No date"}</p>
                                 </div>
-                                <span className="shrink-0 rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">{money(expense.amount)}</span>
+                                <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+                                    <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">{money(expense.amount)}</span>
+                                    <span className={hasProof ? "rounded-full bg-blue-100 px-3 py-1 text-xs font-black text-blue-800" : "rounded-full bg-slate-200 px-3 py-1 text-xs font-black text-slate-600"}>
+                                        {hasProof ? "Proof Attached" : "No Attachment"}
+                                    </span>
+                                </div>
                             </div>
                             <div className="mt-3 grid gap-2 sm:grid-cols-2">
                                 <MiniFinance label="Category" value={expense.categoryName ?? expense.category ?? "Expense"} tone="slate" />
@@ -2174,6 +2302,28 @@ function GenericExpenseApprovalQueue({ isAdmin, onReviewed, requests }: { isAdmi
                                 <MiniFinance label="Payment method" value={expense.paymentMethod ?? "Not set"} tone="slate" />
                                 <MiniFinance label="Projected after approval" value={`-${money(expense.amount)}`} tone="amber" />
                             </div>
+                            <section className="mt-3 rounded-2xl border border-slate-200 bg-white p-3">
+                                <p className="text-xs font-black uppercase tracking-wide text-slate-500">Supporting Proof</p>
+                                {hasProof ? (
+                                    <div className="mt-2 grid gap-3 sm:grid-cols-[88px_minmax(0,1fr)] sm:items-center">
+                                        {proofMime.startsWith("image/") ? (
+                                            <img src={proofUrl} alt={`${proofName} thumbnail`} className="h-24 w-24 rounded-2xl border border-slate-200 object-cover" loading="lazy" />
+                                        ) : (
+                                            <div className="flex h-24 w-24 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-500"><FileText size={28} /></div>
+                                        )}
+                                        <div className="min-w-0">
+                                            <p className="break-words text-sm font-black text-slate-950">{proofName}</p>
+                                            <p className="mt-1 text-xs font-bold text-slate-500">{proofMime || "Private supporting document"}</p>
+                                            <div className="mt-2 flex flex-wrap gap-2">
+                                                <a href={proofUrl} target="_blank" rel="noreferrer" className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white">View Full Size</a>
+                                                <a href={`${proofUrl}?download=1`} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Download</a>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <p className="mt-2 rounded-xl bg-slate-50 px-3 py-2 text-sm font-bold text-slate-500">No supporting proof attached.</p>
+                                )}
+                            </section>
                             <label className="mt-3 block">
                                 <span className="text-xs font-black uppercase tracking-wide text-slate-500">Admin note / rejection reason</span>
                                 <input
@@ -3326,6 +3476,11 @@ function ExpenseActionModal({
             employee.assignmentType,
         ].some((value) => String(value ?? "").toLowerCase().includes(query))).slice(0, 80);
     }, [employeeOptions, employeeQuery]);
+    const proofPath = String((expense as ExpenseItem & { supporting_document?: string | null }).supporting_document ?? "");
+    const proofName = String((expense as ExpenseItem & { supporting_document_original_name?: string | null }).supporting_document_original_name ?? "Supporting proof");
+    const proofMime = String((expense as ExpenseItem & { supporting_document_mime_type?: string | null }).supporting_document_mime_type ?? "");
+    const proofUploadedAt = String((expense as ExpenseItem & { supporting_document_uploaded_at?: string | null }).supporting_document_uploaded_at ?? "");
+    const proofUrl = `/api/expenses/proof/${encodeURIComponent(expense.id)}`;
 
     function update<Key extends keyof ExpenseChangePayload>(key: Key, value: ExpenseChangePayload[Key]) {
         setDraft((current) => ({ ...current, [key]: value }));
@@ -3376,6 +3531,8 @@ function ExpenseActionModal({
                         <p>Approved: {expense.approved_at ? new Date(expense.approved_at).toLocaleString() : "Not approved timestamped"}</p>
                         <p>Status: {expense.status ?? expense.approvalState}</p>
                         <p>Recorded by: {expense.submittedByName ?? "System"}</p>
+                        <p>Supporting proof: {proofPath ? proofName : "No supporting proof attached."}</p>
+                        {proofUploadedAt ? <p>Proof uploaded: {new Date(proofUploadedAt).toLocaleString()}</p> : null}
                     </div>
                 ) : (
                     <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -3441,6 +3598,28 @@ function ExpenseActionModal({
                         </div>
                     </div>
                 )}
+                <section className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs font-black uppercase tracking-wide text-slate-500">Supporting Proof</p>
+                    {proofPath ? (
+                        <div className="mt-3 grid gap-3 sm:grid-cols-[96px_minmax(0,1fr)] sm:items-center">
+                            {proofMime.startsWith("image/") ? (
+                                <img src={proofUrl} alt={`${proofName} thumbnail`} className="h-24 w-24 rounded-2xl border border-slate-200 object-cover" loading="lazy" />
+                            ) : (
+                                <div className="flex h-24 w-24 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-500"><FileText size={30} /></div>
+                            )}
+                            <div className="min-w-0">
+                                <p className="break-words text-sm font-black text-slate-950">{proofName}</p>
+                                <p className="mt-1 text-xs font-bold text-slate-500">{proofMime || "Private supporting document"}</p>
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                    <a href={proofUrl} target="_blank" rel="noreferrer" className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white">View Full Size</a>
+                                    <a href={`${proofUrl}?download=1`} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Download</a>
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        <p className="mt-2 rounded-xl bg-white px-3 py-2 text-sm font-bold text-slate-500">No supporting proof attached.</p>
+                    )}
+                </section>
                 {!readOnly ? (
                     <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                         <label className="block text-sm font-bold text-slate-700">
