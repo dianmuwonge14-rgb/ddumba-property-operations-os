@@ -65,21 +65,24 @@ function reportPeriod(report: CollectionReportData) {
     return "Selected period";
 }
 
-function StatCard({ label, value, hint, tone = "slate" }: { label: string; value: string; hint: string; tone?: "green" | "blue" | "amber" | "slate" }) {
+function StatCard({ label, value, hint, tone = "slate", onClick }: { label: string; value: string; hint: string; tone?: "green" | "blue" | "amber" | "slate"; onClick?: () => void }) {
     const tones = {
         green: "border-emerald-400/30 bg-emerald-500/10 text-emerald-100",
         blue: "border-sky-400/30 bg-sky-500/10 text-sky-100",
         amber: "border-amber-400/30 bg-amber-500/10 text-amber-100",
         slate: "border-white/10 bg-white/[0.06] text-white",
     };
-
-    return (
-        <div className={`rounded-lg border p-4 shadow-sm ${tones[tone]}`}>
+    const className = `rounded-lg border p-4 text-left shadow-sm transition ${tones[tone]} ${onClick ? "cursor-pointer hover:-translate-y-0.5 hover:border-amber-200/50 hover:shadow-lg hover:shadow-amber-950/20 focus:outline-none focus:ring-2 focus:ring-amber-200" : ""}`;
+    const content = (
+        <>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/55">{label}</p>
             <p className="mt-2 break-words text-2xl font-semibold leading-tight">{value}</p>
             <p className="mt-1 text-xs text-white/55">{hint}</p>
-        </div>
+        </>
     );
+
+    if (onClick) return <button type="button" onClick={onClick} className={className}>{content}</button>;
+    return <div className={className}>{content}</div>;
 }
 
 export default function CollectionsRecordsCentre({ initialData }: Props) {
@@ -158,12 +161,17 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
         document.getElementById("collections-ledger")?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
 
+    function openAdminCapitalInjectionRecords() {
+        setFilters((current) => ({ ...current, collectionSource: "admin_capital_injection", employeeId: undefined }));
+        window.setTimeout(scrollToLedger, 80);
+    }
+
     function toggleCorrectionRow(id: string) {
         setSelectedCorrectionIds((current) => current.includes(id) ? current.filter((rowId) => rowId !== id) : [...current, id]);
     }
 
     function exportCsv() {
-        const headers = ["Date", "Time", "Receipt", "Room", "Tenant", "Landlord", "Office", "Amount Paid", "Remaining Balance", "Payment Method", "Collection Source", "Recorded By", "Status"];
+        const headers = ["Date", "Time", "Receipt", "Room", "Tenant", "Landlord", "Office", "Amount Paid", "Remaining Balance", "Payment Method", "Collection Source", "Reference", "Purpose", "Notes", "Recorded By", "Created At", "Audit Reference", "Status"];
         const lines = [
             headers.map(escapeCsv).join(","),
             ...report.rows.map((row) => [
@@ -178,7 +186,12 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                 row.remainingBalance,
                 row.paymentMethod,
                 row.collectionSource,
+                row.reference ?? "",
+                row.purpose ?? "",
+                row.notes ?? "",
                 row.recordedBy,
+                row.createdAt ?? "",
+                row.auditReference ?? "",
                 row.status,
             ].map(escapeCsv).join(",")),
         ];
@@ -288,22 +301,20 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                                 ))}
                             </select>
                         </label>
-                        {initialData.isAdmin ? (
-                            <label className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55">
-                                Collection Source
-                                <select
-                                    value={filters.collectionSource ?? ""}
-                                    onChange={(event) => updateFilter("collectionSource", event.target.value)}
-                                    className="mt-1 h-10 w-full rounded-md border border-white/10 bg-slate-950 px-3 text-sm text-white outline-none focus:border-sky-300"
-                                >
-                                    {sourceOptions.map((source) => (
-                                        <option key={source.value || "all"} value={source.value} className="bg-slate-950 text-white">
-                                            {source.label}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
-                        ) : null}
+                        <label className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55">
+                            Collection Source
+                            <select
+                                value={filters.collectionSource ?? ""}
+                                onChange={(event) => updateFilter("collectionSource", event.target.value)}
+                                className="mt-1 h-10 w-full rounded-md border border-white/10 bg-slate-950 px-3 text-sm text-white outline-none focus:border-sky-300"
+                            >
+                                {sourceOptions.map((source) => (
+                                    <option key={source.value || "all"} value={source.value} className="bg-slate-950 text-white">
+                                        {source.label}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
                         <label className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55">
                             Single month
                             <input
@@ -556,9 +567,13 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                 ) : null}
 
                 <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                    <StatCard label="Total Collected" value={formatMoney(report.totals.totalAmount)} hint={report.activeOfficeName ?? "Selected scope"} tone="green" />
+                    <StatCard label="Total Collections" value={formatMoney(report.totals.totalAmount)} hint={report.activeOfficeName ?? "Selected scope"} tone="green" />
+                    <StatCard label="Tenant / Operational Collections" value={formatMoney(report.totals.tenantOperationalTotal)} hint="Tenant payments inside total collections" tone="blue" />
+                    <StatCard label="Admin Capital Injection" value={formatMoney(report.totals.adminCapitalInjectionTotal)} hint="Admin-funded cash received in selected period" tone="amber" onClick={openAdminCapitalInjectionRecords} />
                     <StatCard label="Payments" value={String(report.totals.paymentCount)} hint={`${report.totals.tenantCount} tenant(s) paid`} tone="blue" />
-                    <StatCard label="Cash / Bank" value={`${formatMoney(report.totals.cashTotal)} / ${formatMoney(report.totals.bankTotal)}`} hint="Physical and bank collections" tone="slate" />
+                    <StatCard label="Cash" value={formatMoney(report.totals.cashTotal)} hint="Cash collections in selected period" tone="slate" />
+                    <StatCard label="Bank" value={formatMoney(report.totals.bankTotal)} hint="Bank collections in selected period" tone="slate" />
+                    <StatCard label="Mobile Money" value={formatMoney(report.totals.mobileMoneyTotal)} hint="Mobile money collections" tone="slate" />
                     <StatCard label="Outstanding" value={formatMoney(report.totals.outstandingBalanceRemaining)} hint="Remaining balance from visible rows" tone="amber" />
                 </section>
 
@@ -661,7 +676,11 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                                     <th className="px-4 py-3 text-right">Remaining Balance</th>
                                     <th className="px-4 py-3">Method</th>
                                     <th className="px-4 py-3">Source</th>
+                                    <th className="px-4 py-3">Reference</th>
+                                    <th className="px-4 py-3">Purpose / Notes</th>
                                     <th className="px-4 py-3">Recorded By</th>
+                                    <th className="px-4 py-3">Created</th>
+                                    <th className="px-4 py-3">Audit</th>
                                     <th className="px-4 py-3">Status</th>
                                     <th className="px-4 py-3">Actions</th>
                                 </tr>
@@ -680,25 +699,36 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                                         <td className="whitespace-nowrap px-4 py-3 text-right text-amber-100">{formatMoney(row.remainingBalance)}</td>
                                         <td className="whitespace-nowrap px-4 py-3 text-white/65">{row.paymentMethod}</td>
                                         <td className="whitespace-nowrap px-4 py-3 text-white/65">{row.collectionSource}</td>
+                                        <td className="whitespace-nowrap px-4 py-3 text-white/65">{row.reference ?? "--"}</td>
+                                        <td className="min-w-[220px] max-w-xs px-4 py-3 text-white/65">
+                                            <span className="block break-words">{row.purpose ?? "--"}</span>
+                                            {row.notes ? <span className="mt-1 block break-words text-xs text-white/40">{row.notes}</span> : null}
+                                        </td>
                                         <td className="whitespace-nowrap px-4 py-3 text-white/65">{row.recordedBy}</td>
+                                        <td className="whitespace-nowrap px-4 py-3 text-white/65">{row.createdAt ? formatDateTime(row.createdAt) : "--"}</td>
+                                        <td className="whitespace-nowrap px-4 py-3 text-white/65">{row.auditReference ?? "--"}</td>
                                         <td className="whitespace-nowrap px-4 py-3">
                                             <span className="rounded-full border border-emerald-200/20 bg-emerald-300/10 px-2 py-1 text-xs font-semibold text-emerald-100">{row.status}</span>
                                         </td>
                                         <td className="whitespace-nowrap px-4 py-3">
-                                            <div className="flex flex-wrap gap-2">
-                                                <a href={`/office/receipts?search=${encodeURIComponent(row.receiptNumber)}`} className="rounded-md border border-white/10 px-2 py-1 text-xs font-semibold text-sky-100 hover:bg-white/10">
-                                                    View Receipt
-                                                </a>
-                                                <a href={`/office/payments?paymentId=${encodeURIComponent(row.id)}`} className="rounded-md border border-white/10 px-2 py-1 text-xs font-semibold text-emerald-100 hover:bg-white/10">
-                                                    Open Payment
-                                                </a>
-                                            </div>
+                                            {row.collectionSourceKey === "admin_capital_injection" ? (
+                                                <span className="rounded-md border border-amber-200/20 bg-amber-300/10 px-2 py-1 text-xs font-semibold text-amber-100">Treasury record</span>
+                                            ) : (
+                                                <div className="flex flex-wrap gap-2">
+                                                    <a href={`/office/receipts?search=${encodeURIComponent(row.receiptNumber)}`} className="rounded-md border border-white/10 px-2 py-1 text-xs font-semibold text-sky-100 hover:bg-white/10">
+                                                        View Receipt
+                                                    </a>
+                                                    <a href={`/office/payments?paymentId=${encodeURIComponent(row.id)}`} className="rounded-md border border-white/10 px-2 py-1 text-xs font-semibold text-emerald-100 hover:bg-white/10">
+                                                        Open Payment
+                                                    </a>
+                                                </div>
+                                            )}
                                         </td>
                                     </tr>
                                 ))}
                                 {!report.rows.length ? (
                                     <tr>
-                                        <td colSpan={13} className="px-4 py-10 text-center text-sm text-white/50">
+                                        <td colSpan={18} className="px-4 py-10 text-center text-sm text-white/50">
                                             No collections found for the selected filters.
                                         </td>
                                     </tr>
@@ -709,7 +739,7 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                                     <td colSpan={7} className="px-4 py-3">Totals</td>
                                     <td className="px-4 py-3 text-right text-emerald-200">{formatMoney(report.totals.totalAmount)}</td>
                                     <td className="px-4 py-3 text-right text-amber-100">{formatMoney(report.totals.outstandingBalanceRemaining)}</td>
-                                    <td colSpan={4} className="px-4 py-3 text-right text-white/60">{report.totals.paymentCount} payment(s)</td>
+                                    <td colSpan={9} className="px-4 py-3 text-right text-white/60">{report.totals.paymentCount} payment(s)</td>
                                 </tr>
                             </tfoot>
                         </table>

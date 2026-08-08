@@ -148,7 +148,13 @@ export type CollectionReportRow = {
     amountPaid: number;
     remainingBalance: number;
     paymentMethod: string;
+    collectionSourceKey: "tenant" | "admin_capital_injection" | "other";
     collectionSource: string;
+    reference: string | null;
+    purpose: string | null;
+    notes: string | null;
+    createdAt: string | null;
+    auditReference: string | null;
     recordedBy: string;
     status: string;
 };
@@ -187,6 +193,9 @@ export type EmployeeCollectionPerformance = EmployeeCollectionSummary & {
 
 export type CollectionReportTotals = {
     totalAmount: number;
+    tenantOperationalTotal: number;
+    adminCapitalInjectionTotal: number;
+    otherCollectionTotal: number;
     paymentCount: number;
     tenantCount: number;
     cashTotal: number;

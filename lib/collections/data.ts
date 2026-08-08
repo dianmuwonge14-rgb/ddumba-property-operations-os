@@ -110,7 +110,7 @@ function collectionEmployeeId(row: CollectionEmployeeRow, userById: Map<string, 
     return userId ? userById.get(String(userId))?.employee_id ?? row.collector_id ?? null : row.collector_id ?? null;
 }
 
-function collectionSourceKey(row: CollectionRow) {
+function collectionSourceKey(row: CollectionRow): CollectionReportRow["collectionSourceKey"] {
     const type = String(row.type ?? "").toUpperCase();
     if (type === "ADMIN_CAPITAL_INJECTION") return "admin_capital_injection";
     if (type === "ADMIN_CASH_TRANSFER") return "other";
@@ -122,6 +122,15 @@ function collectionSourceLabel(row: CollectionRow) {
     if (key === "admin_capital_injection") return "Admin Capital Injection";
     if (key === "other") return "Other Sources";
     return "Tenant Collections";
+}
+
+function collectionTextField(row: CollectionRow, keys: string[]) {
+    const raw = row as CollectionRow & Record<string, unknown>;
+    for (const key of keys) {
+        const value = raw[key];
+        if (typeof value === "string" && value.trim()) return value;
+    }
+    return null;
 }
 
 function isRealActiveEmployee(employee: EmployeeOptionRow | null | undefined, linkedUser?: { account_type?: string | null } | null) {
@@ -506,6 +515,9 @@ function emptyCollectionReport(filters: Required<Pick<CollectionReportFilters, "
         canUseEmployeeFilter,
         totals: {
             totalAmount: 0,
+            tenantOperationalTotal: 0,
+            adminCapitalInjectionTotal: 0,
+            otherCollectionTotal: 0,
             paymentCount: 0,
             tenantCount: 0,
             cashTotal: 0,
@@ -676,7 +688,7 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
     const roomFilter = normalizeCollectionFilter(filters.room);
     const tenantFilter = normalizeCollectionFilter(filters.tenant);
     const employeeFilterId = canUseEmployeeFilter ? String(filters.employeeId ?? "").trim() : "";
-    const collectionSourceFilter = isAdmin ? String(filters.collectionSource ?? "").trim() : "";
+    const collectionSourceFilter = String(filters.collectionSource ?? "").trim();
 
     const collectionRowsWithEmployees = collections.map((row) => ({
         collection: row,
@@ -710,6 +722,7 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
         .filter(({ employeeId }) => !employeeFilterId || employeeId === employeeFilterId)
         .filter(({ collection }) => !collectionSourceFilter || collectionSourceKey(collection) === collectionSourceFilter)
         .map(({ collection: row, employeeId }) => {
+            const sourceKey = collectionSourceKey(row);
             const isAdminCashTransfer = String(row.type ?? "").toUpperCase() === "ADMIN_CASH_TRANSFER";
             const isAdminCapitalInjection = String(row.type ?? "").toUpperCase() === "ADMIN_CAPITAL_INJECTION";
             const room = row.room_id ? roomById.get(row.room_id) : null;
@@ -738,7 +751,15 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
                 amountPaid: collectionAmount(row),
                 remainingBalance: Number(row.balance ?? 0),
                 paymentMethod: isAdminCapitalInjection ? "Admin Capital Injection" : isAdminCashTransfer ? "Admin Cash Transfer" : row.payment_method ?? "payment",
+                collectionSourceKey: sourceKey,
                 collectionSource: collectionSourceLabel(row),
+                reference: collectionTextField(row, ["reference_number", "reference", "collection_number"]),
+                purpose: isAdminCapitalInjection
+                    ? collectionTextField(row, ["purpose", "reason", "description", "payment_description"]) ?? "Admin-funded cash received"
+                    : collectionTextField(row, ["purpose", "reason", "description", "payment_description"]),
+                notes: collectionTextField(row, ["notes", "comment"]),
+                createdAt: row.created_at ?? null,
+                auditReference: collectionTextField(row, ["audit_reference", "audit_id"]) ?? row.id,
                 recordedBy: employeeId ? employeeById.get(employeeId)?.full_name ?? user?.full_name ?? user?.email ?? "System" : user?.full_name ?? user?.email ?? "System",
                 status: row.status ?? "paid",
             };
@@ -757,6 +778,13 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
     const totals = rows.reduce(
         (acc, row) => {
             acc.totalAmount += row.amountPaid;
+            if (row.collectionSourceKey === "admin_capital_injection") {
+                acc.adminCapitalInjectionTotal += row.amountPaid;
+            } else if (row.collectionSourceKey === "tenant") {
+                acc.tenantOperationalTotal += row.amountPaid;
+            } else {
+                acc.otherCollectionTotal += row.amountPaid;
+            }
             const bucket = collectionMethodBucket(row.paymentMethod);
             if (bucket === "cash") acc.cashTotal += row.amountPaid;
             if (bucket === "bank") acc.bankTotal += row.amountPaid;
@@ -766,6 +794,9 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
         },
         {
             totalAmount: 0,
+            tenantOperationalTotal: 0,
+            adminCapitalInjectionTotal: 0,
+            otherCollectionTotal: 0,
             paymentCount: rows.length,
             tenantCount: new Set(rows.map((row) => `${row.roomNumber}:${row.tenantName}`)).size,
             cashTotal: 0,

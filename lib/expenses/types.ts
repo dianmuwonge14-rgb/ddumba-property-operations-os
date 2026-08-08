@@ -219,6 +219,7 @@ export type ExpenseBalanceFilters = {
 
 export type ExpenseBalanceTotals = {
     totalCollections: number;
+    adminCapitalInjectionTotal: number;
     totalExpenses: number;
     remainingBalance: number;
     expenseRows: number;
@@ -227,12 +228,20 @@ export type ExpenseBalanceTotals = {
 
 export type ExpenseReportCollectionItem = CollectionRow & {
     amountValue: number;
+    auditReference: string | null;
+    collectionSourceKey: "tenant" | "admin_capital_injection" | "other";
+    collectionSourceLabel: string;
+    createdAt: string | null;
     officeName: string | null;
     paymentDate: string | null;
     paymentMethod: string | null;
+    purpose: string | null;
+    reference: string | null;
     receiptNumber: string | null;
     recordedByName: string | null;
     roomLabel: string | null;
+    notes: string | null;
+    statusLabel: string;
     tenantName: string | null;
 };
 

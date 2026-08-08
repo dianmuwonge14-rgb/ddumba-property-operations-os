@@ -358,7 +358,7 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
             generatedBy,
             isAdmin,
             officeName: "No office",
-            totals: { totalCollections: 0, totalExpenses: 0, remainingBalance: 0, expenseRows: 0, paymentRows: 0 },
+            totals: { totalCollections: 0, adminCapitalInjectionTotal: 0, totalExpenses: 0, remainingBalance: 0, expenseRows: 0, paymentRows: 0 },
             expenses: [],
             collections: [],
         };
@@ -407,6 +407,12 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
     const items = hydrateExpenseItems(expenses, categoriesResult.data ?? [], propertiesResult.data ?? [], landlordsResult.data ?? [], usersResult.data ?? []);
     const officeById = new Map((officesResult.data ?? []).map((office) => [office.id, office.office_name ?? office.name ?? "Office"]));
     const totalCollections = collections.reduce((total, collection) => total + collectionAmount(collection), 0);
+    const adminCapitalInjectionTotal = collections.reduce((total, collection) => {
+        const raw = collection as CollectionRow & Record<string, unknown>;
+        return String(raw.type ?? raw.collection_type ?? "").toUpperCase() === "ADMIN_CAPITAL_INJECTION"
+            ? total + collectionAmount(collection)
+            : total;
+    }, 0);
     const approvedExpenses = expenses.filter(isApprovedExpense);
     const totalExpenses = sumExpenses(approvedExpenses);
     const collectionItems = hydrateCollectionItems(collections, usersResult.data ?? [], officeById);
@@ -419,6 +425,7 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
         officeName: selectedOfficeId ? officeById.get(selectedOfficeId) ?? "Selected office" : isAdmin ? "All offices" : context.activeOffice?.office_name ?? context.activeOffice?.name ?? "Office",
         totals: {
             totalCollections,
+            adminCapitalInjectionTotal,
             totalExpenses,
             remainingBalance: totalCollections - totalExpenses,
             expenseRows: approvedExpenses.length,
@@ -666,6 +673,8 @@ function hydrateCollectionItems(
         const officeId = typeof raw.office_id === "string" ? raw.office_id : null;
         const collectionType = String(raw.type ?? raw.collection_type ?? "").toUpperCase();
         const isAdminCashTransfer = collectionType === "ADMIN_CASH_TRANSFER";
+        const isAdminCapitalInjection = collectionType === "ADMIN_CAPITAL_INJECTION";
+        const collectionSourceKey = isAdminCapitalInjection ? "admin_capital_injection" : isAdminCashTransfer ? "other" : "tenant";
         const recordedBy = typeof raw.recorded_by === "string"
             ? raw.recorded_by
             : typeof raw.submitted_by === "string"
@@ -673,16 +682,31 @@ function hydrateCollectionItems(
                 : typeof raw.created_by === "string"
                     ? raw.created_by
                     : "";
+        const textField = (keys: string[]) => {
+            for (const key of keys) {
+                const value = raw[key];
+                if (typeof value === "string" && value.trim()) return value;
+            }
+            return null;
+        };
         return {
             ...collection,
             amountValue: collectionAmount(raw),
+            auditReference: textField(["audit_reference", "audit_id"]) ?? collection.id,
+            collectionSourceKey,
+            collectionSourceLabel: isAdminCapitalInjection ? "Admin Capital Injection" : isAdminCashTransfer ? "Other Sources" : "Tenant Collections",
+            createdAt: typeof raw.created_at === "string" ? raw.created_at : null,
             officeName: officeId ? officeById.get(officeId) ?? "Office" : null,
             paymentDate: typeof raw.payment_date === "string" ? raw.payment_date : typeof raw.paid_at === "string" ? raw.paid_at.slice(0, 10) : typeof raw.created_at === "string" ? raw.created_at.slice(0, 10) : null,
-            paymentMethod: isAdminCashTransfer ? "Admin Cash Transfer" : typeof raw.payment_method === "string" ? raw.payment_method : null,
-            receiptNumber: typeof raw.receipt_number === "string" ? raw.receipt_number : typeof raw.receipt_no === "string" ? raw.receipt_no : null,
+            paymentMethod: isAdminCapitalInjection ? "Admin Capital Injection" : isAdminCashTransfer ? "Admin Cash Transfer" : typeof raw.payment_method === "string" ? raw.payment_method : null,
+            purpose: isAdminCapitalInjection ? textField(["purpose", "reason", "description", "payment_description"]) ?? "Admin-funded cash received" : textField(["purpose", "reason", "description", "payment_description"]),
+            reference: textField(["reference_number", "reference", "collection_number"]),
+            receiptNumber: typeof raw.receipt_number === "string" ? raw.receipt_number : typeof raw.receipt_no === "string" ? raw.receipt_no : typeof raw.collection_number === "string" ? raw.collection_number : null,
             recordedByName: userById.get(recordedBy) ?? null,
-            roomLabel: isAdminCashTransfer ? "Office cash" : typeof raw.room_number === "string" ? raw.room_number : typeof raw.room_label === "string" ? raw.room_label : null,
-            tenantName: isAdminCashTransfer ? "Cash from Admin" : typeof raw.tenant_name === "string" ? raw.tenant_name : null,
+            roomLabel: isAdminCashTransfer || isAdminCapitalInjection ? "Office cash" : typeof raw.room_number === "string" ? raw.room_number : typeof raw.room_label === "string" ? raw.room_label : null,
+            notes: textField(["notes", "comment"]),
+            statusLabel: String(raw.status ?? "paid"),
+            tenantName: isAdminCapitalInjection ? "Admin Capital Injection" : isAdminCashTransfer ? "Cash from Admin" : typeof raw.tenant_name === "string" ? raw.tenant_name : null,
         };
     });
 }

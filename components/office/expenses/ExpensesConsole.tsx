@@ -7,11 +7,12 @@ import { AlertTriangle, Banknote, Bot, Camera, CheckCircle2, Download, Edit3, Ey
 import { decideTreasuryCashRequest, submitTreasuryCashRequest } from "@/app/actions/cash-banking";
 import { adminEditExpenseDirect, adminSafeDeleteExpense, approveExpense, createEmployeeExpenseFromExpenses, createExpense, createLandlordPaidExpenseRequest, decideEmployeeExpenseRequest, decideExpenseChangeRequest, decideLandlordExpenseEditRequest, decideLandlordPaidExpenseRequest, previewEmployeeExpense, previewLandlordPaymentExpense, rejectExpense, submitExpenseChangeRequest, submitLandlordExpenseEdit } from "@/app/actions/expenses";
 import { currentBusinessDate, formatBusinessDate } from "@/lib/business-date";
-import type { EmployeeExpensePreview, ExpenseBalanceReport, ExpenseChangePayload, ExpenseItem, ExpensePeriodMode, ExpensesPageData, LandlordExpenseEditRequestType } from "@/lib/expenses/types";
+import type { EmployeeExpensePreview, ExpenseBalanceFilters, ExpenseBalanceReport, ExpenseChangePayload, ExpenseItem, ExpensePeriodMode, ExpensesPageData, LandlordExpenseEditRequestType } from "@/lib/expenses/types";
 
 type Props = {
     canManage: boolean;
     data: ExpensesPageData;
+    initialFilters?: ExpenseBalanceFilters;
     isAdmin: boolean;
 };
 
@@ -38,6 +39,14 @@ function startOfWeek(dateValue: string) {
 
 function money(value: number | string | null | undefined) {
     return `UGX ${Math.round(Number(value ?? 0)).toLocaleString()}`;
+}
+
+function formatDateTime(value: string | null | undefined) {
+    if (!value) return "--";
+    return new Intl.DateTimeFormat("en-UG", {
+        dateStyle: "medium",
+        timeStyle: "short",
+    }).format(new Date(value));
 }
 
 const EXPENSE_PROOF_ACCEPT = "image/jpeg,image/jpg,image/png,image/heic,image/heif,application/pdf";
@@ -108,7 +117,7 @@ type LandlordPaymentPreview = Awaited<ReturnType<typeof previewLandlordPaymentEx
 type ExpenseEntryMode = "landlord_payment" | "authorised" | "unauthorised" | "banking" | "cash_handover_admin";
 type AuthorisedExpenseType = "employee_lunch" | "airtime" | "internet" | "transport_kampala";
 type ExpenseModalMode = "view" | "edit" | "date" | "employee" | "history";
-type SummaryDrilldownKind = "collections" | "expenses";
+type SummaryDrilldownKind = "collections" | "adminCapitalInjection" | "expenses";
 type RecordDatePreset = "today" | "yesterday" | "week" | "month" | "custom_date" | "custom_range" | "all_dates";
 type RecordTableFilters = {
     datePreset: RecordDatePreset;
@@ -241,16 +250,16 @@ function expenseField(expense: ExpenseItem, key: keyof ExpenseChangePayload) {
     return "";
 }
 
-export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
+export default function ExpensesConsole({ canManage, data, initialFilters, isAdmin }: Props) {
     const [filters, setFilters] = useState<ExpenseFilters>({
-        mode: "single_date",
-        singleDate: today(),
-        startDate: today(),
-        endDate: today(),
-        singleMonth: thisMonth(),
-        startMonth: thisMonth(),
-        endMonth: thisMonth(),
-        officeId: "",
+        mode: initialFilters?.mode ?? "single_date",
+        singleDate: initialFilters?.singleDate ?? today(),
+        startDate: initialFilters?.startDate ?? initialFilters?.singleDate ?? today(),
+        endDate: initialFilters?.endDate ?? initialFilters?.singleDate ?? today(),
+        singleMonth: initialFilters?.singleMonth ?? thisMonth(),
+        startMonth: initialFilters?.startMonth ?? initialFilters?.singleMonth ?? thisMonth(),
+        endMonth: initialFilters?.endMonth ?? initialFilters?.singleMonth ?? thisMonth(),
+        officeId: initialFilters?.officeId ?? "",
     });
     const [expenseDate, setExpenseDate] = useState(today());
     const [backdatingReason, setBackdatingReason] = useState("");
@@ -327,7 +336,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
     const activeOfficeId = data.office?.id ?? "";
     const isEntebbeOperationsOffice = /entebbe operations/i.test(activeOfficeName);
     const totals = useMemo(
-        () => report?.totals ?? { totalCollections: 0, totalExpenses: 0, remainingBalance: 0, expenseRows: 0, paymentRows: 0 },
+        () => report?.totals ?? { totalCollections: 0, adminCapitalInjectionTotal: 0, totalExpenses: 0, remainingBalance: 0, expenseRows: 0, paymentRows: 0 },
         [report?.totals],
     );
     const periodLabel = report ? `${report.filters.startDate} to ${report.filters.endDate}` : filters.singleDate;
@@ -1089,7 +1098,7 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                     </div>
                 </section>
 
-                <section className="mx-auto mt-5 max-w-6xl grid gap-3 md:grid-cols-5">
+                <section className="mx-auto mt-5 max-w-6xl grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                     <BalanceCard
                         interactive
                         label="Total Collections"
@@ -1098,6 +1107,15 @@ export default function ExpensesConsole({ canManage, data, isAdmin }: Props) {
                         tone="green"
                         icon={<Banknote size={18} />}
                         onClick={() => setSummaryDrilldown("collections")}
+                    />
+                    <BalanceCard
+                        interactive
+                        label="Admin Capital Injection"
+                        value={money(totals.adminCapitalInjectionTotal)}
+                        hint="Admin-funded cash received in selected period"
+                        tone="blue"
+                        icon={<WalletCards size={18} />}
+                        onClick={() => setSummaryDrilldown("adminCapitalInjection")}
                     />
                     <BalanceCard
                         interactive
@@ -1777,18 +1795,21 @@ function SummaryDrilldownModal({ kind, onClose, report }: { kind: SummaryDrilldo
         window.addEventListener("keydown", handleKey);
         return () => window.removeEventListener("keydown", handleKey);
     }, [onClose]);
-    const isCollections = kind === "collections";
+    const isCollections = kind === "collections" || kind === "adminCapitalInjection";
     const expenses = useMemo(() => (report?.expenses ?? []).filter((expense) => normalizeStatus(expense.status ?? expense.approvalState) === "approved"), [report?.expenses]);
-    const collections = report?.collections ?? [];
+    const collections = useMemo(() => {
+        const rows = report?.collections ?? [];
+        return kind === "adminCapitalInjection" ? rows.filter((collection) => collection.collectionSourceKey === "admin_capital_injection") : rows;
+    }, [kind, report?.collections]);
     const total = isCollections
         ? collections.reduce((sum, collection) => sum + Number(collection.amountValue ?? 0), 0)
         : expenses.reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
     const count = isCollections ? collections.length : expenses.length;
-    const title = isCollections ? "Total Collections Records" : "Total Expenses Records";
+    const title = kind === "adminCapitalInjection" ? "Admin Capital Injection Records" : isCollections ? "Total Collections Records" : "Total Expenses Records";
     const officeLabel = report?.officeName ?? "Selected scope";
     const period = report ? `${report.filters.startDate} to ${report.filters.endDate}` : "Current filter";
     const collectionUrl = report
-        ? `/office/collections?startDate=${encodeURIComponent(report.filters.startDate)}&endDate=${encodeURIComponent(report.filters.endDate)}${report.filters.officeId ? `&officeId=${encodeURIComponent(report.filters.officeId)}` : ""}`
+        ? `/office/collections?startDate=${encodeURIComponent(report.filters.startDate)}&endDate=${encodeURIComponent(report.filters.endDate)}${report.filters.officeId ? `&officeId=${encodeURIComponent(report.filters.officeId)}` : ""}${kind === "adminCapitalInjection" ? "&collectionSource=admin_capital_injection" : ""}`
         : "/office/collections";
 
     return (
@@ -1821,15 +1842,21 @@ function SummaryDrilldownModal({ kind, onClose, report }: { kind: SummaryDrilldo
                 </div>
                 <div className="overflow-auto">
                     {isCollections ? (
-                        <table className="w-full min-w-[980px] text-left text-sm">
+                        <table className="w-full min-w-[1180px] text-left text-sm">
                             <thead className="bg-slate-100 text-xs uppercase text-slate-500">
                                 <tr>
-                                    <th className="px-4 py-3">Payment Date</th>
+                                    <th className="px-4 py-3">Business Date</th>
                                     <th className="px-4 py-3">Receipt</th>
                                     <th className="px-4 py-3">Tenant / Room</th>
-                                    <th className="px-4 py-3">Office</th>
+                                    <th className="px-4 py-3">Destination Office</th>
+                                    <th className="px-4 py-3">Source</th>
                                     <th className="px-4 py-3">Method</th>
+                                    <th className="px-4 py-3">Reference</th>
+                                    <th className="px-4 py-3">Purpose / Notes</th>
                                     <th className="px-4 py-3">Recorded By</th>
+                                    <th className="px-4 py-3">Created</th>
+                                    <th className="px-4 py-3">Audit</th>
+                                    <th className="px-4 py-3">Status</th>
                                     <th className="px-4 py-3 text-right">Amount</th>
                                 </tr>
                             </thead>
@@ -1840,8 +1867,17 @@ function SummaryDrilldownModal({ kind, onClose, report }: { kind: SummaryDrilldo
                                         <td className="px-4 py-3 font-black text-slate-950">{collection.receiptNumber ?? collection.id}</td>
                                         <td className="px-4 py-3 font-bold text-slate-700">{collection.tenantName ?? "Tenant"}{collection.roomLabel ? ` · ${collection.roomLabel}` : ""}</td>
                                         <td className="px-4 py-3 font-bold text-slate-500">{collection.officeName ?? officeLabel}</td>
+                                        <td className="px-4 py-3 font-bold text-slate-500">{collection.collectionSourceLabel}</td>
                                         <td className="px-4 py-3 font-bold capitalize text-slate-500">{collection.paymentMethod?.replaceAll("_", " ") ?? "--"}</td>
+                                        <td className="px-4 py-3 font-bold text-slate-500">{collection.reference ?? "--"}</td>
+                                        <td className="max-w-xs px-4 py-3 font-bold text-slate-500">
+                                            <span className="block break-words">{collection.purpose ?? "--"}</span>
+                                            {collection.notes ? <span className="mt-1 block break-words text-xs font-semibold text-slate-400">{collection.notes}</span> : null}
+                                        </td>
                                         <td className="px-4 py-3 font-bold text-slate-500">{collection.recordedByName ?? "System"}</td>
+                                        <td className="px-4 py-3 font-bold text-slate-500">{collection.createdAt ? formatDateTime(collection.createdAt) : "--"}</td>
+                                        <td className="px-4 py-3 font-bold text-slate-500">{collection.auditReference ?? "--"}</td>
+                                        <td className="px-4 py-3 font-bold text-slate-500">{collection.statusLabel}</td>
                                         <td className="px-4 py-3 text-right font-black text-emerald-700">{money(collection.amountValue)}</td>
                                     </tr>
                                 ))}
@@ -3663,7 +3699,7 @@ function buildFinanceInsights(input: {
     employeeRequests: ExpensesPageData["employeeExpenseRequests"];
     expenses: ExpenseItem[];
     requests: ExpensesPageData["landlordPaymentRequests"];
-    totals: { totalCollections: number; totalExpenses: number; remainingBalance: number; expenseRows: number; paymentRows: number };
+    totals: { totalCollections: number; adminCapitalInjectionTotal: number; totalExpenses: number; remainingBalance: number; expenseRows: number; paymentRows: number };
 }) {
     const pending = input.requests.filter((request) => request.status === "pending");
     const pendingEmployee = input.employeeRequests.filter((request) => request.status === "pending");
