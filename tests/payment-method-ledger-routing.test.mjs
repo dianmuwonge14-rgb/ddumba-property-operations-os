@@ -56,10 +56,18 @@ test("collections payment method filter uses canonical method buckets instead of
 
 test("migration reclassifies historical direct bank and mobile-money collection ledgers", () => {
   const source = read("supabase/upgrade_migrations/0258_payment_method_ledger_routing.sql");
+  const backfill = read("supabase/upgrade_migrations/0259_backfill_missing_digital_collection_ledgers.sql");
+  const reconcile = read("supabase/upgrade_migrations/0260_reconcile_digital_collection_ledger_amounts.sql");
 
   assert.match(source, /account_type = 'bank'/);
   assert.match(source, /account_type = 'mobile_money'/);
   assert.match(source, /source_type = 'collection'/);
   assert.match(source, /source_account\.account_type = 'office_cash'/);
   assert.match(source, /mc\.target_account_type in \('bank', 'mobile_money'\)/);
+  assert.match(backfill, /source_type = 'digital_collection_backfill'/);
+  assert.match(backfill, /ca\.account_type = dc\.target_account_type/);
+  assert.match(backfill, /existing\.source_type = 'digital_collection_backfill'/);
+  assert.match(reconcile, /source_type = 'digital_collection_amount_reconciliation'/);
+  assert.match(reconcile, /expected_amount - ledger_amount/);
+  assert.match(reconcile, /case when difference > 0 then 'inflow' else 'outflow' end/);
 });
