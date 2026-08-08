@@ -11,6 +11,7 @@ import { assertFinancialEntryDate } from "@/lib/business-date";
 import { getTenantCollectionContext } from "@/lib/collections/data";
 import { buildTenantPaymentCoverageAllocations } from "@/lib/collections/move-in-allocation";
 import { recordCollectionLedgerAndCash } from "@/lib/collections/payment-ledger";
+import { paymentMethodBucket } from "@/lib/collections/payment-methods";
 import { availableAdvanceAllocation, displayTenantNetBalance, moneyAmount } from "@/lib/tenants/balance-reconciliation";
 import { recalculateTenantScore } from "@/lib/tenants/scoring";
 import type {
@@ -34,6 +35,12 @@ function assertPositiveAmount(amount: number, label: string) {
     if (!Number.isFinite(amount) || amount <= 0) {
         throw new Error(`${label} must be greater than zero.`);
     }
+}
+
+function canonicalTenantPaymentMethod(value: unknown): "cash" | "bank" | "mobile_money" {
+    const bucket = paymentMethodBucket(value);
+    if (bucket === "cash" || bucket === "bank" || bucket === "mobile_money") return bucket;
+    throw new Error("Payment method must be Cash, Bank or Mobile Money.");
 }
 
 function assertDate(value: string | undefined, label: string) {
@@ -760,6 +767,7 @@ export async function recordCollection(input: RecordCollectionInput) {
     const supabase = isCollector ? createSupabaseAdminClient() : await createSupabaseServerClient();
     const amount = Number(input.amount);
     assertPositiveAmount(amount, "Collection amount");
+    const paymentMethod = canonicalTenantPaymentMethod(input.paymentMethod);
 
     if (!context.activeCompany?.id || !context.activeOffice?.id) {
         throw new Error("Active company and office are required.");
@@ -820,7 +828,7 @@ export async function recordCollection(input: RecordCollectionInput) {
             office_id: resolvedOfficeId,
             paid_at: paidAt,
             payment_date: paymentDate,
-            payment_method: input.paymentMethod,
+            payment_method: paymentMethod,
             payment_source: paymentSource,
             payer_name: input.payerName || (paymentSource === "employer" ? tenantContext.sponsor?.employer_name : tenantContext.tenant.full_name) || null,
             property_id: tenantContext.propertyId,
@@ -976,10 +984,11 @@ export async function recordCollection(input: RecordCollectionInput) {
             balanceBefore,
             collectionId: data.id,
             companyId: context.activeCompany.id,
-            description: savedNotes || `${paymentLabel} recorded via ${input.paymentMethod}`,
+            description: savedNotes || `${paymentLabel} recorded via ${paymentMethod}`,
             leaseId: tenantContext.lease?.id ?? null,
             officeId: resolvedOfficeId,
             paidAt,
+            paymentMethod,
             recordedBy: context.profile?.id ?? null,
             supabase,
             tenantId: tenantContext.tenant.id,
@@ -988,7 +997,7 @@ export async function recordCollection(input: RecordCollectionInput) {
             action_type: "payment_recorded",
             company_id: context.activeCompany.id,
             lease_id: tenantContext.lease?.id ?? null,
-            notes: savedNotes || `${paymentLabel} recorded via ${input.paymentMethod}`,
+            notes: savedNotes || `${paymentLabel} recorded via ${paymentMethod}`,
             office_id: resolvedOfficeId,
             outcome: "payment_recorded",
             performed_by: context.profile?.id ?? null,
@@ -2311,7 +2320,7 @@ export async function followUpPromise(input: FollowUpPromiseInput) {
                 office_id: resolvedOfficeId,
                 paid_at: paidAt,
                 payment_date: dateOnly(paidAt),
-                payment_method: "promise",
+                payment_method: input.paymentMethod ?? "cash",
                 property_id: tenantContext.property?.id ?? tenantContext.tenant.property_id,
                 recorded_by: context.profile?.id ?? null,
                 reference_number: `PROM-${promise.id.slice(0, 8)}-${Date.now()}`,
@@ -2336,6 +2345,7 @@ export async function followUpPromise(input: FollowUpPromiseInput) {
             description: input.notes || `Promise payment recorded for ${amount}`,
             leaseId: promise.lease_id ?? tenantContext.lease?.id ?? null,
             officeId: resolvedOfficeId,
+            paymentMethod: collection.payment_method ?? input.paymentMethod ?? "cash",
             recordedBy: context.profile?.id ?? null,
             supabase,
             tenantId: tenantContext.tenant.id,

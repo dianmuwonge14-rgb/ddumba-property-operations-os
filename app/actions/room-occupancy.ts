@@ -409,6 +409,7 @@ async function recordMoveInEntryPayment(input: {
         leaseId: input.leaseId,
         officeId: input.officeId,
         paidAt,
+        paymentMethod: input.paymentMethod,
         recordedBy: input.actorId,
         supabase: input.supabase,
         tenantId: input.tenantId,

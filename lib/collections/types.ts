@@ -348,4 +348,5 @@ export type FollowUpPromiseInput = {
     notes?: string;
     nextFollowUpAt?: string;
     markFulfilled?: boolean;
+    paymentMethod?: "cash" | "bank" | "mobile_money";
 };

@@ -1,4 +1,5 @@
 import { requirePermission, hasPermission } from "@/lib/auth/permissions";
+import { paymentMethodBucket } from "@/lib/collections/payment-methods";
 import { collectionAmount, isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { CashBankingData, CashBankingFilters, CashInsight, CashLedgerRow, CashOfficeSummary } from "./types";
@@ -56,6 +57,17 @@ function sum(rows: Row[], value: (row: Row) => number) {
 
 function cashAmount(row: Row) {
     return collectionAmount(row);
+}
+
+function isAdminPhysicalCashCollection(row: Row) {
+    const type = String(row.type ?? "").toUpperCase();
+    return type === "ADMIN_CAPITAL_INJECTION" || type === "ADMIN_CASH_TRANSFER";
+}
+
+function physicalCollectionAmount(row: Row) {
+    return isAdminPhysicalCashCollection(row) || paymentMethodBucket(row.payment_method) === "cash"
+        ? collectionAmount(row)
+        : 0;
 }
 
 function expenseAmount(row: Row) {
@@ -204,7 +216,7 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
         usersResult,
     ] = await Promise.all([
         admin.from("offices").select("id, office_name, name").eq("company_id", companyId).ilike("status", "active").is("merged_into_office_id", null).order("office_name", { ascending: true, nullsFirst: false }),
-        admin.from("collections").select("id, company_id, office_id, amount, amount_paid, payment_date, paid_at, created_at, payment_method, reference_number, recorded_by, status, financial_effective, reversed_at, voided_at, deleted_at, superseded_at, superseded_by_payment_id, corrected_by_payment_id, correction_of_payment_id").eq("company_id", companyId).limit(10000),
+        admin.from("collections").select("id, company_id, office_id, amount, amount_paid, payment_date, paid_at, created_at, payment_method, reference_number, recorded_by, status, type, financial_effective, reversed_at, voided_at, deleted_at, superseded_at, superseded_by_payment_id, corrected_by_payment_id, correction_of_payment_id").eq("company_id", companyId).limit(10000),
         admin.from("expenses").select("id, company_id, office_id, amount, expense_date, created_at, item, description, entered_by, submitted_by, status").eq("company_id", companyId).limit(10000),
         admin.from("cash_accounts").select("id, company_id, office_id, account_type, name, status").eq("company_id", companyId).eq("status", "active"),
         (admin as unknown as { from: (table: string) => any }).from("cash_transactions").select("id, company_id, office_id, cash_account_id, amount, transaction_type, source_type, source_id, transaction_date, created_at, description, recorded_by, status, direction, occurred_at").eq("company_id", companyId).limit(10000),
@@ -297,6 +309,8 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
         const collectionType = String(row.type ?? "").toUpperCase();
         const isAdminCashTransfer = collectionType === "ADMIN_CASH_TRANSFER";
         const isAdminCapitalInjection = collectionType === "ADMIN_CAPITAL_INJECTION";
+        const amountIn = isAdminCapitalInjection || isAdminCashTransfer ? cashAmount(row) : physicalCollectionAmount(row);
+        if (amountIn <= 0) continue;
         ledgerRows.push({
             id: `collection-${row.id}`,
             date: collectionDate(row),
@@ -305,7 +319,7 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
             officeName: officeById.get(row.office_id) ?? "Office",
             transactionType: isAdminCapitalInjection ? "admin_capital_injection" : isAdminCashTransfer ? "admin_float" : "collection",
             label: isAdminCapitalInjection ? "Admin Capital Injection" : isAdminCashTransfer ? "Admin cash transfer" : "Tenant collection",
-            amountIn: cashAmount(row),
+            amountIn,
             amountOut: 0,
             runningBalance: 0,
             recordedBy: userById.get(String(row.recorded_by)) ?? "Office user",
@@ -454,6 +468,7 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
     }
 
     const moneyAtBank = sum(cashTransactions.filter((row) => accountById.get(String(row.cash_account_id))?.account_type === "bank"), signedLedgerAmount);
+    const mobileMoneyBalance = sum(cashTransactions.filter((row) => accountById.get(String(row.cash_account_id))?.account_type === "mobile_money"), signedLedgerAmount);
     const adminCashBalance = sum(cashTransactions.filter((row) => accountById.get(String(row.cash_account_id))?.account_type === "hq_cash"), signedLedgerAmount);
     const moneyAtOffices = sum(summaries as unknown as Row[], (row) => numberValue(row.moneyAtOffice));
     const rawMoneyAtOffices = sum(summaries as unknown as Row[], (row) => numberValue(row.rawMoneyAtOffice));
@@ -467,9 +482,10 @@ export async function getCashBankingData(filtersInput: CashBankingFilters = {}):
         cashReconciliationDifference,
         moneyBanked: sum(bankOutflows, (row) => numberValue(row.amount)),
         moneyAtBank,
+        mobileMoneyBalance,
         adminCashBalance,
         moneyWithCollectors: collectorCash,
-        companyCashPosition: sum(periodCollections, cashAmount) - sum(periodExpenses, expenseAmount),
+        companyCashPosition: moneyAtOffices + moneyAtBank + mobileMoneyBalance + adminCashBalance + collectorCash,
         adminFloatGiven: sum(adminFloatInflows, (row) => numberValue(row.amount)) - sum(adminFloatOutflows, (row) => numberValue(row.amount)),
     };
 

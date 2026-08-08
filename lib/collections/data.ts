@@ -580,9 +580,6 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
     }
 
     const paymentMethodFilter = normalizeCollectionFilter(filters.paymentMethod);
-    if (paymentMethodFilter) {
-        collectionQuery = collectionQuery.ilike("payment_method", `%${escapeSupabaseLike(paymentMethodFilter)}%`);
-    }
 
     const { data: collectionData, error } = await collectionQuery;
     if (error) throw new Error(error.message);
@@ -720,6 +717,7 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
 
     const rows: CollectionReportRow[] = collectionRowsWithEmployees
         .filter(({ employeeId }) => !employeeFilterId || employeeId === employeeFilterId)
+        .filter(({ collection }) => !paymentMethodFilter || collectionMethodBucket(String(collection.payment_method ?? "")) === collectionMethodBucket(paymentMethodFilter))
         .filter(({ collection }) => !collectionSourceFilter || collectionSourceKey(collection) === collectionSourceFilter)
         .map(({ collection: row, employeeId }) => {
             const sourceKey = collectionSourceKey(row);

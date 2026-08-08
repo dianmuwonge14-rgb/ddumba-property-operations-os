@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database.types";
+import { paymentMethodBucket } from "@/lib/collections/payment-methods";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type DdumbaClient = SupabaseClient<Database>;
@@ -16,6 +17,7 @@ type PaymentLedgerInput = {
     balanceAfter: number;
     recordedBy?: string | null;
     description: string;
+    paymentMethod?: string | null;
     paidAt?: string | null;
 };
 
@@ -39,27 +41,47 @@ export async function recordCollectionLedgerAndCash(input: PaymentLedgerInput) {
         throw new Error(`Tenant ledger update failed: ${ledgerError.message}`);
     }
 
-    const { data: cashAccount, error: cashAccountError } = await admin
+    const methodBucket = paymentMethodBucket(input.paymentMethod);
+    const accountType = methodBucket === "bank" ? "bank" : methodBucket === "mobile_money" ? "mobile_money" : "office_cash";
+    const accountName = accountType === "bank" ? "Company Bank" : accountType === "mobile_money" ? "Company Mobile Money" : "Office Cash";
+    const isOfficeScopedAccount = accountType === "office_cash";
+    let accountQuery = admin
         .from("cash_accounts")
         .select("id")
         .eq("company_id", input.companyId)
-        .eq("office_id", input.officeId)
-        .eq("account_type", "office_cash")
+        .eq("account_type", accountType)
         .eq("status", "active")
-        .limit(1)
-        .maybeSingle();
+        .limit(1);
+    accountQuery = isOfficeScopedAccount ? accountQuery.eq("office_id", input.officeId) : accountQuery.is("office_id", null);
+    const { data: cashAccount, error: cashAccountError } = await accountQuery.maybeSingle();
 
     if (cashAccountError) {
-        throw new Error(`Office cash lookup failed: ${cashAccountError.message}`);
+        throw new Error(`Payment cash account lookup failed: ${cashAccountError.message}`);
     }
 
-    if (!cashAccount?.id) {
-        return;
+    let cashAccountId = cashAccount?.id ?? null;
+    if (!cashAccountId) {
+        const { data: createdAccount, error: createAccountError } = await admin
+            .from("cash_accounts")
+            .insert({
+                account_type: accountType,
+                company_id: input.companyId,
+                currency: "UGX",
+                name: accountName,
+                office_id: isOfficeScopedAccount ? input.officeId : null,
+                status: "active",
+            })
+            .select("id")
+            .single();
+        if (createAccountError) {
+            throw new Error(`Payment cash account creation failed: ${createAccountError.message}`);
+        }
+        cashAccountId = createdAccount.id;
     }
 
     const { error: cashError } = await admin.from("cash_transactions").insert({
         amount: input.amount,
-        cash_account_id: cashAccount.id,
+        cash_account_id: cashAccountId,
         company_id: input.companyId,
         description: input.description,
         office_id: input.officeId,
@@ -71,6 +93,6 @@ export async function recordCollectionLedgerAndCash(input: PaymentLedgerInput) {
     });
 
     if (cashError) {
-        throw new Error(`Office cash update failed: ${cashError.message}`);
+        throw new Error(`Payment cash ledger update failed: ${cashError.message}`);
     }
 }

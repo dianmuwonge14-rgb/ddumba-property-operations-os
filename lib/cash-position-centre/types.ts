@@ -199,6 +199,8 @@ export type CashPositionData = {
         currentAccumulatedOfficeCash: number;
         currentPhysicalOfficeCash: number;
         companyCashAvailable: number;
+        moneyAtBank: number;
+        mobileMoney: number;
         pendingExpensesPeriod: number;
         pendingExpenseRequests: number;
         projectedCashAfterPendingApprovals: number;

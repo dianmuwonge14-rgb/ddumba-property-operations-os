@@ -1,5 +1,6 @@
 import { requirePermission } from "@/lib/auth/permissions";
 import { getScopedSupabase } from "@/lib/auth/query";
+import { paymentMethodBucket } from "@/lib/collections/payment-methods";
 import { collectionAmount, uniqueFinanciallyEffectiveCollections } from "@/lib/collections/validity";
 import type {
     CashAccountRow,
@@ -38,6 +39,18 @@ function monthRange() {
 
 function expenseStatus(expense: Record<string, unknown>) {
     return String(expense.status ?? (expense.approved_at ? "approved" : "pending")).toLowerCase();
+}
+
+function isPhysicalCashCollection(collection: CollectionRow | Record<string, unknown>) {
+    const raw = collection as CollectionRow & Record<string, unknown>;
+    const type = String(raw.type ?? raw.collection_type ?? "").toUpperCase();
+    return type === "ADMIN_CAPITAL_INJECTION"
+        || type === "ADMIN_CASH_TRANSFER"
+        || paymentMethodBucket(raw.payment_method) === "cash";
+}
+
+function physicalCollectionAmount(collection: CollectionRow) {
+    return isPhysicalCashCollection(collection) ? collectionAmount(collection) : 0;
 }
 
 function isApprovedExpense(expense: Record<string, unknown>) {
@@ -407,6 +420,7 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
     const items = hydrateExpenseItems(expenses, categoriesResult.data ?? [], propertiesResult.data ?? [], landlordsResult.data ?? [], usersResult.data ?? []);
     const officeById = new Map((officesResult.data ?? []).map((office) => [office.id, office.office_name ?? office.name ?? "Office"]));
     const totalCollections = collections.reduce((total, collection) => total + collectionAmount(collection), 0);
+    const physicalCollections = collections.reduce((total, collection) => total + physicalCollectionAmount(collection), 0);
     const adminCapitalInjectionTotal = collections.reduce((total, collection) => {
         const raw = collection as CollectionRow & Record<string, unknown>;
         return String(raw.type ?? raw.collection_type ?? "").toUpperCase() === "ADMIN_CAPITAL_INJECTION"
@@ -427,7 +441,7 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
             totalCollections,
             adminCapitalInjectionTotal,
             totalExpenses,
-            remainingBalance: totalCollections - totalExpenses,
+            remainingBalance: physicalCollections - totalExpenses,
             expenseRows: approvedExpenses.length,
             paymentRows: collections.length,
         },
@@ -510,7 +524,8 @@ function calculateKpis(
     const propertyExpenses = sumExpenses(approvedExpenses.filter((expense) => expense.property_id && propertyIds.has(expense.property_id)));
     const validCollections = uniqueFinanciallyEffectiveCollections(collections);
     const collectionValue = validCollections.reduce((total, collection) => total + collectionAmount(collection), 0);
-    const netCashPosition = collectionValue - totalExpenses;
+    const physicalCollectionValue = validCollections.reduce((total, collection) => total + physicalCollectionAmount(collection), 0);
+    const netCashPosition = physicalCollectionValue - totalExpenses;
 
     return {
         totalExpenses,

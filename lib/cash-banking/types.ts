@@ -70,6 +70,7 @@ export type CashBankingData = {
         cashReconciliationDifference: number;
         moneyBanked: number;
         moneyAtBank: number;
+        mobileMoneyBalance: number;
         adminCashBalance: number;
         moneyWithCollectors: number;
         companyCashPosition: number;

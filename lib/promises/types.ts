@@ -80,6 +80,7 @@ export type PromiseFollowupInput = {
 export type PromiseStateInput = {
     promiseId: string;
     notes?: string;
+    paymentMethod?: "cash" | "bank" | "mobile_money";
 };
 
 export type ReschedulePromiseInput = {
