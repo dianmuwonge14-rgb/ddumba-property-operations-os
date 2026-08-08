@@ -632,8 +632,16 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
             .eq("company_id", companyId)
             .limit(2000))
         : Promise.resolve([]);
+    const officeHistoricalCollectorsRequest = !isAdmin && officeId
+        ? optionalRows((supabase as unknown as DynamicDb)
+            .from("collections")
+            .select("id, company_id, office_id, collected_by_employee_id, prepared_by_employee_id, recorded_by_employee_id, recorded_by, entered_by_account_id, collector_id, status, type, financial_effective, reversed_at, voided_at, deleted_at, superseded_at, superseded_by_payment_id, corrected_by_payment_id, correction_of_payment_id")
+            .eq("company_id", companyId)
+            .eq("office_id", officeId)
+            .limit(10000))
+        : Promise.resolve([]);
 
-    const [{ data: tenants }, { data: rooms }, { data: offices }, { data: users }, { data: activeEmployees }, officeRoleAssignments, collectorProfiles] = await Promise.all([
+    const [{ data: tenants }, { data: rooms }, { data: offices }, { data: users }, { data: activeEmployees }, officeRoleAssignments, collectorProfiles, officeHistoricalCollectors] = await Promise.all([
         tenantIds.length ? supabase.from("tenants").select("id, full_name, phone").eq("company_id", companyId).in("id", tenantIds) : { data: [] },
         roomIds.length ? supabase.from("rooms").select("id, room_number, landlord_id").eq("company_id", companyId).in("id", roomIds) : { data: [] },
         officeIds.length ? supabase.from("offices").select("id, office_name, name").eq("company_id", companyId).in("id", officeIds) : { data: [] },
@@ -641,14 +649,17 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
         employeeLookupRequest,
         officeRoleAssignmentsRequest,
         collectorProfilesRequest,
+        officeHistoricalCollectorsRequest,
     ]);
     const collectionUsers = (users ?? []) as CollectionUserRow[];
     const userById = new Map(collectionUsers.map((user) => [user.id, user]));
     const activeOfficeRoleAssignments = ((officeRoleAssignments ?? []) as OfficeRoleAssignmentRow[]).filter((row) => isActiveAssignmentStatus(row.status));
     const activeCollectorProfiles = ((collectorProfiles ?? []) as FieldCollectorProfileRow[]).filter((row) => isActiveAssignmentStatus(row.status));
+    const historicalOfficeCollections = uniqueFinanciallyEffectiveCollections((officeHistoricalCollectors ?? []) as CollectionRow[]);
+    const historicalOfficeUserIds = uniqueIds(historicalOfficeCollections.map((row) => row.recorded_by ?? row.collector_id ?? row.entered_by_account_id));
     const officeRoleUserIds = uniqueIds(activeOfficeRoleAssignments.map((row) => row.user_id));
     const collectorProfileUserIds = uniqueIds(activeCollectorProfiles.map((row) => row.user_id));
-    const extraOfficeUserIds = uniqueIds([...officeRoleUserIds, ...collectorProfileUserIds]);
+    const extraOfficeUserIds = uniqueIds([...officeRoleUserIds, ...collectorProfileUserIds, ...historicalOfficeUserIds]);
     const missingOfficeRoleUserIds = extraOfficeUserIds.filter((id) => !userById.has(id));
     const { data: officeRoleUsers } = missingOfficeRoleUserIds.length
         ? (supabase as unknown as DynamicDb)
@@ -666,7 +677,14 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
         row.recorded_by_employee_id,
         row.collector_id,
     ]));
+    const historicalOfficeEmployeeIds = uniqueIds((historicalOfficeCollections as CollectionEmployeeRow[]).flatMap((row) => [
+        row.collected_by_employee_id,
+        row.prepared_by_employee_id,
+        row.recorded_by_employee_id,
+        row.collector_id,
+    ]));
     const collectionUserEmployeeIds = uniqueIds(collectionUsers.map((user) => user.employee_id));
+    const historicalOfficeUserEmployeeIds = uniqueIds(historicalOfficeUserIds.map((id) => userById.get(id)?.employee_id));
     const officeRoleEmployeeIds = uniqueIds(activeOfficeRoleAssignments.map((row) => row.employee_id));
     const officeAssignedEmployeeIds = uniqueIds(((officeRoleUsers ?? []) as CollectionUserRow[])
         .filter((user) => !officeId || user.default_office_id === officeId || officeRoleUserIds.includes(user.id))
@@ -685,7 +703,9 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
         ])
         : uniqueIds([
             ...directEmployeeIds,
+            ...historicalOfficeEmployeeIds,
             ...collectionUserEmployeeIds,
+            ...historicalOfficeUserEmployeeIds,
             ...officeRoleEmployeeIds,
             ...officeAssignedEmployeeIds,
             ...collectorProfileEmployeeIds,

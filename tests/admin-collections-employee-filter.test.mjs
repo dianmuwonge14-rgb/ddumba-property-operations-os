@@ -44,9 +44,13 @@ test("office receptionist collections report exposes only office-scoped employee
   assert.match(dataSource, /\.from\("field_collector_profiles"\)/);
   assert.match(dataSource, /activeCollectorProfiles/);
   assert.match(dataSource, /collectorProfileEmployeeIds/);
+  assert.match(dataSource, /officeHistoricalCollectorsRequest/);
+  assert.match(dataSource, /historicalOfficeCollections/);
+  assert.match(dataSource, /historicalOfficeEmployeeIds/);
+  assert.match(dataSource, /historicalOfficeUserEmployeeIds/);
   assert.match(dataSource, /isActiveAssignmentStatus/);
   assert.match(dataSource, /officeAssignedEmployeeIds/);
-  assert.match(dataSource, /isAdmin[\s\S]*directEmployeeIds[\s\S]*collectionUserEmployeeIds[\s\S]*officeRoleEmployeeIds[\s\S]*officeAssignedEmployeeIds[\s\S]*collectorProfileEmployeeIds/);
+  assert.match(dataSource, /isAdmin[\s\S]*directEmployeeIds[\s\S]*historicalOfficeEmployeeIds[\s\S]*collectionUserEmployeeIds[\s\S]*historicalOfficeUserEmployeeIds[\s\S]*officeRoleEmployeeIds[\s\S]*officeAssignedEmployeeIds[\s\S]*collectorProfileEmployeeIds/);
   assert.match(dataSource, /const optionOfficeId = !isAdmin && officeId \? officeId : employee\.office_id/);
   assert.match(uiSource, /report\.canUseEmployeeFilter \? \(/);
   assert.match(uiSource, /All Office Employees/);
