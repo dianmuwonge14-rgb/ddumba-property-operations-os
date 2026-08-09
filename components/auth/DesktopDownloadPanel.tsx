@@ -3,10 +3,10 @@
 import { Download, Laptop, MonitorDown } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-const RELEASE_VERSION = "0.1.0";
-const WINDOWS_URL = "https://github.com/dianmuwonge14-rgb/ddumba-property-operations-os/releases/download/v0.1.0/Ddumba-OS-Windows-x64.exe";
-const MAC_URL = "https://github.com/dianmuwonge14-rgb/ddumba-property-operations-os/releases/download/v0.1.0/Ddumba-OS-Mac-arm64.dmg";
-const WINDOWS_MSI_URL = "https://github.com/dianmuwonge14-rgb/ddumba-property-operations-os/releases/download/v0.1.0/Ddumba-OS-Windows-x64.msi";
+const RELEASE_VERSION = "0.1.1";
+const WINDOWS_URL = "https://github.com/dianmuwonge14-rgb/ddumba-property-operations-os/releases/download/v0.1.1/Ddumba-OS-Windows-x64.exe";
+const MAC_URL = "https://github.com/dianmuwonge14-rgb/ddumba-property-operations-os/releases/download/v0.1.1/Ddumba-OS-Mac-arm64.dmg";
+const WINDOWS_MSI_URL = "https://github.com/dianmuwonge14-rgb/ddumba-property-operations-os/releases/download/v0.1.1/Ddumba-OS-Windows-x64.msi";
 
 type DetectedOs = "windows" | "mac" | "other";
 
@@ -76,7 +76,7 @@ export default function DesktopDownloadPanel() {
                     <a className="inline-flex items-center justify-between rounded-xl bg-white/10 px-3 py-2 text-slate-100 hover:bg-white/15" href={WINDOWS_MSI_URL}>
                         Windows MSI installer <Download size={14} />
                     </a>
-                    <a className="inline-flex items-center justify-between rounded-xl bg-white/10 px-3 py-2 text-slate-100 hover:bg-white/15" href="https://github.com/dianmuwonge14-rgb/ddumba-property-operations-os/releases/tag/v0.1.0">
+                    <a className="inline-flex items-center justify-between rounded-xl bg-white/10 px-3 py-2 text-slate-100 hover:bg-white/15" href="https://github.com/dianmuwonge14-rgb/ddumba-property-operations-os/releases/tag/v0.1.1">
                         View release notes <Laptop size={14} />
                     </a>
                 </div>
