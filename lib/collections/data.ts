@@ -797,14 +797,17 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
         .map((employee) => {
             const optionOfficeId = !isAdmin && officeId ? officeId : employee.office_id;
             const office = optionOfficeId ? officeById.get(optionOfficeId) : null;
-            const role = normalizedEmployeeRole(employee);
+            const isCompanyWideFieldCollector = fieldCollectorEmployeeIds.includes(employee.id);
+            const role = isCompanyWideFieldCollector && roleKey(normalizedEmployeeRole(employee)) === "employee"
+                ? "Field Collector"
+                : normalizedEmployeeRole(employee);
             const officeName = office?.office_name ?? office?.name ?? (!isAdmin && officeId ? context.activeOffice?.office_name ?? context.activeOffice?.name : null) ?? "Unassigned";
             const searchText = [employee.full_name, employee.phone, employee.employee_code, role, officeName].filter(Boolean).join(" ").toLowerCase();
             return {
                 id: employee.id,
                 employeeCode: employee.employee_code ?? "",
                 name: employee.full_name ?? "Employee",
-                group: employeeOptionGroup(employee),
+                group: isCompanyWideFieldCollector ? "field_collectors" as const : employeeOptionGroup(employee),
                 officeId: optionOfficeId,
                 officeName,
                 phone: employee.phone ?? "",

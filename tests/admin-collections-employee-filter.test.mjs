@@ -48,6 +48,9 @@ test("office receptionist collections report exposes office employees plus compa
   assert.match(dataSource, /fieldCollectorEmployeeIds/);
   assert.match(dataSource, /isFieldCollectorEmployee/);
   assert.match(dataSource, /officeScopedActiveEmployeeIds/);
+  assert.match(dataSource, /isCompanyWideFieldCollector/);
+  assert.match(dataSource, /isCompanyWideFieldCollector && roleKey\(normalizedEmployeeRole\(employee\)\) === "employee"[\s\S]*\? "Field Collector"/);
+  assert.match(dataSource, /group: isCompanyWideFieldCollector \? "field_collectors"/);
   assert.match(dataSource, /officeHistoricalCollectorsRequest/);
   assert.match(dataSource, /historicalOfficeCollections/);
   assert.match(dataSource, /historicalOfficeEmployeeIds/);
