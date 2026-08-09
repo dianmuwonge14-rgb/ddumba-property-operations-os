@@ -43,6 +43,11 @@ test("office receptionist collections report exposes office employees plus compa
   assert.match(dataSource, /const canUseEmployeeFilter = isAdmin \|\| Boolean\(officeId\)/);
   assert.match(dataSource, /employeeFilterId = canUseEmployeeFilter \? String\(filters\.employeeId/);
   assert.match(dataSource, /\.from\("user_office_roles"\)[\s\S]*\.eq\("office_id", officeId\)/);
+  assert.match(dataSource, /fieldCollectorRoleAssignmentsRequest/);
+  assert.match(dataSource, /\.from\("user_office_roles"\)[\s\S]*\.select\("user_id, employee_id, office_id, status, roles\(key, name\)"\)[\s\S]*\.eq\("company_id", companyId\)/);
+  assert.match(dataSource, /activeFieldCollectorRoleAssignments/);
+  assert.match(dataSource, /isFieldCollectorAssignment/);
+  assert.match(dataSource, /fieldCollectorRoleEmployeeIds/);
   assert.match(dataSource, /\.from\("field_collector_profiles"\)/);
   assert.match(dataSource, /activeCollectorProfiles/);
   assert.match(dataSource, /collectorProfileEmployeeIds/);

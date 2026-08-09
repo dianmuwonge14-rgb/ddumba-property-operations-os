@@ -83,6 +83,7 @@ type OfficeRoleAssignmentRow = {
     employee_id?: string | null;
     office_id?: string | null;
     status?: string | null;
+    roles?: { key?: string | null; name?: string | null } | Array<{ key?: string | null; name?: string | null }> | null;
 };
 
 type FieldCollectorProfileRow = {
@@ -192,6 +193,18 @@ function employeeOptionGroup(employee: Pick<EmployeeOptionRow, "role" | "job_tit
     if (role.includes("receptionist")) return "receptionists";
     if (role === "collector" || role === "field collector" || role.includes("field collector")) return "field_collectors";
     return "managers_other";
+}
+
+function assignmentRoleKey(row: OfficeRoleAssignmentRow) {
+    const role = Array.isArray(row.roles) ? row.roles[0] : row.roles;
+    return roleKey(`${role?.key ?? ""} ${role?.name ?? ""}`);
+}
+
+function isFieldCollectorAssignment(row: OfficeRoleAssignmentRow) {
+    const role = assignmentRoleKey(row);
+    return role === "collector"
+        || role === "field collector"
+        || role.includes("field collector");
 }
 
 function businessTimeOnly(value: string | null | undefined) {
@@ -648,6 +661,13 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
             .eq("office_id", officeId)
             .limit(2000))
         : Promise.resolve([]);
+    const fieldCollectorRoleAssignmentsRequest = !isAdmin && officeId
+        ? optionalRows(metadataDb
+            .from("user_office_roles")
+            .select("user_id, employee_id, office_id, status, roles(key, name)")
+            .eq("company_id", companyId)
+            .limit(2000))
+        : Promise.resolve([]);
     const collectorProfilesRequest = !isAdmin && officeId
         ? optionalRows(metadataDb
             .from("field_collector_profiles")
@@ -664,25 +684,29 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
             .limit(10000))
         : Promise.resolve([]);
 
-    const [{ data: tenants }, { data: rooms }, { data: offices }, { data: users }, { data: activeEmployees }, officeRoleAssignments, collectorProfiles, officeHistoricalCollectors] = await Promise.all([
+    const [{ data: tenants }, { data: rooms }, { data: offices }, { data: users }, { data: activeEmployees }, officeRoleAssignments, fieldCollectorRoleAssignments, collectorProfiles, officeHistoricalCollectors] = await Promise.all([
         tenantIds.length ? supabase.from("tenants").select("id, full_name, phone").eq("company_id", companyId).in("id", tenantIds) : { data: [] },
         roomIds.length ? supabase.from("rooms").select("id, room_number, landlord_id").eq("company_id", companyId).in("id", roomIds) : { data: [] },
         officeIds.length ? supabase.from("offices").select("id, office_name, name").eq("company_id", companyId).in("id", officeIds) : { data: [] },
         recordedByIds.length ? (supabase as unknown as DynamicDb).from("users").select("id, full_name, email, phone, employee_id, account_type, default_office_id").eq("company_id", companyId).in("id", recordedByIds) : { data: [] },
         employeeLookupRequest,
         officeRoleAssignmentsRequest,
+        fieldCollectorRoleAssignmentsRequest,
         collectorProfilesRequest,
         officeHistoricalCollectorsRequest,
     ]);
     const collectionUsers = (users ?? []) as CollectionUserRow[];
     const userById = new Map(collectionUsers.map((user) => [user.id, user]));
     const activeOfficeRoleAssignments = ((officeRoleAssignments ?? []) as OfficeRoleAssignmentRow[]).filter((row) => isActiveAssignmentStatus(row.status));
+    const activeFieldCollectorRoleAssignments = ((fieldCollectorRoleAssignments ?? []) as OfficeRoleAssignmentRow[])
+        .filter((row) => isActiveAssignmentStatus(row.status) && isFieldCollectorAssignment(row));
     const activeCollectorProfiles = ((collectorProfiles ?? []) as FieldCollectorProfileRow[]).filter((row) => isActiveAssignmentStatus(row.status));
     const historicalOfficeCollections = uniqueFinanciallyEffectiveCollections((officeHistoricalCollectors ?? []) as CollectionRow[]);
     const historicalOfficeUserIds = uniqueIds(historicalOfficeCollections.map((row) => row.recorded_by ?? row.collector_id ?? row.entered_by_account_id));
     const officeRoleUserIds = uniqueIds(activeOfficeRoleAssignments.map((row) => row.user_id));
+    const fieldCollectorRoleUserIds = uniqueIds(activeFieldCollectorRoleAssignments.map((row) => row.user_id));
     const collectorProfileUserIds = uniqueIds(activeCollectorProfiles.map((row) => row.user_id));
-    const extraOfficeUserIds = uniqueIds([...officeRoleUserIds, ...collectorProfileUserIds, ...historicalOfficeUserIds]);
+    const extraOfficeUserIds = uniqueIds([...officeRoleUserIds, ...fieldCollectorRoleUserIds, ...collectorProfileUserIds, ...historicalOfficeUserIds]);
     const missingOfficeRoleUserIds = extraOfficeUserIds.filter((id) => !userById.has(id));
     const { data: officeRoleUsers } = missingOfficeRoleUserIds.length
         ? metadataDb
@@ -709,6 +733,10 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
     const collectionUserEmployeeIds = uniqueIds(collectionUsers.map((user) => user.employee_id));
     const historicalOfficeUserEmployeeIds = uniqueIds(historicalOfficeUserIds.map((id) => userById.get(id)?.employee_id));
     const officeRoleEmployeeIds = uniqueIds(activeOfficeRoleAssignments.map((row) => row.employee_id));
+    const fieldCollectorRoleEmployeeIds = uniqueIds(activeFieldCollectorRoleAssignments.flatMap((row) => [
+        row.employee_id,
+        row.user_id ? userById.get(String(row.user_id))?.employee_id : null,
+    ]));
     const officeAssignedEmployeeIds = uniqueIds(((officeRoleUsers ?? []) as CollectionUserRow[])
         .filter((user) => !officeId || user.default_office_id === officeId || officeRoleUserIds.includes(user.id))
         .map((user) => user.employee_id));
@@ -719,6 +747,7 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
     const allActiveEmployees = ((activeEmployees ?? []) as EmployeeOptionRow[]).filter((employee) => isRealActiveEmployee(employee));
     const fieldCollectorEmployeeIds = uniqueIds([
         ...allActiveEmployees.filter(isFieldCollectorEmployee).map((employee) => employee.id),
+        ...fieldCollectorRoleEmployeeIds,
         ...collectorProfileEmployeeIds,
     ]);
     const officeScopedActiveEmployeeIds = uniqueIds(allActiveEmployees
