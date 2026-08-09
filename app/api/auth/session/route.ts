@@ -61,6 +61,13 @@ export async function GET() {
     const cookieStore = await cookies();
     const expiresAt = Number(cookieStore.get(SESSION_EXPIRES_COOKIE)?.value ?? 0);
     const hasControlledSession = cookieStore.get(SESSION_CONTROLLED_COOKIE)?.value === "1";
+    const supabase = await createSupabaseServerClient();
+    const { data: userResult } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+    if (!userResult.user) {
+        clearSessionCookies(cookieStore);
+        clearSupabaseAuthCookies(cookieStore);
+        return NextResponse.json({ authenticated: false, expired: false }, { status: 401 });
+    }
     const expired = Boolean((hasControlledSession && !expiresAt) || (expiresAt && expiresAt <= Date.now()));
     if (expired) {
         await clearAuthenticatedSession("timeout");

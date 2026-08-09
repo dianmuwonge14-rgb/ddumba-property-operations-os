@@ -23,6 +23,8 @@ test("login, logout and session API manage timeout cookies and audit events", ()
   assert.match(logoutSource, /clearSessionCookies\(cookieStore\)/);
   assert.match(logoutSource, /automatic_timeout_logout/);
   assert.match(sessionRoute, /export async function POST/);
+  assert.match(sessionRoute, /supabase\.auth\.getUser\(\)/);
+  assert.match(sessionRoute, /return NextResponse\.json\(\{ authenticated: false, expired: false \}, \{ status: 401 \}\)/);
   assert.match(sessionRoute, /reason === "continue_session"/);
   assert.match(sessionRoute, /event_type: "session_refresh"/);
   assert.match(sessionRoute, /export async function DELETE/);
