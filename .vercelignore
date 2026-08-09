@@ -1,0 +1,16 @@
+node_modules
+.next
+out
+build
+coverage
+.git
+.vercel
+.DS_Store
+*.log
+*.tsbuildinfo
+desktop-artifacts
+desktop-dist
+outputs
+src-tauri/target
+src-tauri/resources
+supabase/.temp
