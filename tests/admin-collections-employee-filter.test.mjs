@@ -29,6 +29,8 @@ test("admin collections report supports stable employee filters and summaries", 
   assert.match(dataSource, /recorded_by_employee_id/);
   assert.match(dataSource, /userById\.get\(String\(userId\)\)\?\.employee_id/);
   assert.match(dataSource, /isRealActiveEmployee/);
+  assert.match(dataSource, /createSupabaseAdminClient/);
+  assert.match(dataSource, /const metadataDb = createSupabaseAdminClient\(\) as unknown as DynamicDb/);
   assert.match(dataSource, /activeEmployees/);
   assert.match(dataSource, /\.from\("employees"\)[\s\S]*\.order\("full_name"/);
   assert.match(dataSource, /!employeeFilterId \|\| employeeId === employeeFilterId/);

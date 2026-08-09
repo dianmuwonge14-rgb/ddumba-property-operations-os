@@ -1,6 +1,7 @@
 import { getScopedSupabase } from "@/lib/auth/query";
 import { requirePermission } from "@/lib/auth/permissions";
 import { collectionAmount, isFinanciallyEffectiveCollection, uniqueFinanciallyEffectiveCollections } from "@/lib/collections/validity";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { availableAdvanceAllocation, displayTenantNetBalance } from "@/lib/tenants/balance-reconciliation";
 import { billingPeriodForDate, clampBillingDay, nextBillingDate } from "@/lib/tenants/billing-cycle";
 import type {
@@ -579,6 +580,7 @@ function emptyCollectionReport(filters: Required<Pick<CollectionReportFilters, "
 export async function getCollectionReportData(filters: CollectionReportFilters = {}): Promise<CollectionReportData> {
     const context = await requirePermission("collections.read");
     const { supabase } = await getScopedSupabase();
+    const metadataDb = createSupabaseAdminClient() as unknown as DynamicDb;
     const companyId = context.activeCompany?.id;
     const officeId = context.activeOffice?.id;
     const isAdmin = context.canAccessAllOffices || context.isCompanyAdmin;
@@ -632,14 +634,14 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
     const recordedByIds = uniqueIds(collections.map((row) => row.recorded_by ?? row.collector_id ?? row.entered_by_account_id));
     const employeeLookupRequest = (() => {
         if (!canUseEmployeeFilter) return Promise.resolve({ data: [] as EmployeeOptionRow[] });
-        let query = (supabase as unknown as DynamicDb)
+        let query = metadataDb
             .from("employees")
             .select("id, full_name, phone, employee_code, role, job_title, office_id, status, user_id")
             .eq("company_id", companyId);
         return query.order("full_name", { ascending: true }).limit(2000);
     })();
     const officeRoleAssignmentsRequest = !isAdmin && officeId
-        ? optionalRows((supabase as unknown as DynamicDb)
+        ? optionalRows(metadataDb
             .from("user_office_roles")
             .select("user_id, employee_id, office_id, status")
             .eq("company_id", companyId)
@@ -647,14 +649,14 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
             .limit(2000))
         : Promise.resolve([]);
     const collectorProfilesRequest = !isAdmin && officeId
-        ? optionalRows((supabase as unknown as DynamicDb)
+        ? optionalRows(metadataDb
             .from("field_collector_profiles")
             .select("id, user_id, employee_id, status")
             .eq("company_id", companyId)
             .limit(2000))
         : Promise.resolve([]);
     const officeHistoricalCollectorsRequest = !isAdmin && officeId
-        ? optionalRows((supabase as unknown as DynamicDb)
+        ? optionalRows(metadataDb
             .from("collections")
             .select("id, company_id, office_id, collected_by_employee_id, prepared_by_employee_id, recorded_by_employee_id, recorded_by, entered_by_account_id, collector_id, status, type, financial_effective, reversed_at, voided_at, deleted_at, superseded_at, superseded_by_payment_id, corrected_by_payment_id, correction_of_payment_id")
             .eq("company_id", companyId)
@@ -683,7 +685,7 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
     const extraOfficeUserIds = uniqueIds([...officeRoleUserIds, ...collectorProfileUserIds, ...historicalOfficeUserIds]);
     const missingOfficeRoleUserIds = extraOfficeUserIds.filter((id) => !userById.has(id));
     const { data: officeRoleUsers } = missingOfficeRoleUserIds.length
-        ? (supabase as unknown as DynamicDb)
+        ? metadataDb
             .from("users")
             .select("id, full_name, email, phone, employee_id, account_type, default_office_id")
             .eq("company_id", companyId)
@@ -744,22 +746,23 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
             ...fieldCollectorEmployeeIds,
         ]);
     const { data: employees } = employeeIds.length
-        ? await supabase
+        ? await metadataDb
             .from("employees")
             .select("id, full_name, phone, employee_code, role, job_title, office_id, status, user_id")
             .eq("company_id", companyId)
             .in("id", employeeIds)
         : { data: [] as EmployeeOptionRow[] };
-    const linkedEmployeeUserIds = uniqueIds((employees ?? []).map((employee) => employee.user_id));
+    const employeeRows = (employees ?? []) as EmployeeOptionRow[];
+    const linkedEmployeeUserIds = uniqueIds(employeeRows.map((employee) => employee.user_id));
     const { data: linkedEmployeeUsers } = linkedEmployeeUserIds.length
-        ? (supabase as unknown as DynamicDb)
+        ? metadataDb
             .from("users")
             .select("id, account_type")
             .eq("company_id", companyId)
             .in("id", linkedEmployeeUserIds)
         : { data: [] };
     const linkedEmployeeUserById = new Map(((linkedEmployeeUsers ?? []) as Array<{ id: string; account_type: string | null }>).map((user) => [user.id, user]));
-    const employeeOfficeIds = uniqueIds((employees ?? []).map((employee) => employee.office_id));
+    const employeeOfficeIds = uniqueIds(employeeRows.map((employee) => employee.office_id));
     const missingOfficeIds = employeeOfficeIds.filter((id) => !officeIds.includes(id));
     const { data: employeeOffices } = missingOfficeIds.length
         ? await supabase.from("offices").select("id, office_name, name").eq("company_id", companyId).in("id", missingOfficeIds)
@@ -774,7 +777,7 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
     const roomById = new Map((rooms ?? []).map((room) => [room.id, room]));
     const officeById = new Map([...(offices ?? []), ...(employeeOffices ?? [])].map((office) => [office.id, office] as [string, OfficeNameRow]));
     const landlordById = new Map((landlords ?? []).map((landlord) => [landlord.id, landlord]));
-    const employeeById = new Map(((employees ?? []) as EmployeeOptionRow[])
+    const employeeById = new Map(employeeRows
         .filter((employee) => isRealActiveEmployee(employee, employee.user_id ? linkedEmployeeUserById.get(String(employee.user_id)) ?? null : null))
         .map((employee) => [employee.id, employee]));
 
