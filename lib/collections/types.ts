@@ -277,7 +277,7 @@ export type FastPaymentRecentItem = {
     dateChangeRequestStatus: "pending" | "approved" | "rejected" | null;
     requestedPaymentDate: string | null;
     correctionRequestId: string | null;
-    correctionRequestType: "date_change" | "amount_change" | "room_change" | "remove_payment" | null;
+    correctionRequestType: "date_change" | "amount_change" | "room_change" | "remove_payment" | "payment_method_change" | null;
     correctionRequestStatus: "pending" | "approved" | "rejected" | null;
     isCorrected: boolean;
     correctionHistoryCount: number;

@@ -119,13 +119,20 @@ function paymentLookup(data: NotificationsCentreData, id: string | null | undefi
 function correctionTypeName(value: string | null | undefined) {
     if (value === "amount_change") return "Amount Change";
     if (value === "room_change") return "Room Change";
+    if (value === "payment_method_change") return "Payment Method Change";
     if (value === "remove_payment") return "Remove Payment";
     return "Date Change";
+}
+
+function correctionJsonText(value: Record<string, unknown> | null | undefined, key: string) {
+    const row = value ?? {};
+    return String(row[`${key}_label`] ?? row[key] ?? "").replaceAll("_", " ").trim();
 }
 
 function correctionOriginalValue(data: NotificationsCentreData, request: NotificationPaymentDateRequest, paymentAmount: number) {
     if (request.correction_type === "amount_change") return money(request.original_amount ?? paymentAmount);
     if (request.correction_type === "room_change") return lookup(data.lookups.rooms, request.original_room_id ?? request.room_id, "Unknown room");
+    if (request.correction_type === "payment_method_change") return correctionJsonText(request.original_value, "payment_method") || "Unknown method";
     if (request.correction_type === "remove_payment") return "Active payment";
     return formatDate(request.original_payment_date);
 }
@@ -133,6 +140,7 @@ function correctionOriginalValue(data: NotificationsCentreData, request: Notific
 function correctionRequestedValue(data: NotificationsCentreData, request: NotificationPaymentDateRequest) {
     if (request.correction_type === "amount_change") return money(request.requested_amount ?? 0);
     if (request.correction_type === "room_change") return lookup(data.lookups.rooms, request.requested_room_id, "Requested room");
+    if (request.correction_type === "payment_method_change") return correctionJsonText(request.requested_value, "payment_method") || "Requested method";
     if (request.correction_type === "remove_payment") return "Void / remove from active collections";
     return formatDate(request.requested_payment_date);
 }

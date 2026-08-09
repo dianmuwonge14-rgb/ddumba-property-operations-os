@@ -29,7 +29,7 @@ type Props = {
     isAdmin: boolean;
     searchOffices?: Office[];
 };
-type CorrectionType = "date_change" | "amount_change" | "room_change" | "remove_payment";
+type CorrectionType = "date_change" | "amount_change" | "room_change" | "remove_payment" | "payment_method_change";
 type CorrectionHistoryRow = {
     id: string;
     correction_type: CorrectionType | string | null;
@@ -1262,7 +1262,15 @@ export default function FastPaymentsEntry({
         setMessage(null);
         setCorrectionPayment(payment);
         setCorrectionType(type);
-        setRequestedValue(type === "date_change" ? payment.paymentDate ?? paymentDate : type === "amount_change" ? String(payment.amount) : type === "remove_payment" ? "Remove payment" : "");
+        setRequestedValue(type === "date_change"
+            ? payment.paymentDate ?? paymentDate
+            : type === "amount_change"
+                ? String(payment.amount)
+                : type === "payment_method_change"
+                    ? ""
+                    : type === "remove_payment"
+                        ? "Remove payment"
+                        : "");
         setCorrectionReason("");
     }
 
@@ -1275,6 +1283,7 @@ export default function FastPaymentsEntry({
                     const result = await adminCorrectPayment({
                         correctionType,
                         correctedAmount: correctionType === "amount_change" ? Number(requestedValue) : undefined,
+                        correctedPaymentMethod: correctionType === "payment_method_change" ? requestedValue : undefined,
                         correctedPaymentDate: correctionType === "date_change" ? requestedValue : undefined,
                         correctedRoomNumber: correctionType === "room_change" ? requestedValue : undefined,
                         paymentId: correctionPayment.id,
@@ -1290,6 +1299,7 @@ export default function FastPaymentsEntry({
                             correctionRequestStatus: "approved" as const,
                             correctionRequestType: correctionType,
                             isCorrected: true,
+                            method: correctionType === "payment_method_change" ? String(result.payment.payment_method ?? requestedValue) : payment.method,
                             paymentDate: correctionType === "date_change" ? String(result.payment.payment_date ?? requestedValue).slice(0, 10) : payment.paymentDate,
                             roomId: correctionType === "room_change" ? result.payment.room_id ?? payment.roomId : payment.roomId,
                             tenantId: correctionType === "room_change" ? result.payment.tenant_id ?? payment.tenantId : payment.tenantId,
@@ -1313,6 +1323,7 @@ export default function FastPaymentsEntry({
                         paymentId: correctionPayment.id,
                         reason: correctionReason,
                         requestedAmount: correctionType === "amount_change" ? Number(requestedValue) : undefined,
+                        requestedPaymentMethod: correctionType === "payment_method_change" ? requestedValue : undefined,
                         requestedPaymentDate: correctionType === "date_change" ? requestedValue : undefined,
                         requestedRoomNumber: correctionType === "room_change" ? requestedValue : undefined,
                     });
@@ -2845,6 +2856,7 @@ function RecordedPaymentsTable({
                                         <CorrectionIconButton disabled={!isAdmin && payment.correctionRequestStatus === "pending"} icon={CalendarDays} label="Date correction" onClick={() => onRequestCorrection(payment, "date_change")} />
                                         <CorrectionIconButton disabled={!isAdmin && payment.correctionRequestStatus === "pending"} icon={Pencil} label="Amount correction" onClick={() => onRequestCorrection(payment, "amount_change")} />
                                         <CorrectionIconButton disabled={!isAdmin && payment.correctionRequestStatus === "pending"} icon={Home} label="Room correction" onClick={() => onRequestCorrection(payment, "room_change")} />
+                                        <CorrectionIconButton disabled={!isAdmin && payment.correctionRequestStatus === "pending"} icon={CreditCard} label="Change Payment Method" onClick={() => onRequestCorrection(payment, "payment_method_change")} />
                                         <CorrectionIconButton danger disabled={!isAdmin && payment.correctionRequestStatus === "pending"} icon={Trash2} label="Remove payment" onClick={() => onRequestCorrection(payment, "remove_payment")} />
                                         <CorrectionIconButton disabled={false} icon={History} label="History" onClick={() => onViewHistory(payment)} />
                                     </div>
@@ -2974,6 +2986,14 @@ function PaymentCorrectionRequestModal({
             type: "text",
             placeholder: "Explain why this payment belongs to another room...",
         },
+        payment_method_change: {
+            title: isAdmin ? "Change Payment Method" : "Request Payment Method Change",
+            eyebrow: isAdmin ? "Admin Direct Reclassification" : "Payment Method Change",
+            current: "Current Payment Method",
+            requested: "New Payment Method",
+            type: "select",
+            placeholder: "Explain why this payment method needs to be changed...",
+        },
         remove_payment: {
             title: isAdmin ? "Remove Payment" : "Request Payment Removal",
             eyebrow: isAdmin ? "Admin Direct Removal" : "Payment Removal Request",
@@ -2989,7 +3009,9 @@ function PaymentCorrectionRequestModal({
                 ? money(payment.amount)
                 : correctionType === "room_change"
                     ? payment.roomNumber
-                    : `${payment.roomNumber} · ${money(payment.amount)} · ${payment.paymentDate ?? "No date"}`;
+                    : correctionType === "payment_method_change"
+                        ? payment.method.replaceAll("_", " ")
+                        : `${payment.roomNumber} · ${money(payment.amount)} · ${payment.paymentDate ?? "No date"}`;
     return (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
             <div className="w-full max-w-2xl rounded-3xl border border-slate-200 bg-white shadow-2xl">
@@ -3010,17 +3032,33 @@ function PaymentCorrectionRequestModal({
                         <ModalDetail label="Room" value={payment.roomNumber} />
                         <ModalDetail label="Tenant" value={payment.tenantName} />
                         <ModalDetail label="Amount Paid" value={money(payment.amount)} />
+                        <ModalDetail label="Receipt Number" value={payment.id.slice(0, 8).toUpperCase()} />
+                        <ModalDetail label="Recorded By" value={payment.recordedBy || "Unknown"} />
+                        <ModalDetail label="Business Date" value={payment.paymentDate ?? "No date"} />
                         <ModalDetail label={labels.current} value={currentValue} />
                     </div>
                     {correctionType !== "remove_payment" ? (
                     <label className="block">
                         <span className="text-xs font-black uppercase text-slate-500">{labels.requested}</span>
-                        <input
-                            type={labels.type}
-                            value={requestedValue}
-                            onChange={(event) => onRequestedValueChange(event.target.value)}
-                            className="mt-1 h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                        />
+                        {correctionType === "payment_method_change" ? (
+                            <select
+                                value={requestedValue}
+                                onChange={(event) => onRequestedValueChange(event.target.value)}
+                                className="mt-1 h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                            >
+                                <option value="">Select new method</option>
+                                <option value="cash">Cash</option>
+                                <option value="bank">Bank</option>
+                                <option value="mobile_money">Mobile Money</option>
+                            </select>
+                        ) : (
+                            <input
+                                type={labels.type}
+                                value={requestedValue}
+                                onChange={(event) => onRequestedValueChange(event.target.value)}
+                                className="mt-1 h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                            />
+                        )}
                     </label>
                     ) : (
                         <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
@@ -3042,8 +3080,12 @@ function PaymentCorrectionRequestModal({
                             Cancel
                         </button>
                         <button type="button" disabled={isPending} onClick={onSubmit} className="inline-flex items-center gap-2 rounded-2xl bg-blue-700 px-5 py-3 text-sm font-black text-white disabled:opacity-40">
-                            {isPending ? <Loader2 className="animate-spin" size={16} /> : <CalendarDays size={16} />}
-                            {correctionType === "remove_payment" ? (isAdmin ? "Remove Payment" : "Send Removal Request") : isAdmin ? "Apply Correction" : "Send To Admin"}
+                            {isPending ? <Loader2 className="animate-spin" size={16} /> : correctionType === "payment_method_change" ? <CreditCard size={16} /> : <CalendarDays size={16} />}
+                            {correctionType === "remove_payment"
+                                ? (isAdmin ? "Remove Payment" : "Send Removal Request")
+                                : correctionType === "payment_method_change"
+                                    ? (isAdmin ? "Confirm Change" : "Request Admin Approval")
+                                    : isAdmin ? "Apply Correction" : "Send To Admin"}
                         </button>
                     </div>
                 </div>

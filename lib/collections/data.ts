@@ -419,7 +419,7 @@ export async function getFastPaymentRecentPayments(paymentDate: string, options?
             correctionRequestStatus: correctionRequestStatus === "pending" || correctionRequestStatus === "approved" || correctionRequestStatus === "rejected"
                 ? correctionRequestStatus
                 : null,
-            correctionRequestType: correctionRequestType === "date_change" || correctionRequestType === "amount_change" || correctionRequestType === "room_change" || correctionRequestType === "remove_payment"
+            correctionRequestType: correctionRequestType === "date_change" || correctionRequestType === "amount_change" || correctionRequestType === "room_change" || correctionRequestType === "remove_payment" || correctionRequestType === "payment_method_change"
                 ? correctionRequestType
                 : null,
             isCorrected: correctionHistory.some((request) => String(request.status ?? "") === "approved"),

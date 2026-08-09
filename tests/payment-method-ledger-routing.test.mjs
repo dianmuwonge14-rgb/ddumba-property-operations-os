@@ -38,6 +38,27 @@ test("all tenant payment entry paths pass the selected method to ledger posting"
   assert.match(promisesAction, /paymentMethod: input\.paymentMethod \?\? "cash"/);
 });
 
+test("payment method correction reclassifies ledger buckets without creating another collection", () => {
+  const collectionsAction = read("app/actions/collections.ts");
+  const paymentsEntry = read("components/office/payments/FastPaymentsEntry.tsx");
+  const notifications = read("components/office/notifications/NotificationsCentre.tsx");
+  const migration = read("supabase/upgrade_migrations/0264_payment_method_correction_requests.sql");
+
+  assert.match(collectionsAction, /payment_method_change/);
+  assert.match(collectionsAction, /reclassifyPaymentMethod/);
+  assert.match(collectionsAction, /\.from\("cash_transactions"\)\s*\n\s*\.update\(/);
+  assert.match(collectionsAction, /source_type", "collection"/);
+  assert.match(collectionsAction, /Payment method changed from/);
+  assert.match(collectionsAction, /movementType: "submission_approved"/);
+  assert.match(collectionsAction, /movementType: "collection_in"/);
+  assert.doesNotMatch(collectionsAction, /recordCollection\([^)]*payment_method_change/s);
+  assert.match(paymentsEntry, /label="Change Payment Method"/);
+  assert.match(paymentsEntry, /correctedPaymentMethod: correctionType === "payment_method_change"/);
+  assert.match(paymentsEntry, /requestedPaymentMethod: correctionType === "payment_method_change"/);
+  assert.match(notifications, /Payment Method Change/);
+  assert.match(migration, /'payment_method_change'/);
+});
+
 test("cash position and cash banking reports keep direct bank and mobile money out of physical office cash", () => {
   const cashPosition = read("lib/cash-position-centre/data.ts");
   const cashBanking = read("lib/cash-banking/data.ts");

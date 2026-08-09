@@ -11,7 +11,7 @@ import { assertFinancialEntryDate } from "@/lib/business-date";
 import { getTenantCollectionContext } from "@/lib/collections/data";
 import { buildTenantPaymentCoverageAllocations } from "@/lib/collections/move-in-allocation";
 import { recordCollectionLedgerAndCash } from "@/lib/collections/payment-ledger";
-import { paymentMethodBucket } from "@/lib/collections/payment-methods";
+import { displayPaymentMethod, paymentMethodBucket } from "@/lib/collections/payment-methods";
 import { availableAdvanceAllocation, displayTenantNetBalance, moneyAmount } from "@/lib/tenants/balance-reconciliation";
 import { recalculateTenantScore } from "@/lib/tenants/scoring";
 import { normalizeOfflineTransactionUuid } from "@/lib/offline/idempotency";
@@ -681,11 +681,20 @@ function collectionTypeForPaymentKind(kind: RecordCollectionInput["paymentKind"]
     }
 }
 
-type PaymentCorrectionType = "date_change" | "amount_change" | "room_change" | "remove_payment";
+type PaymentCorrectionType = "date_change" | "amount_change" | "room_change" | "remove_payment" | "payment_method_change";
 
 function normalizeCorrectionType(value: string): PaymentCorrectionType {
-    if (value === "date_change" || value === "amount_change" || value === "room_change" || value === "remove_payment") return value;
+    if (value === "date_change" || value === "amount_change" || value === "room_change" || value === "remove_payment" || value === "payment_method_change") return value;
     throw new Error("Unsupported payment correction type.");
+}
+
+function isFinanciallyActivePayment(payment: Record<string, unknown>) {
+    const status = String(payment.status ?? "").trim().toLowerCase();
+    const inactiveStatuses = new Set(["cancelled", "canceled", "deleted", "rejected", "removed_by_admin_approval", "reversed", "superseded", "void", "voided"]);
+    if (inactiveStatuses.has(status)) return false;
+    if (payment.financial_effective === false) return false;
+    if (payment.reversed_at || payment.voided_at || payment.deleted_at || payment.superseded_at || payment.superseded_by_payment_id) return false;
+    return true;
 }
 
 async function getActiveTenantForRoom(db: DynamicDb, companyId: string, roomNumberOrId: string, officeId?: string | null) {
@@ -733,8 +742,241 @@ async function getActiveTenantForRoom(db: DynamicDb, companyId: string, roomNumb
 function correctionTypeLabel(type: PaymentCorrectionType) {
     if (type === "date_change") return "date change";
     if (type === "amount_change") return "amount change";
+    if (type === "payment_method_change") return "payment method change";
     if (type === "remove_payment") return "payment removal";
     return "room change";
+}
+
+async function ensurePaymentMethodCashAccount(input: {
+    companyId: string;
+    db: DynamicDb;
+    method: "cash" | "bank" | "mobile_money";
+    officeId?: string | null;
+}) {
+    const accountType = input.method === "bank" ? "bank" : input.method === "mobile_money" ? "mobile_money" : "office_cash";
+    const isOfficeScopedAccount = accountType === "office_cash";
+    const accountName = accountType === "bank" ? "Company Bank" : accountType === "mobile_money" ? "Company Mobile Money" : "Office Cash";
+    let query = input.db
+        .from("cash_accounts")
+        .select("id")
+        .eq("company_id", input.companyId)
+        .eq("account_type", accountType)
+        .eq("status", "active")
+        .limit(1);
+    query = isOfficeScopedAccount ? query.eq("office_id", input.officeId ?? null) : query.is("office_id", null);
+    const { data, error } = await query.maybeSingle();
+    if (error) throw new Error(error.message);
+    if (data?.id) return String(data.id);
+
+    const created = await input.db
+        .from("cash_accounts")
+        .insert({
+            account_type: accountType,
+            company_id: input.companyId,
+            currency: "UGX",
+            name: accountName,
+            office_id: isOfficeScopedAccount ? input.officeId ?? null : null,
+            status: "active",
+        })
+        .select("id")
+        .single();
+    if (created.error) throw new Error(created.error.message);
+    return String(created.data.id);
+}
+
+async function recalculateCollectorCashBalance(input: { collectorUserId: string; companyId: string; db: DynamicDb }) {
+    const { data: movements, error } = await input.db
+        .from("field_collector_cash_movements")
+        .select("amount, movement_type, status")
+        .eq("company_id", input.companyId)
+        .eq("collector_user_id", input.collectorUserId);
+    if (error) throw new Error(error.message);
+    const balance = (movements ?? []).reduce((total: number, row: Record<string, unknown>) => {
+        const amount = Number(row.amount ?? 0);
+        if (row.status === "voided" || row.status === "rejected") return total;
+        if (row.movement_type === "collection_in") return total + amount;
+        if (row.movement_type === "submission_approved") return total - amount;
+        return total;
+    }, 0);
+    const update = await input.db
+        .from("field_collector_profiles")
+        .update({ cash_balance: balance, updated_at: new Date().toISOString() })
+        .eq("company_id", input.companyId)
+        .eq("user_id", input.collectorUserId);
+    if (update.error) throw new Error(update.error.message);
+    return balance;
+}
+
+async function insertCollectorCashMovement(input: {
+    amount: number;
+    collectionId: string;
+    companyId: string;
+    collectorUserId: string;
+    db: DynamicDb;
+    movementType: "collection_in" | "submission_approved";
+    notes: string;
+    officeId?: string | null;
+    paymentMethod: string;
+    roomId?: string | null;
+    tenantId?: string | null;
+}) {
+    const insert = await input.db.from("field_collector_cash_movements").insert({
+        amount: input.amount,
+        collection_id: input.collectionId,
+        company_id: input.companyId,
+        collector_user_id: input.collectorUserId,
+        movement_type: input.movementType,
+        notes: input.notes,
+        office_id: input.officeId ?? null,
+        payment_method: input.paymentMethod,
+        room_id: input.roomId ?? null,
+        status: "posted",
+        tenant_id: input.tenantId ?? null,
+    });
+    if (insert.error) throw new Error(insert.error.message);
+    await recalculateCollectorCashBalance({ collectorUserId: input.collectorUserId, companyId: input.companyId, db: input.db });
+}
+
+async function insertCollectorOfficeCashOffset(input: {
+    amount: number;
+    collectionId: string;
+    companyId: string;
+    db: DynamicDb;
+    description: string;
+    officeId: string;
+    recordedBy?: string | null;
+    transactionType: "inflow" | "outflow";
+}) {
+    const cashAccountId = await ensurePaymentMethodCashAccount({ companyId: input.companyId, db: input.db, method: "cash", officeId: input.officeId });
+    const insert = await input.db.from("cash_transactions").insert({
+        amount: input.amount,
+        cash_account_id: cashAccountId,
+        company_id: input.companyId,
+        description: input.description,
+        office_id: input.officeId,
+        recorded_by: input.recordedBy ?? null,
+        source_id: input.collectionId,
+        source_type: "payment_method_reclassification",
+        transaction_date: new Date().toISOString(),
+        transaction_type: input.transactionType,
+    });
+    if (insert.error) throw new Error(insert.error.message);
+}
+
+async function reclassifyPaymentMethod(input: {
+    actorId?: string | null;
+    companyId: string;
+    db: DynamicDb;
+    newMethod: "cash" | "bank" | "mobile_money";
+    oldMethod: "cash" | "bank" | "mobile_money";
+    payment: Record<string, unknown>;
+    reason: string;
+}) {
+    const paymentId = String(input.payment.id ?? "");
+    const officeId = input.payment.office_id ? String(input.payment.office_id) : null;
+    const amount = Number(input.payment.amount_paid ?? input.payment.amount ?? 0);
+    if (!paymentId) throw new Error("Payment record is required.");
+    if (!officeId) throw new Error("Payment office is required before changing payment method.");
+    assertPositiveAmount(amount, "Payment amount");
+    if (input.oldMethod === input.newMethod) throw new Error("Select a different payment method.");
+
+    const cashAccountId = await ensurePaymentMethodCashAccount({
+        companyId: input.companyId,
+        db: input.db,
+        method: input.newMethod,
+        officeId,
+    });
+    const transactionDate = input.payment.paid_at ?? (paymentBusinessDate(input.payment) ? businessDateStartIso(paymentBusinessDate(input.payment)) : new Date().toISOString());
+    const { data: existingCashTransactions, error: existingCashError } = await input.db
+        .from("cash_transactions")
+        .select("id")
+        .eq("company_id", input.companyId)
+        .eq("source_type", "collection")
+        .eq("source_id", paymentId);
+    if (existingCashError) throw new Error(existingCashError.message);
+    if ((existingCashTransactions ?? []).length) {
+        const transactionUpdate = await input.db
+            .from("cash_transactions")
+            .update({
+                cash_account_id: cashAccountId,
+                description: `Payment method changed from ${displayPaymentMethod(input.oldMethod)} to ${displayPaymentMethod(input.newMethod)}. Reason: ${input.reason}`,
+                office_id: officeId,
+                transaction_date: transactionDate,
+                transaction_type: "inflow",
+            })
+            .eq("company_id", input.companyId)
+            .eq("source_type", "collection")
+            .eq("source_id", paymentId);
+        if (transactionUpdate.error) throw new Error(transactionUpdate.error.message);
+    } else {
+        const transactionInsert = await input.db.from("cash_transactions").insert({
+            amount,
+            cash_account_id: cashAccountId,
+            company_id: input.companyId,
+            description: `Payment method ledger created during correction from ${displayPaymentMethod(input.oldMethod)} to ${displayPaymentMethod(input.newMethod)}. Reason: ${input.reason}`,
+            office_id: officeId,
+            recorded_by: input.actorId ?? input.payment.recorded_by ?? null,
+            source_id: paymentId,
+            source_type: "collection",
+            transaction_date: transactionDate,
+            transaction_type: "inflow",
+        });
+        if (transactionInsert.error) throw new Error(transactionInsert.error.message);
+    }
+
+    const isCollectorPayment = String(input.payment.account_type ?? "").toLowerCase().includes("collector");
+    const collectorUserId = isCollectorPayment ? String(input.payment.entered_by_account_id ?? input.payment.recorded_by ?? "") : "";
+    if (isCollectorPayment && !collectorUserId) throw new Error("Collector payment is missing the collector user linkage.");
+    if (isCollectorPayment && input.oldMethod === "cash" && input.newMethod !== "cash") {
+        await insertCollectorCashMovement({
+            amount,
+            collectionId: paymentId,
+            companyId: input.companyId,
+            collectorUserId,
+            db: input.db,
+            movementType: "submission_approved",
+            notes: `Payment method correction removed collector-held cash. ${input.reason}`,
+            officeId,
+            paymentMethod: input.newMethod,
+            roomId: input.payment.room_id ? String(input.payment.room_id) : null,
+            tenantId: input.payment.tenant_id ? String(input.payment.tenant_id) : null,
+        });
+        await insertCollectorOfficeCashOffset({
+            amount,
+            collectionId: paymentId,
+            companyId: input.companyId,
+            db: input.db,
+            description: `Offset collector cash-holding outflow after payment method changed to ${displayPaymentMethod(input.newMethod)}. ${input.reason}`,
+            officeId,
+            recordedBy: input.actorId ?? collectorUserId,
+            transactionType: "inflow",
+        });
+    }
+    if (isCollectorPayment && input.oldMethod !== "cash" && input.newMethod === "cash") {
+        await insertCollectorCashMovement({
+            amount,
+            collectionId: paymentId,
+            companyId: input.companyId,
+            collectorUserId,
+            db: input.db,
+            movementType: "collection_in",
+            notes: `Payment method correction moved payment into collector-held cash. ${input.reason}`,
+            officeId,
+            paymentMethod: "cash",
+            roomId: input.payment.room_id ? String(input.payment.room_id) : null,
+            tenantId: input.payment.tenant_id ? String(input.payment.tenant_id) : null,
+        });
+        await insertCollectorOfficeCashOffset({
+            amount,
+            collectionId: paymentId,
+            companyId: input.companyId,
+            db: input.db,
+            description: `Collector cash holding created after payment method changed to Cash. ${input.reason}`,
+            officeId,
+            recordedBy: input.actorId ?? collectorUserId,
+            transactionType: "outflow",
+        });
+    }
 }
 
 function paymentLabelForKind(kind: RecordCollectionInput["paymentKind"], source: "tenant" | "employer") {
@@ -1339,6 +1581,7 @@ export async function requestPaymentCorrection(input: {
     correctionType: PaymentCorrectionType;
     requestedPaymentDate?: string;
     requestedAmount?: number;
+    requestedPaymentMethod?: string;
     requestedRoomNumber?: string;
     reason: string;
 }) {
@@ -1362,6 +1605,9 @@ export async function requestPaymentCorrection(input: {
         .maybeSingle();
     if (paymentError) throw new Error(paymentError.message);
     if (!payment) throw new Error("Payment record not found.");
+    if (!isFinanciallyActivePayment(payment)) {
+        throw new Error("This payment can no longer be corrected because it is not financially active.");
+    }
     if (!isCollector && !(context.isCompanyAdmin || context.canAccessAllOffices) && payment.office_id !== context.activeOffice?.id) {
         throw new Error("You can only request corrections for payments in your active office.");
     }
@@ -1371,14 +1617,14 @@ export async function requestPaymentCorrection(input: {
         .select("id")
         .eq("company_id", context.activeCompany.id)
         .eq("payment_id", input.paymentId)
-        .eq("correction_type", correctionType)
         .eq("status", "pending")
         .maybeSingle();
     if (existingError) throw new Error(existingError.message);
-    if (existing) throw new Error(`This payment already has a pending ${correctionTypeLabel(correctionType)} request.`);
+    if (existing) throw new Error("This payment already has a pending correction request.");
 
     let requestedDate: string | null = null;
     let requestedAmount: number | null = null;
+    let requestedPaymentMethod: "cash" | "bank" | "mobile_money" | null = null;
     let requestedRoom: Record<string, unknown> | null = null;
     let requestedTenant: Record<string, unknown> | null = null;
     if (correctionType === "date_change") {
@@ -1388,6 +1634,11 @@ export async function requestPaymentCorrection(input: {
     if (correctionType === "amount_change") {
         requestedAmount = Number(input.requestedAmount);
         assertPositiveAmount(requestedAmount, "Requested amount");
+    }
+    if (correctionType === "payment_method_change") {
+        requestedPaymentMethod = canonicalTenantPaymentMethod(input.requestedPaymentMethod);
+        const currentMethod = canonicalTenantPaymentMethod(payment.payment_method);
+        if (requestedPaymentMethod === currentMethod) throw new Error("Select a different payment method.");
     }
     if (correctionType === "room_change") {
         const contextForRoom = await getActiveTenantForRoom(
@@ -1404,6 +1655,8 @@ export async function requestPaymentCorrection(input: {
         amount: Number(payment.amount_paid ?? payment.amount ?? 0),
         balance: Number(payment.balance ?? 0),
         payment_date: paymentBusinessDate(payment),
+        payment_method: canonicalTenantPaymentMethod(payment.payment_method),
+        payment_method_label: displayPaymentMethod(payment.payment_method),
         room_id: payment.room_id ?? null,
         tenant_id: payment.tenant_id ?? null,
         status: payment.status ?? null,
@@ -1411,6 +1664,8 @@ export async function requestPaymentCorrection(input: {
     const requestedValue = {
         amount: requestedAmount,
         payment_date: requestedDate,
+        payment_method: requestedPaymentMethod,
+        payment_method_label: requestedPaymentMethod ? displayPaymentMethod(requestedPaymentMethod) : null,
         room_id: requestedRoom?.id ?? null,
         room_number: requestedRoom?.room_number ?? input.requestedRoomNumber ?? null,
         tenant_id: requestedTenant?.id ?? null,
@@ -1513,6 +1768,9 @@ export async function decidePaymentCorrection(input: {
     if (input.decision === "approved") {
         const type = normalizeCorrectionType(String(request.correction_type));
         const paymentAmount = Number(payment.amount_paid ?? payment.amount ?? 0);
+        if (!isFinanciallyActivePayment(payment)) {
+            throw new Error("This payment can no longer be corrected because it is not financially active.");
+        }
         if (type === "date_change") {
             const correctedPaymentDate = String(request.requested_payment_date).slice(0, 10);
             assertDate(correctedPaymentDate, "Requested payment date");
@@ -1637,6 +1895,32 @@ export async function decidePaymentCorrection(input: {
             if (update.error) throw new Error(update.error.message);
             updatedPayment = update.data;
         }
+        if (type === "payment_method_change") {
+            const oldMethod = canonicalTenantPaymentMethod(payment.payment_method);
+            const requestedMethod = canonicalTenantPaymentMethod((request.requested_value as Record<string, unknown> | null)?.payment_method);
+            if (oldMethod === requestedMethod) throw new Error("Select a different payment method.");
+            await reclassifyPaymentMethod({
+                actorId: context.profile?.id ?? null,
+                companyId: context.activeCompany.id,
+                db,
+                newMethod: requestedMethod,
+                oldMethod,
+                payment,
+                reason: String(input.comment ?? request.reason ?? ""),
+            });
+            const update = await db
+                .from("collections")
+                .update({
+                    notes: [payment.notes, `Payment method changed from ${displayPaymentMethod(oldMethod)} to ${displayPaymentMethod(requestedMethod)} after Admin approval. Reason: ${input.comment ?? request.reason ?? ""}`].filter(Boolean).join(" | "),
+                    payment_method: requestedMethod,
+                })
+                .eq("id", request.payment_id)
+                .eq("company_id", context.activeCompany.id)
+                .select("*")
+                .single();
+            if (update.error) throw new Error(update.error.message);
+            updatedPayment = update.data;
+        }
         if (type === "remove_payment") {
             if (String(payment.status ?? "").toLowerCase() === "removed_by_admin_approval" || String(payment.status ?? "").toLowerCase() === "voided") {
                 throw new Error("This payment has already been removed.");
@@ -1708,6 +1992,7 @@ export async function adminCorrectPayment(input: {
     correctionType: PaymentCorrectionType;
     correctedPaymentDate?: string;
     correctedAmount?: number;
+    correctedPaymentMethod?: string;
     correctedRoomNumber?: string;
     reason: string;
 }) {
@@ -1728,11 +2013,16 @@ export async function adminCorrectPayment(input: {
         .maybeSingle();
     if (paymentError) throw new Error(paymentError.message);
     if (!payment) throw new Error("Payment record not found.");
+    if (!isFinanciallyActivePayment(payment)) {
+        throw new Error("This payment can no longer be corrected because it is not financially active.");
+    }
 
     const originalAmount = Number(payment.amount_paid ?? payment.amount ?? 0);
     const originalPaymentDate = paymentBusinessDate(payment);
+    const originalPaymentMethod = canonicalTenantPaymentMethod(payment.payment_method);
     let requestedDate: string | null = null;
     let requestedAmount: number | null = null;
+    let requestedPaymentMethod: "cash" | "bank" | "mobile_money" | null = null;
     let requestedRoom: Record<string, unknown> | null = null;
     let requestedTenant: Record<string, unknown> | null = null;
     let updatedPayment = payment;
@@ -1870,6 +2160,32 @@ export async function adminCorrectPayment(input: {
         updatedPayment = update.data;
     }
 
+    if (correctionType === "payment_method_change") {
+        requestedPaymentMethod = canonicalTenantPaymentMethod(input.correctedPaymentMethod);
+        if (requestedPaymentMethod === originalPaymentMethod) throw new Error("Select a different payment method.");
+        await reclassifyPaymentMethod({
+            actorId: context.profile?.id ?? null,
+            companyId: context.activeCompany.id,
+            db,
+            newMethod: requestedPaymentMethod,
+            oldMethod: originalPaymentMethod,
+            payment,
+            reason,
+        });
+        const update = await db
+            .from("collections")
+            .update({
+                notes: [payment.notes, `Admin changed payment method from ${displayPaymentMethod(originalPaymentMethod)} to ${displayPaymentMethod(requestedPaymentMethod)}. Reason: ${reason}`].filter(Boolean).join(" | "),
+                payment_method: requestedPaymentMethod,
+            })
+            .eq("id", input.paymentId)
+            .eq("company_id", context.activeCompany.id)
+            .select("*")
+            .single();
+        if (update.error) throw new Error(update.error.message);
+        updatedPayment = update.data;
+    }
+
     if (correctionType === "remove_payment") {
         if (String(payment.status ?? "").toLowerCase() === "removed_by_admin_approval" || String(payment.status ?? "").toLowerCase() === "voided") {
             throw new Error("This payment has already been removed.");
@@ -1889,6 +2205,8 @@ export async function adminCorrectPayment(input: {
     const requestedValue = {
         amount: requestedAmount,
         payment_date: requestedDate,
+        payment_method: requestedPaymentMethod,
+        payment_method_label: requestedPaymentMethod ? displayPaymentMethod(requestedPaymentMethod) : null,
         room_id: requestedRoom?.id ?? null,
         room_number: requestedRoom?.room_number ?? input.correctedRoomNumber ?? null,
         tenant_id: requestedTenant?.id ?? null,
@@ -1900,6 +2218,8 @@ export async function adminCorrectPayment(input: {
         amount: originalAmount,
         balance: Number(payment.balance ?? 0),
         payment_date: originalPaymentDate,
+        payment_method: originalPaymentMethod,
+        payment_method_label: displayPaymentMethod(originalPaymentMethod),
         room_id: payment.room_id ?? null,
         status: payment.status ?? null,
         tenant_id: payment.tenant_id ?? null,

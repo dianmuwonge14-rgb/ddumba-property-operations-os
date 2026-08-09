@@ -133,6 +133,7 @@ function correctionFieldLabel(type: unknown) {
     if (type === "date_change") return "Payment date";
     if (type === "amount_change") return "Amount paid";
     if (type === "room_change") return "Room";
+    if (type === "payment_method_change") return "Payment method";
     if (type === "remove_payment") return "Payment status";
     return "Payment";
 }
@@ -146,6 +147,7 @@ function correctionValueLabel(value: unknown, type: unknown) {
         const tenant = text(row.tenant_name);
         return [room, tenant].filter(Boolean).join(" · ") || null;
     }
+    if (type === "payment_method_change") return text(row.payment_method_label) ?? text(row.payment_method)?.replaceAll("_", " ") ?? null;
     if (type === "remove_payment") return text(row.status) ?? (row.remove_payment ? "removed by Admin approval" : null);
     return JSON.stringify(row);
 }

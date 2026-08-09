@@ -31,6 +31,13 @@ test("payment correction approval syncs receipt status and amendment history", (
   assert.match(collections, /decision: "approved"/);
 });
 
+test("receipt amendment history labels payment method changes explicitly", () => {
+  assert.match(service, /payment_method_change/);
+  assert.match(service, /return "Payment method"/);
+  assert.match(service, /payment_method_label/);
+  assert.match(collections, /Payment method changed from/);
+});
+
 test("receipt history loads amendments and exposes premium status filters", () => {
   assert.match(historyData, /payment_receipt_amendments/);
   assert.match(historyData, /amendmentSummary/);
