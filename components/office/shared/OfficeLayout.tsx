@@ -3,6 +3,7 @@ import AttendanceAccessGate from "./AttendanceAccessGate";
 import AttendanceStatusBanner from "./AttendanceStatusBanner";
 import GlobalNotificationToasts from "./GlobalNotificationToasts";
 import SessionTimeoutController from "./SessionTimeoutController";
+import DesktopSyncStatus from "./DesktopSyncStatus";
 import { NavigationMemoryProvider, UnsavedChangesGuard } from "@/components/navigation/NavigationMemoryProvider";
 import { getAttendanceGateStatus } from "@/lib/attendance/gate";
 import { requireAuth } from "@/lib/auth/permissions";
@@ -41,6 +42,9 @@ export default async function OfficeLayout({
                     <div className="px-4">
                         <AttendanceStatusBanner attendance={attendance} />
                         <UnsavedChangesGuard className="mx-auto mt-3 max-w-[1600px]" />
+                        <div className="mx-auto mt-3 flex max-w-[1600px] justify-end">
+                            <DesktopSyncStatus />
+                        </div>
                     </div>
                     {children}
                 </div>

@@ -14,6 +14,7 @@ import { recordCollectionLedgerAndCash } from "@/lib/collections/payment-ledger"
 import { paymentMethodBucket } from "@/lib/collections/payment-methods";
 import { availableAdvanceAllocation, displayTenantNetBalance, moneyAmount } from "@/lib/tenants/balance-reconciliation";
 import { recalculateTenantScore } from "@/lib/tenants/scoring";
+import { normalizeOfflineTransactionUuid } from "@/lib/offline/idempotency";
 import type {
     CreateCollectionActionInput,
     CreatePromiseInput,
@@ -768,9 +769,37 @@ export async function recordCollection(input: RecordCollectionInput) {
     const amount = Number(input.amount);
     assertPositiveAmount(amount, "Collection amount");
     const paymentMethod = canonicalTenantPaymentMethod(input.paymentMethod);
+    const offlineTransactionUuid = normalizeOfflineTransactionUuid(input.offlineTransactionUuid);
 
     if (!context.activeCompany?.id || !context.activeOffice?.id) {
         throw new Error("Active company and office are required.");
+    }
+    if (offlineTransactionUuid) {
+        const { data: existingPayment, error: existingPaymentError } = await (supabase as unknown as DynamicDb)
+            .from("collections")
+            .select("*")
+            .eq("company_id", context.activeCompany.id)
+            .eq("offline_transaction_uuid", offlineTransactionUuid)
+            .maybeSingle();
+        if (existingPaymentError && !/offline_transaction_uuid|schema cache|Could not find/i.test(existingPaymentError.message ?? "")) {
+            throw new Error(existingPaymentError.message);
+        }
+        if (existingPayment) {
+            let receipt = null;
+            try {
+                receipt = await createTenantPaymentReceipt(existingPayment.id, { issuedBy: context.profile?.id ?? null });
+            } catch {
+                // Existing idempotent payment is authoritative even when receipt lookup is temporarily unavailable.
+            }
+            return {
+                ...existingPayment,
+                alreadyProcessed: true,
+                balance: existingPayment.balance_after_payment ?? existingPayment.balance,
+                balance_after_payment: existingPayment.balance_after_payment ?? existingPayment.balance,
+                receipt,
+                receiptError: null,
+            };
+        }
     }
     const tenantContext = await getFastTenantPaymentContext({
         companyId: context.activeCompany.id,
@@ -844,6 +873,11 @@ export async function recordCollection(input: RecordCollectionInput) {
             tenant_top_up_expected: tenantContext.contribution.tenantTopUpExpected || null,
             type: collectionTypeForPaymentKind(paymentKind),
             used_to_clear_outstanding: usedToClearOutstanding,
+            ...(offlineTransactionUuid ? {
+                offline_device_id: input.offlineDeviceId || null,
+                offline_local_created_at: input.offlineLocalCreatedAt || null,
+                offline_transaction_uuid: offlineTransactionUuid,
+            } : {}),
         })
         .select("*")
         .single();

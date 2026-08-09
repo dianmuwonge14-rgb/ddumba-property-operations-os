@@ -18,6 +18,7 @@ import { currentBusinessDate, formatBusinessDate } from "@/lib/business-date";
 import type { AdvanceRentAssistantItem, CollectionTenantResult, FastPaymentRecentItem, FastPaymentRecentTotals, FastPaymentTenantSearchResult } from "@/lib/collections/types";
 import type { Company, Office, UserProfile } from "@/lib/auth/types";
 import type { PaymentReceiptSummary } from "@/lib/receipts/payment-receipts";
+import { isDesktopRuntime, queueOfflineTenantPayment } from "@/lib/offline/desktop-runtime";
 
 type Props = {
     activeCompany: Company | null;
@@ -114,6 +115,10 @@ function compactDate(value: string | null | undefined) {
 
 function normalize(value: string | null | undefined) {
     return String(value ?? "").trim().toLowerCase();
+}
+
+function employeeIdFromProfile(profile: UserProfile | null) {
+    return (profile as unknown as { employee_id?: string | null } | null)?.employee_id ?? null;
 }
 
 const TENANT_PAYMENT_METHODS: Array<{ description: string; icon: LucideIcon; label: string; value: TenantPaymentMethod }> = [
@@ -1185,6 +1190,63 @@ export default function FastPaymentsEntry({
                 void loadRecentPayments(paymentDate);
                 void loadAdvanceRentAssistant(paymentDate);
             } catch (error) {
+                const canSaveOffline = isDesktopRuntime() || (typeof navigator !== "undefined" && !navigator.onLine);
+                if (canSaveOffline && activeCompany?.id && activeOffice?.id && profile?.id && selectedTenant?.tenant?.id) {
+                    try {
+                        const offline = await queueOfflineTenantPayment({
+                            amount: paidAmount,
+                            companyId: activeCompany.id,
+                            employeeId: employeeIdFromProfile(profile),
+                            officeId: selectedTenant.room?.office_id ?? selectedTenant.tenant.office_id ?? activeOffice.id,
+                            payload: {
+                                amount: paidAmount,
+                                paymentDate,
+                                paymentKind: "tenant_normal",
+                                paymentMethod,
+                                paymentSource: "tenant",
+                                referenceNumber: paymentReference.trim() || undefined,
+                                tenantId: selectedTenant.tenant.id,
+                            },
+                            paymentDate,
+                            paymentMethod,
+                            referenceNumber: paymentReference.trim() || undefined,
+                            roomId: selectedTenant.room?.id ?? selectedTenant.tenant.room_id ?? null,
+                            tenantId: selectedTenant.tenant.id,
+                            userId: profile.id,
+                        });
+                        const offlinePayment: FastPaymentRecentItem = {
+                            id: offline.envelope.transactionUuid,
+                            paidAt: offline.envelope.localCreatedAt,
+                            paymentDate,
+                            roomNumber: selectedTenant.room?.room_number ?? "Unknown",
+                            tenantName: selectedTenant.tenant.full_name ?? "Unnamed tenant",
+                            landlordName: selectedTenant.landlord?.full_name ?? "No landlord",
+                            officeName: selectedTenant.office?.office_name ?? selectedTenant.office?.name ?? activeOffice.office_name ?? activeOffice.name ?? "Office",
+                            amount: paidAmount,
+                            method: paymentMethod,
+                            paymentType: "OFFLINE - PENDING SYNC",
+                            recordedBy: actorLabel,
+                            balanceAfter: Math.max(0, liveOutstandingBalance(selectedTenant) - paidAmount),
+                            dateChangeRequestId: null,
+                            dateChangeRequestStatus: null,
+                            requestedPaymentDate: null,
+                            correctionRequestId: null,
+                            correctionRequestStatus: null,
+                            correctionRequestType: null,
+                            isCorrected: false,
+                            correctionHistoryCount: 0,
+                            roomId: selectedTenant.room?.id ?? null,
+                            tenantId: selectedTenant.tenant.id,
+                        };
+                        setRecentPayments((current) => [offlinePayment, ...current.filter((payment) => payment.id !== offlinePayment.id)]);
+                        setMessage(`OFFLINE - PENDING SYNC. Provisional receipt ${offline.provisionalReceiptNumber} saved on this device.`);
+                        clearForNextPayment();
+                        return;
+                    } catch (offlineError) {
+                        setMessage(offlineError instanceof Error ? offlineError.message : "Offline payment could not be saved.");
+                        return;
+                    }
+                }
                 setMessage(error instanceof Error ? error.message : "Payment could not be recorded.");
             }
         });

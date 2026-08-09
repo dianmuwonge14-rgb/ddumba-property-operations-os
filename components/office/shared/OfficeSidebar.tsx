@@ -25,6 +25,7 @@ import {
     Medal,
     Rocket,
     ReceiptText,
+    RefreshCcw,
     Sheet,
     ShieldCheck,
     SlidersHorizontal,
@@ -61,6 +62,7 @@ const adminSections = [
             { href: "/office/landlord-payments", label: "Landlord Payments", icon: WalletCards },
             { href: "/office/landlords", label: "Landlords Portfolio", icon: UsersRound },
             { href: "/office/notifications", label: "Notifications", icon: Bell },
+            { href: "/office/sync-centre", label: "Sync Centre", icon: RefreshCcw },
             { href: "/office/admin/cash-banking", label: "Cash Banking", icon: WalletCards },
             { href: "/office/admin/collector-banking", label: "Bank Deposit Slips", icon: Landmark },
             { href: "/office/bad-debt", label: "Bad Debt Recovery", icon: Archive },
@@ -89,6 +91,7 @@ const adminSections = [
             { href: "/office/audit", label: "Audit Centre", icon: Archive },
             { href: "/office/admin/system-health", label: "System Health", icon: Gauge },
             { href: "/office/admin/data-integrity", label: "Data Integrity", icon: ShieldCheck },
+            { href: "/office/admin/desktop-devices", label: "Desktop Devices", icon: RefreshCcw },
             { href: "/office/admin/rent-change-requests", label: "Rent Change Requests", icon: KeyRound },
             { href: "/office/dashboard", label: "Analytics", icon: LineChart },
             { href: "/office/launch", label: "Launch Readiness", icon: Rocket },
@@ -124,6 +127,7 @@ const officeSections = [
             { href: "/office/bad-debt", label: "Bad Debt Recovery", icon: Archive },
             { href: "/office/attendance", label: "Attendance", icon: Gauge },
             { href: "/office/salary", label: "My Salary", icon: FileBadge },
+            { href: "/office/sync-centre", label: "Sync Centre", icon: RefreshCcw },
             { href: "/office/spreadsheet", label: "Daily Report", icon: Sheet },
             { href: "/office/employees", label: "Employees", icon: UserCog },
         ],
@@ -148,6 +152,7 @@ const collectorSections = [
             { href: "/office/expenses", label: "Expenses", icon: ReceiptText },
             { href: "/office/collector/instructions", label: "Instructions", icon: ClipboardCheck },
             { href: "/office/notifications", label: "Notifications", icon: Bell },
+            { href: "/office/sync-centre", label: "Sync Centre", icon: RefreshCcw },
         ],
     },
 ];
@@ -173,6 +178,7 @@ function themeForPath(pathname: string) {
     if (pathname.includes("/expenses")) return "expenses";
     if (pathname.includes("/attendance")) return "attendance";
     if (pathname.includes("/salary") || pathname.includes("/payroll")) return "employees";
+    if (pathname.includes("/sync-centre")) return "reports";
     if (pathname.includes("/employees")) return "employees";
     if (pathname.includes("/properties")) return "properties";
     if (pathname.includes("/vacant-rooms")) return "vacant";

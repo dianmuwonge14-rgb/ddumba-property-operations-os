@@ -253,6 +253,9 @@ export type RecordCollectionInput = {
     chequeReference?: string;
     collectorName?: string;
     notes?: string;
+    offlineTransactionUuid?: string;
+    offlineDeviceId?: string;
+    offlineLocalCreatedAt?: string;
 };
 
 export type FastPaymentRecentItem = {

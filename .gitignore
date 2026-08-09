@@ -36,6 +36,11 @@ yarn-error.log*
 # vercel
 .vercel
 
+# desktop build artifacts
+/desktop-artifacts/
+/desktop-dist/
+/src-tauri/target/
+
 # local supabase metadata
 supabase/.temp/
 

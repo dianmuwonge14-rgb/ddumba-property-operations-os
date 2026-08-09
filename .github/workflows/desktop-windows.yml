@@ -1,0 +1,81 @@
+name: Build Windows Desktop Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/desktop-windows.yml"
+      - "app/api/desktop/**"
+      - "app/office/sync-centre/**"
+      - "components/office/shared/DesktopSyncStatus.tsx"
+      - "components/office/sync/**"
+      - "desktop-dist/**"
+      - "lib/offline/**"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/prepare-desktop-dist.mjs"
+      - "src-tauri/**"
+      - "tests/desktop-offline-foundation.test.mjs"
+
+jobs:
+  build-windows:
+    name: Windows x64 desktop installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install NSIS for EXE installer
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify desktop icon assets
+        shell: pwsh
+        run: |
+          if (!(Test-Path "src-tauri/icons/icon.ico")) { throw "Missing Windows icon.ico" }
+          if (!(Test-Path "src-tauri/icons/icon.icns")) { throw "Missing macOS icon.icns" }
+
+      - name: Run desktop foundation tests
+        run: node --test tests/desktop-offline-foundation.test.mjs
+
+      - name: Build Windows desktop installer
+        run: npm run desktop:build:windows
+
+      - name: List Windows installer artifacts
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path "src-tauri/target/x86_64-pc-windows-msvc/release/bundle" -Recurse |
+            Where-Object { $_.Extension -in ".msi", ".exe" } |
+            Select-Object FullName, Length
+
+      - name: Upload Windows MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: ddumba-os-windows-msi
+          path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+      - name: Upload Windows EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: ddumba-os-windows-exe
+          path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          if-no-files-found: error
