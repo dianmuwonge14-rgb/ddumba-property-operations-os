@@ -2,6 +2,7 @@ import OfficeSidebar from "./OfficeSidebar";
 import AttendanceAccessGate from "./AttendanceAccessGate";
 import AttendanceStatusBanner from "./AttendanceStatusBanner";
 import GlobalNotificationToasts from "./GlobalNotificationToasts";
+import SessionTimeoutController from "./SessionTimeoutController";
 import { NavigationMemoryProvider, UnsavedChangesGuard } from "@/components/navigation/NavigationMemoryProvider";
 import { getAttendanceGateStatus } from "@/lib/attendance/gate";
 import { requireAuth } from "@/lib/auth/permissions";
@@ -48,6 +49,7 @@ export default async function OfficeLayout({
                     officeId={context.activeOffice?.id ?? null}
                     isAdmin={(context.isCompanyAdmin || context.isCompanyReadOnlyManager) && !context.isOfficeMode}
                 />
+                <SessionTimeoutController initialExpiresAt={context.sessionExpiresAt} />
                 <AttendanceAccessGate attendance={attendance} />
             </div>
         </NavigationMemoryProvider>

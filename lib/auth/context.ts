@@ -6,6 +6,37 @@ import type { AuthContext, Company, Office, Permission, Role, RoleAssignment, Us
 const ACTIVE_COMPANY_COOKIE = "ddumba_active_company_id";
 const ACTIVE_OFFICE_COOKIE = "ddumba_active_office_id";
 const AUTH_MODE_COOKIE = "ddumba_auth_mode";
+const SESSION_EXPIRES_COOKIE = "ddumba_session_expires_at";
+const SESSION_EXPIRES_HINT_COOKIE = "ddumba_session_expires_hint";
+const SESSION_DEVICE_COOKIE = "ddumba_session_device_id";
+const SESSION_CONTROLLED_COOKIE = "ddumba_session_controlled";
+const SESSION_DURATION_SECONDS = 60 * 60;
+const SESSION_DURATION_MS = SESSION_DURATION_SECONDS * 1000;
+const SESSION_WARNING_MS = 5 * 60 * 1000;
+
+const sessionCookieOptions = {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: SESSION_DURATION_SECONDS,
+};
+
+const sessionHintCookieOptions = {
+    httpOnly: false,
+    sameSite: "lax" as const,
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: SESSION_DURATION_SECONDS,
+};
+
+const sessionControlCookieOptions = {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+};
 
 function unique(values: Array<string | null | undefined>) {
     return [...new Set(values.filter((value): value is string => Boolean(value)))];
@@ -52,6 +83,15 @@ export const getAuthContext = cache(async (): Promise<AuthContext> => {
 
     if (!authUser) {
         return emptyAuthContext();
+    }
+
+    const sessionExpiresAt = Number(cookieStore.get(SESSION_EXPIRES_COOKIE)?.value ?? 0);
+    const hasControlledSession = cookieStore.get(SESSION_CONTROLLED_COOKIE)?.value === "1";
+    if ((hasControlledSession && !sessionExpiresAt) || (sessionExpiresAt && sessionExpiresAt <= Date.now())) {
+        return {
+            ...emptyAuthContext(),
+            authUser,
+        };
     }
 
     const { data: profile } = await supabase
@@ -194,6 +234,7 @@ export const getAuthContext = cache(async (): Promise<AuthContext> => {
         isCompanyReadOnlyManager,
         canAccessAllOffices,
         isOfficeMode,
+        sessionExpiresAt: sessionExpiresAt || null,
     };
 });
 
@@ -213,7 +254,50 @@ export function emptyAuthContext(): AuthContext {
         isCompanyReadOnlyManager: false,
         canAccessAllOffices: false,
         isOfficeMode: false,
+        sessionExpiresAt: null,
     };
 }
 
-export { ACTIVE_COMPANY_COOKIE, ACTIVE_OFFICE_COOKIE, AUTH_MODE_COOKIE };
+function nextSessionExpiry() {
+    return Date.now() + SESSION_DURATION_MS;
+}
+
+function sessionDeviceId(existing?: string | null) {
+    return existing || crypto.randomUUID();
+}
+
+function setSessionCookies(cookieStore: {
+    get?: (name: string) => { value?: string } | undefined;
+    set: (name: string, value: string, options?: Record<string, unknown>) => void;
+}) {
+    const expiresAt = nextSessionExpiry();
+    const deviceId = sessionDeviceId(cookieStore.get?.(SESSION_DEVICE_COOKIE)?.value ?? null);
+    cookieStore.set(SESSION_EXPIRES_COOKIE, String(expiresAt), sessionCookieOptions);
+    cookieStore.set(SESSION_EXPIRES_HINT_COOKIE, String(expiresAt), sessionHintCookieOptions);
+    cookieStore.set(SESSION_DEVICE_COOKIE, deviceId, sessionCookieOptions);
+    cookieStore.set(SESSION_CONTROLLED_COOKIE, "1", sessionControlCookieOptions);
+    return { deviceId, expiresAt };
+}
+
+function clearSessionCookies(cookieStore: {
+    delete: (name: string) => void;
+}) {
+    cookieStore.delete(SESSION_EXPIRES_COOKIE);
+    cookieStore.delete(SESSION_EXPIRES_HINT_COOKIE);
+    cookieStore.delete(SESSION_DEVICE_COOKIE);
+    cookieStore.delete(SESSION_CONTROLLED_COOKIE);
+}
+
+export {
+    ACTIVE_COMPANY_COOKIE,
+    ACTIVE_OFFICE_COOKIE,
+    AUTH_MODE_COOKIE,
+    SESSION_DEVICE_COOKIE,
+    SESSION_CONTROLLED_COOKIE,
+    SESSION_DURATION_MS,
+    SESSION_EXPIRES_COOKIE,
+    SESSION_EXPIRES_HINT_COOKIE,
+    SESSION_WARNING_MS,
+    clearSessionCookies,
+    setSessionCookies,
+};

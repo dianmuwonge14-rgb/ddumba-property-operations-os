@@ -28,6 +28,7 @@ export type AuthContext = {
     isCompanyReadOnlyManager: boolean;
     canAccessAllOffices: boolean;
     isOfficeMode: boolean;
+    sessionExpiresAt: number | null;
 };
 
 export type PermissionKey =

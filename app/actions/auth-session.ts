@@ -2,7 +2,7 @@
 
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { ACTIVE_COMPANY_COOKIE, ACTIVE_OFFICE_COOKIE, AUTH_MODE_COOKIE, getAuthContext } from "@/lib/auth/context";
+import { ACTIVE_COMPANY_COOKIE, ACTIVE_OFFICE_COOKIE, AUTH_MODE_COOKIE, clearSessionCookies, getAuthContext } from "@/lib/auth/context";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export async function logout() {
@@ -45,6 +45,7 @@ export async function logout() {
     cookieStore.delete(ACTIVE_COMPANY_COOKIE);
     cookieStore.delete(ACTIVE_OFFICE_COOKIE);
     cookieStore.delete(AUTH_MODE_COOKIE);
+    clearSessionCookies(cookieStore);
 
     redirect("/");
 }

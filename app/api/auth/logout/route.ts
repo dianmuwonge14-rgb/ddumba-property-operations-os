@@ -1,6 +1,6 @@
 import { cookies, headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { ACTIVE_COMPANY_COOKIE, ACTIVE_OFFICE_COOKIE, AUTH_MODE_COOKIE, getAuthContext } from "@/lib/auth/context";
+import { ACTIVE_COMPANY_COOKIE, ACTIVE_OFFICE_COOKIE, AUTH_MODE_COOKIE, clearSessionCookies, getAuthContext } from "@/lib/auth/context";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 function clearSupabaseAuthCookies(cookieStore: Awaited<ReturnType<typeof cookies>>) {
@@ -20,10 +20,11 @@ export async function POST() {
 }
 
 export async function GET(request: Request) {
-    return logoutResponse(new URL("/", request.url));
+    const url = new URL(request.url);
+    return logoutResponse(new URL("/", request.url), url.searchParams.get("reason") ?? undefined);
 }
 
-async function logoutResponse(redirectToLogin: URL | null = null) {
+async function logoutResponse(redirectToLogin: URL | null = null, reason = "manual") {
     const headerStore = await headers();
     const supabase = await createSupabaseServerClient();
     const context = await getAuthContext().catch(() => null);
@@ -34,13 +35,14 @@ async function logoutResponse(redirectToLogin: URL | null = null) {
                 company_id: context.profile.company_id,
                 office_id: context.activeOffice?.id ?? null,
                 user_id: context.profile.id,
-                event_type: "logout",
+                event_type: reason === "timeout" ? "automatic_timeout_logout" : reason === "forced" ? "forced_admin_logout" : "logout",
                 severity: "info",
                 user_agent: headerStore.get("user-agent"),
                 metadata: {
                     active_company_id: context.activeCompany?.id ?? null,
                     active_office_id: context.activeOffice?.id ?? null,
                     auth_mode: context.authMode,
+                    reason,
                 },
             });
         } catch {
@@ -54,6 +56,7 @@ async function logoutResponse(redirectToLogin: URL | null = null) {
     cookieStore.delete(ACTIVE_COMPANY_COOKIE);
     cookieStore.delete(ACTIVE_OFFICE_COOKIE);
     cookieStore.delete(AUTH_MODE_COOKIE);
+    clearSessionCookies(cookieStore);
     clearSupabaseAuthCookies(cookieStore);
 
     if (redirectToLogin) {

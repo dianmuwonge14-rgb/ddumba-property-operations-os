@@ -1,6 +1,6 @@
 import { cookies, headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { ACTIVE_COMPANY_COOKIE, ACTIVE_OFFICE_COOKIE, AUTH_MODE_COOKIE } from "@/lib/auth/context";
+import { ACTIVE_COMPANY_COOKIE, ACTIVE_OFFICE_COOKIE, AUTH_MODE_COOKIE, setSessionCookies } from "@/lib/auth/context";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -479,6 +479,25 @@ export async function POST(request: Request) {
         } else {
             cookieStore.delete(ACTIVE_OFFICE_COOKIE);
         }
+        const session = setSessionCookies(cookieStore);
+
+        try {
+            await supabase.from("security_events").insert({
+                company_id: identity.company_id,
+                office_id: identity.office_id,
+                user_id: identity.user_id,
+                event_type: "login",
+                severity: "info",
+                user_agent: userAgent,
+                metadata: {
+                    auth_mode: identity.auth_mode,
+                    device_id: session.deviceId,
+                    session_expires_at: new Date(session.expiresAt).toISOString(),
+                },
+            });
+        } catch {
+            // Login must not fail if audit logging is temporarily unavailable.
+        }
 
         const isAdmin = identity.auth_mode === "admin";
         const isCollector = identity.auth_mode === "collector";
@@ -495,6 +514,10 @@ export async function POST(request: Request) {
             office: {
                 id: identity.office_id,
                 name: identity.office_name ?? "Office",
+            },
+            session: {
+                expiresAt: session.expiresAt,
+                durationMinutes: 60,
             },
             redirectTo: identity.redirect_to ?? (isAdmin ? "/office/admin/cash-position" : isCollector ? "/office/collector" : "/office"),
         });
