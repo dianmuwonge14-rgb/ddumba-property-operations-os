@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requirePermission } from "@/lib/auth/permissions";
+import { isCompanyOperationalManager, requirePermission } from "@/lib/auth/permissions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -27,6 +27,13 @@ function isAllRounderEmployee(row: Record<string, unknown>) {
     return [row.employee_assignment_type, row.role, row.job_title].some((value) => normalizedRole(value) === "allrounder");
 }
 
+function isEligibleEmployee(row: Record<string, unknown>, activeOfficeId: string | null, canSeeAll: boolean) {
+    if (String(row.status ?? "active").toLowerCase() !== "active") return false;
+    if (canSeeAll) return true;
+    const employeeOfficeId = typeof row.office_id === "string" ? row.office_id : null;
+    return Boolean(activeOfficeId && employeeOfficeId === activeOfficeId) || isAllRounderEmployee(row);
+}
+
 export async function GET(request: NextRequest) {
     try {
         const context = await requirePermission("expenses.read");
@@ -38,7 +45,11 @@ export async function GET(request: NextRequest) {
         const type = request.nextUrl.searchParams.get("type");
         const id = request.nextUrl.searchParams.get("id") ?? "";
         const expenseDate = request.nextUrl.searchParams.get("expenseDate") ?? new Date().toISOString().slice(0, 10);
-        const canSeeAll = context.isCompanyAdmin && !context.isOfficeMode;
+        const canSeeAll = (context.isCompanyAdmin && !context.isOfficeMode) || isCompanyOperationalManager(context);
+        const requestedOfficeId = request.nextUrl.searchParams.get("officeId")?.trim() || null;
+        const selectedOfficeId = canSeeAll && requestedOfficeId && context.offices.some((office) => office.id === requestedOfficeId)
+            ? requestedOfficeId
+            : activeOfficeId;
         if (!id) throw new Error("Select a record.");
 
         if (type === "employee") {
@@ -80,8 +91,8 @@ export async function GET(request: NextRequest) {
             if (requestResult.error && !/does not exist|schema cache/i.test(requestResult.error.message ?? "")) throw new Error(requestResult.error.message);
             const employee = employeeResult.data as Record<string, unknown> | null;
             if (!employee) throw new Error("Employee not found.");
-            if (String(employee.status ?? "active").toLowerCase() !== "active" || !isAllRounderEmployee(employee)) {
-                throw new Error("Only active All Rounders can be selected for authorised employee expenses.");
+            if (!isEligibleEmployee(employee, selectedOfficeId, canSeeAll)) {
+                throw new Error("Only active employees in your office or company-wide All Rounders can be selected for authorised employee expenses.");
             }
             const office = employee.offices as Record<string, unknown> | null;
             const dailyAllocation = 7000;
@@ -120,8 +131,8 @@ export async function GET(request: NextRequest) {
                     officeName: String(office?.office_name ?? office?.name ?? "Office"),
                     employeeHomeOfficeId: typeof employee.office_id === "string" ? employee.office_id : null,
                     employeeHomeOfficeName: String(office?.office_name ?? office?.name ?? "Office"),
-                    submittingOfficeId: activeOfficeId,
-                    submittingOfficeName: String(context.activeOffice?.office_name ?? context.activeOffice?.name ?? "Submitting office"),
+                    submittingOfficeId: selectedOfficeId,
+                    submittingOfficeName: String(context.offices.find((office) => office.id === selectedOfficeId)?.office_name ?? context.offices.find((office) => office.id === selectedOfficeId)?.name ?? context.activeOffice?.office_name ?? context.activeOffice?.name ?? "Submitting office"),
                     position: String(employee.role ?? employee.job_title ?? ""),
                     dailyLunchAllocation: dailyAllocation,
                     previousUnusedLunchBalance,
@@ -150,7 +161,7 @@ export async function GET(request: NextRequest) {
                         .eq("company_id", companyId)
                         .eq("landlord_id", id)
                         .not("status", "in", "(archived,inactive,deleted,removed)");
-                    if (!canSeeAll && activeOfficeId) query = query.eq("office_id", activeOfficeId);
+                    if (selectedOfficeId) query = query.eq("office_id", selectedOfficeId);
                     return query;
                 })(),
                 db

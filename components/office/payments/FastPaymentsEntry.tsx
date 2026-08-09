@@ -25,7 +25,7 @@ type Props = {
     activeOffice: Office | null;
     profile: UserProfile | null;
     canPostPayments: boolean;
-    entryMode?: "office" | "admin" | "collector";
+    entryMode?: "office" | "admin" | "collector" | "manager";
     isAdmin: boolean;
     searchOffices?: Office[];
 };
@@ -371,11 +371,17 @@ export default function FastPaymentsEntry({
     const selectedOfficeMismatch = Boolean(
         selectedTenant &&
         !isAdmin &&
+        entryMode !== "manager" &&
         entryMode !== "collector" &&
         activeOffice?.id &&
         (selectedTenant.office?.id ?? selectedTenant.room?.office_id ?? selectedTenant.tenant.office_id) !== activeOffice.id,
     );
-    const actorLabel = entryMode === "collector" ? `collector ${profile?.full_name ?? "Field Collector"}` : profile?.full_name ?? "Current user";
+    const canSearchAcrossOffices = isAdmin || entryMode === "manager";
+    const actorLabel = entryMode === "collector"
+        ? `collector ${profile?.full_name ?? "Field Collector"}`
+        : entryMode === "manager"
+            ? `Manager ${profile?.full_name ?? "Company Manager"}`
+            : profile?.full_name ?? "Current user";
     const currentKampalaDate = today();
     const adminBackdatedPayment = isAdmin && paymentDate < currentKampalaDate;
     const adminBackdatedSecurity = isAdmin && securityDepositForm.paymentDate < currentKampalaDate;
@@ -446,7 +452,7 @@ export default function FastPaymentsEntry({
                         paymentDate,
                         q: lookup,
                     });
-                    if (isAdmin) {
+                    if (canSearchAcrossOffices) {
                         if (adminSearchOfficeId === "all") {
                             params.set("allOffices", "1");
                         } else {
@@ -489,7 +495,7 @@ export default function FastPaymentsEntry({
         }, 150);
 
         return () => clearTimeout(timer);
-    }, [adminSearchOfficeId, isAdmin, paymentDate, roomQuery]);
+    }, [adminSearchOfficeId, canSearchAcrossOffices, paymentDate, roomQuery]);
 
     useEffect(() => {
         return () => {
@@ -1354,11 +1360,11 @@ export default function FastPaymentsEntry({
                         <div>
                             <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black uppercase text-cyan-100">
                                 <ShieldCheck size={14} />
-                                {entryMode === "collector" ? "Collector tenant payments" : isAdmin ? "Admin tenant payments" : "Office tenant payments"}
+                                {entryMode === "collector" ? "Collector tenant payments" : entryMode === "manager" ? "Manager tenant payments" : isAdmin ? "Admin tenant payments" : "Office tenant payments"}
                             </div>
                             <h1 className="mt-3 text-3xl font-black sm:text-4xl">Tenant Payments Entry</h1>
                             <p className="mt-1 text-sm font-semibold text-slate-300">
-                                {activeCompany?.name ?? "Company"} · {entryMode === "collector" || isAdmin ? "All offices" : activeOffice?.office_name ?? activeOffice?.name ?? "Active office"}
+                                {activeCompany?.name ?? "Company"} · {entryMode === "collector" || canSearchAcrossOffices ? "All offices" : activeOffice?.office_name ?? activeOffice?.name ?? "Active office"}
                             </p>
                         </div>
                         <label className="block sm:w-60">
@@ -1393,7 +1399,7 @@ export default function FastPaymentsEntry({
                 </section>
 
                 <section className="mx-auto mt-5 max-w-6xl rounded-[30px] border border-white/70 bg-white p-5 shadow-2xl shadow-slate-950/20">
-                    <div className={`grid gap-4 ${isAdmin ? "lg:grid-cols-[minmax(0,1fr)_240px_220px]" : "lg:grid-cols-[minmax(0,1fr)_220px]"}`}>
+                    <div className={`grid gap-4 ${canSearchAcrossOffices ? "lg:grid-cols-[minmax(0,1fr)_240px_220px]" : "lg:grid-cols-[minmax(0,1fr)_220px]"}`}>
                         <label className="block">
                             <span className="text-xs font-black uppercase tracking-wide text-slate-500">Room / tenant / phone</span>
                             <div className="relative mt-1">
@@ -1427,7 +1433,7 @@ export default function FastPaymentsEntry({
 	                            </div>
 	                        </label>
 
-                        {isAdmin ? (
+                        {canSearchAcrossOffices ? (
                             <label className="block">
                                 <span className="text-xs font-black uppercase tracking-wide text-slate-500">Search scope</span>
                                 <select
@@ -1534,7 +1540,7 @@ export default function FastPaymentsEntry({
                                             <span className="mt-0.5 block text-xs text-slate-500">{result.tenant.phone ?? "No phone recorded"}</span>
 	                                        <span className="mt-1 block text-xs text-slate-500">
 	                                            {result.landlord?.full_name ?? "No landlord"}{isSearchPreviewTenant(result) ? "" : ` · Balance ${money(liveOutstandingBalance(result))}`}
-	                                            {isAdmin ? ` · ${result.office?.office_name ?? result.office?.name ?? "No office"}` : ""}
+	                                            {canSearchAcrossOffices ? ` · ${result.office?.office_name ?? result.office?.name ?? "No office"}` : ""}
 	                                        </span>
 	                                    </button>
 	                                ))}

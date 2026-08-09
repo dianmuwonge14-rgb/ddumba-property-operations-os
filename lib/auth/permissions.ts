@@ -19,6 +19,22 @@ export function hasAnyPermission(context: AuthContext, permissions: PermissionKe
     return context.isCompanyAdmin || permissions.some((permission) => context.permissions.includes(permission));
 }
 
+export function isCompanyOperationalManager(context: AuthContext) {
+    return context.isCompanyReadOnlyManager && !context.isOfficeMode && context.canAccessAllOffices;
+}
+
+export function canPostTenantPayments(context: AuthContext) {
+    return context.isCompanyAdmin
+        || isCompanyOperationalManager(context)
+        || hasPermission(context, "collections.payment.post");
+}
+
+export function canSubmitOperationalExpenses(context: AuthContext) {
+    return context.isCompanyAdmin
+        || isCompanyOperationalManager(context)
+        || hasPermission(context, "expenses.manage");
+}
+
 export function canAccessOffice(context: AuthContext, officeId: string | null | undefined) {
     if (!officeId) return context.canAccessAllOffices;
     if (context.canAccessAllOffices) return true;
@@ -44,6 +60,26 @@ export async function requirePermission(permission: PermissionKey) {
     const context = await requireAuth();
 
     if (!hasPermission(context, permission)) {
+        redirect("/office");
+    }
+
+    return context;
+}
+
+export async function requireTenantPaymentEntryAccess() {
+    const context = await requireAuth();
+
+    if (!canPostTenantPayments(context)) {
+        redirect("/office");
+    }
+
+    return context;
+}
+
+export async function requireOperationalExpenseEntryAccess() {
+    const context = await requireAuth();
+
+    if (!canSubmitOperationalExpenses(context) && !hasPermission(context, "expenses.read")) {
         redirect("/office");
     }
 

@@ -1,5 +1,5 @@
 import { logUserAction } from "@/lib/auth/audit";
-import { requirePermission } from "@/lib/auth/permissions";
+import { hasPermission, isCompanyOperationalManager, requireAuth } from "@/lib/auth/permissions";
 import { getScopedSupabase } from "@/lib/auth/query";
 import type {
     AttendanceEventRow,
@@ -61,7 +61,10 @@ function toMoneyNumber(value: number | null | undefined) {
 }
 
 export async function getExecutiveReportingData(): Promise<ExecutiveReportingData> {
-    const context = await requirePermission("reports.read");
+    const context = await requireAuth();
+    if (!hasPermission(context, "reports.read") && !isCompanyOperationalManager(context)) {
+        return emptyData();
+    }
     const { supabase } = await getScopedSupabase();
     const companyId = context.activeCompany?.id;
 

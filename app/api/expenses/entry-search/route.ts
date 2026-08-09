@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requirePermission } from "@/lib/auth/permissions";
+import { isCompanyOperationalManager, requirePermission } from "@/lib/auth/permissions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -28,19 +28,27 @@ export async function GET(request: NextRequest) {
         const context = await requirePermission("expenses.read");
         const supabase = await createSupabaseServerClient();
         const companyId = context.activeCompany?.id;
-        const activeOfficeId = context.activeOffice?.id ?? null;
+        const contextActiveOfficeId = context.activeOffice?.id ?? null;
         if (!companyId) throw new Error("Active company is required.");
         const type = request.nextUrl.searchParams.get("type");
         const q = normalizeSearch(request.nextUrl.searchParams.get("q") ?? "");
         if (!q) return NextResponse.json({ results: [] }, { headers: { "Cache-Control": "no-store" } });
         const like = `%${q}%`;
-        const canSeeAll = context.isCompanyAdmin && !context.isOfficeMode;
+        const canSeeAll = (context.isCompanyAdmin && !context.isOfficeMode) || isCompanyOperationalManager(context);
+        const requestedOfficeId = request.nextUrl.searchParams.get("officeId")?.trim() || null;
+        const activeOfficeId = canSeeAll && requestedOfficeId && context.offices.some((office) => office.id === requestedOfficeId)
+            ? requestedOfficeId
+            : contextActiveOfficeId;
 
         if (type === "employee") {
             const admin = createSupabaseAdminClient() as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }> };
-            const { data, error } = await admin.rpc("ddumba_v1_expense_all_rounder_search", {
+            const { data, error } = await admin.rpc("ddumba_v1_expense_employee_search", {
                 p_company_id: companyId,
+                p_office_id: activeOfficeId,
                 p_query: q,
+                // Keep the original company-wide permission explicit while the selected active office scopes entry submission.
+                // p_include_all_offices: canSeeAll
+                p_include_all_offices: canSeeAll && !activeOfficeId,
             });
             if (error) throw new Error(error.message);
             const results = ((data ?? []) as Array<Record<string, unknown>>)
@@ -50,7 +58,7 @@ export async function GET(request: NextRequest) {
                         name: String(row.employee_name ?? "Employee"),
                         officeId: typeof row.home_office_id === "string" ? row.home_office_id : null,
                         officeName: String(row.home_office_name ?? "Office"),
-                        role: String(row.employee_position ?? "All Rounder"),
+                        role: String(row.employee_position ?? "Employee"),
                         phone: typeof row.phone === "string" ? row.phone : null,
                         employeeCode: typeof row.employee_code === "string" ? row.employee_code : null,
                     };
@@ -74,7 +82,7 @@ export async function GET(request: NextRequest) {
             let roomQuery = landlordIds.length
                 ? supabase.from("rooms").select("landlord_id, office_id, offices:office_id(id, office_name, name)").eq("company_id", companyId).in("landlord_id", landlordIds).not("status", "in", "(archived,inactive,deleted,removed)")
                 : null;
-            if (roomQuery && !canSeeAll && activeOfficeId) roomQuery = roomQuery.eq("office_id", activeOfficeId);
+            if (roomQuery && activeOfficeId) roomQuery = roomQuery.eq("office_id", activeOfficeId);
             const roomResult = roomQuery ? await roomQuery : { data: [], error: null };
             if (roomResult.error) throw new Error(roomResult.error.message);
             const firstRoomByLandlord = new Map<string, Record<string, unknown>>();

@@ -32,7 +32,7 @@ export default async function OfficeLayout({
                 <div className="pointer-events-none fixed inset-0 z-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:64px_64px] opacity-30" />
                 <OfficeSidebar
                     isCollector={isCollector}
-                    isAdmin={(context.isCompanyAdmin || context.isCompanyReadOnlyManager) && !context.isOfficeMode}
+                    isAdmin={context.isCompanyAdmin && !context.isOfficeMode}
                     isReadOnlyManager={context.isCompanyReadOnlyManager}
                     officeName={context.activeOffice?.office_name ?? context.activeOffice?.name ?? null}
                     attendance={attendance}

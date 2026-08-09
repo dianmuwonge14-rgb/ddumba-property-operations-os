@@ -1,4 +1,4 @@
-import { requirePermission } from "@/lib/auth/permissions";
+import { canSubmitOperationalExpenses, requireOperationalExpenseEntryAccess } from "@/lib/auth/permissions";
 import { getExpensesPageData } from "@/lib/expenses/data";
 import type { ExpenseBalanceFilters, ExpensePeriodMode } from "@/lib/expenses/types";
 import ExpensesConsole from "@/components/office/expenses/ExpensesConsole";
@@ -12,7 +12,7 @@ function scalar(value: string | string[] | undefined) {
 }
 
 export default async function ExpensesPage({ searchParams }: Props) {
-    const context = await requirePermission("expenses.read");
+    const context = await requireOperationalExpenseEntryAccess();
     const params = await searchParams;
     const mode = scalar(params.mode) as ExpensePeriodMode | undefined;
     const data = await getExpensesPageData();
@@ -29,10 +29,11 @@ export default async function ExpensesPage({ searchParams }: Props) {
 
     return (
         <ExpensesConsole
-            canManage={context.isCompanyAdmin || context.permissions.includes("expenses.manage")}
+            canManage={canSubmitOperationalExpenses(context)}
             data={data}
             initialFilters={initialFilters}
             isAdmin={context.isCompanyAdmin && !context.isOfficeMode}
+            isManager={context.isCompanyReadOnlyManager && !context.isOfficeMode}
         />
     );
 }

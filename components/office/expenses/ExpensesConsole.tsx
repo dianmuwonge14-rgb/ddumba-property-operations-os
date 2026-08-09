@@ -14,6 +14,7 @@ type Props = {
     data: ExpensesPageData;
     initialFilters?: ExpenseBalanceFilters;
     isAdmin: boolean;
+    isManager?: boolean;
 };
 
 function today() {
@@ -250,7 +251,7 @@ function expenseField(expense: ExpenseItem, key: keyof ExpenseChangePayload) {
     return "";
 }
 
-export default function ExpensesConsole({ canManage, data, initialFilters, isAdmin }: Props) {
+export default function ExpensesConsole({ canManage, data, initialFilters, isAdmin, isManager = false }: Props) {
     const [filters, setFilters] = useState<ExpenseFilters>({
         mode: initialFilters?.mode ?? "single_date",
         singleDate: initialFilters?.singleDate ?? today(),
@@ -275,6 +276,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
     const [loadingLandlordDetail, setLoadingLandlordDetail] = useState(false);
     const [paymentMonth, setPaymentMonth] = useState(thisMonth());
     const [paymentMethod, setPaymentMethod] = useState("cash");
+    const [entryOfficeId, setEntryOfficeId] = useState(data.office?.id ?? data.offices[0]?.id ?? "");
     const [bankingOfficeId, setBankingOfficeId] = useState(data.office?.id ?? data.offices[0]?.id ?? "");
     const [bankingMethod, setBankingMethod] = useState("Bank deposit");
     const [bankingBankAccount, setBankingBankAccount] = useState("Company Bank");
@@ -334,7 +336,11 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
     const expenses = useMemo(() => report?.expenses ?? [], [report]);
     const activeOfficeName = data.office?.office_name ?? data.office?.name ?? "Office";
     const activeOfficeId = data.office?.id ?? "";
-    const isEntebbeOperationsOffice = /entebbe operations/i.test(activeOfficeName);
+    const canSelectEntryOffice = isAdmin || isManager;
+    const selectedEntryOfficeId = canSelectEntryOffice ? entryOfficeId : activeOfficeId;
+    const selectedEntryOfficeName = data.offices.find((office) => office.id === selectedEntryOfficeId)?.name ?? activeOfficeName;
+    const isSelectedEntryEntebbeOperationsOffice = /entebbe operations/i.test(selectedEntryOfficeName);
+    const isEntebbeOperationsOffice = isSelectedEntryEntebbeOperationsOffice;
     const totals = useMemo(
         () => report?.totals ?? { totalCollections: 0, adminCapitalInjectionTotal: 0, totalExpenses: 0, remainingBalance: 0, expenseRows: 0, paymentRows: 0 },
         [report?.totals],
@@ -356,10 +362,11 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
         return data.expenses.filter((expense) => {
             const status = String(expense.status ?? expense.approvalState ?? "").toLowerCase();
             if (["rejected", "cancelled", "canceled", "reversed", "voided", "deleted"].includes(status)) return false;
-            if (activeOfficeId && expense.office_id && expense.office_id !== activeOfficeId) return false;
+            if (!canSelectEntryOffice && activeOfficeId && expense.office_id && expense.office_id !== activeOfficeId) return false;
+            if (canSelectEntryOffice && selectedEntryOfficeId && expense.office_id && expense.office_id !== selectedEntryOfficeId) return false;
             return String(expense.expense_date ?? "").slice(0, 7) === month;
         });
-    }, [activeOfficeId, data.expenses, expenseDate]);
+    }, [activeOfficeId, canSelectEntryOffice, data.expenses, expenseDate, selectedEntryOfficeId]);
     const authorisedUsage = useMemo(() => {
         const sumByNeedle = (needles: string[]) => currentMonthExpenses
             .filter((expense) => {
@@ -390,6 +397,15 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
         requests: data.landlordPaymentRequests,
         totals,
     }), [data.employeeExpenseRequests, data.landlordPaymentRequests, expenses, totals]);
+    const expenseEntryModes = useMemo(() => ([
+        ["landlord_payment", "Landlord Payment"],
+        ["authorised", "Authorised Expenses"],
+        ["unauthorised", "Unauthorised Expenses"],
+        ...(!isManager ? [
+            ["banking", "Banking"],
+            ["cash_handover_admin", "Cash Handover to Admin"],
+        ] : []),
+    ] as Array<[ExpenseEntryMode, string]>), [isManager]);
 
     const selectedExpenses = useMemo(() => expenses.filter((expense) => selectedExpenseIds.includes(expense.id)), [expenses, selectedExpenseIds]);
     const selectedBankingSummary = useMemo(() => {
@@ -450,7 +466,9 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
         const timer = setTimeout(() => {
             void (async () => {
                 try {
-                    const response = await fetch(`/api/expenses/entry-search?type=employee&q=${encodeURIComponent(query)}`, {
+                    const params = new URLSearchParams({ type: "employee", q: query });
+                    if (selectedEntryOfficeId) params.set("officeId", selectedEntryOfficeId);
+                    const response = await fetch(`/api/expenses/entry-search?type=employee&${params.toString().replace(/^type=employee&?/, "")}`, {
                         cache: "no-store",
                         signal: controller.signal,
                     });
@@ -469,7 +487,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
             clearTimeout(timer);
             controller.abort();
         };
-    }, [employeeSearch, isEmployeeExpenseMode, selectedEmployeeDetail?.name]);
+    }, [employeeSearch, isEmployeeExpenseMode, selectedEmployeeDetail?.name, selectedEntryOfficeId]);
 
     useEffect(() => {
         const query = landlordSearch.trim();
@@ -486,7 +504,9 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
         const timer = setTimeout(() => {
             void (async () => {
                 try {
-                    const response = await fetch(`/api/expenses/entry-search?type=landlord&q=${encodeURIComponent(query)}`, {
+                    const params = new URLSearchParams({ type: "landlord", q: query });
+                    if (selectedEntryOfficeId) params.set("officeId", selectedEntryOfficeId);
+                    const response = await fetch(`/api/expenses/entry-search?type=landlord&${params.toString().replace(/^type=landlord&?/, "")}`, {
                         cache: "no-store",
                         signal: controller.signal,
                     });
@@ -505,7 +525,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
             clearTimeout(timer);
             controller.abort();
         };
-    }, [isLandlordPaidMode, landlordSearch, selectedLandlordDetail?.name]);
+    }, [isLandlordPaidMode, landlordSearch, selectedEntryOfficeId, selectedLandlordDetail?.name]);
 
     function loadEntryDetail(type: "employee" | "landlord", id: string) {
         detailAbortRef.current?.abort();
@@ -515,7 +535,9 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
         if (type === "landlord") setLoadingLandlordDetail(true);
         void (async () => {
             try {
-                const response = await fetch(`/api/expenses/entry-detail?type=${type}&id=${encodeURIComponent(id)}&expenseDate=${encodeURIComponent(expenseDate)}`, {
+                const params = new URLSearchParams({ id, expenseDate });
+                if (selectedEntryOfficeId) params.set("officeId", selectedEntryOfficeId);
+                const response = await fetch(`/api/expenses/entry-detail?type=${type}&${params.toString()}`, {
                     cache: "no-store",
                     signal: controller.signal,
                 });
@@ -586,7 +608,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                     const preview = await previewLandlordPaymentExpense({
                         amount: Number(amount),
                         landlordId,
-                        officeId: selectedLandlordOption?.officeId ?? null,
+                        officeId: selectedLandlordOption?.officeId ?? selectedEntryOfficeId ?? null,
                         paymentMonth,
                     });
                     if (!cancelled) {
@@ -607,7 +629,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
             cancelled = true;
             clearTimeout(timer);
         };
-    }, [amount, isLandlordPaidMode, landlordId, paymentMonth, selectedLandlordOption?.officeId]);
+    }, [amount, isLandlordPaidMode, landlordId, paymentMonth, selectedEntryOfficeId, selectedLandlordOption?.officeId]);
 
     useEffect(() => {
         if (!isEmployeeExpenseMode || !employeeId || !Number.isFinite(Number(amount)) || Number(amount) <= 0) {
@@ -625,6 +647,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                         expenseDate,
                         expenseItem: "Lunch",
                         note: notes,
+                        officeId: selectedEntryOfficeId || null,
                     });
                     if (!cancelled) setEmployeePreview(preview);
                 } catch (error) {
@@ -890,7 +913,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                         backdatingReason: adminBackdatedExpense ? trimmedBackdatingReason : null,
                         expenseDate,
                         landlordId,
-                        officeId: selectedLandlordOption?.officeId ?? null,
+                        officeId: selectedLandlordOption?.officeId ?? selectedEntryOfficeId ?? null,
                         paymentMethod,
                         paymentMonth,
                         notes: notes || trimmedItem || undefined,
@@ -907,6 +930,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                         expenseDate,
                         expenseItem: "Lunch",
                         note: notes || trimmedItem || undefined,
+                        officeId: selectedEntryOfficeId || null,
                     });
                     flashExpense(String(result.expenseId ?? result.request?.id ?? Date.now()));
                     setMessage(isAdmin && result.preview.extraAmount > 0
@@ -925,6 +949,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                         description: notes || undefined,
                         expenseDate,
                         item: itemName,
+                        officeId: selectedEntryOfficeId || null,
                         supportingProof,
                     });
                     flashExpense(saved.id);
@@ -1141,14 +1166,8 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                 <h2 className="mt-1 text-2xl font-black">Record the correct workflow first</h2>
                                 <p className="mt-1 text-sm font-semibold text-slate-300">Landlord payments, authorised office allowances, and unauthorised requests are routed separately.</p>
                             </div>
-                            <div className="grid gap-2 sm:grid-cols-2 lg:w-[860px] lg:grid-cols-5">
-                                {([
-                                    ["landlord_payment", "Landlord Payment"],
-                                    ["authorised", "Authorised Expenses"],
-                                    ["unauthorised", "Unauthorised Expenses"],
-                                    ["banking", "Banking"],
-                                    ["cash_handover_admin", "Cash Handover to Admin"],
-                                ] as Array<[ExpenseEntryMode, string]>).map(([mode, label]) => (
+                            <div className={`grid gap-2 sm:grid-cols-2 ${isManager ? "lg:w-[560px] lg:grid-cols-3" : "lg:w-[860px] lg:grid-cols-5"}`}>
+                                {expenseEntryModes.map(([mode, label]) => (
                                     <button
                                         key={`expense-entry-mode:${mode}`}
                                         type="button"
@@ -1168,6 +1187,34 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                     </div>
 
                     <div className="p-5">
+                        {canSelectEntryOffice ? (
+                            <div className="mb-5 rounded-3xl border border-blue-100 bg-blue-50 p-4">
+                                <label className="block">
+                                    <span className="text-xs font-black uppercase tracking-wide text-blue-800">{isManager ? "Manager Expense Entry Office" : "Expense Entry Office"}</span>
+                                    <select
+                                        value={entryOfficeId}
+                                        onChange={(event) => {
+                                            setEntryOfficeId(event.target.value);
+                                            setMessage(null);
+                                            setSelectedLandlordDetail(null);
+                                            setLandlordId("");
+                                            setLandlordSearch("");
+                                            setEmployeeId("");
+                                            setEmployeeSearch("");
+                                            setSelectedEmployeeDetail(null);
+                                        }}
+                                        className="mt-2 h-14 w-full rounded-2xl border border-blue-200 bg-white px-4 text-base font-black text-slate-950 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                                    >
+                                        {data.offices.map((office) => (
+                                            <option key={office.id} value={office.id}>{office.name}</option>
+                                        ))}
+                                    </select>
+                                    <span className="mt-2 block text-xs font-bold text-blue-900">
+                                        {isManager ? "Manager-entered expenses are saved to this office and remain Pending Admin Approval." : "Select the office that owns this expense entry."}
+                                    </span>
+                                </label>
+                            </div>
+                        ) : null}
                         {isLandlordPaidMode ? (
                             <div className="space-y-4">
                                 <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_180px_190px]">
@@ -1225,7 +1272,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                     <div className="space-y-4">
                                         <PremiumCardSection title="Landlord Summary">
                                             <PremiumEntryCard label="Landlord Name" value={selectedLandlordOption.name} />
-                                            <PremiumEntryCard label="Office" value={selectedLandlordOption.officeName ?? activeOfficeName} />
+                                            <PremiumEntryCard label="Office" value={selectedLandlordOption.officeName ?? selectedEntryOfficeName} />
                                             <PremiumEntryCard label="Location" value={selectedLandlordOption.location ?? "--"} />
                                             <PremiumEntryCard label="Payment Status" value={selectedLandlordDetail?.paymentStatus ?? (landlordPreview ? (landlordPreview.advanceAmount > 0 ? "Review advance" : "Within payable") : "Enter amount")} />
                                         </PremiumCardSection>
@@ -1310,8 +1357,8 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                         {selectedEmployeeOption ? (
                                             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                                                 <PremiumEntryCard label="Employee Name" value={selectedEmployeeOption.name} />
-                                                <PremiumEntryCard label="Employee Home Office" value={selectedEmployeeDetail?.employeeHomeOfficeName ?? selectedEmployeeOption.officeName ?? activeOfficeName} />
-                                                <PremiumEntryCard label="Submitting Office" value={selectedEmployeeDetail?.submittingOfficeName ?? activeOfficeName} />
+                                                <PremiumEntryCard label="Employee Home Office" value={selectedEmployeeDetail?.employeeHomeOfficeName ?? selectedEmployeeOption.officeName ?? selectedEntryOfficeName} />
+                                                <PremiumEntryCard label="Submitting Office" value={selectedEmployeeDetail?.submittingOfficeName ?? selectedEntryOfficeName} />
                                                 <PremiumEntryCard label="Position" value={selectedEmployeeDetail?.position ?? selectedEmployeeOption.role ?? "--"} />
                                                 <PremiumEntryCard label="Daily Lunch Allocation" value={money(selectedEmployeeDetail?.dailyLunchAllocation ?? employeePreview?.dailyLunchAllowance ?? 7000)} />
                                                 <PremiumEntryCard label="Previous Unused Lunch Balance" value={loadingEmployeeDetail ? "Loading..." : money(selectedEmployeeDetail?.previousUnusedLunchBalance ?? Math.max(0, (employeePreview?.lunchBalanceBefore ?? 0) - (employeePreview?.dailyLunchAllowance || 7000)))} />
@@ -2273,7 +2320,7 @@ function GenericExpenseApprovalQueue({ isAdmin, onReviewed, requests }: { isAdmi
     const [message, setMessage] = useState<string | null>(null);
     const [pendingId, setPendingId] = useState<string | null>(null);
     const [isPending, startTransition] = useTransition();
-    if (!isAdmin || !requests.length) return null;
+    if (!requests.length) return null;
 
     function decide(expense: ExpenseItem, decision: "approved" | "rejected") {
         const note = comments[expense.id]?.trim() ?? "";
@@ -2304,9 +2351,9 @@ function GenericExpenseApprovalQueue({ isAdmin, onReviewed, requests }: { isAdmi
     return (
         <section className="mx-auto mt-5 max-w-6xl overflow-hidden rounded-[26px] border border-amber-200 bg-white shadow-2xl shadow-slate-950/15">
             <div className="border-b border-amber-100 bg-amber-50 px-4 py-3">
-                <p className="text-xs font-black uppercase tracking-wide text-amber-700">Admin approval centre</p>
+                <p className="text-xs font-black uppercase tracking-wide text-amber-700">{isAdmin ? "Admin approval centre" : "Expense approval status"}</p>
                 <h2 className="text-lg font-black text-slate-950">Pending Office Expenses</h2>
-                <p className="mt-1 text-sm font-bold text-slate-600">Pending expenses are visible here but do not reduce cash until Admin approval.</p>
+                <p className="mt-1 text-sm font-bold text-slate-600">{isAdmin ? "Pending expenses are visible here but do not reduce cash until Admin approval." : "Manager-entered expenses remain pending until Admin approval."}</p>
                 {message ? <p className="mt-2 rounded-xl bg-white px-3 py-2 text-sm font-black text-slate-700">{message}</p> : null}
             </div>
             <div className="grid gap-3 p-4 lg:grid-cols-2">
@@ -2360,22 +2407,30 @@ function GenericExpenseApprovalQueue({ isAdmin, onReviewed, requests }: { isAdmi
                                     <p className="mt-2 rounded-xl bg-slate-50 px-3 py-2 text-sm font-bold text-slate-500">No supporting proof attached.</p>
                                 )}
                             </section>
-                            <label className="mt-3 block">
-                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Admin note / rejection reason</span>
-                                <input
-                                    value={note}
-                                    onChange={(event) => setComments((current) => ({ ...current, [expense.id]: event.target.value }))}
-                                    placeholder="Required for rejection"
-                                    className="mt-1 h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-950 outline-none focus:border-amber-400 focus:ring-4 focus:ring-amber-100"
-                                />
-                            </label>
+                            {isAdmin ? (
+                                <label className="mt-3 block">
+                                    <span className="text-xs font-black uppercase tracking-wide text-slate-500">Admin note / rejection reason</span>
+                                    <input
+                                        value={note}
+                                        onChange={(event) => setComments((current) => ({ ...current, [expense.id]: event.target.value }))}
+                                        placeholder="Required for rejection"
+                                        className="mt-1 h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-950 outline-none focus:border-amber-400 focus:ring-4 focus:ring-amber-100"
+                                    />
+                                </label>
+                            ) : null}
                             <div className="mt-3 flex flex-wrap gap-2">
-                                <button disabled={isPending} onClick={() => decide(expense, "approved")} className="rounded-xl bg-emerald-700 px-4 py-2 text-xs font-black text-white disabled:opacity-40">
-                                    {busy ? "Processing..." : "Approve"}
-                                </button>
-                                <button disabled={isPending} onClick={() => decide(expense, "rejected")} className="rounded-xl bg-rose-700 px-4 py-2 text-xs font-black text-white disabled:opacity-40">
-                                    Reject
-                                </button>
+                                {isAdmin ? (
+                                    <>
+                                        <button disabled={isPending} onClick={() => decide(expense, "approved")} className="rounded-xl bg-emerald-700 px-4 py-2 text-xs font-black text-white disabled:opacity-40">
+                                            {busy ? "Processing..." : "Approve"}
+                                        </button>
+                                        <button disabled={isPending} onClick={() => decide(expense, "rejected")} className="rounded-xl bg-rose-700 px-4 py-2 text-xs font-black text-white disabled:opacity-40">
+                                            Reject
+                                        </button>
+                                    </>
+                                ) : (
+                                    <span className="rounded-xl bg-amber-100 px-4 py-2 text-xs font-black text-amber-800">Awaiting Admin decision</span>
+                                )}
                                 <a href={`/office/admin/cash-position?officeId=${encodeURIComponent(String(expense.office_id ?? ""))}`} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-black text-slate-700">
                                     Open office cash position
                                 </a>

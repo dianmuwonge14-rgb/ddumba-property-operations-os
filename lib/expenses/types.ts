@@ -263,6 +263,7 @@ export type CreateExpenseInput = {
     category?: string;
     propertyId?: string;
     item?: string;
+    officeId?: string | null;
     vendor?: string;
     description?: string;
     expenseDate?: string;
@@ -323,6 +324,7 @@ export type CreateEmployeeExpenseInput = {
     expenseDate: string;
     expenseItem: string;
     note?: string;
+    officeId?: string | null;
 };
 
 export type DecideEmployeeExpenseRequestInput = {

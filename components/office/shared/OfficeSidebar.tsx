@@ -134,6 +134,34 @@ const officeSections = [
     },
 ];
 
+const managerSections = [
+    {
+        label: "Manager Operations",
+        items: [
+            { href: "/office", label: "Dashboard", icon: Home },
+            { href: "/office/admin/payments", label: "Payment Entry", icon: Banknote },
+            { href: "/office/collections", label: "Collections", icon: HandCoins },
+            { href: "/office/expenses", label: "Expenses", icon: ReceiptText },
+            { href: "/office/notifications", label: "Approval Status", icon: Bell },
+            { href: "/office/receipts", label: "Receipt History", icon: ReceiptText },
+        ],
+    },
+    {
+        label: "Company View",
+        items: [
+            { href: "/office/landlords", label: "Landlords", icon: UsersRound },
+            { href: "/office/properties", label: "Properties", icon: Building2 },
+            { href: "/office/admin/vacant-rooms", label: "Rooms", icon: HousePlus },
+            { href: "/office/admin/defaulters", label: "Defaulters", icon: AlertTriangle },
+            { href: "/office/promises", label: "Promise Centre", icon: CalendarCheck },
+            { href: "/office/reports", label: "Reports", icon: BarChart3 },
+            { href: "/office/admin/attendance", label: "Attendance", icon: Gauge },
+            { href: "/office/salary", label: "My Salary", icon: FileBadge },
+            { href: "/office/sync-centre", label: "Sync Centre", icon: RefreshCcw },
+        ],
+    },
+];
+
 const collectorSections = [
     {
         label: "Field Collector",
@@ -194,8 +222,8 @@ function themeForPath(pathname: string) {
 export default function OfficeSidebar({ isAdmin, isCollector = false, isReadOnlyManager = false, officeName, attendance, notificationCount }: Props) {
     const pathname = usePathname();
     const moduleTheme = themeForPath(pathname);
-    const sections = isCollector ? collectorSections : isAdmin ? adminSections : officeSections;
-    const logoHref = isAdmin ? "/office/admin/cash-position" : isCollector ? "/office/collector" : "/office";
+    const sections = isCollector ? collectorSections : isReadOnlyManager ? managerSections : isAdmin ? adminSections : officeSections;
+    const logoHref = isAdmin ? "/office/admin/cash-position" : isReadOnlyManager ? "/office" : isCollector ? "/office/collector" : "/office";
     const activeItem = sections.flatMap((section) => section.items).find((item) => pathname === item.href || (item.href !== "/office" && pathname.startsWith(item.href)));
     const checkInTime = attendance.firstCheckIn
         ? new Intl.DateTimeFormat("en-UG", { timeZone: "Africa/Kampala", hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(attendance.firstCheckIn))
@@ -230,7 +258,7 @@ export default function OfficeSidebar({ isAdmin, isCollector = false, isReadOnly
                             <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
                                 <p className="whitespace-nowrap text-xs font-black tracking-wide text-white sm:text-sm">DDUMBA OS</p>
                                 <span className="mobile-nowrap rounded-full border border-white/10 bg-white/10 px-2 py-0.5 text-[9px] font-black uppercase text-cyan-100 sm:px-2.5 sm:py-1 sm:text-[10px]">
-                                    {isReadOnlyManager ? "Read-Only Manager" : isAdmin ? "Admin" : isCollector ? "Collector" : "Office"}
+                                    {isReadOnlyManager ? "Manager" : isAdmin ? "Admin" : isCollector ? "Collector" : "Office"}
                                 </span>
                             </div>
                             <p className="max-w-[58vw] truncate text-[11px] font-bold text-slate-400 sm:max-w-none sm:text-xs">{activeItem?.label ?? "Enterprise"} · {officeName ?? "Company"}</p>

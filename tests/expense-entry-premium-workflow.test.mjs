@@ -9,6 +9,7 @@ const expenseActions = readFileSync(new URL("../app/actions/expenses.ts", import
 const entrySearchRoute = readFileSync(new URL("../app/api/expenses/entry-search/route.ts", import.meta.url), "utf8");
 const entryDetailRoute = readFileSync(new URL("../app/api/expenses/entry-detail/route.ts", import.meta.url), "utf8");
 const allRounderMigration = readFileSync(new URL("../supabase/upgrade_migrations/0233_all_rounder_authorised_expense_search.sql", import.meta.url), "utf8");
+const localEmployeeMigration = readFileSync(new URL("../supabase/upgrade_migrations/0239_authorised_expense_local_employee_search.sql", import.meta.url), "utf8");
 
 test("expense entry exposes the approved premium workflow categories plus treasury transfers", () => {
   assert.match(expensesConsole, /type ExpenseEntryMode = "landlord_payment" \| "authorised" \| "unauthorised" \| "banking" \| "cash_handover_admin"/);
@@ -92,15 +93,19 @@ test("employee lunch entry uses live detail cards and duplicate protection", () 
   ]) {
     assert.match(expensesConsole, new RegExp(label));
   }
-  assert.match(entrySearchRoute, /ddumba_v1_expense_all_rounder_search/);
+  assert.match(entrySearchRoute, /ddumba_v1_expense_employee_search/);
+  assert.match(entrySearchRoute, /p_office_id: activeOfficeId/);
+  assert.match(entrySearchRoute, /p_include_all_offices: canSeeAll/);
   assert.doesNotMatch(entrySearchRoute, /query = query\.eq\("office_id", activeOfficeId\)/);
   assert.match(entrySearchRoute, /isRealEmployee/);
   assert.match(entryDetailRoute, /createSupabaseAdminClient/);
   assert.doesNotMatch(entryDetailRoute, /employeeQuery = employeeQuery\.eq\("office_id", activeOfficeId\)/);
-  assert.match(entryDetailRoute, /Only active All Rounders can be selected/);
+  assert.match(entryDetailRoute, /isEligibleEmployee/);
+  assert.match(entryDetailRoute, /Only active employees in your office or company-wide All Rounders can be selected/);
   assert.match(entryDetailRoute, /dailyAllocation = 7000/);
   assert.match(expenseActions, /Lunch has already been recorded for this employee on this date\./);
   assert.match(expenseActions, /isAllRounderEmployee/);
+  assert.match(expenseActions, /isEligibleAuthorisedExpenseEmployee/);
   assert.match(expenseActions, /employee_home_office_id/);
   assert.match(expenseActions, /submitting_office_id/);
   assert.match(expenseActions, /employee_expense_requests/);
@@ -110,6 +115,14 @@ test("employee lunch entry uses live detail cards and duplicate protection", () 
   assert.match(allRounderMigration, /employee_home_office_id/);
   assert.match(allRounderMigration, /submitting_office_id/);
   assert.match(allRounderMigration, /ddumba_v1_prevent_duplicate_employee_lunch/);
+  assert.match(localEmployeeMigration, /ddumba_v1_expense_employee_search/);
+  assert.match(localEmployeeMigration, /e\.office_id = p_office_id/);
+  assert.match(localEmployeeMigration, /ddumba_v1_is_all_rounder_employee/);
+  assert.match(localEmployeeMigration, /p_include_all_offices/);
+  assert.match(localEmployeeMigration, /office account/);
+  assert.match(localEmployeeMigration, /revoke all on function public\.ddumba_v1_expense_employee_search/);
+  assert.match(localEmployeeMigration, /grant execute on function public\.ddumba_v1_expense_employee_search\(uuid, uuid, text, boolean\) to service_role/);
+  assert.doesNotMatch(localEmployeeMigration, /to authenticated, service_role/);
 });
 
 test("recorded expense list filters by business expense date and supports all dates", () => {

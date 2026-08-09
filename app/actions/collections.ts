@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { logUserAction } from "@/lib/auth/audit";
-import { hasPermission, requireAuth, requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissions";
+import { canPostTenantPayments, hasPermission, requireAuth, requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissions";
 import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createTenantPaymentReceipt, markTenantPaymentReceiptPendingCorrection, syncTenantPaymentReceiptForCorrection } from "@/lib/receipts/payment-receipts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -761,7 +761,7 @@ export async function recordCollection(input: RecordCollectionInput) {
     };
     const context = await requireAuth();
     const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
-    if (!isCollector && !hasPermission(context, "collections.payment.post")) {
+    if (!isCollector && !canPostTenantPayments(context)) {
         throw new Error("You do not have permission to post tenant payments.");
     }
     mark("auth");

@@ -124,9 +124,10 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
     const companyId = context.activeCompany?.id;
     const officeId = context.activeOffice?.id;
 
-    if (!companyId || (!context.isCompanyAdmin && !officeId)) return emptyData();
-    const isAdmin = context.isCompanyAdmin && !context.isOfficeMode;
-    const selectedOfficeId = isAdmin ? null : officeId ?? null;
+    const canViewAllOffices = (context.isCompanyAdmin || context.isCompanyReadOnlyManager) && !context.isOfficeMode;
+    if (!companyId || (!canViewAllOffices && !officeId)) return emptyData();
+    const isAdmin = canViewAllOffices;
+    const selectedOfficeId = canViewAllOffices ? null : officeId ?? null;
 
     const [
         expensesResult,
@@ -360,7 +361,7 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
     const { supabase } = await getScopedSupabase();
     const companyId = context.activeCompany?.id;
     const officeId = context.activeOffice?.id;
-    const isAdmin = context.isCompanyAdmin && !context.isOfficeMode;
+    const isAdmin = (context.isCompanyAdmin || context.isCompanyReadOnlyManager) && !context.isOfficeMode;
     const resolved = resolveExpenseFilters(filters);
     const generatedBy = context.profile?.full_name ?? context.profile?.email ?? "System";
 

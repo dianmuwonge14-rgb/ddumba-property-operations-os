@@ -2,7 +2,7 @@
 
 import { createHash, randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
-import { hasPermission, requireAuth, requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissions";
+import { canSubmitOperationalExpenses, hasPermission, isCompanyOperationalManager, requireAuth, requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
 import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createLandlordPaymentReceipt } from "@/lib/receipts/payment-receipts";
@@ -42,11 +42,38 @@ const ALLOWED_EXPENSE_PROOF_TYPES = new Set([
 const MAX_EXPENSE_PROOF_BYTES = 10 * 1024 * 1024;
 
 async function activeWriteContext() {
-    const context = await requirePermission("expenses.manage");
+    const context = await requireAuth();
+    if (!canSubmitOperationalExpenses(context)) {
+        throw new Error("You do not have permission to submit expenses.");
+    }
     if (!context.activeCompany?.id || !context.activeOffice?.id) {
         throw new Error("Active company and office are required.");
     }
     return context;
+}
+
+async function expenseManageContext() {
+    const context = await requireAuth();
+    if (isCompanyOperationalManager(context) || !hasPermission(context, "expenses.manage")) {
+        throw new Error("You do not have permission to manage expense configuration or direct expense edits.");
+    }
+    if (!context.activeCompany?.id || !context.activeOffice?.id) {
+        throw new Error("Active company and office are required.");
+    }
+    return context;
+}
+
+async function resolveOperationalExpenseOfficeId(context: Awaited<ReturnType<typeof requireAuth>>, requestedOfficeId?: string | null) {
+    const activeOfficeId = context.activeOffice?.id ?? null;
+    const requested = validUuid(requestedOfficeId) ? requestedOfficeId : null;
+    if (!isCompanyOperationalManager(context) && !(context.isCompanyAdmin && !context.isOfficeMode)) {
+        return activeOfficeId;
+    }
+    if (!requested) return activeOfficeId;
+    if (!context.offices.some((office) => office.id === requested)) {
+        throw new Error("You do not have access to the selected office.");
+    }
+    return requested;
 }
 
 async function resolveExpenseEmployeeActorId(context: Awaited<ReturnType<typeof requireAuth>>) {
@@ -521,10 +548,12 @@ export async function createExpense(input: CreateExpenseInput) {
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
     const actorEmployeeId = await resolveExpenseEmployeeActorId(context);
     const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
+    const targetOfficeId = await resolveOperationalExpenseOfficeId(context, input.officeId);
+    if (!targetOfficeId) throw new Error("Select an office for this expense.");
     const expenseId = randomUUID();
     const proof = decodeExpenseProof(input.supportingProof ?? null);
     const proofPath = proof
-        ? `${context.activeCompany!.id}/${context.activeOffice!.id}/${actorId ?? "unknown"}/${expenseDate.slice(0, 4)}/${expenseDate.slice(5, 7)}/${expenseId}.${proof.extension}`
+        ? `${context.activeCompany!.id}/${targetOfficeId}/${actorId ?? "unknown"}/${expenseDate.slice(0, 4)}/${expenseDate.slice(5, 7)}/${expenseId}.${proof.extension}`
         : null;
     if (proof && proofPath) {
         const upload = await adminDb.storage.from(EXPENSE_PROOF_BUCKET).upload(proofPath, proof.buffer, {
@@ -539,7 +568,7 @@ export async function createExpense(input: CreateExpenseInput) {
         approved_by: isDirectAdmin ? actorId : null,
         category: input.category || null,
         category_id: input.categoryId || null,
-        cash_source_id: context.activeOffice!.id,
+        cash_source_id: targetOfficeId,
         cash_source_type: "office_cash",
         company_id: context.activeCompany!.id,
         description: [
@@ -550,7 +579,7 @@ export async function createExpense(input: CreateExpenseInput) {
         expense_number: expenseNumber(),
         id: expenseId,
         item: input.item || null,
-        office_id: context.activeOffice!.id,
+        office_id: targetOfficeId,
         payment_method: input.paymentMethod || null,
         property_id: input.propertyId || null,
         receipt_url: input.receiptUrl || null,
@@ -610,7 +639,7 @@ export async function createExpense(input: CreateExpenseInput) {
             companyId: context.activeCompany!.id,
             db: adminDb,
             description: `Admin-approved office expense: ${input.item || input.category || "Expense"}`,
-            officeId: context.activeOffice!.id,
+            officeId: targetOfficeId,
             recordedBy: actorId,
             sourceId: data.id,
             sourceType: "expense",
@@ -626,7 +655,7 @@ export async function createExpense(input: CreateExpenseInput) {
             entity_type: "expense",
             is_read: false,
             message: `Expense approval requested for ${input.item || input.category || "office expense"}: UGX ${Math.round(amount).toLocaleString()} on ${expenseDate}.${proofPath ? " Supporting proof attached." : ""}`,
-            office_id: context.activeOffice!.id,
+            office_id: targetOfficeId,
             recipient_type: "admin",
             severity: "warning",
             title: proofPath ? "Expense pending Admin approval - Proof attached" : "Expense pending Admin approval",
@@ -638,7 +667,7 @@ export async function createExpense(input: CreateExpenseInput) {
         entityType: "expense",
         entityId: data.id,
         companyId: context.activeCompany!.id,
-        officeId: context.activeOffice!.id,
+        officeId: targetOfficeId,
         afterData: data,
     });
     if (proofPath) {
@@ -647,7 +676,7 @@ export async function createExpense(input: CreateExpenseInput) {
             entityType: "expense",
             entityId: data.id,
             companyId: context.activeCompany!.id,
-            officeId: context.activeOffice!.id,
+            officeId: targetOfficeId,
             afterData: {
                 expense_request_id: data.id,
                 file_path: proofPath,
@@ -669,12 +698,12 @@ async function resolveLandlordPaymentOfficeId(input: {
     activeOfficeId: string;
     companyId: string;
     db: { from: (table: string) => any };
-    isDirectAdmin: boolean;
+    canSelectOffice: boolean;
     landlordId: string;
     paymentMonth: string;
     requestedOfficeId?: string | null;
 }) {
-    if (!input.isDirectAdmin) return input.activeOfficeId;
+    if (!input.canSelectOffice) return input.activeOfficeId;
 
     const requestedOfficeId = validUuid(input.requestedOfficeId) ? input.requestedOfficeId : null;
     const payableQuery = input.db
@@ -721,6 +750,7 @@ export async function previewLandlordPaymentExpense(input: {
     const companyId = context.activeCompany!.id;
     const value = Number(input.amount);
     const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
+    const canSelectOffice = isDirectAdmin || isCompanyOperationalManager(context);
     const paymentMonth = monthStart(input.paymentMonth);
     const officeId = !input.landlordId
         ? context.activeOffice!.id
@@ -728,7 +758,7 @@ export async function previewLandlordPaymentExpense(input: {
             activeOfficeId: context.activeOffice!.id,
             companyId,
             db,
-            isDirectAdmin,
+            canSelectOffice,
             landlordId: input.landlordId,
             paymentMonth,
             requestedOfficeId: input.officeId,
@@ -785,6 +815,7 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
     const companyId = context.activeCompany!.id;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
     const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
+    const canSelectOffice = isDirectAdmin || isCompanyOperationalManager(context);
     const amount = Number(input.amount);
     assertAmount(amount);
     if (!input.landlordId) throw new Error("Select landlord.");
@@ -795,7 +826,7 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
         activeOfficeId: context.activeOffice!.id,
         companyId,
         db,
-        isDirectAdmin,
+        canSelectOffice,
         landlordId: input.landlordId,
         paymentMonth,
         requestedOfficeId: input.officeId,
@@ -1104,7 +1135,8 @@ export async function previewEmployeeExpense(input: CreateEmployeeExpenseInput):
     const supabase = await createSupabaseServerClient();
     const db = supabase as unknown as { from: (table: string) => any };
     const companyId = context.activeCompany!.id;
-    const officeId = context.activeOffice!.id;
+    const officeId = await resolveOperationalExpenseOfficeId(context, input.officeId);
+    if (!officeId) throw new Error("Select an office for this employee expense.");
     const value = Number(input.amount);
     if (!input.employeeId || !input.expenseItem || !Number.isFinite(value) || value <= 0) {
         return {
@@ -1146,7 +1178,8 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
     const supabase = await createSupabaseServerClient();
     const db = supabase as unknown as { from: (table: string) => any };
     const companyId = context.activeCompany!.id;
-    const officeId = context.activeOffice!.id;
+    const officeId = await resolveOperationalExpenseOfficeId(context, input.officeId);
+    if (!officeId) throw new Error("Select an office for this employee expense.");
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
     const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
     const expenseActorId = await resolveExpenseEmployeeActorId(context);
@@ -3059,7 +3092,7 @@ export async function adminSafeDeleteExpense(input: DeleteExpenseInput) {
 }
 
 export async function editExpense(input: EditExpenseInput) {
-    const context = await activeWriteContext();
+    const context = await expenseManageContext();
     const existing = await getExpenseInActiveOffice(input.expenseId);
     const supabase = await createSupabaseServerClient();
     const amount = Number(input.amount);
@@ -3223,7 +3256,7 @@ export async function rejectExpense(input: ExpenseDecisionInput) {
 }
 
 export async function createExpenseCategory(input: CreateExpenseCategoryInput) {
-    const context = await activeWriteContext();
+    const context = await expenseManageContext();
     const supabase = await createSupabaseServerClient();
     const key = input.key.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
     const name = input.name.trim();
