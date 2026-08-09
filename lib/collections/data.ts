@@ -159,6 +159,8 @@ function isRealActiveEmployee(employee: EmployeeOptionRow | null | undefined, li
     return !name.includes("office account")
         && !name.endsWith(" office login")
         && !name.endsWith(" office qa")
+        && !name.startsWith("test ")
+        && name !== "test ceo"
         && name !== "nakiwogo office"
         && !code.startsWith("off-")
         && !role.includes("office account")
@@ -169,6 +171,26 @@ function isRealActiveEmployee(employee: EmployeeOptionRow | null | undefined, li
 function isActiveAssignmentStatus(value: string | null | undefined) {
     const status = String(value ?? "active").toLowerCase();
     return !["archived", "deleted", "disabled", "expired", "inactive", "revoked", "suspended", "terminated"].includes(status);
+}
+
+function normalizedEmployeeRole(employee: Pick<EmployeeOptionRow, "role" | "job_title">) {
+    return String(employee.role ?? employee.job_title ?? "Employee").trim();
+}
+
+function roleKey(value: string | null | undefined) {
+    return String(value ?? "").toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function isFieldCollectorEmployee(employee: Pick<EmployeeOptionRow, "role" | "job_title">) {
+    const role = roleKey(normalizedEmployeeRole(employee));
+    return role === "collector" || role === "field collector" || role.includes("field collector");
+}
+
+function employeeOptionGroup(employee: Pick<EmployeeOptionRow, "role" | "job_title">): "receptionists" | "field_collectors" | "managers_other" {
+    const role = roleKey(normalizedEmployeeRole(employee));
+    if (role.includes("receptionist")) return "receptionists";
+    if (role === "collector" || role === "field collector" || role.includes("field collector")) return "field_collectors";
+    return "managers_other";
 }
 
 function businessTimeOnly(value: string | null | undefined) {
@@ -614,7 +636,6 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
             .from("employees")
             .select("id, full_name, phone, employee_code, role, job_title, office_id, status, user_id")
             .eq("company_id", companyId);
-        if (!isAdmin && officeId) query = query.eq("office_id", officeId);
         return query.order("full_name", { ascending: true }).limit(2000);
     })();
     const officeRoleAssignmentsRequest = !isAdmin && officeId
@@ -691,10 +712,21 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
         .map((user) => user.employee_id));
     const collectorProfileEmployeeIds = uniqueIds(activeCollectorProfiles.flatMap((profile) => {
         const linkedUser = profile.user_id ? userById.get(String(profile.user_id)) : null;
-        const userIsOfficeScoped = !officeId || linkedUser?.default_office_id === officeId || officeRoleUserIds.includes(String(profile.user_id ?? ""));
-        return userIsOfficeScoped ? [profile.employee_id, linkedUser?.employee_id] : [];
+        return [profile.employee_id, linkedUser?.employee_id];
     }));
     const allActiveEmployees = ((activeEmployees ?? []) as EmployeeOptionRow[]).filter((employee) => isRealActiveEmployee(employee));
+    const fieldCollectorEmployeeIds = uniqueIds([
+        ...allActiveEmployees.filter(isFieldCollectorEmployee).map((employee) => employee.id),
+        ...collectorProfileEmployeeIds,
+    ]);
+    const officeScopedActiveEmployeeIds = uniqueIds(allActiveEmployees
+        .filter((employee) => {
+            if (!officeId) return true;
+            return employee.office_id === officeId
+                || officeRoleEmployeeIds.includes(employee.id)
+                || officeAssignedEmployeeIds.includes(employee.id);
+        })
+        .map((employee) => employee.id));
     const employeeIds = isAdmin
         ? uniqueIds([
             ...directEmployeeIds,
@@ -708,8 +740,8 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
             ...historicalOfficeUserEmployeeIds,
             ...officeRoleEmployeeIds,
             ...officeAssignedEmployeeIds,
-            ...collectorProfileEmployeeIds,
-            ...allActiveEmployees.map((employee) => employee.id),
+            ...officeScopedActiveEmployeeIds,
+            ...fieldCollectorEmployeeIds,
         ]);
     const { data: employees } = employeeIds.length
         ? await supabase
@@ -765,13 +797,14 @@ export async function getCollectionReportData(filters: CollectionReportFilters =
         .map((employee) => {
             const optionOfficeId = !isAdmin && officeId ? officeId : employee.office_id;
             const office = optionOfficeId ? officeById.get(optionOfficeId) : null;
-            const role = employee.role ?? employee.job_title ?? "Employee";
+            const role = normalizedEmployeeRole(employee);
             const officeName = office?.office_name ?? office?.name ?? (!isAdmin && officeId ? context.activeOffice?.office_name ?? context.activeOffice?.name : null) ?? "Unassigned";
             const searchText = [employee.full_name, employee.phone, employee.employee_code, role, officeName].filter(Boolean).join(" ").toLowerCase();
             return {
                 id: employee.id,
                 employeeCode: employee.employee_code ?? "",
                 name: employee.full_name ?? "Employee",
+                group: employeeOptionGroup(employee),
                 officeId: optionOfficeId,
                 officeName,
                 phone: employee.phone ?? "",

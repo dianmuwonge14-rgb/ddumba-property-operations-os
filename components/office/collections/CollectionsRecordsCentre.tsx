@@ -114,6 +114,20 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
         if (!needle) return report.employeeOptions;
         return report.employeeOptions.filter((employee) => employee.searchText.includes(needle));
     }, [employeeSearch, report.employeeOptions]);
+    const groupedEmployeeOptions = useMemo(() => {
+        const labels = {
+            receptionists: "Receptionists",
+            field_collectors: "Field Collectors",
+            managers_other: "Managers / Other Employees",
+        } as const;
+        return (Object.keys(labels) as Array<keyof typeof labels>)
+            .map((group) => ({
+                group,
+                label: labels[group],
+                employees: visibleEmployeeOptions.filter((employee) => employee.group === group),
+            }))
+            .filter((section) => section.employees.length);
+    }, [visibleEmployeeOptions]);
     const sortedEmployeePerformance = useMemo(() => {
         const rows = [...report.employeePerformance];
         if (employeeSort === "lowest") return rows.sort((left, right) => left.totalCollected - right.totalCollected || left.employeeName.localeCompare(right.employeeName));
@@ -377,11 +391,15 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                                         onChange={(event) => updateFilter("employeeId", event.target.value)}
                                         className="h-10 w-full rounded-md border border-white/10 bg-slate-950 px-3 text-sm text-white outline-none focus:border-sky-300"
                                     >
-                                        <option value="" className="bg-slate-950 text-white">{initialData.isAdmin ? "All Employees" : "All Office Employees"}</option>
-                                        {visibleEmployeeOptions.map((employee) => (
-                                            <option key={employee.id} value={employee.id} className="bg-slate-950 text-white">
-                                                {employee.name} · {employee.role} · {employee.officeName}
-                                            </option>
+                                        <option value="" className="bg-slate-950 text-white">{initialData.isAdmin ? "All Employees" : "All Office Employees & Collectors"}</option>
+                                        {groupedEmployeeOptions.map((section) => (
+                                            <optgroup key={section.group} label={section.label} className="bg-slate-950 text-white">
+                                                {section.employees.map((employee) => (
+                                                    <option key={employee.id} value={employee.id} className="bg-slate-950 text-white">
+                                                        {employee.name} · {employee.role} · {employee.officeName}
+                                                    </option>
+                                                ))}
+                                            </optgroup>
                                         ))}
                                     </select>
                                 </div>
@@ -610,8 +628,8 @@ export default function CollectionsRecordsCentre({ initialData }: Props) {
                     <section className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <div>
-                                <h2 className="text-base font-semibold text-white">{initialData.isAdmin ? "All Employees Collection Performance" : "All Office Employees Collection Performance"}</h2>
-                                <p className="text-xs text-white/50">Real employee-linked collection totals for the selected filters.</p>
+                                <h2 className="text-base font-semibold text-white">{initialData.isAdmin ? "All Employees Collection Performance" : "All Office Employees & Collectors Collection Performance"}</h2>
+                                <p className="text-xs text-white/50">Real employee-linked collection totals for the selected office and period.</p>
                             </div>
                             <select
                                 value={employeeSort}

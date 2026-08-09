@@ -165,6 +165,7 @@ export type CollectionEmployeeOption = {
     phone: string;
     employeeCode: string;
     role: string;
+    group: "receptionists" | "field_collectors" | "managers_other";
     officeId: string | null;
     officeName: string;
     searchText: string;
