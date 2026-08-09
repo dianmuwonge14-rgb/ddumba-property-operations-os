@@ -1,6 +1,8 @@
+mod desktop_server;
 mod offline_store;
 mod sync;
 
+use desktop_server::{start_desktop_next_server, DesktopNextServer, DesktopNextServerStatus};
 use offline_store::{
     get_desktop_session, init_offline_database, list_offline_mutations, offline_store_status, save_cache_records,
     save_desktop_session, save_offline_mutation, save_offline_payment, search_cache, update_offline_mutation_status,
@@ -8,6 +10,7 @@ use offline_store::{
     OfflineSearchResult, OfflineStoreStatus,
 };
 use sync::{sync_engine_status, SyncEngineStatus};
+use tauri::{Manager, State};
 
 #[tauri::command]
 fn desktop_offline_store_status(app: tauri::AppHandle) -> OfflineStoreStatus {
@@ -64,9 +67,20 @@ fn desktop_sync_engine_status() -> SyncEngineStatus {
     sync_engine_status()
 }
 
+#[tauri::command]
+fn desktop_next_server_status(app: tauri::AppHandle, state: State<'_, DesktopNextServer>) -> DesktopNextServerStatus {
+    start_desktop_next_server(&app, &state)
+}
+
 fn main() {
     tauri::Builder::default()
+        .manage(DesktopNextServer::default())
         .plugin(tauri_plugin_shell::init())
+        .setup(|app| {
+            let state = app.state::<DesktopNextServer>();
+            let _ = start_desktop_next_server(app.handle(), &state);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             desktop_offline_store_status,
             desktop_init_offline_database,
@@ -78,7 +92,8 @@ fn main() {
             desktop_update_offline_mutation_status,
             desktop_save_session,
             desktop_get_session,
-            desktop_sync_engine_status
+            desktop_sync_engine_status,
+            desktop_next_server_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running Ddumba Property Operations OS desktop shell");

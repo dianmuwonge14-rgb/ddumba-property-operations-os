@@ -39,6 +39,7 @@ yarn-error.log*
 # desktop build artifacts
 /desktop-artifacts/
 /desktop-dist/
+/src-tauri/resources/
 /src-tauri/target/
 
 # local supabase metadata

@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "desktop:dev": "npx @tauri-apps/cli dev",
+    "desktop:clean": "node scripts/clean-desktop-build.mjs",
     "desktop:prepare": "node scripts/prepare-desktop-dist.mjs",
     "desktop:build": "npx @tauri-apps/cli build",
     "desktop:build:windows": "npx @tauri-apps/cli build --target x86_64-pc-windows-msvc",

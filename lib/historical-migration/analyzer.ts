@@ -91,7 +91,7 @@ export async function dryRunHistoricalWorkbookMigration(): Promise<HistoricalMig
         };
     }
     if (!workbookPath) throw new Error("No approved historical workbook path is configured.");
-    const buffer = await readFile(workbookPath);
+    const buffer = await readFile(/* turbopackIgnore: true */ workbookPath);
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer);
     const existing = await loadExistingKeys();

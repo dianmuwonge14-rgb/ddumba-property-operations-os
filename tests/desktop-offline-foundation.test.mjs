@@ -15,6 +15,7 @@ const syncCentre = readFileSync(new URL("../components/office/sync/SyncCentre.ts
 const paymentEntry = readFileSync(new URL("../components/office/payments/FastPaymentsEntry.tsx", import.meta.url), "utf8");
 const desktopDevices = readFileSync(new URL("../components/office/admin/DesktopDevicesConsole.tsx", import.meta.url), "utf8");
 const nativeStore = readFileSync(new URL("../src-tauri/src/offline_store.rs", import.meta.url), "utf8");
+const desktopServer = readFileSync(new URL("../src-tauri/src/desktop_server.rs", import.meta.url), "utf8");
 const tauriConfig = readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8");
 
 test("desktop migration stores devices, mutations, conflicts and offline idempotency", () => {
@@ -63,14 +64,19 @@ test("desktop login creates a durable desktop bearer session for local-first sta
   assert.match(desktopSession, /desktopContextForUser/);
 });
 
-test("desktop bundle contains the operational UI instead of a remote website launcher", () => {
+test("desktop bundle starts the real local Next app instead of a separate offline interface", () => {
   assert.doesNotMatch(desktopShellScript, /Open Ddumba OS/);
   assert.doesNotMatch(desktopShellScript, /Production Login/);
   assert.doesNotMatch(desktopShellScript, /window\.location\.href\s*=\s*WEB_URL/);
-  assert.match(desktopShellScript, /desktop_get_session/);
-  assert.match(desktopShellScript, /desktop_search_cache/);
-  assert.match(desktopShellScript, /desktop_save_offline_payment/);
-  assert.match(desktopShellScript, /OFFLINE - PENDING SYNC/);
+  assert.doesNotMatch(desktopShellScript, /Offline Payment Entry/);
+  assert.doesNotMatch(desktopShellScript, /Offline Search/);
+  assert.match(desktopShellScript, /\.next\/standalone/);
+  assert.match(desktopShellScript, /next-app/);
+  assert.match(desktopShellScript, /desktop_next_server_status/);
+  assert.match(desktopServer, /server\.js/);
+  assert.match(desktopServer, /127\.0\.0\.1/);
+  assert.match(desktopServer, /NODE_ENV/);
+  assert.match(desktopServer, /production/);
 });
 
 test("office shell exposes sync status and sync centre queue visibility", () => {
@@ -116,5 +122,6 @@ test("tauri scaffold targets Windows and macOS installers", () => {
   assert.equal(parsed.productName, "Ddumba Property Operations OS");
   assert.deepEqual(parsed.bundle.targets, ["msi", "nsis", "dmg"]);
   assert.deepEqual(parsed.bundle.icon, ["icons/icon.icns", "icons/icon.ico"]);
+  assert.deepEqual(parsed.bundle.resources, ["resources/"]);
   assert.equal(parsed.build.devUrl, "http://localhost:3000");
 });

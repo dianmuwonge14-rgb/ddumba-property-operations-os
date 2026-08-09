@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Ddumba Property Operations OS",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "identifier": "com.ddumba.property-operations-os",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:3000",
-    "beforeBuildCommand": "npm run build && npm run desktop:prepare",
+    "beforeBuildCommand": "npm run desktop:clean && npm run build && npm run desktop:prepare",
     "frontendDist": "../desktop-dist"
   },
   "app": {
@@ -31,6 +31,7 @@
     "category": "Business",
     "shortDescription": "Offline-first desktop edition of Ddumba Property Operations OS.",
     "longDescription": "Ddumba Property Operations OS desktop application with offline workspace support and secure synchronization to the production Ddumba OS backend.",
-    "icon": ["icons/icon.icns", "icons/icon.ico"]
+    "icon": ["icons/icon.icns", "icons/icon.ico"],
+    "resources": ["resources/"]
   }
 }

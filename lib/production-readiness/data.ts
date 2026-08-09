@@ -120,14 +120,14 @@ async function readBackupStatus(supabase: SupabaseClient): Promise<{ status: "pa
 }
 
 async function readVersion() {
-    const versionFile = path.join(process.cwd(), "VERSION");
+    const versionFile = path.join(/* turbopackIgnore: true */ process.cwd(), "VERSION");
     if (fs.existsSync(versionFile)) return fs.readFileSync(versionFile, "utf8").trim();
     const packageJson = await readJsonFile("package.json");
     return stringAt(packageJson, ["version"]);
 }
 
 async function readJsonFile(relativePath: string): Promise<unknown> {
-    const filePath = path.join(process.cwd(), relativePath);
+    const filePath = path.join(/* turbopackIgnore: true */ process.cwd(), relativePath);
     if (!fs.existsSync(filePath)) return null;
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
