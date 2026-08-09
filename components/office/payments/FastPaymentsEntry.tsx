@@ -93,6 +93,7 @@ type ReceiptModalState = {
     receipt: PaymentReceiptSummary;
     sending: boolean;
 };
+type TenantPaymentMethod = "cash" | "bank" | "mobile_money";
 
 function today() {
     return currentBusinessDate();
@@ -114,6 +115,12 @@ function compactDate(value: string | null | undefined) {
 function normalize(value: string | null | undefined) {
     return String(value ?? "").trim().toLowerCase();
 }
+
+const TENANT_PAYMENT_METHODS: Array<{ description: string; icon: LucideIcon; label: string; value: TenantPaymentMethod }> = [
+    { description: "Physical cash held at the office or by the collector.", icon: Banknote, label: "Cash", value: "cash" },
+    { description: "Tenant paid directly into the company bank account.", icon: CreditCard, label: "Bank", value: "bank" },
+    { description: "Tenant paid through mobile money or another digital wallet.", icon: Smartphone, label: "Mobile Money", value: "mobile_money" },
+];
 
 function isSearchPreviewTenant(tenant: CollectionTenantResult | null): tenant is FastPaymentTenantSearchResult {
     return Boolean((tenant as FastPaymentTenantSearchResult | null)?.searchPreviewOnly);
@@ -261,6 +268,8 @@ export default function FastPaymentsEntry({
     const [results, setResults] = useState<FastPaymentTenantSearchResult[]>([]);
     const [selectedTenant, setSelectedTenant] = useState<CollectionTenantResult | null>(null);
     const [amount, setAmount] = useState("");
+    const [paymentMethod, setPaymentMethod] = useState<TenantPaymentMethod>("cash");
+    const [paymentReference, setPaymentReference] = useState("");
     const [recentPayments, setRecentPayments] = useState<FastPaymentRecentItem[]>([]);
     const [recentTotals, setRecentTotals] = useState<FastPaymentRecentTotals>(() => emptyPaymentTotals());
     const [ledgerSearch, setLedgerSearch] = useState("");
@@ -615,6 +624,8 @@ export default function FastPaymentsEntry({
         setResults([]);
         setSelectedTenant(null);
         setAmount("");
+        setPaymentMethod("cash");
+        setPaymentReference("");
         setDuplicateWarning(null);
         requestAnimationFrame(() => roomInputRef.current?.focus());
     }
@@ -1100,7 +1111,8 @@ export default function FastPaymentsEntry({
                     ? await recordCollectorPayment({
                         amount: paidAmount,
                         paymentDate,
-                        paymentMethod: "cash",
+                        paymentMethod,
+                        referenceNumber: paymentReference.trim() || undefined,
                         tenantId: selectedTenant.tenant.id,
                     })
                     : await recordCollection({
@@ -1108,9 +1120,10 @@ export default function FastPaymentsEntry({
                         amount: paidAmount,
                         backdatingReason: adminBackdatedPayment ? trimmedBackdatingReason : undefined,
                         paymentDate,
-                        paymentMethod: "cash",
+                        paymentMethod,
                         paymentKind: "tenant_normal",
                         paymentSource: "tenant",
+                        referenceNumber: paymentReference.trim() || undefined,
                     });
                 console.info("payments_entry_save_performance", {
                     paymentId: collection.id,
@@ -1141,7 +1154,7 @@ export default function FastPaymentsEntry({
                     landlordName: selectedTenant.landlord?.full_name ?? "No landlord",
                     officeName: selectedTenant.office?.office_name ?? selectedTenant.office?.name ?? activeOffice?.office_name ?? activeOffice?.name ?? "Office",
                     amount: Number(collection.amount_paid ?? paidAmount),
-                    method: collection.payment_method ?? "cash",
+                    method: collection.payment_method ?? paymentMethod,
                     paymentType: collection.type ?? "rent",
                     recordedBy: entryMode === "collector" ? `Entered by ${actorLabel}` : actorLabel,
                     balanceAfter: remainingBalance,
@@ -1396,6 +1409,47 @@ export default function FastPaymentsEntry({
                             />
 	                        </label>
 	                    </div>
+
+                    <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_280px]">
+                        <fieldset>
+                            <legend className="text-xs font-black uppercase tracking-wide text-slate-500">Payment method</legend>
+                            <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                                {TENANT_PAYMENT_METHODS.map((method) => {
+                                    const Icon = method.icon;
+                                    const active = paymentMethod === method.value;
+                                    return (
+                                        <button
+                                            key={method.value}
+                                            type="button"
+                                            aria-pressed={active}
+                                            onClick={() => setPaymentMethod(method.value)}
+                                            className={`min-h-20 rounded-2xl border p-3 text-left transition focus:outline-none focus:ring-4 focus:ring-blue-100 ${active ? "border-blue-500 bg-blue-50 shadow-lg shadow-blue-100" : "border-slate-200 bg-slate-50 hover:border-blue-300 hover:bg-white"}`}
+                                        >
+                                            <span className="flex items-center gap-2 text-sm font-black text-slate-950">
+                                                <Icon size={17} className={active ? "text-blue-700" : "text-slate-500"} />
+                                                {method.label}
+                                            </span>
+                                            <span className="mt-1 block text-xs font-bold leading-snug text-slate-500">{method.description}</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </fieldset>
+                        <label className={`block ${paymentMethod === "cash" ? "opacity-75" : ""}`}>
+                            <span className="text-xs font-black uppercase tracking-wide text-slate-500">
+                                {paymentMethod === "cash" ? "Reference (optional)" : "Transaction / payment reference"}
+                            </span>
+                            <input
+                                value={paymentReference}
+                                onChange={(event) => setPaymentReference(event.target.value)}
+                                placeholder={paymentMethod === "bank" ? "Bank transaction reference" : paymentMethod === "mobile_money" ? "Mobile Money transaction ID" : "Optional cash note"}
+                                className="mt-2 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                            />
+                            <span className="mt-1 block text-xs font-bold text-slate-500">
+                                {paymentMethod === "cash" ? "Cash increases physical money held." : "Bank and Mobile Money do not increase office or collector cash held."}
+                            </span>
+                        </label>
+                    </div>
 	
                     {roomMatchesOpen && results.length > 0 ? (
 	                        <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-3">

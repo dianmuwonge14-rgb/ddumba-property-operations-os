@@ -18,12 +18,21 @@ test("tenant payment ledger routes cash, bank and mobile money to separate cash 
 
 test("all tenant payment entry paths pass the selected method to ledger posting", () => {
   const collectionsAction = read("app/actions/collections.ts");
+  const collectorsAction = read("app/actions/collectors.ts");
   const roomOccupancyAction = read("app/actions/room-occupancy.ts");
   const promisesAction = read("app/actions/promises.ts");
+  const paymentsEntry = read("components/office/payments/FastPaymentsEntry.tsx");
 
   assert.match(collectionsAction, /const paymentMethod = canonicalTenantPaymentMethod\(input\.paymentMethod\)/);
   assert.match(collectionsAction, /payment_method: paymentMethod/);
   assert.match(collectionsAction, /paymentMethod,\s*\n\s*recordedBy/s);
+  assert.match(collectorsAction, /const methodBucket = paymentMethodBucket\(input\.paymentMethod\)/);
+  assert.match(collectorsAction, /if \(methodBucket === "cash"\)/);
+  assert.match(collectorsAction, /referenceNumber: input\.referenceNumber/);
+  assert.match(paymentsEntry, /const \[paymentMethod, setPaymentMethod\] = useState<TenantPaymentMethod>\("cash"\)/);
+  assert.match(paymentsEntry, /paymentMethod,\s*\n\s*paymentKind: "tenant_normal"/);
+  assert.doesNotMatch(paymentsEntry, /recordCollectorPayment\(\{\s*amount: paidAmount,[\s\S]{0,260}paymentMethod: "cash"/);
+  assert.doesNotMatch(paymentsEntry, /recordCollection\(\{\s*tenantId: selectedTenant\.tenant\.id,[\s\S]{0,320}paymentMethod: "cash"/);
   assert.match(roomOccupancyAction, /paymentMethod: input\.paymentMethod/);
   assert.match(promisesAction, /payment_method: input\.paymentMethod \?\? "cash"/);
   assert.match(promisesAction, /paymentMethod: input\.paymentMethod \?\? "cash"/);

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { logUserAction } from "@/lib/auth/audit";
 import { requireAuth, requirePermission } from "@/lib/auth/permissions";
+import { paymentMethodBucket } from "@/lib/collections/payment-methods";
 import { createNotificationWithEmail } from "@/lib/notifications/email";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -263,15 +264,17 @@ async function neutralizeOfficeCashForCollector(input: { amount: number; collect
     });
 }
 
-export async function recordCollectorPayment(input: { amount: number; notes?: string; paymentDate: string; paymentMethod: string; tenantId: string }) {
+export async function recordCollectorPayment(input: { amount: number; notes?: string; paymentDate: string; paymentMethod: string; referenceNumber?: string; tenantId: string }) {
     const context = await requireAuth();
     requireCollector(context);
+    const methodBucket = paymentMethodBucket(input.paymentMethod);
     const collection = await recordCollection({
         amount: input.amount,
         collectorName: context.profile?.full_name ?? "Field Collector",
         notes: input.notes,
         paymentDate: input.paymentDate,
         paymentMethod: input.paymentMethod,
+        referenceNumber: input.referenceNumber,
         tenantId: input.tenantId,
     });
     const db = createSupabaseAdminClient() as unknown as DynamicDb;
@@ -281,26 +284,28 @@ export async function recordCollectorPayment(input: { amount: number; notes?: st
         entered_by_name: context.profile!.full_name,
     }).eq("id", collection.id);
 
-    await neutralizeOfficeCashForCollector({
-        amount: Number(collection.amount_paid ?? collection.amount ?? input.amount),
-        collectionId: collection.id,
-        companyId: context.activeCompany!.id,
-        officeId: String(collection.office_id ?? context.activeOffice?.id),
-        recordedBy: context.profile!.id,
-    });
+    if (methodBucket === "cash") {
+        await neutralizeOfficeCashForCollector({
+            amount: Number(collection.amount_paid ?? collection.amount ?? input.amount),
+            collectionId: collection.id,
+            companyId: context.activeCompany!.id,
+            officeId: String(collection.office_id ?? context.activeOffice?.id),
+            recordedBy: context.profile!.id,
+        });
 
-    await adjustCollectorBalance({
-        amount: Number(collection.amount_paid ?? collection.amount ?? input.amount),
-        collectionId: collection.id,
-        companyId: context.activeCompany!.id,
-        collectorId: context.profile!.id,
-        movementType: "collection_in",
-        notes: input.notes ?? null,
-        officeId: collection.office_id ?? context.activeOffice?.id ?? null,
-        paymentMethod: input.paymentMethod,
-        roomId: collection.room_id ?? null,
-        tenantId: collection.tenant_id ?? input.tenantId,
-    });
+        await adjustCollectorBalance({
+            amount: Number(collection.amount_paid ?? collection.amount ?? input.amount),
+            collectionId: collection.id,
+            companyId: context.activeCompany!.id,
+            collectorId: context.profile!.id,
+            movementType: "collection_in",
+            notes: input.notes ?? null,
+            officeId: collection.office_id ?? context.activeOffice?.id ?? null,
+            paymentMethod: input.paymentMethod,
+            roomId: collection.room_id ?? null,
+            tenantId: collection.tenant_id ?? input.tenantId,
+        });
+    }
     revalidatePath("/office/collector");
     revalidatePath("/office/collector/payments");
     return collection;
