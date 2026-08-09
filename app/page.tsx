@@ -1,4 +1,5 @@
 import PinLoginForm from "@/components/auth/PinLoginForm";
+import DesktopDownloadPanel from "@/components/auth/DesktopDownloadPanel";
 
 export default function Home() {
   return (
@@ -45,6 +46,8 @@ export default function Home() {
           </p>
 
           <PinLoginForm />
+
+          <DesktopDownloadPanel />
 
           <div className="mt-8 border-t border-slate-200 pt-4 text-center text-sm font-semibold text-slate-400">
             © 2026 Ddumba Property Management
