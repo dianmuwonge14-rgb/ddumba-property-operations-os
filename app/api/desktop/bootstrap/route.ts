@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/permissions";
+import { bearerTokenFromRequest, requireDesktopContext } from "@/lib/offline/desktop-session";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type DynamicDb = {
@@ -51,10 +52,25 @@ async function safeRows(query: any) {
     return (data ?? []) as Record<string, unknown>[];
 }
 
-export async function GET() {
-    const context = await requireAuth();
+function cors(response: NextResponse) {
+    response.headers.set("Access-Control-Allow-Origin", "*");
+    response.headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
+    response.headers.set("Access-Control-Allow-Headers", "content-type, authorization");
+    return response;
+}
+
+export function OPTIONS() {
+    return cors(new NextResponse(null, { status: 204 }));
+}
+
+async function authContext(request: Request) {
+    return bearerTokenFromRequest(request) ? requireDesktopContext(request) : requireAuth();
+}
+
+export async function GET(request: Request) {
+    const context = await authContext(request);
     if (!context.activeCompany?.id || !context.profile?.id) {
-        return NextResponse.json({ success: false, code: "AUTH_CONTEXT_MISSING", message: "Active company and user are required." }, { status: 400 });
+        return cors(NextResponse.json({ success: false, code: "AUTH_CONTEXT_MISSING", message: "Active company and user are required." }, { status: 400 }));
     }
 
     const db = createSupabaseAdminClient() as unknown as DynamicDb;
@@ -103,7 +119,7 @@ export async function GET() {
             ...toCacheRecords("security_deposit", securityDeposits, ["status", "tenant_id", "room_id"], syncedAt),
         ];
 
-        return NextResponse.json({
+        return cors(NextResponse.json({
             success: true,
             bootstrap: {
                 company: context.activeCompany,
@@ -126,9 +142,9 @@ export async function GET() {
                 { label: "Defaulters", count: defaulters.length },
                 { label: "Configuration", count: expenseCategories.length },
             ],
-        });
+        }));
     } catch (error) {
         const message = error instanceof Error ? error.message : "Desktop offline workspace could not be prepared.";
-        return NextResponse.json({ success: false, code: "DESKTOP_BOOTSTRAP_FAILED", message }, { status: 500 });
+        return cors(NextResponse.json({ success: false, code: "DESKTOP_BOOTSTRAP_FAILED", message }, { status: 500 }));
     }
 }

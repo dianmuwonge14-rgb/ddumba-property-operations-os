@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/permissions";
 import { normalizeOfflineTransactionUuid } from "@/lib/offline/idempotency";
+import { bearerTokenFromRequest, requireDesktopContext } from "@/lib/offline/desktop-session";
 import { OFFLINE_MUTATION_TYPES, type OfflineMutationEnvelope } from "@/lib/offline/types";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { recordCollection } from "@/app/actions/collections";
@@ -68,8 +69,23 @@ function employeeIdFromContext(context: Awaited<ReturnType<typeof requireAuth>>)
     return (context.profile as unknown as { employee_id?: string | null } | null)?.employee_id ?? null;
 }
 
-export async function GET() {
-    const context = await requireAuth();
+function cors(response: NextResponse) {
+    response.headers.set("Access-Control-Allow-Origin", "*");
+    response.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    response.headers.set("Access-Control-Allow-Headers", "content-type, authorization");
+    return response;
+}
+
+export function OPTIONS() {
+    return cors(new NextResponse(null, { status: 204 }));
+}
+
+async function authContext(request: Request) {
+    return bearerTokenFromRequest(request) ? requireDesktopContext(request) : requireAuth();
+}
+
+export async function GET(request: Request) {
+    const context = await authContext(request);
     if (!context.activeCompany?.id || !context.profile?.id) {
         return errorResponse("AUTH_CONTEXT_MISSING", "Active company and user are required.");
     }
@@ -88,7 +104,7 @@ export async function GET() {
     }
 
     const rows = (data ?? []) as SyncStatusRow[];
-    return NextResponse.json({
+    return cors(NextResponse.json({
         success: true,
         mutations: rows,
         summary: {
@@ -97,19 +113,19 @@ export async function GET() {
             pendingCount: rows.filter((row) => ["saved_offline", "waiting_to_sync", "syncing"].includes(String(row.sync_status))).length,
             syncedCount: rows.filter((row) => row.sync_status === "synced").length,
         },
-    });
+    }));
 }
 
 export async function POST(request: Request) {
-    const context = await requireAuth();
+    const context = await authContext(request);
     if (!context.activeCompany?.id || !context.profile?.id) {
-        return errorResponse("AUTH_CONTEXT_MISSING", "Active company and user are required.");
+        return cors(errorResponse("AUTH_CONTEXT_MISSING", "Active company and user are required."));
     }
 
     const body = await request.json().catch(() => null) as { deviceId?: string; mutations?: Partial<OfflineMutationEnvelope>[] } | null;
     const deviceId = String(body?.deviceId ?? "").trim();
-    if (!deviceId) return errorResponse("DEVICE_ID_REQUIRED", "Desktop device ID is required.");
-    if (!Array.isArray(body?.mutations)) return errorResponse("MUTATIONS_REQUIRED", "Offline mutations are required.");
+    if (!deviceId) return cors(errorResponse("DEVICE_ID_REQUIRED", "Desktop device ID is required."));
+    if (!Array.isArray(body?.mutations)) return cors(errorResponse("MUTATIONS_REQUIRED", "Offline mutations are required."));
 
     const db = createSupabaseAdminClient() as unknown as DynamicDb;
     const employeeId = employeeIdFromContext(context);
@@ -254,11 +270,11 @@ export async function POST(request: Request) {
         .eq("company_id", context.activeCompany.id)
         .eq("device_id", deviceId);
 
-    return NextResponse.json({
+    return cors(NextResponse.json({
         success: rejected.length === 0,
         accepted,
         conflicts: [],
         message: "Offline entries were queued. Financial posting is handled by the authoritative server sync worker.",
         rejected,
-    }, { status: rejected.length ? 207 : 200 });
+    }, { status: rejected.length ? 207 : 200 }));
 }

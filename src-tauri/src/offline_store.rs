@@ -41,6 +41,46 @@ pub struct OfflinePaymentDraft {
     pub payload: serde_json::Value,
 }
 
+#[derive(Deserialize)]
+pub struct OfflineMutationDraft {
+    pub transaction_uuid: String,
+    pub transaction_type: String,
+    pub company_id: String,
+    pub user_id: String,
+    pub employee_id: Option<String>,
+    pub office_id: Option<String>,
+    pub business_date: String,
+    pub local_created_at: String,
+    pub base_revision: Option<String>,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+pub struct DesktopSessionDraft {
+    pub desktop_token: String,
+    pub expires_at: String,
+    pub bootstrap: serde_json::Value,
+}
+
+#[derive(Serialize)]
+pub struct OfflineMutationRow {
+    pub transaction_uuid: String,
+    pub transaction_type: String,
+    pub company_id: String,
+    pub user_id: String,
+    pub employee_id: Option<String>,
+    pub office_id: Option<String>,
+    pub business_date: String,
+    pub local_created_at: String,
+    pub payload: serde_json::Value,
+    pub base_revision: Option<String>,
+    pub sync_status: String,
+    pub retry_count: i64,
+    pub server_acknowledgement_id: Option<String>,
+    pub synced_at: Option<String>,
+    pub failure_reason: Option<String>,
+}
+
 #[derive(Serialize)]
 pub struct OfflineSearchResult {
     pub id: String,
@@ -78,6 +118,14 @@ pub fn init_offline_database(app: AppHandle) -> Result<OfflineStoreStatus, Strin
             create table if not exists meta (
               key text primary key,
               value text not null,
+              updated_at text not null default current_timestamp
+            );
+
+            create table if not exists desktop_session (
+              id integer primary key check (id = 1),
+              desktop_token text not null,
+              expires_at text not null,
+              bootstrap text not null,
               updated_at text not null default current_timestamp
             );
 
@@ -143,6 +191,43 @@ pub fn init_offline_database(app: AppHandle) -> Result<OfflineStoreStatus, Strin
         .map_err(|error| format!("Desktop SQLite schema version could not be saved: {error}"))?;
 
     Ok(offline_store_status_for_app(&app, true))
+}
+
+pub fn save_desktop_session(app: AppHandle, session: DesktopSessionDraft) -> Result<(), String> {
+    let connection = open_database(&app)?;
+    connection
+        .execute(
+            "insert into desktop_session(id, desktop_token, expires_at, bootstrap, updated_at)
+             values(1, ?1, ?2, ?3, current_timestamp)
+             on conflict(id) do update set
+               desktop_token = excluded.desktop_token,
+               expires_at = excluded.expires_at,
+               bootstrap = excluded.bootstrap,
+               updated_at = excluded.updated_at",
+            params![session.desktop_token, session.expires_at, session.bootstrap.to_string()],
+        )
+        .map_err(|error| format!("Desktop session could not be saved: {error}"))?;
+    Ok(())
+}
+
+pub fn get_desktop_session(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
+    let connection = open_database(&app)?;
+    let mut statement = connection
+        .prepare("select desktop_token, expires_at, bootstrap from desktop_session where id = 1")
+        .map_err(|error| format!("Desktop session could not be loaded: {error}"))?;
+    let mut rows = statement.query([]).map_err(|error| format!("Desktop session query failed: {error}"))?;
+    if let Some(row) = rows.next().map_err(|error| format!("Desktop session row failed: {error}"))? {
+        let token: String = row.get(0).map_err(|error| format!("Desktop token could not be read: {error}"))?;
+        let expires_at: String = row.get(1).map_err(|error| format!("Desktop session expiry could not be read: {error}"))?;
+        let bootstrap_text: String = row.get(2).map_err(|error| format!("Desktop bootstrap could not be read: {error}"))?;
+        let bootstrap = serde_json::from_str(&bootstrap_text).unwrap_or(serde_json::Value::Null);
+        return Ok(Some(serde_json::json!({
+            "desktopToken": token,
+            "expiresAt": expires_at,
+            "bootstrap": bootstrap
+        })));
+    }
+    Ok(None)
 }
 
 pub fn save_cache_records(app: AppHandle, records: Vec<OfflineCacheEnvelope>) -> Result<usize, String> {
@@ -221,6 +306,94 @@ pub fn save_offline_payment(app: AppHandle, payment: OfflinePaymentDraft) -> Res
         .map_err(|error| format!("Offline receipt could not be saved: {error}"))?;
 
     Ok(provisional)
+}
+
+pub fn save_offline_mutation(app: AppHandle, mutation: OfflineMutationDraft) -> Result<String, String> {
+    let connection = open_database(&app)?;
+    connection
+        .execute(
+            "insert into offline_mutations(
+                transaction_uuid, transaction_type, company_id, user_id, employee_id, office_id,
+                business_date, local_created_at, payload, base_revision, sync_status, retry_count, updated_at
+             ) values(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'waiting_to_sync', 0, current_timestamp)
+             on conflict(transaction_uuid) do nothing",
+            params![
+                mutation.transaction_uuid,
+                mutation.transaction_type,
+                mutation.company_id,
+                mutation.user_id,
+                mutation.employee_id,
+                mutation.office_id,
+                mutation.business_date,
+                mutation.local_created_at,
+                mutation.payload.to_string(),
+                mutation.base_revision,
+            ],
+        )
+        .map_err(|error| format!("Offline mutation could not be saved: {error}"))?;
+    Ok(mutation.transaction_uuid)
+}
+
+pub fn list_offline_mutations(app: AppHandle, statuses: Option<Vec<String>>, limit: Option<u32>) -> Result<Vec<OfflineMutationRow>, String> {
+    let connection = open_database(&app)?;
+    let max_rows = limit.unwrap_or(100).min(500);
+    let allowed = statuses.unwrap_or_else(|| vec!["waiting_to_sync".to_string(), "failed".to_string(), "conflict".to_string(), "synced".to_string()]);
+    let placeholders = allowed.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "select transaction_uuid, transaction_type, company_id, user_id, employee_id, office_id,
+                business_date, local_created_at, payload, base_revision, sync_status, retry_count,
+                server_acknowledgement_id, synced_at, failure_reason
+         from offline_mutations
+         where sync_status in ({placeholders})
+         order by local_created_at desc
+         limit ?"
+    );
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = allowed.into_iter().map(|value| Box::new(value) as Box<dyn rusqlite::ToSql>).collect();
+    params_vec.push(Box::new(max_rows));
+    let params_refs = params_vec.iter().map(|value| value.as_ref()).collect::<Vec<_>>();
+    let mut statement = connection.prepare(&sql).map_err(|error| format!("Offline outbox could not be prepared: {error}"))?;
+    let rows = statement
+        .query_map(params_refs.as_slice(), |row| {
+            let payload_text: String = row.get(8)?;
+            Ok(OfflineMutationRow {
+                transaction_uuid: row.get(0)?,
+                transaction_type: row.get(1)?,
+                company_id: row.get(2)?,
+                user_id: row.get(3)?,
+                employee_id: row.get(4)?,
+                office_id: row.get(5)?,
+                business_date: row.get(6)?,
+                local_created_at: row.get(7)?,
+                payload: serde_json::from_str(&payload_text).unwrap_or(serde_json::Value::Null),
+                base_revision: row.get(9)?,
+                sync_status: row.get(10)?,
+                retry_count: row.get(11)?,
+                server_acknowledgement_id: row.get(12)?,
+                synced_at: row.get(13)?,
+                failure_reason: row.get(14)?,
+            })
+        })
+        .map_err(|error| format!("Offline outbox query failed: {error}"))?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|error| format!("Offline outbox row could not be read: {error}"))
+}
+
+pub fn update_offline_mutation_status(app: AppHandle, transaction_uuid: String, sync_status: String, server_acknowledgement_id: Option<String>, failure_reason: Option<String>) -> Result<(), String> {
+    let connection = open_database(&app)?;
+    let synced_at: Option<String> = if sync_status == "synced" { Some(chrono::Utc::now().to_rfc3339()) } else { None };
+    connection
+        .execute(
+            "update offline_mutations
+             set sync_status = ?2,
+                 retry_count = case when ?2 = 'failed' then retry_count + 1 else retry_count end,
+                 server_acknowledgement_id = coalesce(?3, server_acknowledgement_id),
+                 failure_reason = ?4,
+                 synced_at = coalesce(?5, synced_at),
+                 updated_at = current_timestamp
+             where transaction_uuid = ?1",
+            params![transaction_uuid, sync_status, server_acknowledgement_id, failure_reason, synced_at],
+        )
+        .map_err(|error| format!("Offline mutation status could not be updated: {error}"))?;
+    Ok(())
 }
 
 pub fn search_cache(app: AppHandle, query: String, cache_types: Vec<String>, office_id: Option<String>, limit: Option<u32>) -> Result<Vec<OfflineSearchResult>, String> {

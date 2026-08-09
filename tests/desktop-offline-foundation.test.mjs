@@ -6,7 +6,10 @@ const migration = readFileSync(new URL("../supabase/upgrade_migrations/0262_offl
 const syncRoute = readFileSync(new URL("../app/api/desktop/sync/route.ts", import.meta.url), "utf8");
 const devicesRoute = readFileSync(new URL("../app/api/desktop/devices/route.ts", import.meta.url), "utf8");
 const bootstrapRoute = readFileSync(new URL("../app/api/desktop/bootstrap/route.ts", import.meta.url), "utf8");
+const desktopLoginRoute = readFileSync(new URL("../app/api/desktop/login/route.ts", import.meta.url), "utf8");
+const desktopSession = readFileSync(new URL("../lib/offline/desktop-session.ts", import.meta.url), "utf8");
 const desktopRuntime = readFileSync(new URL("../lib/offline/desktop-runtime.ts", import.meta.url), "utf8");
+const desktopShellScript = readFileSync(new URL("../scripts/prepare-desktop-dist.mjs", import.meta.url), "utf8");
 const statusChip = readFileSync(new URL("../components/office/shared/DesktopSyncStatus.tsx", import.meta.url), "utf8");
 const syncCentre = readFileSync(new URL("../components/office/sync/SyncCentre.tsx", import.meta.url), "utf8");
 const paymentEntry = readFileSync(new URL("../components/office/payments/FastPaymentsEntry.tsx", import.meta.url), "utf8");
@@ -24,7 +27,8 @@ test("desktop migration stores devices, mutations, conflicts and offline idempot
 });
 
 test("desktop sync endpoint requires auth and queues envelopes without financial shadow posting", () => {
-  assert.match(syncRoute, /await requireAuth\(\)/);
+  assert.match(syncRoute, /requireDesktopContext/);
+  assert.match(syncRoute, /bearerTokenFromRequest\(request\) \? requireDesktopContext\(request\) : requireAuth\(\)/);
   assert.match(syncRoute, /normalizeOfflineTransactionUuid/);
   assert.match(syncRoute, /OFFLINE_MUTATION_TYPES/);
   assert.match(syncRoute, /desktop_sync_mutations/);
@@ -41,12 +45,32 @@ test("desktop device endpoint registers authenticated devices only", () => {
 });
 
 test("desktop bootstrap downloads authorised working cache", () => {
-  assert.match(bootstrapRoute, /await requireAuth\(\)/);
+  assert.match(bootstrapRoute, /requireDesktopContext/);
+  assert.match(bootstrapRoute, /bearerTokenFromRequest\(request\) \? requireDesktopContext\(request\) : requireAuth\(\)/);
   assert.match(bootstrapRoute, /rooms/);
   assert.match(bootstrapRoute, /tenants/);
   assert.match(bootstrapRoute, /landlords/);
   assert.match(bootstrapRoute, /security_deposit_register/);
   assert.match(bootstrapRoute, /expense_categories/);
+});
+
+test("desktop login creates a durable desktop bearer session for local-first startup", () => {
+  assert.match(desktopLoginRoute, /verifyDesktopLogin/);
+  assert.match(desktopLoginRoute, /createDesktopSession/);
+  assert.match(desktopSession, /desktop_auth_sessions/);
+  assert.match(desktopSession, /token_hash/);
+  assert.match(desktopSession, /expires_at/);
+  assert.match(desktopSession, /desktopContextForUser/);
+});
+
+test("desktop bundle contains the operational UI instead of a remote website launcher", () => {
+  assert.doesNotMatch(desktopShellScript, /Open Ddumba OS/);
+  assert.doesNotMatch(desktopShellScript, /Production Login/);
+  assert.doesNotMatch(desktopShellScript, /window\.location\.href\s*=\s*WEB_URL/);
+  assert.match(desktopShellScript, /desktop_get_session/);
+  assert.match(desktopShellScript, /desktop_search_cache/);
+  assert.match(desktopShellScript, /desktop_save_offline_payment/);
+  assert.match(desktopShellScript, /OFFLINE - PENDING SYNC/);
 });
 
 test("office shell exposes sync status and sync centre queue visibility", () => {
