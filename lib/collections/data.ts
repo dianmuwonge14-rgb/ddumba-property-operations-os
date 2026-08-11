@@ -2272,6 +2272,13 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
 
     const leaseByTenant = new Map((leases.data ?? []).map((lease) => [lease.tenant_id, lease]));
     const roomById = new Map((rooms.data ?? []).map((room) => [room.id, room]));
+    const leaseRoomIds = [...new Set((leases.data ?? []).map((lease) => lease.room_id).filter((id): id is string => Boolean(id) && !roomById.has(id)))];
+    if (leaseRoomIds.length) {
+        const { data: leaseRooms } = await supabase.from("rooms").select("*").eq("company_id", companyId).in("id", leaseRoomIds);
+        for (const room of leaseRooms ?? []) {
+            roomById.set(room.id, room);
+        }
+    }
     const sponsorRows = (sponsors.data ?? []) as TenantRentSponsor[];
     const sponsorByTenant = new Map<string, TenantRentSponsor>(sponsorRows.map((sponsor) => [sponsor.tenant_id, sponsor]));
     const allocationsByTenant = new Map<string, Array<Record<string, unknown>>>();
@@ -2289,18 +2296,19 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
         }
     }
 
+    const hydratedRoomRows = [...roomById.values()];
     const propertyIds = [...new Set([
         ...tenants.map((tenant) => tenant.property_id),
-        ...(rooms.data ?? []).map((room) => room.property_id),
+        ...hydratedRoomRows.map((room) => room.property_id),
     ].filter((id): id is string => Boolean(id)))];
     const directLandlordIds = [...new Set([
-        ...(rooms.data ?? []).map((room) => room.landlord_id),
+        ...hydratedRoomRows.map((room) => room.landlord_id),
     ].filter((id): id is string => Boolean(id)))];
 
     const officeIds = [...new Set([
         officeId,
         ...tenants.map((tenant) => tenant.office_id),
-        ...(rooms.data ?? []).map((room) => room.office_id),
+        ...hydratedRoomRows.map((room) => room.office_id),
         ...(leases.data ?? []).map((lease) => lease.office_id),
     ].filter((id): id is string => Boolean(id)))];
 
@@ -2330,7 +2338,8 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
 
     return tenants.map((tenant): CollectionTenantResult => {
         const lease = leaseByTenant.get(tenant.id) ?? null;
-        const room = tenant.room_id ? roomById.get(tenant.room_id) ?? null : null;
+        const roomId = tenant.room_id ?? lease?.room_id ?? null;
+        const room = roomId ? roomById.get(roomId) ?? null : null;
         const propertyId = tenant.property_id ?? room?.property_id ?? null;
         const property = propertyId ? propertyById.get(propertyId) ?? null : null;
         const landlordId = room?.landlord_id ?? property?.landlord_id ?? null;

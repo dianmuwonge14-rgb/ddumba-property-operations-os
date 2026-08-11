@@ -142,6 +142,31 @@ test("tenant receipt branding is configurable per office without hard-coded offi
   assert.match(receiptPrintPdfRoute, /snapshot\.receiptFooter/);
 });
 
+test("tenant receipt room is resolved from authoritative payment and tenant history", () => {
+  const roomRepairMigration = readFileSync(new URL("../supabase/upgrade_migrations/0269_receipt_room_snapshot_repair.sql", import.meta.url), "utf8");
+
+  assert.match(collectionsAction, /const resolvedRoomId = tenantContext\.room\?\.id \?\? tenantContext\.lease\?\.room_id \?\? tenantContext\.tenant\.room_id \?\? null/);
+  assert.match(collectionsAction, /room_id: resolvedRoomId/);
+  assert.match(receiptService, /resolvePaymentRoom/);
+  assert.match(receiptService, /payment\.room_id/);
+  assert.match(receiptService, /resolvePaymentLease/);
+  assert.match(receiptService, /tenant_exit_records/);
+  assert.match(receiptService, /vacated_tenant_debts/);
+  assert.match(receiptService, /roomNumber: text\(room\?\.room_number\)/);
+  assert.match(receiptService, /roomId: text\(room\?\.id\)/);
+  assert.match(receiptService, /paymentId: text\(payment\.id\)/);
+  assert.match(receiptData, /fetchFallbackReceiptRooms/);
+  assert.match(receiptData, /tenant_exit_records/);
+  assert.match(receiptData, /vacated_tenant_debts/);
+  assert.match(receiptData, /roomNumber: row\.receipt_snapshot\?\.roomNumber \?\? fallbackRoom\.roomNumber/);
+  assert.match(roomRepairMigration, /ddumba_receipt_resolved_room/);
+  assert.match(roomRepairMigration, /'payment\.room_id'/);
+  assert.match(roomRepairMigration, /'lease\.room_id'/);
+  assert.match(roomRepairMigration, /'tenant\.room_id'/);
+  assert.match(roomRepairMigration, /'tenant_exit_records\.room_id'/);
+  assert.match(roomRepairMigration, /receipt_room_snapshot_repaired/);
+});
+
 test("receipt history can preview and reprint only the saved receipt slip", () => {
   assert.match(receiptHistory, /TenantPaymentReceiptModal/);
   assert.match(receiptHistory, /downloadTenantPaymentReceiptPdf/);
@@ -316,7 +341,7 @@ test("tenant receipt branding is resolved from the room office and stored in the
   assert.match(receiptService, /receipt_business_name/);
   assert.match(receiptService, /receipt_footer/);
   assert.match(receiptService, /receipt_logo_url/);
-  assert.match(receiptService, /const receiptOfficeId = room\?\.office_id \?\? tenant\?\.office_id \?\? payment\.office_id/);
+  assert.match(receiptService, /const receiptOfficeId = room\?\.office_id \?\? lease\?\.office_id \?\? tenant\?\.office_id \?\? payment\.office_id/);
   assert.match(receiptService, /companyName: branding\.name/);
   assert.match(sharedReceipt, /safeText\(snapshot\.companyName\) \?\? "DDUMBA OS"/);
   assert.match(sharedReceipt, /snapshot\.receiptFooter/);

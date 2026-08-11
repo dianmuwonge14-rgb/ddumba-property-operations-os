@@ -72,6 +72,10 @@ export type PaymentReceiptSnapshot = {
     paymentMethod: string | null;
     previousOutstandingBalance: number;
     receiptNumber: string;
+    landlordId?: string | null;
+    officeId?: string | null;
+    paymentId?: string | null;
+    roomId?: string | null;
     amendmentHistory?: PaymentReceiptAmendmentSnapshot[];
     amendmentSummary?: string | null;
     approvalDate?: string | null;
@@ -91,6 +95,7 @@ export type PaymentReceiptSnapshot = {
     referenceNumber: string | null;
     remainingOutstandingBalance: number;
     roomNumber: string | null;
+    tenantId?: string | null;
     securityDepositAmount?: number;
     securityDepositReceiptNumber?: string | null;
     status: string;
@@ -269,6 +274,97 @@ async function getUserName(db: Db, id: unknown) {
     return text(data?.full_name) ?? text(data?.email) ?? text(data?.phone);
 }
 
+function paymentDateKey(payment: LooseRow) {
+    return text(payment.payment_date)?.slice(0, 10)
+        ?? text(payment.paid_at)?.slice(0, 10)
+        ?? text(payment.created_at)?.slice(0, 10)
+        ?? null;
+}
+
+function leaseCoversPaymentDate(lease: LooseRow, paymentDate: string | null) {
+    if (!paymentDate) return true;
+    const start = text(lease.start_date)?.slice(0, 10) ?? "";
+    const end = text(lease.end_date)?.slice(0, 10) ?? "";
+    return (!start || start <= paymentDate) && (!end || end >= paymentDate);
+}
+
+async function resolvePaymentLease(db: Db, payment: LooseRow, tenant: LooseRow | null, companyId: string) {
+    const explicitLease = await getOne(db, "leases", payment.lease_id, companyId, "id,company_id,office_id,property_id,room_id,tenant_id,start_date,end_date,status,monthly_rent");
+    if (explicitLease?.room_id) return explicitLease;
+    const tenantId = payment.tenant_id ?? tenant?.id;
+    if (!tenantId) return null;
+
+    const { data, error } = await db
+        .from("leases")
+        .select("id,company_id,office_id,property_id,room_id,tenant_id,start_date,end_date,status,monthly_rent")
+        .eq("company_id", companyId)
+        .eq("tenant_id", tenantId)
+        .order("start_date", { ascending: false })
+        .limit(12);
+    if (error && !isMissingSchemaError(error)) throw new Error(error.message);
+
+    const leases = ((data ?? []) as LooseRow[]).filter((lease) => lease.room_id);
+    const paymentDate = paymentDateKey(payment);
+    return leases.find((lease) => leaseCoversPaymentDate(lease, paymentDate))
+        ?? leases.find((lease) => String(lease.status ?? "").toLowerCase() === "active")
+        ?? leases[0]
+        ?? null;
+}
+
+async function resolveHistoricalPaymentRoom(db: Db, payment: LooseRow, tenant: LooseRow | null, companyId: string) {
+    const tenantId = payment.tenant_id ?? tenant?.id;
+    if (!tenantId) return null;
+
+    const paymentDate = paymentDateKey(payment);
+    const exitRows = await db
+        .from("tenant_exit_records")
+        .select("id,room_id,lease_id,created_at")
+        .eq("company_id", companyId)
+        .eq("tenant_id", tenantId)
+        .order("created_at", { ascending: false })
+        .limit(8);
+    if (exitRows.error && !isMissingSchemaError(exitRows.error)) throw new Error(exitRows.error.message);
+
+    const exits = ((exitRows.data ?? []) as LooseRow[]).filter((row) => row.room_id);
+    const matchingExit = exits.find((row) => {
+        const created = text(row.created_at)?.slice(0, 10);
+        return !paymentDate || !created || paymentDate <= created;
+    }) ?? exits[0] ?? null;
+    const roomFromExit = await getOne(db, "rooms", matchingExit?.room_id, companyId, "*");
+    if (roomFromExit) return roomFromExit;
+
+    const debtRows = await db
+        .from("vacated_tenant_debts")
+        .select("id,room_id,lease_id,created_at")
+        .eq("company_id", companyId)
+        .eq("tenant_id", tenantId)
+        .order("created_at", { ascending: false })
+        .limit(8);
+    if (debtRows.error && !isMissingSchemaError(debtRows.error)) throw new Error(debtRows.error.message);
+
+    const debts = ((debtRows.data ?? []) as LooseRow[]).filter((row) => row.room_id);
+    const matchingDebt = debts.find((row) => {
+        const created = text(row.created_at)?.slice(0, 10);
+        return !paymentDate || !created || paymentDate <= created;
+    }) ?? debts[0] ?? null;
+    return getOne(db, "rooms", matchingDebt?.room_id, companyId, "*");
+}
+
+async function resolvePaymentRoom(db: Db, payment: LooseRow, tenant: LooseRow | null, companyId: string) {
+    const roomFromPayment = await getOne(db, "rooms", payment.room_id, companyId, "*");
+    if (roomFromPayment) return { lease: null as LooseRow | null, room: roomFromPayment };
+
+    const lease = await resolvePaymentLease(db, payment, tenant, companyId);
+    const roomFromLease = await getOne(db, "rooms", lease?.room_id, companyId, "*");
+    if (roomFromLease) return { lease, room: roomFromLease };
+
+    const historicalRoom = await resolveHistoricalPaymentRoom(db, payment, tenant, companyId);
+    if (historicalRoom) return { lease, room: historicalRoom };
+
+    const roomFromTenant = await getOne(db, "rooms", tenant?.room_id, companyId, "*");
+    return { lease, room: roomFromTenant };
+}
+
 function accountTypeAllowsReceiptIssuer(accountType: unknown) {
     const value = String(accountType ?? "").toLowerCase();
     return !/(office|workspace|shared|system|service)/i.test(value);
@@ -312,18 +408,18 @@ async function resolveReceiptIssuer(db: Db, companyId: string, payment: LooseRow
 
 async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumber: string, verificationCode: string): Promise<PaymentReceiptSnapshot> {
     const companyId = String(payment.company_id);
-    const [company, tenant, room, recordedBy] = await Promise.all([
+    const [company, tenant, recordedBy] = await Promise.all([
         getOne(db, "companies", payment.company_id, companyId, "*"),
         getOne(db, "tenants", payment.tenant_id, companyId, "*"),
-        getOne(db, "rooms", payment.room_id, companyId, "*"),
         payment.recorded_by ? db.from("users").select("id,employee_id,full_name,email,phone,account_type").eq("id", payment.recorded_by).maybeSingle() : Promise.resolve({ data: null, error: null }),
     ]);
     if (recordedBy.error && !isMissingSchemaError(recordedBy.error)) throw new Error(recordedBy.error.message);
 
-    const receiptOfficeId = room?.office_id ?? tenant?.office_id ?? payment.office_id;
+    const { lease, room } = await resolvePaymentRoom(db, payment, tenant, companyId);
+    const receiptOfficeId = room?.office_id ?? lease?.office_id ?? tenant?.office_id ?? payment.office_id;
     const office = await getOne(db, "offices", receiptOfficeId, companyId, "*");
     const landlordId = room?.landlord_id ?? null;
-    const propertyId = room?.property_id ?? tenant?.property_id ?? null;
+    const propertyId = room?.property_id ?? lease?.property_id ?? tenant?.property_id ?? null;
     const [landlord, property] = await Promise.all([
         landlordId ? getOne(db, "landlords", landlordId, companyId, "*") : Promise.resolve(null),
         propertyId ? getOne(db, "properties", propertyId, companyId, "*") : Promise.resolve(null),
@@ -399,12 +495,17 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
         preparedByRole: issuer.role,
         previousOutstandingBalance: amount(payment.balance_before_payment ?? payment.expected_amount),
         receiptNumber,
+        landlordId: text(landlord?.id ?? landlordId),
+        officeId: text(receiptOfficeId),
+        paymentId: text(payment.id),
         recordedByName: issuer.name ?? text(payment.entered_by_name) ?? (accountTypeAllowsReceiptIssuer(recordedBy.data?.account_type) ? text(recordedBy.data?.full_name) : null),
         referenceNumber: text(payment.reference_number ?? payment.cheque_reference ?? payment.collection_number),
         remainingOutstandingBalance: amount(payment.balance_after_payment ?? payment.balance),
+        roomId: text(room?.id),
         roomNumber: text(room?.room_number),
         status: text(payment.status) ?? "paid",
         tenantEmail: text(tenant?.email),
+        tenantId: text(tenant?.id ?? payment.tenant_id),
         tenantName: text(tenant?.full_name),
         tenantPhone: text(tenant?.phone),
         verificationCode,
@@ -448,7 +549,7 @@ export async function createTenantPaymentReceipt(paymentId: string, options: { c
             corrected_from_receipt_id: options.correctedFromReceiptId ?? null,
             file_url: null,
             issued_by: options.issuedBy ?? payment.recorded_by ?? null,
-            office_id: payment.office_id ?? null,
+                office_id: snapshot.officeId ?? payment.office_id ?? null,
             payment_id: paymentId,
             payment_type: "tenant_collection",
             receipt_number: receiptNumber,
@@ -553,7 +654,7 @@ export async function syncTenantPaymentReceiptForCorrection(input: {
         const { data: updatedReceipt, error: updateError } = await db
             .from("payment_receipts")
             .update({
-                office_id: payment.office_id ?? request.office_id ?? existing.office_id ?? null,
+                office_id: updatedSnapshot.officeId ?? payment.office_id ?? request.office_id ?? existing.office_id ?? null,
                 receipt_snapshot: updatedSnapshot,
                 status: receiptStatus,
                 updated_at: new Date().toISOString(),
@@ -570,7 +671,7 @@ export async function syncTenantPaymentReceiptForCorrection(input: {
                 company_id: companyId,
                 file_url: null,
                 issued_by: payment.recorded_by ?? request.requested_by ?? null,
-                office_id: payment.office_id ?? request.office_id ?? null,
+                office_id: updatedSnapshot.officeId ?? payment.office_id ?? request.office_id ?? null,
                 payment_id: input.paymentId,
                 payment_type: "tenant_collection",
                 receipt_number: receiptNumber,

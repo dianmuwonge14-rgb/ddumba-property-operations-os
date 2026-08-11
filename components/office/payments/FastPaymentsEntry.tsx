@@ -1218,7 +1218,7 @@ export default function FastPaymentsEntry({
                             paymentDate,
                             paymentMethod,
                             referenceNumber: paymentReference.trim() || undefined,
-                            roomId: selectedTenant.room?.id ?? selectedTenant.tenant.room_id ?? null,
+                            roomId: selectedTenant.room?.id ?? selectedTenant.lease?.room_id ?? selectedTenant.tenant.room_id ?? null,
                             tenantId: selectedTenant.tenant.id,
                             userId: profile.id,
                         });

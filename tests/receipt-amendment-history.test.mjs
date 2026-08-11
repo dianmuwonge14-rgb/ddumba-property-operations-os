@@ -26,7 +26,7 @@ test("payment correction approval syncs receipt status and amendment history", (
   assert.match(service, /receiptAmendmentHistory/);
   assert.match(service, /getOne\(db, "rooms", row\.room_id/);
   assert.match(service, /status: receiptStatus/);
-  assert.match(service, /office_id: payment\.office_id \?\? request\.office_id \?\? existing\.office_id/);
+  assert.match(service, /office_id: updatedSnapshot\.officeId \?\? payment\.office_id \?\? request\.office_id \?\? existing\.office_id/);
   assert.match(collections, /syncTenantPaymentReceiptForCorrection/);
   assert.match(collections, /markTenantPaymentReceiptPendingCorrection/);
   assert.match(collections, /decision: input\.decision/);

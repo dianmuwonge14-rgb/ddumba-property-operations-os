@@ -39,9 +39,165 @@ type AmendmentRow = {
     status: string;
 };
 
+type LooseRow = Record<string, unknown>;
+
 function missingSchema(error: { message?: string; code?: string } | null | undefined) {
     const message = String(error?.message ?? "");
     return error?.code === "42P01" || error?.code === "PGRST205" || /does not exist|schema cache|Could not find/i.test(message);
+}
+
+function text(value: unknown) {
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function paymentDateKey(row: LooseRow) {
+    return text(row.payment_date)?.slice(0, 10)
+        ?? text(row.paid_at)?.slice(0, 10)
+        ?? text(row.created_at)?.slice(0, 10)
+        ?? null;
+}
+
+function leaseCoversPaymentDate(lease: LooseRow, paymentDate: string | null) {
+    if (!paymentDate) return true;
+    const start = text(lease.start_date)?.slice(0, 10) ?? "";
+    const end = text(lease.end_date)?.slice(0, 10) ?? "";
+    return (!start || start <= paymentDate) && (!end || end >= paymentDate);
+}
+
+async function fetchFallbackReceiptRooms(db: { from: (table: string) => any }, companyId: string, rows: ReceiptRow[]) {
+    const candidates = rows.filter((row) => row.payment_type === "tenant_collection" && !text(row.receipt_snapshot?.roomNumber));
+    const fallbackByReceipt = new Map<string, { officeId: string | null; roomId: string | null; roomNumber: string | null }>();
+    if (!candidates.length) return fallbackByReceipt;
+
+    const paymentIds = candidates.map((row) => row.payment_id);
+    const { data: paymentRows, error: paymentError } = await db
+        .from("collections")
+        .select("id,company_id,office_id,property_id,tenant_id,room_id,lease_id,payment_date,paid_at,created_at")
+        .eq("company_id", companyId)
+        .in("id", paymentIds);
+    if (paymentError) return fallbackByReceipt;
+
+    const payments = (paymentRows ?? []) as LooseRow[];
+    const tenantIds = Array.from(new Set(payments.map((payment) => text(payment.tenant_id)).filter(Boolean) as string[]));
+
+    const tenantById = new Map<string, LooseRow>();
+    if (tenantIds.length) {
+        const { data: tenantRows, error: tenantError } = await db
+            .from("tenants")
+            .select("id,room_id,office_id")
+            .eq("company_id", companyId)
+            .in("id", tenantIds);
+        if (!tenantError) {
+            for (const tenant of ((tenantRows ?? []) as LooseRow[])) tenantById.set(String(tenant.id), tenant);
+        }
+    }
+
+    const leasesByTenant = new Map<string, LooseRow[]>();
+    if (tenantIds.length) {
+        const { data: leaseRows, error: leaseError } = await db
+            .from("leases")
+            .select("id,tenant_id,room_id,office_id,property_id,start_date,end_date,status,created_at")
+            .eq("company_id", companyId)
+            .in("tenant_id", tenantIds)
+            .order("start_date", { ascending: false });
+        if (!leaseError || missingSchema(leaseError)) {
+            for (const lease of ((leaseRows ?? []) as LooseRow[]).filter((row) => row.room_id)) {
+                const tenantId = String(lease.tenant_id);
+                leasesByTenant.set(tenantId, [...(leasesByTenant.get(tenantId) ?? []), lease]);
+            }
+        }
+    }
+
+    const exitsByTenant = new Map<string, LooseRow[]>();
+    if (tenantIds.length) {
+        const { data: exitRows, error: exitError } = await db
+            .from("tenant_exit_records")
+            .select("id,tenant_id,room_id,lease_id,created_at")
+            .eq("company_id", companyId)
+            .in("tenant_id", tenantIds)
+            .order("created_at", { ascending: false });
+        if (!exitError || missingSchema(exitError)) {
+            for (const exit of ((exitRows ?? []) as LooseRow[]).filter((row) => row.room_id)) {
+                const tenantId = String(exit.tenant_id);
+                exitsByTenant.set(tenantId, [...(exitsByTenant.get(tenantId) ?? []), exit]);
+            }
+        }
+    }
+
+    const debtsByTenant = new Map<string, LooseRow[]>();
+    if (tenantIds.length) {
+        const { data: debtRows, error: debtError } = await db
+            .from("vacated_tenant_debts")
+            .select("id,tenant_id,room_id,lease_id,created_at")
+            .eq("company_id", companyId)
+            .in("tenant_id", tenantIds)
+            .order("created_at", { ascending: false });
+        if (!debtError || missingSchema(debtError)) {
+            for (const debt of ((debtRows ?? []) as LooseRow[]).filter((row) => row.room_id)) {
+                const tenantId = String(debt.tenant_id);
+                debtsByTenant.set(tenantId, [...(debtsByTenant.get(tenantId) ?? []), debt]);
+            }
+        }
+    }
+
+    const resolvedRoomIds = new Set<string>();
+    const fallbackRoomIdByPayment = new Map<string, string>();
+    for (const payment of payments) {
+        const tenantId = text(payment.tenant_id);
+        const tenant = tenantId ? tenantById.get(tenantId) : null;
+        const paymentDate = paymentDateKey(payment);
+        const leases = tenantId ? leasesByTenant.get(tenantId) ?? [] : [];
+        const matchingLease = leases.find((lease) => leaseCoversPaymentDate(lease, paymentDate))
+            ?? leases.find((lease) => String(lease.status ?? "").toLowerCase() === "active")
+            ?? leases[0]
+            ?? null;
+        const exits = tenantId ? exitsByTenant.get(tenantId) ?? [] : [];
+        const matchingExit = exits.find((exit) => {
+            const created = text(exit.created_at)?.slice(0, 10);
+            return !paymentDate || !created || paymentDate <= created;
+        }) ?? exits[0] ?? null;
+        const debts = tenantId ? debtsByTenant.get(tenantId) ?? [] : [];
+        const matchingDebt = debts.find((debt) => {
+            const created = text(debt.created_at)?.slice(0, 10);
+            return !paymentDate || !created || paymentDate <= created;
+        }) ?? debts[0] ?? null;
+        const roomId = text(payment.room_id)
+            ?? text(matchingLease?.room_id)
+            ?? text(tenant?.room_id)
+            ?? text(matchingExit?.room_id)
+            ?? text(matchingDebt?.room_id);
+        if (roomId) {
+            fallbackRoomIdByPayment.set(String(payment.id), roomId);
+            resolvedRoomIds.add(roomId);
+        }
+    }
+
+    const roomById = new Map<string, LooseRow>();
+    if (resolvedRoomIds.size) {
+        const { data: roomRows, error: roomError } = await db
+            .from("rooms")
+            .select("id,office_id,room_number")
+            .eq("company_id", companyId)
+            .in("id", Array.from(resolvedRoomIds));
+        if (!roomError) {
+            for (const room of ((roomRows ?? []) as LooseRow[])) roomById.set(String(room.id), room);
+        }
+    }
+
+    for (const row of candidates) {
+        const roomId = fallbackRoomIdByPayment.get(row.payment_id) ?? null;
+        const room = roomId ? roomById.get(roomId) : null;
+        const roomNumber = text(room?.room_number);
+        if (roomNumber) {
+            fallbackByReceipt.set(row.id, {
+                officeId: text(room?.office_id),
+                roomId,
+                roomNumber,
+            });
+        }
+    }
+
+    return fallbackByReceipt;
 }
 
 export type ReceiptHistoryItem = {
@@ -204,22 +360,27 @@ export const getReceiptHistoryData = cache(async function getReceiptHistoryData(
             }
         }
     }
+    const fallbackRooms = await fetchFallbackReceiptRooms(db, context.activeCompany.id, rows);
 
     return {
         error: null,
         receipts: rows.map((row) => {
             const amendments = amendmentsByReceipt.get(row.id) ?? row.receipt_snapshot?.amendmentHistory ?? [];
             const latestAmendment = amendments.at(-1) ?? null;
+            const fallbackRoom = fallbackRooms.get(row.id) ?? null;
+            const snapshot = fallbackRoom
+                ? { ...row.receipt_snapshot, roomId: row.receipt_snapshot?.roomId ?? fallbackRoom.roomId, roomNumber: row.receipt_snapshot?.roomNumber ?? fallbackRoom.roomNumber }
+                : row.receipt_snapshot;
             return ({
-            amountPaid: Number(row.receipt_snapshot?.amountPaid ?? 0),
-            amendmentSummary: row.receipt_snapshot?.amendmentSummary ?? (
+            amountPaid: Number(snapshot?.amountPaid ?? 0),
+            amendmentSummary: snapshot?.amendmentSummary ?? (
                 latestAmendment
                     ? `${latestAmendment.fieldLabel} ${latestAmendment.status === "rejected" ? "change rejected" : "changed"}`
                     : null
             ),
             amendments,
-            approvedByName: row.receipt_snapshot?.changeApprovedByName ?? latestAmendment?.approvedByName ?? null,
-            changedByName: row.receipt_snapshot?.changedByName ?? latestAmendment?.changedByName ?? null,
+            approvedByName: snapshot?.changeApprovedByName ?? latestAmendment?.approvedByName ?? null,
+            changedByName: snapshot?.changedByName ?? latestAmendment?.changedByName ?? null,
             deliveryStatus: deliveryByReceipt.get(row.id) ?? {
                 email: null,
                 emailAt: null,
@@ -233,18 +394,18 @@ export const getReceiptHistoryData = cache(async function getReceiptHistoryData(
             id: row.id,
             issuedAt: row.issued_at,
             lastUpdatedAt: latestAmendment?.approvalDate ?? latestAmendment?.changeDate ?? row.issued_at,
-            officeName: row.receipt_snapshot?.officeName ?? null,
+            officeName: snapshot?.officeName ?? null,
             paymentId: row.payment_id,
             paymentType: row.payment_type,
-            preparedByName: row.receipt_snapshot?.preparedByName ?? row.receipt_snapshot?.recordedByName ?? null,
+            preparedByName: snapshot?.preparedByName ?? snapshot?.recordedByName ?? null,
             receiptNumber: row.receipt_number,
-            recordedByName: row.receipt_snapshot?.recordedByName ?? null,
-            remainingOutstandingBalance: Number(row.receipt_snapshot?.remainingOutstandingBalance ?? 0),
-            roomNumber: row.receipt_snapshot?.roomNumber ?? null,
-            snapshot: row.receipt_snapshot,
+            recordedByName: snapshot?.recordedByName ?? null,
+            remainingOutstandingBalance: Number(snapshot?.remainingOutstandingBalance ?? 0),
+            roomNumber: snapshot?.roomNumber ?? null,
+            snapshot,
             status: row.status,
-            tenantName: row.receipt_snapshot?.tenantName ?? null,
-            tenantPhone: row.receipt_snapshot?.tenantPhone ?? null,
+            tenantName: snapshot?.tenantName ?? null,
+            tenantPhone: snapshot?.tenantPhone ?? null,
             verificationCode: row.verification_code,
             });
         }),

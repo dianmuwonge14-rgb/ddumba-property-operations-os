@@ -173,8 +173,18 @@ async function getFastTenantPaymentContext(input: {
         throw new Error(allocationResult.error.message);
     }
 
-    const room = roomResult.data;
     const lease = leaseResult.data;
+    let room = roomResult.data;
+    if (!room && lease?.room_id) {
+        const leaseRoomResult = await supabase
+            .from("rooms")
+            .select("id, company_id, office_id, property_id, room_number, monthly_rent, outstanding_balance, status")
+            .eq("id", lease.room_id)
+            .eq("company_id", companyId)
+            .maybeSingle();
+        if (leaseRoomResult.error) throw new Error(leaseRoomResult.error.message);
+        room = leaseRoomResult.data;
+    }
     const monthlyRent = Number(lease?.monthly_rent ?? tenant.monthly_rent ?? room?.monthly_rent ?? 0);
     const activeAdvanceBalance = (allocationResult.data ?? []).reduce((total: number, row: Record<string, unknown>) => total + availableAdvanceAllocation(row), 0);
     const netBalance = displayTenantNetBalance({
@@ -1055,6 +1065,7 @@ export async function recordCollection(input: RecordCollectionInput) {
         tenantContext.room?.office_id ??
         tenantContext.tenant.office_id ??
         context.activeOffice.id;
+    const resolvedRoomId = tenantContext.room?.id ?? tenantContext.lease?.room_id ?? tenantContext.tenant.room_id ?? null;
     const balanceBefore = Math.max(0, tenantContext.outstandingBalance);
     const totalDueBeforePayment = balanceBefore;
     const balance = Math.max(0, totalDueBeforePayment - amount);
@@ -1108,7 +1119,7 @@ export async function recordCollection(input: RecordCollectionInput) {
             recorded_by_employee_id: employeeId,
             recorded_by: context.profile?.id ?? null,
             reference_number: input.referenceNumber || null,
-            room_id: tenantContext.room?.id ?? tenantContext.tenant.room_id,
+            room_id: resolvedRoomId,
             status: "paid",
             tenant_id: tenantContext.tenant.id,
             tenant_top_up_balance_after: tenantTopUpBalanceAfter,
@@ -1207,7 +1218,7 @@ export async function recordCollection(input: RecordCollectionInput) {
             is_historical_credit: allocation.isHistoricalCredit,
             office_id: resolvedOfficeId,
             payment_id: data.id,
-            room_id: tenantContext.room?.id ?? tenantContext.tenant.room_id ?? null,
+            room_id: resolvedRoomId,
             source_lease_id: "coverageStart" in allocation ? tenantContext.lease?.id ?? null : null,
             tenant_id: tenantContext.tenant.id,
         }))));
@@ -1234,7 +1245,7 @@ export async function recordCollection(input: RecordCollectionInput) {
         db: supabase as unknown as DynamicDb,
         note: `${paymentLabel} recorded; final tenant balance reconciled as one net outstanding/advance position.`,
         requestedOutstanding: balance,
-        roomId: tenantContext.room?.id ?? tenantContext.tenant.room_id ?? null,
+        roomId: resolvedRoomId,
         sourceId: data.id,
         sourceType: "collection_payment",
         tenantId: tenantContext.tenant.id,
@@ -1371,7 +1382,7 @@ export async function checkCollectionDuplicate(input: { tenantId: string; paymen
 
     const dateOnly = input.paymentDate.slice(0, 10);
     assertDate(dateOnly, "Payment date");
-    const roomId = tenantContext.room?.id ?? tenantContext.tenant.room_id;
+    const roomId = tenantContext.room?.id ?? tenantContext.lease?.room_id ?? tenantContext.tenant.room_id;
 
     let query = supabase
         .from("collections")
@@ -2516,6 +2527,7 @@ export async function createPromise(input: CreatePromiseInput) {
         tenantContext.room?.office_id ??
         tenantContext.tenant.office_id ??
         context.activeOffice.id;
+    const resolvedRoomId = tenantContext.room?.id ?? tenantContext.lease?.room_id ?? tenantContext.tenant.room_id ?? null;
     const { data, error } = await supabase
         .from("promises")
         .insert({
@@ -2528,7 +2540,7 @@ export async function createPromise(input: CreatePromiseInput) {
             promise_date: input.promisedDate,
             promised_amount: amount,
             promised_date: input.promisedDate,
-            room_id: tenantContext.room?.id ?? tenantContext.tenant.room_id,
+            room_id: resolvedRoomId,
             status: "open",
             tenant_id: tenantContext.tenant.id,
         })
@@ -2653,6 +2665,7 @@ export async function followUpPromise(input: FollowUpPromiseInput) {
             tenantContext.room?.office_id ??
             tenantContext.tenant.office_id ??
             context.activeOffice.id;
+        const resolvedRoomId = tenantContext.room?.id ?? tenantContext.lease?.room_id ?? tenantContext.tenant.room_id ?? null;
         const amount = Number(promise.promised_amount ?? promise.amount ?? 0);
         assertPositiveAmount(amount, "Promise payment amount");
         const balanceBefore = Math.max(0, tenantContext.outstandingBalance);
@@ -2678,7 +2691,7 @@ export async function followUpPromise(input: FollowUpPromiseInput) {
                 property_id: tenantContext.property?.id ?? tenantContext.tenant.property_id,
                 recorded_by: context.profile?.id ?? null,
                 reference_number: `PROM-${promise.id.slice(0, 8)}-${Date.now()}`,
-                room_id: tenantContext.room?.id ?? tenantContext.tenant.room_id,
+                room_id: resolvedRoomId,
                 status: "paid",
                 tenant_id: tenantContext.tenant.id,
                 type: "rent",
