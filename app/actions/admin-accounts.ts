@@ -14,12 +14,22 @@ type OfficeAccountInput = {
     confirmPin?: string;
     officeId: string;
     roleId: string;
-    accountType?: "office" | "admin" | "receptionist";
+    accountType?: "office" | "admin" | "receptionist" | "collector" | "manager" | "employee";
     status?: string;
     employeeId?: string;
     phone?: string;
     effectiveStartDate?: string;
     loginIdentifier?: string;
+};
+
+type EmployeeLoginAccountInput = {
+    employeeId: string;
+    officeId: string;
+    roleId: string;
+    pin: string;
+    confirmPin?: string;
+    status?: string;
+    effectiveStartDate?: string;
 };
 
 type UpdateOfficeAccountInput = {
@@ -535,7 +545,8 @@ export async function createOfficeAccount(input: OfficeAccountInput) {
 
         if (userError) throw new Error(userError.message);
 
-        const linkedEmployee = accountType === "receptionist"
+        const shouldLinkEmployee = accountType !== "admin" || Boolean(input.employeeId);
+        const linkedEmployee = shouldLinkEmployee
             ? await resolveReceptionistEmployee({
                 companyId: context.activeCompany.id,
                 employeeId: input.employeeId,
@@ -565,7 +576,7 @@ export async function createOfficeAccount(input: OfficeAccountInput) {
             company_id: context.activeCompany.id,
             office_id: input.officeId,
             user_id: authUser.user.id,
-            event_type: accountType === "receptionist" ? "receptionist_account_created" : "office_account_created",
+            event_type: accountType === "receptionist" ? "receptionist_account_created" : "employee_login_account_created",
             severity: "info",
             metadata: {
                 account_type: accountType,
@@ -576,7 +587,7 @@ export async function createOfficeAccount(input: OfficeAccountInput) {
         });
 
         await logUserAction({
-            action: accountType === "receptionist" ? "receptionist_account_created" : "office_account_created",
+            action: accountType === "receptionist" ? "receptionist_account_created" : "employee_login_account_created",
             entityType: "user",
             entityId: authUser.user.id,
             companyId: context.activeCompany.id,
@@ -605,6 +616,81 @@ export async function createOfficeAccount(input: OfficeAccountInput) {
         }
         throw new Error(businessError.message);
     }
+}
+
+export async function createEmployeeLoginAccount(input: EmployeeLoginAccountInput) {
+    const context = await requirePermission("settings.manage");
+    if (!context.activeCompany?.id) throw new Error("Active company is required.");
+    if (!input.employeeId || !input.officeId || !input.roleId) throw new Error("Employee, role, and office are required.");
+
+    const admin = createSupabaseAdminClient();
+    const [{ data: employee, error: employeeError }, { data: role, error: roleError }] = await Promise.all([
+        admin
+            .from("employees")
+            .select("id, full_name, phone, employee_code, email, user_id, company_id")
+            .eq("company_id", context.activeCompany.id)
+            .eq("id", input.employeeId)
+            .maybeSingle(),
+        admin
+            .from("roles")
+            .select("id, key, name")
+            .or(`company_id.eq.${context.activeCompany.id},company_id.is.null`)
+            .eq("id", input.roleId)
+            .maybeSingle(),
+    ]);
+    if (employeeError) throw new Error(employeeError.message);
+    if (roleError) throw new Error(roleError.message);
+    if (!employee?.id) throw new Error("Selected employee could not be found.");
+    if (!role?.id) throw new Error("Selected role could not be found.");
+    if (employee.user_id) throw new Error(`${employee.full_name ?? "This employee"} already has a login account.`);
+
+    const roleKey = String(role.key ?? role.name ?? "").toLowerCase();
+    if (["super_admin", "company_admin", "hq_executive"].some((key) => roleKey.includes(key))) {
+        throw new Error("Admin roles cannot be created from employee login creation.");
+    }
+
+    const accountType = roleKey.includes("receptionist")
+        ? "receptionist"
+        : roleKey.includes("collector")
+            ? "collector"
+            : roleKey.includes("manager")
+                ? "manager"
+                : "employee";
+
+    await createOfficeAccount({
+        accountType,
+        confirmPin: input.confirmPin,
+        effectiveStartDate: input.effectiveStartDate,
+        email: String(employee.email ?? "").trim(),
+        employeeId: employee.id,
+        fullName: String(employee.full_name ?? "").trim(),
+        loginIdentifier: String(employee.employee_code ?? employee.full_name ?? "").trim(),
+        officeId: input.officeId,
+        phone: String(employee.phone ?? "").trim(),
+        pin: input.pin,
+        roleId: input.roleId,
+        status: input.status ?? "active",
+    });
+
+    const roleName = String(role.name ?? role.key ?? "Employee").trim();
+    const { error: roleSyncError } = await admin
+        .from("employees")
+        .update({
+            job_title: roleName,
+            role: roleName,
+            role_id: role.id,
+            role_name: roleName,
+            updated_at: new Date().toISOString(),
+        } as never)
+        .eq("company_id", context.activeCompany.id)
+        .eq("id", employee.id);
+    if (roleSyncError && !/role_id|role_name|role|schema cache/i.test(roleSyncError.message)) {
+        throw new Error(roleSyncError.message);
+    }
+
+    revalidatePath("/office/admin");
+    revalidatePath("/office/admin/employees");
+    revalidatePath("/office/employees");
 }
 
 export async function updateOfficeAccount(input: UpdateOfficeAccountInput) {

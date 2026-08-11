@@ -116,6 +116,7 @@ export async function getOfficeEmployeeCentreData(): Promise<EmployeeManagementD
         const assignmentType = employee.employee_assignment_type === "all_rounder" ? "all_rounder" : "fixed_office";
         return {
             id,
+            userId: employee.user_id ? String(employee.user_id) : null,
             fullName: text(employee.full_name, "Unnamed Employee"),
             age: employee.age === null || employee.age === undefined ? null : Number(employee.age),
             employeeCode: text(employee.employee_code, id.slice(0, 8)),

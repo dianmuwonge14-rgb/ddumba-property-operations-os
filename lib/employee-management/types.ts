@@ -25,6 +25,7 @@ export type EmployeeFinance = {
 
 export type EmployeeProfile = {
     id: string;
+    userId: string | null;
     fullName: string;
     age: number | null;
     employeeCode: string;

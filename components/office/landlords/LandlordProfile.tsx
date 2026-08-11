@@ -3,7 +3,7 @@
 import { memo, useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import type React from "react";
 import { useRouter } from "next/navigation";
-import { addRoomToLandlord, deleteOrArchiveLandlordRoom, generateLandlordStatement, markLandlordMonthlyPayablePaid, markLandlordSettlementPaid, permanentlyDeleteLandlordPortfolio } from "@/app/actions/landlords";
+import { addRoomToLandlord, changeLandlordPortfolioOffice, deleteOrArchiveLandlordRoom, generateLandlordStatement, markLandlordMonthlyPayablePaid, markLandlordSettlementPaid, permanentlyDeleteLandlordPortfolio } from "@/app/actions/landlords";
 import type { CollectionTenantResult } from "@/lib/collections/types";
 import type { LandlordItem, LandlordRoomAssignmentOption } from "@/lib/landlords/types";
 import { landlordMonthlyDeductions, landlordMonthlyDue } from "@/lib/landlord-payables/payment-allocation";
@@ -107,6 +107,13 @@ function LandlordProfile({
     const [landlordDeleteConfirmation, setLandlordDeleteConfirmation] = useState("");
     const [landlordDeleteError, setLandlordDeleteError] = useState<string | null>(null);
     const [landlordDeleteMessage, setLandlordDeleteMessage] = useState<string | null>(null);
+    const [officeMoveOpen, setOfficeMoveOpen] = useState(false);
+    const [officeMoveMode, setOfficeMoveMode] = useState<"portfolio" | "rooms">("portfolio");
+    const [officeMoveRoomId, setOfficeMoveRoomId] = useState("");
+    const [officeMoveDestinationId, setOfficeMoveDestinationId] = useState("");
+    const [officeMoveReason, setOfficeMoveReason] = useState("");
+    const [officeMoveMessage, setOfficeMoveMessage] = useState<string | null>(null);
+    const [officeMoveError, setOfficeMoveError] = useState<string | null>(null);
     const [monthlyPayableMessage, setMonthlyPayableMessage] = useState<string | null>(null);
     const [payablePaymentInputs, setPayablePaymentInputs] = useState<Record<string, string>>({});
     const [roomForm, setRoomForm] = useState({
@@ -149,6 +156,13 @@ function LandlordProfile({
         setLandlordDeleteConfirmation("");
         setLandlordDeleteError(null);
         setLandlordDeleteMessage(null);
+        setOfficeMoveOpen(false);
+        setOfficeMoveMode("portfolio");
+        setOfficeMoveRoomId("");
+        setOfficeMoveDestinationId("");
+        setOfficeMoveReason("");
+        setOfficeMoveMessage(null);
+        setOfficeMoveError(null);
         setMonthlyPayableMessage(null);
         setPayablePaymentInputs({});
         setRoomForm((current) => ({ ...current, roomNumber: "", monthlyRent: "", openingOutstanding: "", startDate: new Date().toISOString().slice(0, 10), tenantName: "", tenantPhone: "", notes: "" }));
@@ -433,6 +447,45 @@ function LandlordProfile({
         });
     }
 
+    function submitOfficeMove() {
+        if (!landlord) return;
+        const destinationId = officeMoveDestinationId.trim();
+        const reason = officeMoveReason.trim();
+        if (!destinationId) {
+            setOfficeMoveError("Select the destination office.");
+            return;
+        }
+        if (!reason) {
+            setOfficeMoveError("Enter a reason for the office move.");
+            return;
+        }
+        if (officeMoveMode === "rooms" && !officeMoveRoomId) {
+            setOfficeMoveError("Select the room to move.");
+            return;
+        }
+        startTransition(async () => {
+            try {
+                setOfficeMoveError(null);
+                setOfficeMoveMessage(null);
+                const result = await changeLandlordPortfolioOffice({
+                    destinationOfficeId: destinationId,
+                    landlordId: landlord.id,
+                    moveMode: officeMoveMode,
+                    reason,
+                    roomIds: officeMoveMode === "rooms" ? [officeMoveRoomId] : undefined,
+                });
+                setOfficeMoveMessage(`${result.movedRooms} room(s) moved to ${officeChoices.find((office) => office.id === destinationId)?.name ?? "the selected office"}.`);
+                setOfficeMoveOpen(false);
+                setOfficeMoveReason("");
+                setOfficeMoveRoomId("");
+                await onSaved();
+                router.refresh();
+            } catch (error) {
+                setOfficeMoveError(error instanceof Error ? error.message : "Unable to move this landlord portfolio.");
+            }
+        });
+    }
+
     if (!landlord) {
         return (
             <div className="bg-white rounded-3xl shadow-lg p-8">
@@ -463,6 +516,13 @@ function LandlordProfile({
     const deleteRentRoll = landlord.rooms.reduce((total, item) => total + item.monthlyRent, 0);
     const deleteOfficeLabel = landlord.offices.map(officeLabel).filter(Boolean).join(", ") || "No office assigned";
     const deleteOutstanding = Math.max(landlord.totalUnpaidMonthlyPayables, landlord.outstandingSettlementValue, landlord.totalOutstandingBalance, 0);
+    const moveRooms = officeMoveMode === "rooms"
+        ? visibleRooms.filter((item) => item.room.id === officeMoveRoomId)
+        : landlord.rooms;
+    const moveOccupiedRooms = moveRooms.filter((item) => item.tenant?.id || ["occupied", "active"].includes(String(item.room.status ?? "").toLowerCase())).length;
+    const moveRentRoll = moveRooms.reduce((total, item) => total + item.monthlyRent, 0);
+    const moveCurrentOfficeLabel = Array.from(new Set(moveRooms.map((item) => item.room.office_id ? officeChoices.find((office) => office.id === item.room.office_id)?.name ?? "Unknown office" : "No office"))).join(", ") || "No office assigned";
+    const moveDestinationLabel = officeChoices.find((office) => office.id === officeMoveDestinationId)?.name ?? "Select destination";
     return (
         <div className="space-y-6">
             <div className="bg-white rounded-3xl shadow-lg overflow-hidden">
@@ -799,6 +859,35 @@ function LandlordProfile({
 
             <Section title="Room Portfolio">
                 {canAdminManage ? (
+                    <div className="mb-4 rounded-3xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-sky-50 p-4 shadow-sm">
+                        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                            <div>
+                                <p className="text-sm font-black text-slate-950">Office Move Control</p>
+                                <p className="mt-1 text-xs font-bold text-slate-600">
+                                    Move this landlord portfolio or a single room to another active office. Historical receipts and collections keep their original office.
+                                </p>
+                                {officeMoveMessage ? <p className="mt-2 text-sm font-black text-emerald-700">{officeMoveMessage}</p> : null}
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setOfficeMoveOpen(true);
+                                    setOfficeMoveError(null);
+                                    setOfficeMoveMessage(null);
+                                    setOfficeMoveDestinationId("");
+                                    setOfficeMoveReason("");
+                                    setOfficeMoveMode("portfolio");
+                                    setOfficeMoveRoomId(visibleRooms[0]?.room.id ?? landlord.rooms[0]?.room.id ?? "");
+                                }}
+                                className="rounded-2xl bg-emerald-700 px-4 py-2 text-xs font-black text-white shadow-sm hover:bg-emerald-800"
+                            >
+                                Change Office
+                            </button>
+                        </div>
+                    </div>
+                ) : null}
+
+                {canAdminManage ? (
                     <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50/70 p-4">
                         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                             <div>
@@ -1094,6 +1183,99 @@ function LandlordProfile({
                         }}
                     />
                 </div>
+                {canAdminManage && officeMoveOpen ? (
+                    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/70 px-4 py-6 backdrop-blur-sm">
+                        <div className="w-full max-w-3xl rounded-3xl border border-emerald-200 bg-white p-6 shadow-2xl">
+                            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                                <div>
+                                    <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">Admin office move</p>
+                                    <h3 className="mt-2 text-2xl font-black text-slate-950">Change Office</h3>
+                                    <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">
+                                        Move {landlord.full_name} and current operational records to another office. Historical transaction records keep their original office attribution.
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    disabled={isPending}
+                                    onClick={() => setOfficeMoveOpen(false)}
+                                    className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 disabled:opacity-50"
+                                >
+                                    Close
+                                </button>
+                            </div>
+
+                            <div className="mt-5 grid gap-3 md:grid-cols-2">
+                                <Field label="Move type">
+                                    <select value={officeMoveMode} onChange={(event) => setOfficeMoveMode(event.target.value === "rooms" ? "rooms" : "portfolio")}>
+                                        <option value="portfolio">Full landlord portfolio</option>
+                                        <option value="rooms">Single room only</option>
+                                    </select>
+                                </Field>
+                                {officeMoveMode === "rooms" ? (
+                                    <Field label="Room">
+                                        <select value={officeMoveRoomId} onChange={(event) => setOfficeMoveRoomId(event.target.value)}>
+                                            <option value="">Select room</option>
+                                            {landlord.rooms.map((item) => (
+                                                <option key={item.room.id} value={item.room.id}>
+                                                    {item.room.room_number ?? "Unnumbered"} · {propertyLabel(item.property)}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </Field>
+                                ) : (
+                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                                        <p className="text-xs font-black uppercase text-slate-500">Rooms that will move</p>
+                                        <p className="mt-1 text-sm font-black text-slate-950">{landlord.rooms.length.toLocaleString()} current room(s)</p>
+                                    </div>
+                                )}
+                                <Field label="Destination office">
+                                    <select value={officeMoveDestinationId} onChange={(event) => setOfficeMoveDestinationId(event.target.value)}>
+                                        <option value="">Select destination</option>
+                                        {officeChoices.map((office) => <option key={office.id} value={office.id}>{office.name}</option>)}
+                                    </select>
+                                </Field>
+                                <Field label="Reason">
+                                    <input value={officeMoveReason} onChange={(event) => setOfficeMoveReason(event.target.value)} placeholder="Office reallocation approved by Admin" />
+                                </Field>
+                            </div>
+
+                            <div className="mt-5 grid gap-3 md:grid-cols-4">
+                                <ReportLine label="Current Office" value={moveCurrentOfficeLabel} />
+                                <ReportLine label="Destination" value={moveDestinationLabel} />
+                                <ReportLine label="Affected Rooms" value={moveRooms.length.toLocaleString()} />
+                                <ReportLine label="Occupied Rooms" value={moveOccupiedRooms.toLocaleString()} />
+                                <ReportLine label="Current Rent Roll" value={money(moveRentRoll)} />
+                                <ReportLine label="Tenants Affected" value={moveOccupiedRooms.toLocaleString()} />
+                                <ReportLine label="Historical Receipts" value="Preserved" />
+                                <ReportLine label="Audit" value="Required" />
+                            </div>
+
+                            <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-900">
+                                Move {landlord.full_name} {officeMoveMode === "rooms" ? "and 1 selected room" : `and ${moveRooms.length} room(s)`} from {moveCurrentOfficeLabel} to {moveDestinationLabel}?
+                            </div>
+
+                            {officeMoveError ? <p className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-black text-red-700">{officeMoveError}</p> : null}
+                            <div className="mt-5 flex flex-wrap justify-end gap-2">
+                                <button
+                                    type="button"
+                                    disabled={isPending}
+                                    onClick={() => setOfficeMoveOpen(false)}
+                                    className="rounded-2xl bg-slate-100 px-5 py-3 text-sm font-black text-slate-700 disabled:opacity-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={isPending}
+                                    onClick={submitOfficeMove}
+                                    className="rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    {isPending ? "Moving..." : "Confirm Move"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                ) : null}
                 {canAdminManage && roomRemovalTarget ? (
                     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/70 px-4 py-6 backdrop-blur-sm">
                         <div className="w-full max-w-2xl rounded-3xl border border-red-200 bg-white p-6 shadow-2xl">

@@ -153,6 +153,7 @@ export async function getEmployeeManagementData(): Promise<EmployeeManagementDat
         const offDayBalance = offDayBalanceByEmployee.get(id);
         return {
             id,
+            userId: employee.user_id ? String(employee.user_id) : null,
             fullName: text(employee.full_name, "Unnamed Employee"),
             age: employee.age === null || employee.age === undefined ? null : Number(employee.age),
             employeeCode: text(employee.employee_code, id.slice(0, 8)),

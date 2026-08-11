@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireCompanyAdminMode, requirePermission } from "@/lib/auth/permissions";
 import { logUserAction } from "@/lib/auth/audit";
 import { createNotificationWithEmail } from "@/lib/notifications/email";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getLandlordInCompany, getPropertyForLandlordAssignment } from "@/lib/landlords/data";
 import { getMoveInPayableDecision } from "@/lib/landlords/payable-cutoff";
@@ -52,6 +53,14 @@ type LandlordPaymentDetailsInput = {
     notes?: string;
     adminComment?: string;
     isDefault?: boolean;
+};
+
+type ChangeLandlordPortfolioOfficeInput = {
+    landlordId: string;
+    destinationOfficeId: string;
+    reason: string;
+    roomIds?: string[];
+    moveMode?: "portfolio" | "rooms";
 };
 
 async function activeWriteContext() {
@@ -700,6 +709,138 @@ export async function addRoomToLandlord(input: AddLandlordRoomInput) {
     revalidatePath("/office/vacant-rooms");
     revalidatePath("/office/payments");
     return { room, tenant, lease, mode: "created" };
+}
+
+export async function changeLandlordPortfolioOffice(input: ChangeLandlordPortfolioOfficeInput) {
+    const context = await activeAdminWriteContext();
+    const companyId = context.activeCompany!.id;
+    const reason = input.reason?.trim();
+    if (!input.landlordId) throw new Error("Landlord is required.");
+    if (!input.destinationOfficeId) throw new Error("Destination office is required.");
+    if (!reason) throw new Error("A reason is required before moving a landlord or room.");
+
+    const landlord = await getLandlordInCompany(input.landlordId);
+    const admin = createSupabaseAdminClient();
+    const now = new Date().toISOString();
+    const moveMode = input.moveMode === "rooms" ? "rooms" : "portfolio";
+
+    const { data: destinationOffice, error: destinationError } = await admin
+        .from("offices")
+        .select("id, office_name, name, status, merged_into_office_id")
+        .eq("company_id", companyId)
+        .eq("id", input.destinationOfficeId)
+        .maybeSingle();
+    if (destinationError) throw new Error(destinationError.message);
+    const destination = destinationOffice as { id?: string; office_name?: string | null; name?: string | null; status?: string | null; merged_into_office_id?: string | null } | null;
+    if (!destination?.id || String(destination.status ?? "active").toLowerCase() !== "active" || destination.merged_into_office_id) {
+        throw new Error("Destination office must be active.");
+    }
+
+    let roomQuery = admin
+        .from("rooms")
+        .select("id, room_number, office_id, property_id, landlord_id, monthly_rent, status")
+        .eq("company_id", companyId)
+        .eq("landlord_id", landlord.id);
+    if (moveMode === "rooms") {
+        const roomIds = (input.roomIds ?? []).filter(Boolean);
+        if (!roomIds.length) throw new Error("Select at least one room to move.");
+        roomQuery = roomQuery.in("id", roomIds);
+    }
+    const { data: rooms, error: roomsError } = await roomQuery;
+    if (roomsError) throw new Error(roomsError.message);
+    const selectedRooms = (rooms ?? []) as Array<{
+        id: string;
+        room_number?: string | null;
+        office_id?: string | null;
+        property_id?: string | null;
+        landlord_id?: string | null;
+        monthly_rent?: number | string | null;
+        status?: string | null;
+    }>;
+    if (!selectedRooms.length) throw new Error("No active rooms were found for this landlord.");
+
+    const unchangedRooms = selectedRooms.filter((room) => room.office_id === destination.id);
+    if (unchangedRooms.length === selectedRooms.length) {
+        throw new Error("The selected rooms are already assigned to the destination office.");
+    }
+
+    const roomIds = selectedRooms.map((room) => room.id);
+    const oldOfficeIds = [...new Set(selectedRooms.map((room) => room.office_id).filter(Boolean) as string[])];
+    const propertyIds = [...new Set(selectedRooms.map((room) => room.property_id).filter(Boolean) as string[])];
+
+    const { error: roomUpdateError } = await admin
+        .from("rooms")
+        .update({ office_id: destination.id, updated_at: now } as never)
+        .eq("company_id", companyId)
+        .in("id", roomIds);
+    if (roomUpdateError) throw new Error(roomUpdateError.message);
+
+    const { error: tenantUpdateError } = await admin
+        .from("tenants")
+        .update({ office_id: destination.id, updated_at: now } as never)
+        .eq("company_id", companyId)
+        .in("room_id", roomIds)
+        .in("status", ["active", "occupied"]);
+    if (tenantUpdateError && !/status|schema cache/i.test(tenantUpdateError.message)) throw new Error(tenantUpdateError.message);
+
+    const { error: leaseUpdateError } = await admin
+        .from("leases")
+        .update({ office_id: destination.id, updated_at: now } as never)
+        .eq("company_id", companyId)
+        .in("room_id", roomIds)
+        .eq("status", "active");
+    if (leaseUpdateError && !/status|schema cache/i.test(leaseUpdateError.message)) throw new Error(leaseUpdateError.message);
+
+    if (moveMode === "portfolio" && propertyIds.length) {
+        const { error: propertyUpdateError } = await admin
+            .from("properties")
+            .update({ office_id: destination.id, updated_at: now } as never)
+            .eq("company_id", companyId)
+            .in("id", propertyIds);
+        if (propertyUpdateError) throw new Error(propertyUpdateError.message);
+    }
+
+    await logUserAction({
+        action: moveMode === "portfolio" ? "landlord_portfolio_office_changed" : "landlord_rooms_office_changed",
+        entityType: "landlord",
+        entityId: landlord.id,
+        companyId,
+        officeId: destination.id,
+        beforeData: jsonSafe({
+            landlord_id: landlord.id,
+            old_office_ids: oldOfficeIds,
+            rooms: selectedRooms.map((room) => ({
+                id: room.id,
+                office_id: room.office_id,
+                property_id: room.property_id,
+                room_number: room.room_number,
+            })),
+        }),
+        afterData: jsonSafe({
+            destination_office_id: destination.id,
+            destination_office_name: destination.office_name ?? destination.name,
+            move_mode: moveMode,
+            reason,
+            room_count: selectedRooms.length,
+            room_ids: roomIds,
+            room_numbers: selectedRooms.map((room) => room.room_number).filter(Boolean),
+            rent_roll: selectedRooms.reduce((total, room) => total + Number(room.monthly_rent ?? 0), 0),
+        }),
+    });
+
+    revalidatePath("/office/landlords");
+    revalidatePath("/office/admin");
+    revalidatePath("/office/properties");
+    revalidatePath("/office/dashboard");
+    revalidatePath("/office/vacant-rooms");
+    revalidatePath("/office/payments");
+    revalidatePath("/office/collections");
+
+    return {
+        destinationOfficeId: destination.id,
+        movedRooms: selectedRooms.length,
+        roomNumbers: selectedRooms.map((room) => room.room_number).filter(Boolean),
+    };
 }
 
 function normalizeDateInput(value: string | null | undefined, message: string) {

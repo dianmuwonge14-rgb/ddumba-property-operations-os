@@ -32,6 +32,7 @@ import {
     updateEmployee,
     updateEmployeeProbation,
 } from "@/app/actions/employees";
+import { createEmployeeLoginAccount } from "@/app/actions/admin-accounts";
 import type { EmployeeManagementData, EmployeeProfile } from "@/lib/employee-management/types";
 
 type TabKey = "overview" | "employees" | "payroll" | "advances" | "expenses" | "fines" | "off-days" | "performance" | "contracts" | "documents" | "terminations" | "audit";
@@ -253,6 +254,31 @@ function Overview({ data, selectedEmployee }: { data: EmployeeManagementData; se
 }
 
 function EmployeeForms({ data, selectedEmployee }: { data: EmployeeManagementData; selectedEmployee: EmployeeProfile | null }) {
+    const [loginMessage, setLoginMessage] = useState("");
+    const [loginError, setLoginError] = useState("");
+    const [isLoginPending, startLoginTransition] = useTransition();
+
+    function submitLoginAccount(formData: FormData) {
+        setLoginMessage("");
+        setLoginError("");
+        startLoginTransition(async () => {
+            try {
+                await createEmployeeLoginAccount({
+                    confirmPin: String(formData.get("confirmPin") ?? ""),
+                    effectiveStartDate: String(formData.get("effectiveStartDate") ?? ""),
+                    employeeId: String(formData.get("employeeId") ?? ""),
+                    officeId: String(formData.get("officeId") ?? ""),
+                    pin: String(formData.get("pin") ?? ""),
+                    roleId: String(formData.get("roleId") ?? ""),
+                    status: String(formData.get("status") ?? "active"),
+                });
+                setLoginMessage("Personal login account created and linked to this employee.");
+            } catch (error) {
+                setLoginError(error instanceof Error ? error.message : "Could not create login account.");
+            }
+        });
+    }
+
     return (
         <div className="grid gap-4 2xl:grid-cols-2">
             <GlassPanel title="Add Employee" icon={<Plus size={18} />}>
@@ -326,6 +352,35 @@ function EmployeeForms({ data, selectedEmployee }: { data: EmployeeManagementDat
                         <SubmitButton label="Save Employee" className="md:col-span-2" />
                     </form>
                 ) : <Empty label="Select an employee to edit." />}
+            </GlassPanel>
+
+            <GlassPanel title="Create Login Account" icon={<FileBadge size={18} />}>
+                {selectedEmployee ? (
+                    <form action={submitLoginAccount} className="grid gap-3 md:grid-cols-2">
+                        <input type="hidden" name="employeeId" value={selectedEmployee.id} />
+                        <div className="md:col-span-2 rounded-2xl border border-cyan-300/20 bg-cyan-300/10 p-4">
+                            <p className="text-sm font-black text-white">{selectedEmployee.fullName}</p>
+                            <p className="mt-1 text-xs font-bold text-cyan-100">
+                                {selectedEmployee.userId ? "This employee already has a linked login account. Save is disabled." : "Create a personal account tied to this employee_id. This is not a shared office account."}
+                            </p>
+                        </div>
+                        <SelectInput name="roleId" label="Login role" defaultValue={selectedEmployee.roleId ?? ""} options={data.roles.map((role) => ({ value: role.id, label: role.name }))} />
+                        <SelectInput name="officeId" label="Office / scope" defaultValue={selectedEmployee.assignmentType === "all_rounder" ? selectedEmployee.defaultOfficeId ?? "" : selectedEmployee.officeId ?? ""} options={data.offices.map((office) => ({ value: office.id, label: office.name }))} />
+                        <TextInput name="pin" label="PIN / password" type="password" inputMode="numeric" required />
+                        <TextInput name="confirmPin" label="Confirm PIN" type="password" inputMode="numeric" required />
+                        <TextInput name="effectiveStartDate" label="Effective from" type="date" defaultValue={new Date().toISOString().slice(0, 10)} />
+                        <SelectInput name="status" label="Status" defaultValue="active" options={[{ value: "active", label: "Active" }, { value: "locked", label: "Locked" }]} />
+                        {loginError ? <p className="md:col-span-2 rounded-2xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm font-black text-red-100">{loginError}</p> : null}
+                        {loginMessage ? <p className="md:col-span-2 rounded-2xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-3 text-sm font-black text-emerald-100">{loginMessage}</p> : null}
+                        <button
+                            type="submit"
+                            disabled={isLoginPending || Boolean(selectedEmployee.userId)}
+                            className="md:col-span-2 inline-flex h-11 items-center justify-center rounded-2xl bg-cyan-300 px-4 text-sm font-black text-slate-950 shadow-lg shadow-cyan-500/15 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-45"
+                        >
+                            {isLoginPending ? "Creating..." : selectedEmployee.userId ? "Login Already Linked" : `Create Login for ${selectedEmployee.fullName}`}
+                        </button>
+                    </form>
+                ) : <Empty label="Select an employee to create a login account." />}
             </GlassPanel>
 
             <GlassPanel title="Emergency / Reference Persons" icon={<ContactRound size={18} />}>
