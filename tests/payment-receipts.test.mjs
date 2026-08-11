@@ -42,10 +42,10 @@ test("tenant payment save returns receipt metadata without blocking successful p
 });
 
 test("fulfilled promises create traceable tenant payment receipts", () => {
-  assert.match(collectionsAction, /payment_method: "promise"/);
+  assert.match(collectionsAction, /payment_method: input\.paymentMethod \?\? "cash"/);
   assert.match(collectionsAction, /payment_date: dateOnly\(paidAt\)/);
   assert.match(collectionsAction, /createTenantPaymentReceipt\(collection\.id/);
-  assert.match(promisesAction, /payment_method: "promise"/);
+  assert.match(promisesAction, /payment_method: input\.paymentMethod \?\? "cash"/);
   assert.match(promisesAction, /payment_date: paidAt\.slice\(0, 10\)/);
   assert.match(promisesAction, /createTenantPaymentReceipt\(collection\.id/);
 });

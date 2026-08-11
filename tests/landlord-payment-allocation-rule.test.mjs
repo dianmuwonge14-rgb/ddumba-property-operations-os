@@ -340,7 +340,7 @@ test("admin landlord payment submission resolves the selected landlord office", 
   const expensesSource = readFileSync(new URL("../app/actions/expenses.ts", import.meta.url), "utf8");
   assert.match(expensesSource, /resolveLandlordPaymentOfficeId/);
   assert.match(expensesSource, /requestedOfficeId: input\.officeId/);
-  assert.match(expensesSource, /if \(!input\.isDirectAdmin\) return input\.activeOfficeId/);
+  assert.match(expensesSource, /if \(!input\.canSelectOffice\) return input\.activeOfficeId/);
   assert.match(expensesSource, /landlord_monthly_payables/);
 });
 

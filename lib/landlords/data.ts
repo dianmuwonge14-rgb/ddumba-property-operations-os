@@ -168,6 +168,7 @@ export async function getLandlordNamePrefixSearchData(input: {
     const landlordIds = indexRows.map((row) => row.landlord_id);
     if (landlordIds.length === 0) {
         if (normalizedSearch) return null;
+        if (!canAccessAllOffices && officeId) return null;
         return {
             ...emptyData(),
             company: context.activeCompany,

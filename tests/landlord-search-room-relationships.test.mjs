@@ -15,6 +15,12 @@ test("landlord portfolio search uses the compact full landlord-room index", () =
   assert.match(landlordData, /rankLandlordSearchIndexRows/);
 });
 
+test("office landlord register falls back to live relationships when the search index is empty", () => {
+  assert.match(landlordData, /if \(!canAccessAllOffices && officeId\) return null/);
+  assert.match(landlordData, /collectOfficeLandlordIds/);
+  assert.match(landlordData, /landlordsQuery = landlordsQuery\.in\("id", \[\.\.\.officeScopedLandlordIds\]\)/);
+});
+
 test("local landlord filtering includes room numbers and indexed search text", () => {
   const consoleCode = readFileSync(new URL("../components/office/landlords/LandlordsConsole.tsx", import.meta.url), "utf8");
   assert.match(consoleCode, /landlord\.searchableText/);

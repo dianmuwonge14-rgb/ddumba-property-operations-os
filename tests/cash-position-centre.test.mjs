@@ -154,8 +154,8 @@ test("cash position selected-period card excludes carried-forward office cash", 
   assert.match(typesSource, /dailyBanked/);
   assert.match(typesSource, /dailyHandedToAdmin/);
   assert.match(typesSource, /dailyCashRemainingAtOffice/);
-  assert.match(dataSource, /rawDailyCashRemainingAtOffice = dailyCollected - dailyApprovedExpenses - dailyBanked - dailyHandedToAdmin/);
-  assert.match(dataSource, /dailyCashRemainingAtOffice = Math\.max\(0, dailyCollected - dailyApprovedExpenses\)/);
+  assert.match(dataSource, /rawDailyCashRemainingAtOffice = dailyPhysicalCollected - dailyApprovedExpenses - dailyBanked - dailyHandedToAdmin/);
+  assert.match(dataSource, /dailyCashRemainingAtOffice = Math\.max\(0, dailyPhysicalCollected - dailyApprovedExpenses\)/);
   assert.match(dataSource, /cashAfterExpenses = dailyCashRemainingAtOffice/);
   assert.match(dataSource, /currentAccumulatedOfficeCash/);
   assert.match(dataSource, /adminHandedToAdminOutflows/);
@@ -215,7 +215,7 @@ test("cash position displays zero when the raw selected-period cash is fully cle
   assert.equal(overdrawn.reconciliationDifference, 100_000);
 
   assert.match(dataSource, /Math\.max\(0, rawCashAtOffice\)/);
-  assert.match(dataSource, /companyCashPosition = Math\.max\(0, collectedPeriod - approvedExpensesPeriod\)/);
+  assert.match(dataSource, /companyCashPosition = Math\.max\(0, physicalCollectedPeriod - approvedExpensesPeriod\)/);
   assert.match(dataSource, /cashReconciliationDifference = rawCashAtOffice < 0 \? Math\.abs\(rawCashAtOffice\) : 0/);
   assert.match(dataSource, /detectCashReconciliationCause/);
 });

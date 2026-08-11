@@ -504,7 +504,7 @@ export async function getCashPositionCentreData(filtersInput: CashPositionFilter
             ...card,
             approvedExpenses: cardApprovedExpenses,
             collections,
-            value: Math.max(0, physicalCollections - cardApprovedExpenses),
+            value: Math.max(0, collections - cardApprovedExpenses),
         };
     });
 
