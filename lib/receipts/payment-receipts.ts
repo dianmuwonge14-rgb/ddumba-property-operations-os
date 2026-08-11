@@ -45,6 +45,11 @@ export type PaymentReceiptSnapshot = {
     amountPaid: number;
     companyContact: string | null;
     companyName: string;
+    receiptAddress?: string | null;
+    receiptEmail?: string | null;
+    receiptFooter?: string | null;
+    receiptLogoUrl?: string | null;
+    receiptPhone?: string | null;
     coveragePeriod: string | null;
     coveragePeriods: Array<{
         amount: number;
@@ -191,17 +196,22 @@ function allocationType(row: LooseRow) {
     return String(row.allocation_type ?? "current_month").replaceAll("_", " ");
 }
 
-const KAPEEKA_OFFICE_ID = "2987830f-906b-4f31-921f-734e6171dd10";
-const ENTEBBE_OPERATIONS_OFFICE_ID = "365ca586-4501-45b3-8d21-f7244ef36603";
-const KAPEEKA_RECEIPT_BRAND = "HERITAGE ESTATES AND PROPERTY SOLUTIONS";
-const ENTEBBE_RECEIPT_BRAND = "DDUMBA PROPERTY MANAGEMENT";
+function receiptBrandingForOffice(office: LooseRow | null | undefined, fallback: { contact: string | null; name: string | null }) {
+    const configuredName = text(office?.receipt_business_name) ?? text(office?.receipt_name) ?? text(office?.brand_name);
+    const phone = text(office?.receipt_phone) ?? text(office?.phone);
+    const email = text(office?.receipt_email) ?? text(office?.email);
+    const address = text(office?.receipt_address) ?? text(office?.address);
+    const contact = [address, phone, email].filter(Boolean).join(" · ") || fallback.contact;
 
-function receiptBrandForOffice(office: LooseRow | null | undefined, fallback: string | null) {
-    const officeId = text(office?.id);
-    const officeName = `${text(office?.office_name) ?? text(office?.name) ?? ""}`.toLowerCase().replace(/\s+/g, " ").trim();
-    if (officeId === KAPEEKA_OFFICE_ID || officeName === "kapeeka office") return KAPEEKA_RECEIPT_BRAND;
-    if (officeId === ENTEBBE_OPERATIONS_OFFICE_ID || officeName === "entebbe operations office") return ENTEBBE_RECEIPT_BRAND;
-    return fallback ?? "DDUMBA OS";
+    return {
+        address,
+        contact,
+        email,
+        footer: text(office?.receipt_footer),
+        logoUrl: text(office?.receipt_logo_url) ?? text(office?.logo_url),
+        name: configuredName ?? fallback.name ?? "DDUMBA OS",
+        phone,
+    };
 }
 
 function receiptSummary(row: LooseRow): PaymentReceiptSummary {
@@ -333,6 +343,10 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
     const backdatingMatch = paymentNotes?.match(/BACKDATED ADMIN ENTRY\s*\|\s*Entered on:\s*([^|]+)\|\s*Reason:\s*(.+)$/i);
     const enteredAt = text(payment.paid_at) ?? text(payment.created_at);
     const paymentTransactionDate = text(payment.payment_date) ?? enteredAt;
+    const branding = receiptBrandingForOffice(office, {
+        contact: text(company?.phone) ?? text(company?.email) ?? null,
+        name: text(company?.name),
+    });
 
     return {
         advanceBalance,
@@ -341,8 +355,13 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
         amountAppliedToCurrentRent,
         amountAppliedToOutstanding,
         amountPaid: amount(payment.amount_paid ?? payment.amount),
-        companyContact: text(company?.phone) ?? text(company?.email) ?? null,
-        companyName: receiptBrandForOffice(office, text(company?.name)),
+        companyContact: branding.contact,
+        companyName: branding.name,
+        receiptAddress: branding.address,
+        receiptEmail: branding.email,
+        receiptFooter: branding.footer,
+        receiptLogoUrl: branding.logoUrl,
+        receiptPhone: branding.phone,
         coveragePeriod,
         coveragePeriods,
         landlordName: text(landlord?.full_name),

@@ -89,3 +89,15 @@ test("admin account management shows a confirmation panel and refreshes after st
   assert.match(centreSource, /router\.refresh\(\)/);
   assert.match(centreSource, /Deactivate Account/);
 });
+
+test("office management exposes receipt branding controls", () => {
+  assert.match(centreSource, /Receipt Branding/);
+  assert.match(centreSource, /editReceiptBusinessName/);
+  assert.match(centreSource, /editReceiptLogoUrl/);
+  assert.match(centreSource, /editReceiptAddress/);
+  assert.match(centreSource, /editReceiptPhone/);
+  assert.match(centreSource, /editReceiptEmail/);
+  assert.match(centreSource, /editReceiptFooter/);
+  assert.match(actionSource, /receipt_business_name/);
+  assert.match(actionSource, /receipt_footer/);
+});

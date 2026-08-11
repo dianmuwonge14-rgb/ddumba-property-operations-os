@@ -80,6 +80,7 @@ function receiptStatusLines(receipt: Awaited<ReturnType<typeof loadPrintableRece
 function receiptTextLines(receipt: Awaited<ReturnType<typeof loadPrintableReceipt>>) {
     const snapshot = receipt.snapshot;
     const lines: Array<{ bold?: boolean; center?: boolean; divider?: boolean; size?: number; text: string }> = [
+        { bold: true, center: true, size: 9, text: "OFFICIAL PAYMENT DOCUMENT" },
         { bold: true, center: true, size: 13, text: safe(snapshot.companyName, "DDUMBA OS") },
     ];
     if (safe(snapshot.companyContact)) lines.push({ center: true, size: 8, text: safe(snapshot.companyContact) });
@@ -144,7 +145,7 @@ function receiptTextLines(receipt: Awaited<ReturnType<typeof loadPrintableReceip
         { center: true, size: 8, text: receipt.verificationCode },
         { center: true, text: "Thank you for your payment" },
         ...receiptStatusLines(receipt).map((text) => ({ bold: true, center: true, size: 9, text })),
-        { center: true, size: 8, text: "DDUMBA OS" },
+        { center: true, size: 8, text: safe(snapshot.receiptFooter, "DDUMBA OS") },
     );
     return lines;
 }

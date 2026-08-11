@@ -296,6 +296,12 @@ export default function OfficeAccountManagementCentre({ company, initialFocus, r
                 region: String(formData.get("editRegion") ?? selectedOffice.region ?? ""),
                 collectionTarget: String(formData.get("editCollectionTarget") ?? selectedOffice.collection_target ?? ""),
                 expenseBudget: String(formData.get("editExpenseBudget") ?? selectedOffice.expense_budget ?? ""),
+                receiptAddress: String(formData.get("editReceiptAddress") ?? ""),
+                receiptBusinessName: String(formData.get("editReceiptBusinessName") ?? ""),
+                receiptEmail: String(formData.get("editReceiptEmail") ?? ""),
+                receiptFooter: String(formData.get("editReceiptFooter") ?? ""),
+                receiptLogoUrl: String(formData.get("editReceiptLogoUrl") ?? ""),
+                receiptPhone: String(formData.get("editReceiptPhone") ?? ""),
                 status: String(formData.get("editOfficeStatus") ?? selectedOffice.status ?? "active"),
             }),
             "Office updated.",
@@ -773,6 +779,16 @@ function IncompleteSetups({ disabled, incompleteOffices, nakiwogo, onComplete, r
 }
 
 function OfficeManagement({ disabled, offices, onDeactivate, onEdit, selectedOffice, selectedOfficeId, setSelectedOfficeId }: { disabled: boolean; offices: Props["raw"]["offices"]; onDeactivate: (officeId: string) => void; onEdit: (formData: FormData) => void; selectedOffice: Props["raw"]["offices"][number] | null; selectedOfficeId: string; setSelectedOfficeId: (id: string) => void }) {
+    const selectedOfficeBranding = selectedOffice as (Props["raw"]["offices"][number] & {
+        receipt_address?: string | null;
+        receipt_business_name?: string | null;
+        receipt_email?: string | null;
+        receipt_footer?: string | null;
+        receipt_logo_url?: string | null;
+        receipt_phone?: string | null;
+        email?: string | null;
+        phone?: string | null;
+    }) | null;
     return (
         <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
             <div className="space-y-3">
@@ -800,6 +816,23 @@ function OfficeManagement({ disabled, offices, onDeactivate, onEdit, selectedOff
                         <NativeInput name="editCollectionTarget" label="Collection target" defaultValue={String(selectedOffice.collection_target ?? "")} />
                         <NativeInput name="editExpenseBudget" label="Expense budget" defaultValue={String(selectedOffice.expense_budget ?? "")} />
                     </div>
+                    <section className="mt-5 rounded-2xl border border-cyan-100 bg-cyan-50/60 p-4">
+                        <div className="mb-3">
+                            <p className="text-xs font-black uppercase tracking-wide text-cyan-700">Receipt Branding</p>
+                            <p className="mt-1 text-sm font-semibold text-slate-600">Configure the business identity printed on receipts for this office. Leave contact fields blank to use the company default.</p>
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                            <NativeInput name="editReceiptBusinessName" label="Receipt business name" defaultValue={selectedOfficeBranding?.receipt_business_name ?? ""} />
+                            <NativeInput name="editReceiptLogoUrl" label="Logo URL" defaultValue={selectedOfficeBranding?.receipt_logo_url ?? ""} />
+                            <NativeInput name="editReceiptAddress" label="Address" defaultValue={selectedOfficeBranding?.receipt_address ?? selectedOffice.address ?? ""} />
+                            <NativeInput name="editReceiptPhone" label="Phone" defaultValue={selectedOfficeBranding?.receipt_phone ?? selectedOfficeBranding?.phone ?? ""} />
+                            <NativeInput name="editReceiptEmail" label="Email" defaultValue={selectedOfficeBranding?.receipt_email ?? selectedOfficeBranding?.email ?? ""} />
+                            <label className="md:col-span-2">
+                                <span className="mb-1 block text-xs font-black uppercase tracking-wide text-slate-500">Receipt footer</span>
+                                <textarea name="editReceiptFooter" defaultValue={selectedOfficeBranding?.receipt_footer ?? ""} className="min-h-24 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-900 outline-none focus:border-cyan-300" />
+                            </label>
+                        </div>
+                    </section>
                     <div className="mt-4 flex flex-wrap gap-2">
                         <Submit disabled={disabled} label="Save Office" />
                         <button type="button" onClick={() => onDeactivate(selectedOffice.id)} disabled={disabled} className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-black text-red-700 disabled:opacity-60">Activate / Deactivate</button>

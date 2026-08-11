@@ -30,7 +30,7 @@ export function ReceiptA4({ receipt }: { receipt: TenantReceiptViewModel }) {
         <article id={RECEIPT_A4_ROOT_ID} className="receipt-a4-sheet">
             <header className="receipt-a4-header">
                 <div>
-                    <div className="receipt-a4-logo">DD</div>
+                    {snapshot.receiptLogoUrl ? <img alt={`${snapshot.companyName || "Receipt"} logo`} className="receipt-a4-logo" src={snapshot.receiptLogoUrl} /> : <div className="receipt-a4-logo">DD</div>}
                     <p className="receipt-a4-kicker">Official payment document</p>
                     <h1>{snapshot.companyName || "DDUMBA OS"}</h1>
                     {snapshot.companyContact ? <p className="receipt-a4-muted">{snapshot.companyContact}</p> : null}
@@ -117,7 +117,7 @@ export function ReceiptA4({ receipt }: { receipt: TenantReceiptViewModel }) {
 
             <footer className="receipt-a4-footer">
                 <div>
-                    <p>Generated from the saved DDUMBA OS Supabase transaction.</p>
+                    <p>{snapshot.receiptFooter || "Generated from the saved DDUMBA OS Supabase transaction."}</p>
                     <strong>Thank you for your payment.</strong>
                     {receiptStatus.banner ? <p className="receipt-a4-final-status">{receiptStatus.banner}</p> : null}
                 </div>

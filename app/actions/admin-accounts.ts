@@ -58,6 +58,12 @@ type OfficeInput = {
     region?: string;
     collectionTarget?: string;
     expenseBudget?: string;
+    receiptAddress?: string;
+    receiptBusinessName?: string;
+    receiptEmail?: string;
+    receiptFooter?: string;
+    receiptLogoUrl?: string;
+    receiptPhone?: string;
     status?: string;
 };
 
@@ -990,10 +996,17 @@ export async function createOffice(input: OfficeInput) {
         region: input.region?.trim() || null,
         collection_target: numeric(input.collectionTarget),
         expense_budget: numeric(input.expenseBudget),
+        receipt_address: input.receiptAddress?.trim() || null,
+        receipt_business_name: input.receiptBusinessName?.trim() || null,
+        receipt_email: input.receiptEmail?.trim() || null,
+        receipt_footer: input.receiptFooter?.trim() || null,
+        receipt_logo_url: input.receiptLogoUrl?.trim() || null,
+        receipt_phone: input.receiptPhone?.trim() || null,
         status: input.status || "active",
         updated_at: new Date().toISOString(),
     };
-    const { data, error } = await admin.from("offices").insert(payload).select("id").single();
+    const officeTable = (admin as unknown as { from: (table: string) => any }).from("offices");
+    const { data, error } = await officeTable.insert(payload).select("id").single();
     if (error) throw new Error(error.message);
 
     await logUserAction({
@@ -1203,11 +1216,17 @@ export async function updateOffice(input: UpdateOfficeInput) {
         region: input.region?.trim() || null,
         collection_target: numeric(input.collectionTarget),
         expense_budget: numeric(input.expenseBudget),
+        receipt_address: input.receiptAddress?.trim() || null,
+        receipt_business_name: input.receiptBusinessName?.trim() || null,
+        receipt_email: input.receiptEmail?.trim() || null,
+        receipt_footer: input.receiptFooter?.trim() || null,
+        receipt_logo_url: input.receiptLogoUrl?.trim() || null,
+        receipt_phone: input.receiptPhone?.trim() || null,
         status: input.status || "active",
         updated_at: new Date().toISOString(),
     };
-    const { error } = await admin
-        .from("offices")
+    const officeTable = (admin as unknown as { from: (table: string) => any }).from("offices");
+    const { error } = await officeTable
         .update(payload)
         .eq("id", input.officeId)
         .eq("company_id", context.activeCompany.id);

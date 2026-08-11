@@ -1778,7 +1778,12 @@ export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptVi
         <article id={RECEIPT_EXPORT_ROOT_ID} className="tenant-receipt-export-root">
         <div id={RECEIPT_SCREEN_ID} className="tenant-receipt-slip mx-auto bg-white text-slate-950">
             <header className="receipt-section text-center">
-                <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-full border border-slate-900 bg-slate-950 text-[13px] font-black text-white print:bg-white print:text-black">DD</div>
+                {safeText(snapshot.receiptLogoUrl) ? (
+                    <img alt={`${safeText(snapshot.companyName) ?? "Receipt"} logo`} className="mx-auto h-9 w-9 rounded-full object-contain" src={safeText(snapshot.receiptLogoUrl) ?? ""} />
+                ) : (
+                    <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-full border border-slate-900 bg-slate-950 text-[13px] font-black text-white print:bg-white print:text-black">DD</div>
+                )}
+                <p className="receipt-muted mt-1 text-[8px] font-black uppercase tracking-[0.08em]">Official Payment Document</p>
                 <h3 className="receipt-company mt-1.5 text-[15px] font-black leading-tight">{safeText(snapshot.companyName) ?? "DDUMBA OS"}</h3>
                 {companyContact ? <p className="receipt-muted mt-0.5 text-[9px] font-bold">{companyContact}</p> : null}
                 <p className="receipt-heading mt-2 border-y border-dashed border-slate-900 py-1 text-[10px] font-black uppercase tracking-[0.08em]">Tenant Payment Receipt</p>
@@ -1852,7 +1857,7 @@ export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptVi
             <footer className="receipt-section text-center">
                 <img alt={`Receipt QR ${receipt.verificationCode}`} className="receipt-qr mx-auto" crossOrigin="anonymous" src={qrUrl} />
                 <p className="mt-2 text-[9px] font-black uppercase tracking-wide">Thank you for your payment</p>
-                <p className="receipt-muted mt-1 text-[8px] font-bold leading-tight">Generated from the saved DDUMBA OS Supabase transaction. Keep this slip for tenant, office, collector, and audit verification.</p>
+                <p className="receipt-muted mt-1 text-[8px] font-bold leading-tight">{safeText(snapshot.receiptFooter) ?? "Generated from the saved DDUMBA OS Supabase transaction. Keep this slip for tenant, office, collector, and audit verification."}</p>
                 {receiptStatus.banner ? <p className="mt-1 border border-slate-950 py-1 text-[9px] font-black uppercase">{receiptStatus.banner}</p> : null}
             </footer>
         </div>

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 const migration = readFileSync(new URL("../supabase/upgrade_migrations/0204_payment_receipts.sql", import.meta.url), "utf8");
+const brandingMigration = readFileSync(new URL("../supabase/upgrade_migrations/0265_office_receipt_branding.sql", import.meta.url), "utf8");
 const receiptService = readFileSync(new URL("../lib/receipts/payment-receipts.ts", import.meta.url), "utf8");
 const collectionsAction = readFileSync(new URL("../app/actions/collections.ts", import.meta.url), "utf8");
 const promisesAction = readFileSync(new URL("../app/actions/promises.ts", import.meta.url), "utf8");
@@ -122,6 +123,23 @@ test("tenant receipts snapshot allocation details but render prepared-by instead
   assert.match(receiptStyles, /width: 72mm !important/);
   assert.match(receiptStyles, /receipt-paper-58mm/);
   assert.doesNotMatch(sharedReceipt, /Company contact not set/);
+});
+
+test("tenant receipt branding is configurable per office without hard-coded office branches", () => {
+  assert.match(brandingMigration, /receipt_business_name/);
+  assert.match(brandingMigration, /SUMMIT PROPERTY GROUP/);
+  assert.match(brandingMigration, /HERITAGE ESTATES AND PROPERTY SOLUTIONS/);
+  assert.match(brandingMigration, /DDUMBA PROPERTY MANAGEMENT/);
+  assert.match(brandingMigration, /jsonb_set/);
+  assert.match(receiptService, /receiptBrandingForOffice/);
+  assert.match(receiptService, /receipt_business_name/);
+  assert.doesNotMatch(receiptService, /KAPEEKA_OFFICE_ID/);
+  assert.doesNotMatch(receiptService, /ENTEBBE_OPERATIONS_OFFICE_ID/);
+  assert.match(sharedReceipt, /Official Payment Document/);
+  assert.match(sharedReceipt, /snapshot\.receiptFooter/);
+  assert.match(receiptA4, /snapshot\.receiptLogoUrl/);
+  assert.match(receiptPrintPdfRoute, /OFFICIAL PAYMENT DOCUMENT/);
+  assert.match(receiptPrintPdfRoute, /snapshot\.receiptFooter/);
 });
 
 test("receipt history can preview and reprint only the saved receipt slip", () => {
@@ -294,16 +312,14 @@ test("tenant receipts present room monthly rent instead of a misleading rent all
 });
 
 test("tenant receipt branding is resolved from the room office and stored in the snapshot", () => {
-  assert.match(receiptService, /receiptBrandForOffice/);
-  assert.match(receiptService, /const KAPEEKA_OFFICE_ID = "2987830f-906b-4f31-921f-734e6171dd10"/);
-  assert.match(receiptService, /const ENTEBBE_OPERATIONS_OFFICE_ID = "365ca586-4501-45b3-8d21-f7244ef36603"/);
-  assert.match(receiptService, /officeId === KAPEEKA_OFFICE_ID \|\| officeName === "kapeeka office"/);
-  assert.match(receiptService, /officeId === ENTEBBE_OPERATIONS_OFFICE_ID \|\| officeName === "entebbe operations office"/);
-  assert.match(receiptService, /return KAPEEKA_RECEIPT_BRAND/);
-  assert.match(receiptService, /return ENTEBBE_RECEIPT_BRAND/);
+  assert.match(receiptService, /receiptBrandingForOffice/);
+  assert.match(receiptService, /receipt_business_name/);
+  assert.match(receiptService, /receipt_footer/);
+  assert.match(receiptService, /receipt_logo_url/);
   assert.match(receiptService, /const receiptOfficeId = room\?\.office_id \?\? tenant\?\.office_id \?\? payment\.office_id/);
-  assert.match(receiptService, /companyName: receiptBrandForOffice\(office, text\(company\?\.name\)\)/);
-  assert.match(sharedReceipt, /Thank you for choosing \$\{safeText\(snapshot\.companyName\) \?\? "Ddumba Property Management"\}/);
+  assert.match(receiptService, /companyName: branding\.name/);
+  assert.match(sharedReceipt, /safeText\(snapshot\.companyName\) \?\? "DDUMBA OS"/);
+  assert.match(sharedReceipt, /snapshot\.receiptFooter/);
 });
 
 test("receipt print retains a fallback clean receipt-only popup for mounted receipts", () => {
