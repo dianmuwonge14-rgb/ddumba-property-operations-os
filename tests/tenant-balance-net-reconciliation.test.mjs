@@ -5,29 +5,39 @@ import test from "node:test";
 function reconcile({ outstandingBalance, advanceBalance }) {
   const requestedOutstanding = Math.max(0, Number(outstandingBalance ?? 0));
   const currentAdvance = Math.max(0, Number(advanceBalance ?? 0));
-  const advanceConsumed = Math.min(requestedOutstanding, currentAdvance);
+  const advanceConsumed = requestedOutstanding > 0 ? currentAdvance : 0;
   return {
-    advanceBalance: Math.max(0, currentAdvance - advanceConsumed),
+    advanceBalance: requestedOutstanding > 0 ? 0 : currentAdvance,
     advanceConsumed,
-    outstandingBalance: Math.max(0, requestedOutstanding - advanceConsumed),
+    outstandingBalance: requestedOutstanding > 0 ? requestedOutstanding + currentAdvance : 0,
   };
 }
 
-test("tenant balance reconciliation treats outstanding and advance as one net position", () => {
+test("tenant balance reconciliation keeps unpaid rent inside outstanding", () => {
   assert.deepEqual(reconcile({ advanceBalance: 50_000, outstandingBalance: 40_000 }), {
-    advanceBalance: 10_000,
-    advanceConsumed: 40_000,
-    outstandingBalance: 0,
+    advanceBalance: 0,
+    advanceConsumed: 50_000,
+    outstandingBalance: 90_000,
   });
   assert.deepEqual(reconcile({ advanceBalance: 50_000, outstandingBalance: 50_000 }), {
     advanceBalance: 0,
     advanceConsumed: 50_000,
-    outstandingBalance: 0,
+    outstandingBalance: 100_000,
   });
   assert.deepEqual(reconcile({ advanceBalance: 50_000, outstandingBalance: 60_000 }), {
     advanceBalance: 0,
     advanceConsumed: 50_000,
-    outstandingBalance: 10_000,
+    outstandingBalance: 110_000,
+  });
+  assert.deepEqual(reconcile({ advanceBalance: 60_000, outstandingBalance: 20_000 }), {
+    advanceBalance: 0,
+    advanceConsumed: 60_000,
+    outstandingBalance: 80_000,
+  });
+  assert.deepEqual(reconcile({ advanceBalance: 240_000, outstandingBalance: 270_000 }), {
+    advanceBalance: 0,
+    advanceConsumed: 240_000,
+    outstandingBalance: 510_000,
   });
 });
 
@@ -41,11 +51,15 @@ test("tenant balance reconciliation never leaves both advance and outstanding po
 });
 
 test("database migration preserves advance allocations and records consumed amount", () => {
-  const migration = fs.readFileSync("supabase/upgrade_migrations/0217_tenant_balance_net_reconciliation.sql", "utf8");
-  assert.match(migration, /consumed_by_balance_reconciliation/);
-  assert.match(migration, /create table if not exists public\.tenant_balance_reconciliations/);
-  assert.match(migration, /create or replace function public\.reconcile_tenant_balance/);
-  assert.match(migration, /for update/);
+  const originalMigration = fs.readFileSync("supabase/upgrade_migrations/0217_tenant_balance_net_reconciliation.sql", "utf8");
+  const repairMigration = fs.readFileSync("supabase/upgrade_migrations/0266_true_tenant_outstanding_balance.sql", "utf8");
+  assert.match(originalMigration, /consumed_by_balance_reconciliation/);
+  assert.match(originalMigration, /create table if not exists public\.tenant_balance_reconciliations/);
+  assert.match(repairMigration, /create or replace function public\.reconcile_tenant_balance/);
+  assert.match(repairMigration, /v_outstanding_after := v_requested_outstanding \+ v_advance_before/);
+  assert.match(repairMigration, /payment_amount <= due_before/);
+  assert.match(repairMigration, /B912/);
+  assert.match(repairMigration, /C8019/);
 });
 
 test("payment, adjustment and promise paths use canonical tenant balance reconciliation", () => {
@@ -66,4 +80,10 @@ test("live search and billing functions subtract consumed advance only once", ()
   assert.match(billingMigration, /amount_allocated - coalesce\(a\.consumed_by_balance_reconciliation, 0\)/);
   assert.match(dataSource, /availableAdvanceAllocation/);
   assert.match(dataSource, /displayTenantNetBalance/);
+});
+
+test("tenant payment allocation creates advance only from true overpayment", () => {
+  const allocationSource = fs.readFileSync("lib/collections/move-in-allocation.ts", "utf8");
+  assert.match(allocationSource, /genuineAdvanceCredit = Math\.max\(0, amount - totalDueBeforePayment\)/);
+  assert.match(allocationSource, /remaining = Math\.min\(remaining, genuineAdvanceCredit\)/);
 });

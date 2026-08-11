@@ -330,7 +330,7 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
         : null;
     const advanceBalance = allocations
         .filter((row) => String(row.allocation_type ?? "") === "advance_month")
-        .reduce((total, row) => total + amount(row.amount_allocated), 0);
+        .reduce((total, row) => total + Math.max(0, amount(row.amount_allocated) - amount(row.consumed_by_balance_reconciliation)), 0);
     const amountAppliedToOutstanding = amount(payment.used_to_clear_outstanding) || allocations
         .filter((row) => /arrears|outstanding|debt/i.test(String(row.allocation_type ?? "")))
         .reduce((total, row) => total + amount(row.amount_allocated), 0);

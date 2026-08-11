@@ -150,6 +150,9 @@ export function buildTenantPaymentCoverageAllocations(input: {
         remaining -= currentPaid;
     }
 
+    const genuineAdvanceCredit = Math.max(0, amount - totalDueBeforePayment);
+    remaining = Math.min(remaining, genuineAdvanceCredit);
+
     let advanceIndex = currentIndex + 1;
     while (remaining > 0.004 && advanceIndex < currentIndex + 121) {
         const allocationAmount = Math.min(remaining, monthlyRent);

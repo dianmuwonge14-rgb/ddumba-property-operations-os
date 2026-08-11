@@ -24,9 +24,9 @@ export function availableAdvanceAllocation(row: Record<string, unknown>) {
 export function reconcileTenantBalance(input: TenantBalanceState): TenantBalanceReconciliation {
     const requestedOutstanding = moneyAmount(input.outstandingBalance);
     const currentAdvance = moneyAmount(input.advanceBalance);
-    const advanceConsumed = Math.min(requestedOutstanding, currentAdvance);
-    const outstandingBalance = Math.max(0, requestedOutstanding - advanceConsumed);
-    const advanceBalance = Math.max(0, currentAdvance - advanceConsumed);
+    const advanceConsumed = requestedOutstanding > 0 ? currentAdvance : 0;
+    const outstandingBalance = requestedOutstanding > 0 ? requestedOutstanding + currentAdvance : 0;
+    const advanceBalance = requestedOutstanding > 0 ? 0 : currentAdvance;
 
     return {
         advanceBalance,
@@ -40,12 +40,11 @@ export function reconcileTenantBalance(input: TenantBalanceState): TenantBalance
 export function displayTenantNetBalance(input: TenantBalanceState): TenantBalanceState {
     const outstanding = moneyAmount(input.outstandingBalance);
     const advance = moneyAmount(input.advanceBalance);
-    if (outstanding <= 0 || advance <= 0) {
-        return { advanceBalance: advance, outstandingBalance: outstanding };
+    if (outstanding > 0 && advance > 0) {
+        return { advanceBalance: 0, outstandingBalance: outstanding + advance };
     }
-    const net = outstanding - advance;
     return {
-        advanceBalance: Math.max(0, -net),
-        outstandingBalance: Math.max(0, net),
+        advanceBalance: advance,
+        outstandingBalance: outstanding,
     };
 }
