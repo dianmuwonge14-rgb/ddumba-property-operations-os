@@ -87,3 +87,24 @@ test("tenant payment allocation creates advance only from true overpayment", () 
   assert.match(allocationSource, /genuineAdvanceCredit = Math\.max\(0, amount - totalDueBeforePayment\)/);
   assert.match(allocationSource, /remaining = Math\.min\(remaining, genuineAdvanceCredit\)/);
 });
+
+test("approved legacy arrears are reconstructed as pre-system monthly debt", () => {
+  const migration = fs.readFileSync("supabase/upgrade_migrations/0268_pre_system_legacy_arrears_ledger.sql", "utf8");
+  assert.match(migration, /create table if not exists public\.tenant_pre_system_arrears_periods/);
+  assert.match(migration, /go_live_month/);
+  assert.match(migration, /allocation_month/);
+  assert.match(migration, /payment_amount_applied_oldest_first/);
+  assert.match(migration, /does_not_create_new_rent/);
+  assert.match(migration, /public\.ddumba_reconstruct_approved_legacy_arrears\(\)/);
+  assert.match(migration, /tenant_legacy_monthly_balance_ledger/);
+});
+
+test("advance rent assistant distinguishes legacy arrears from mismatches", () => {
+  const dataSource = fs.readFileSync("lib/collections/data.ts", "utf8");
+  const uiSource = fs.readFileSync("components/office/payments/FastPaymentsEntry.tsx", "utf8");
+  assert.match(dataSource, /tenant_pre_system_arrears_periods/);
+  assert.match(dataSource, /type: "legacy_arrears"/);
+  assert.match(dataSource, /LEGACY ARREARS DETECTED/);
+  assert.match(uiSource, /Legacy \/ Pre-System Arrears/);
+  assert.match(uiSource, /Imported opening debt is part of outstanding balance, not advance rent/);
+});

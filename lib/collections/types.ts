@@ -73,6 +73,8 @@ export type CollectionTenantResult = {
     currentMonthPaid: number;
     advanceRentBalance: number;
     advanceRentMonths: Array<{ month: string; label: string; amount: number; coverageStart?: string | null; coverageEnd?: string | null }>;
+    legacyArrearsBalance?: number;
+    legacyArrearsMonths?: Array<{ month: string; label: string; amount: number; paymentsApplied: number; remainingAmount: number; status: "open" | "partial" | "cleared" }>;
     rentMonthAllocations: Array<{
         month: string;
         label: string;
@@ -307,7 +309,7 @@ export type FastPaymentRecentResult = {
 
 export type AdvanceRentAssistantItem = {
     id: string;
-    type: "advance_rent" | "prepaid_multiple_months" | "resolved" | "allocation_mismatch" | "coverage_mismatch";
+    type: "advance_rent" | "prepaid_multiple_months" | "resolved" | "legacy_arrears" | "allocation_mismatch" | "coverage_mismatch";
     severity: "success" | "warning" | "danger";
     roomNumber: string;
     tenantName: string;
@@ -316,6 +318,7 @@ export type AdvanceRentAssistantItem = {
     currentMonthPaid: number;
     outstandingBalance: number;
     advanceRentBalance: number;
+    legacyArrearsBalance?: number;
     monthsCovered: string[];
     message: string;
 };

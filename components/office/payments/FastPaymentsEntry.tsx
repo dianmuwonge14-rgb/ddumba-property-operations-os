@@ -169,6 +169,8 @@ function buildVacantNewTenantContext(payload: {
         lastAmountPaid: 0,
         lastCollection: null,
         lastRentChargeDate: null,
+        legacyArrearsBalance: 0,
+        legacyArrearsMonths: [],
         lease: null,
         ledgerEntries: [],
         monthlyRent,
@@ -2613,6 +2615,15 @@ function TenantBalance({ isAdmin, loadingDetails, onEditOutstanding, tenant }: {
                     <p className="mt-1 text-xs font-black text-violet-500">Advance Month Paid: None</p>
                 ) : null}
             </div>
+            {!loadingDetails && tenant.legacyArrearsMonths?.length ? (
+                <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4 xl:col-span-2">
+                    <p className="text-xs font-black uppercase text-amber-600">Legacy / Pre-System Arrears</p>
+                    <p className="mt-1 text-2xl font-black text-amber-800">{liveValue(money(tenant.legacyArrearsBalance ?? 0))}</p>
+                    <p className="mt-1 text-[11px] font-black text-amber-700">
+                        Source: imported opening balance · Reconstructed through {tenant.legacyArrearsMonths.map((item) => item.label).join(", ")}
+                    </p>
+                </div>
+            ) : null}
             <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
                 <p className="text-xs font-black uppercase text-emerald-500">Amount to Collect Now</p>
                 <p className="mt-1 text-2xl font-black text-emerald-700">{liveValue(money(amountToCollect(tenant)))}</p>
@@ -2643,6 +2654,34 @@ function TenantBalance({ isAdmin, loadingDetails, onEditOutstanding, tenant }: {
                     <p className="text-sm font-black text-emerald-800">
                         Tenant has {money(tenant.advanceRentBalance)} saved as advance rent for future months.
                     </p>
+                </div>
+            ) : null}
+            {!loadingDetails && tenant.legacyArrearsMonths?.length ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 xl:col-span-4">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <p className="text-xs font-black uppercase text-amber-600">Legacy arrears detected</p>
+                            <p className="text-sm font-black text-amber-900">Imported opening debt is part of outstanding balance, not advance rent.</p>
+                        </div>
+                        <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-amber-800">
+                            Remaining {money(tenant.legacyArrearsBalance ?? 0)}
+                        </span>
+                    </div>
+                    <div className="mt-3 grid gap-2 md:grid-cols-2">
+                        {tenant.legacyArrearsMonths.map((item) => (
+                            <div key={`legacy-${item.month}`} className="flex items-center justify-between gap-3 rounded-2xl border border-amber-100 bg-white px-3 py-2">
+                                <div>
+                                    <p className="text-sm font-black text-slate-950">{item.label}</p>
+                                    <p className="text-xs font-bold text-slate-500">
+                                        Applied {money(item.paymentsApplied)} / {money(item.amount)}
+                                    </p>
+                                </div>
+                                <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-black uppercase ${item.status === "cleared" ? "bg-emerald-100 text-emerald-800" : item.status === "partial" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"}`}>
+                                    {item.status}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             ) : null}
             {!loadingDetails && tenant.rentMonthAllocations.length ? (
@@ -2682,6 +2721,7 @@ function TenantBalance({ isAdmin, loadingDetails, onEditOutstanding, tenant }: {
 function AdvanceRentAssistantPanel({ items, loading }: { items: AdvanceRentAssistantItem[]; loading: boolean }) {
     const advanceCount = items.filter((item) => item.type === "advance_rent" || item.type === "prepaid_multiple_months").length;
     const resolvedCount = items.filter((item) => item.type === "resolved").length;
+    const legacyCount = items.filter((item) => item.type === "legacy_arrears").length;
     const mismatchCount = items.filter((item) => item.type === "allocation_mismatch" || item.type === "coverage_mismatch").length;
 
     return (
@@ -2693,11 +2733,12 @@ function AdvanceRentAssistantPanel({ items, loading }: { items: AdvanceRentAssis
                     </span>
                     <div>
                         <p className="text-sm font-black text-slate-950">AI Advance Rent Assistant</p>
-                        <p className="text-xs font-bold text-slate-500">Live Supabase scan for prepaid rooms and allocation mismatches.</p>
+                        <p className="text-xs font-bold text-slate-500">Live Supabase scan for prepaid rooms, legacy arrears and true allocation mismatches.</p>
                     </div>
                 </div>
                 <div className="flex flex-wrap gap-2 text-xs font-black">
                     <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-800">{advanceCount} advance rooms</span>
+                    <span className="rounded-full bg-amber-100 px-3 py-1 text-amber-900">{legacyCount} legacy arrears</span>
                     <span className="rounded-full bg-sky-100 px-3 py-1 text-sky-800">{resolvedCount} resolved</span>
                     <span className="rounded-full bg-amber-100 px-3 py-1 text-amber-900">{mismatchCount} review items</span>
                 </div>
@@ -2725,7 +2766,7 @@ function AdvanceRentAssistantPanel({ items, loading }: { items: AdvanceRentAssis
                             <div className="mt-3 grid grid-cols-3 gap-2 text-[11px] font-black">
                                 <span>Rent {money(item.monthlyRent)}</span>
                                 <span>Paid {money(item.currentMonthPaid)}</span>
-                                <span>Advance {money(item.advanceRentBalance)}</span>
+                                <span>{item.type === "legacy_arrears" ? `Legacy ${money(item.legacyArrearsBalance ?? 0)}` : `Advance ${money(item.advanceRentBalance)}`}</span>
                             </div>
                         </div>
                     ))}

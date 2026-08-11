@@ -1661,7 +1661,7 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
     const roomIds = uniqueIds(tenantRows.map((tenant) => tenant.room_id));
     const officeIds = uniqueIds(tenantRows.map((tenant) => tenant.office_id));
 
-    const [roomsResult, officesResult, collectionRows, allocationRows] = await Promise.all([
+    const [roomsResult, officesResult, collectionRows, allocationRows, legacyArrearsRows] = await Promise.all([
         roomIds.length
             ? supabase.from("rooms").select("id, room_number, monthly_rent, outstanding_balance, office_id").eq("company_id", companyId).in("id", roomIds)
             : { data: [] as Array<Record<string, unknown>>, error: null },
@@ -1679,6 +1679,13 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
             ? optionalRows((supabase as unknown as DynamicDb)
                 .from("tenant_rent_allocations")
                 .select("tenant_id, payment_id, allocation_month, allocation_type, amount_allocated, consumed_by_balance_reconciliation, allocation_source, is_historical_credit, coverage_start, coverage_end, coverage_index")
+                .eq("company_id", companyId)
+                .in("tenant_id", tenantIds))
+            : [],
+        tenantIds.length
+            ? optionalRows((supabase as unknown as DynamicDb)
+                .from("tenant_pre_system_arrears_periods")
+                .select("tenant_id, room_id, allocation_month, legacy_arrears_amount, payments_applied, remaining_amount, status, go_live_month, source_payment_id")
                 .eq("company_id", companyId)
                 .in("tenant_id", tenantIds))
             : [],
@@ -1701,6 +1708,12 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
         if (!tenantId) continue;
         allocationsByTenant.set(tenantId, [...(allocationsByTenant.get(tenantId) ?? []), allocation]);
     }
+    const legacyArrearsByTenant = new Map<string, Array<Record<string, unknown>>>();
+    for (const legacyRow of legacyArrearsRows as Array<Record<string, unknown>>) {
+        const tenantId = String(legacyRow.tenant_id ?? "");
+        if (!tenantId) continue;
+        legacyArrearsByTenant.set(tenantId, [...(legacyArrearsByTenant.get(tenantId) ?? []), legacyRow]);
+    }
 
     const items: AdvanceRentAssistantItem[] = [];
     for (const tenant of tenantRows) {
@@ -1715,6 +1728,12 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
         const outstandingBalance = Math.max(0, Number(tenant.balance ?? room.outstanding_balance ?? 0));
         const tenantAllocations = allocationsByTenant.get(tenantId) ?? [];
         const tenantCollections = collectionsByTenant.get(tenantId) ?? [];
+        const tenantLegacyArrears = legacyArrearsByTenant.get(tenantId) ?? [];
+        const activeLegacyArrearsBalance = tenantLegacyArrears.reduce((total, row) => total + Number(row.remaining_amount ?? 0), 0);
+        const legacyArrearsMonths = [...new Set(tenantLegacyArrears
+            .sort((left, right) => String(left.allocation_month ?? "").localeCompare(String(right.allocation_month ?? "")))
+            .map((row) => monthLabelFromDate(String(row.allocation_month ?? "")))
+            .filter((value): value is string => Boolean(value)))];
         const currentMonthPaid = tenantAllocations
             .filter((allocation) => String(allocation.allocation_month ?? "").slice(0, 7) === monthStart.slice(0, 7))
             .reduce((total, allocation) => total + Number(allocation.amount_allocated ?? 0), 0);
@@ -1771,6 +1790,26 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
                 advanceRentBalance,
                 monthsCovered,
                 message: `Room ${roomNumber} has UGX ${Math.round(advanceRentBalance).toLocaleString()} already allocated to ${monthsCovered.join(", ") || "future rent"}.`,
+            });
+            continue;
+        }
+
+        if (tenantLegacyArrears.length) {
+            const reconstructedTotal = tenantLegacyArrears.reduce((total, row) => total + Number(row.legacy_arrears_amount ?? 0), 0);
+            items.push({
+                id: `legacy-arrears-${tenantId}`,
+                type: "legacy_arrears",
+                severity: activeLegacyArrearsBalance > 0 ? "warning" : "success",
+                roomNumber,
+                tenantName,
+                officeName,
+                monthlyRent,
+                currentMonthPaid,
+                outstandingBalance,
+                advanceRentBalance,
+                legacyArrearsBalance: activeLegacyArrearsBalance,
+                monthsCovered: legacyArrearsMonths,
+                message: `LEGACY ARREARS DETECTED: Room ${roomNumber} has UGX ${Math.round(reconstructedTotal).toLocaleString()} of imported outstanding from before the system's billing history. It has been allocated to ${legacyArrearsMonths.join(", ") || "prior months"} as pre-system arrears, not advance rent.`,
             });
             continue;
         }
@@ -1844,7 +1883,7 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
     const { supabase } = await getScopedSupabase();
     const tenantIds = tenants.map((tenant) => tenant.id);
     const roomIds = uniqueIds(tenants.map((tenant) => tenant.room_id));
-    const [leases, rooms, collections, allocationRows, rentMonthRows] = await Promise.all([
+    const [leases, rooms, collections, allocationRows, rentMonthRows, legacyArrearsRows] = await Promise.all([
         tenantIds.length ? supabase.from("leases").select("*").eq("company_id", companyId).in("tenant_id", tenantIds).eq("status", "active") : { data: [] as LeaseRow[] },
         roomIds.length ? supabase.from("rooms").select("*").eq("company_id", companyId).in("id", roomIds) : { data: [] as RoomRow[] },
         tenantIds.length
@@ -1872,6 +1911,14 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
                 .eq("company_id", companyId)
                 .in("tenant_id", tenantIds)
                 .order("due_date", { ascending: false }))
+            : [],
+        tenantIds.length
+            ? optionalRows((supabase as unknown as DynamicDb)
+                .from("tenant_pre_system_arrears_periods")
+                .select("tenant_id, allocation_month, legacy_arrears_amount, payments_applied, remaining_amount, status")
+                .eq("company_id", companyId)
+                .in("tenant_id", tenantIds)
+                .order("allocation_month", { ascending: true }))
             : [],
     ]);
     const leaseRows = leases.data ?? [];
@@ -1904,6 +1951,12 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
         if (!tenantId) continue;
         allocationsByTenant.set(tenantId, [...(allocationsByTenant.get(tenantId) ?? []), allocation]);
     }
+    const legacyArrearsByTenant = new Map<string, Array<Record<string, unknown>>>();
+    for (const legacyRow of legacyArrearsRows as Array<Record<string, unknown>>) {
+        const tenantId = String(legacyRow.tenant_id ?? "");
+        if (!tenantId) continue;
+        legacyArrearsByTenant.set(tenantId, [...(legacyArrearsByTenant.get(tenantId) ?? []), legacyRow]);
+    }
     const lastRentChargeByTenant = new Map<string, string>();
     for (const row of rentMonthRows as Array<Record<string, unknown>>) {
         const tenantId = String(row.tenant_id ?? "");
@@ -1923,6 +1976,16 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
         const previousOutstandingBeforeLastPayment = Math.max(0, rawOutstandingBeforeLastPayment);
         const lastAmountPaid = Number(lastCollection?.amount_paid ?? lastCollection?.amount ?? 0);
         const tenantAllocations = allocationsByTenant.get(tenant.id) ?? [];
+        const tenantLegacyArrears = legacyArrearsByTenant.get(tenant.id) ?? [];
+        const legacyArrearsMonths = tenantLegacyArrears.map((row) => ({
+            amount: Number(row.legacy_arrears_amount ?? 0),
+            label: monthLabelFromDate(String(row.allocation_month ?? "")) ?? String(row.allocation_month ?? "").slice(0, 10),
+            month: String(row.allocation_month ?? "").slice(0, 10),
+            paymentsApplied: Number(row.payments_applied ?? 0),
+            remainingAmount: Number(row.remaining_amount ?? 0),
+            status: (String(row.status ?? "open") === "cleared" ? "cleared" : String(row.status ?? "open") === "partial" ? "partial" : "open") as "open" | "partial" | "cleared",
+        }));
+        const legacyArrearsBalance = legacyArrearsMonths.reduce((total, row) => total + row.remainingAmount, 0);
         const monthStart = selectedMonthStart(paymentDate);
         const upcomingMonth = addMonthsToMonthStart(monthStart, 1);
         const allocationByMonth = new Map<string, { historical: number; arrears: number; rent: number; advance: number; coverageStart: string | null; coverageEnd: string | null }>();
@@ -2001,6 +2064,8 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
             currentMonthPaid,
             advanceRentBalance: displayedBalance.advanceBalance,
             advanceRentMonths,
+            legacyArrearsBalance,
+            legacyArrearsMonths,
             rentMonthAllocations,
             nextMonthCoveredAmount,
             nextAdvanceRentMonth: monthLabelFromDate(advanceRentMonths[0]?.month),
