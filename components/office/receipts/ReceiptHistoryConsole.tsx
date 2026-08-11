@@ -64,7 +64,7 @@ function normalizeStatus(status: string | null | undefined) {
 function receiptStatusConfig(status: string | null | undefined) {
     const normalized = normalizeStatus(status);
     if (normalized === "pending_correction") return { card: "border-amber-300 bg-amber-50/80", badge: "bg-amber-100 text-amber-800", accent: "bg-amber-500", label: "Pending correction" };
-    if (normalized === "corrected") return { card: "border-blue-300 bg-blue-50/80", badge: "bg-blue-100 text-blue-800", accent: "bg-blue-500", label: "Corrected" };
+    if (normalized === "corrected") return { card: "border-orange-300 bg-orange-50/80", badge: "bg-orange-100 text-orange-800", accent: "bg-orange-500", label: "Corrected" };
     if (normalized === "partially_adjusted") return { card: "border-purple-300 bg-purple-50/80", badge: "bg-purple-100 text-purple-800", accent: "bg-purple-500", label: "Partially adjusted" };
     if (normalized === "cancelled") return { card: "border-red-300 bg-red-50/80", badge: "bg-red-100 text-red-800", accent: "bg-red-600", label: "Cancelled" };
     if (normalized === "reversed") return { card: "border-rose-400 bg-rose-50/80", badge: "bg-rose-200 text-rose-950", accent: "bg-rose-900", label: "Reversed" };
@@ -210,7 +210,7 @@ export default function ReceiptHistoryConsole({ error, receipts }: Props) {
                                 <button type="button" onClick={() => void shareReceiptByWhatsapp(receipt)} className="inline-flex items-center gap-1 rounded-xl bg-green-600 px-3 py-2 text-xs font-black text-white"><MessageCircle size={13} /> WhatsApp</button>
                                 <a href={`mailto:?subject=${encodeURIComponent(`DDUMBA OS Receipt ${receipt.receiptNumber}`)}&body=${encodeURIComponent(`Receipt ${receipt.receiptNumber} for ${receipt.tenantName ?? "tenant"}: ${money(receipt.amountPaid)}. Verification ${receipt.verificationCode}.`)}`} className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-black text-white"><Mail size={13} /> Resend</a>
                                 <a href={`/office/payments?receipt=${receipt.id}&payment=${receipt.paymentId}`} className="inline-flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-700"><ReceiptText size={13} /> Payment</a>
-                                <a href={`/office/payments?history=${receipt.paymentId}`} className="inline-flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-700"><History size={13} /> Corrections</a>
+                                <a href={`/office/payments?history=${receipt.paymentId}`} className="inline-flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-700"><History size={13} /> View Corrections</a>
                             </div>
                         </article>
                     );}) : (

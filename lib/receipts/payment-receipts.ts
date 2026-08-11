@@ -143,18 +143,35 @@ function correctionFieldLabel(type: unknown) {
     return "Payment";
 }
 
-function correctionValueLabel(value: unknown, type: unknown) {
+async function correctionValueLabel(db: Db, companyId: string, value: unknown, type: unknown) {
     const row = (value ?? {}) as LooseRow;
     if (type === "date_change") return text(row.payment_date) ?? null;
     if (type === "amount_change") return `UGX ${Math.round(amount(row.amount)).toLocaleString()}`;
     if (type === "room_change") {
-        const room = text(row.room_number) ?? text(row.room_id);
-        const tenant = text(row.tenant_name);
+        let room = text(row.room_number);
+        let tenant = text(row.tenant_name);
+        if (!room && row.room_id) {
+            const roomRow = await getOne(db, "rooms", row.room_id, companyId, "id,room_number");
+            room = text(roomRow?.room_number) ?? text(row.room_id);
+        }
+        if (!tenant && row.tenant_id) {
+            const tenantRow = await getOne(db, "tenants", row.tenant_id, companyId, "id,full_name");
+            tenant = text(tenantRow?.full_name);
+        }
         return [room, tenant].filter(Boolean).join(" · ") || null;
     }
     if (type === "payment_method_change") return text(row.payment_method_label) ?? text(row.payment_method)?.replaceAll("_", " ") ?? null;
     if (type === "remove_payment") return text(row.status) ?? (row.remove_payment ? "removed by Admin approval" : null);
     return JSON.stringify(row);
+}
+
+function receiptAmendmentHistory(previousHistory: PaymentReceiptAmendmentSnapshot[], amendment: PaymentReceiptAmendmentSnapshot, requestId: unknown) {
+    const approvedReference = amendment.auditReference;
+    const pendingReference = `payment_correction:${String(requestId)}:pending`;
+    return [
+        ...previousHistory.filter((entry) => entry.auditReference !== approvedReference && entry.auditReference !== pendingReference),
+        amendment,
+    ];
 }
 
 function receiptNumberFor(payment: LooseRow) {
@@ -497,14 +514,15 @@ export async function syncTenantPaymentReceiptForCorrection(input: {
         changeDate: text(request.reviewed_at) ?? text(request.updated_at) ?? text(request.created_at),
         changedByName,
         fieldLabel,
-        newValue: correctionValueLabel(request.requested_value, request.correction_type),
-        previousValue: correctionValueLabel(request.original_value, request.correction_type),
+        newValue: await correctionValueLabel(db, companyId, request.requested_value, request.correction_type),
+        previousValue: await correctionValueLabel(db, companyId, request.original_value, request.correction_type),
         reason: text(request.admin_comment) ?? text(request.reason),
         requestedAt: text(request.created_at),
         requestedByName,
         status: input.decision,
     };
     const previousHistory = Array.isArray(previousSnapshot.amendmentHistory) ? previousSnapshot.amendmentHistory : [];
+    const amendmentHistory = receiptAmendmentHistory(previousHistory, amendment, request.id);
     const amendmentSummary = input.decision === "rejected"
         ? `${fieldLabel} change rejected`
         : receiptStatus === "cancelled"
@@ -512,7 +530,7 @@ export async function syncTenantPaymentReceiptForCorrection(input: {
             : `${fieldLabel} changed from ${amendment.previousValue ?? "previous value"} to ${amendment.newValue ?? "new value"}`;
     const updatedSnapshot: PaymentReceiptSnapshot = {
         ...currentSnapshot,
-        amendmentHistory: [...previousHistory, amendment],
+        amendmentHistory,
         amendmentSummary,
         approvalDate: amendment.approvalDate,
         auditReference: amendment.auditReference,
@@ -535,6 +553,7 @@ export async function syncTenantPaymentReceiptForCorrection(input: {
         const { data: updatedReceipt, error: updateError } = await db
             .from("payment_receipts")
             .update({
+                office_id: payment.office_id ?? request.office_id ?? existing.office_id ?? null,
                 receipt_snapshot: updatedSnapshot,
                 status: receiptStatus,
                 updated_at: new Date().toISOString(),
@@ -641,17 +660,18 @@ export async function markTenantPaymentReceiptPendingCorrection(input: {
         changeDate: text(request.created_at),
         changedByName: requestedByName,
         fieldLabel,
-        newValue: correctionValueLabel(request.requested_value, request.correction_type),
-        previousValue: correctionValueLabel(request.original_value, request.correction_type),
+        newValue: await correctionValueLabel(db, companyId, request.requested_value, request.correction_type),
+        previousValue: await correctionValueLabel(db, companyId, request.original_value, request.correction_type),
         reason: text(request.reason),
         requestedAt: text(request.created_at),
         requestedByName,
         status: "pending",
     };
     const previousHistory = Array.isArray(previousSnapshot.amendmentHistory) ? previousSnapshot.amendmentHistory : [];
+    const amendmentHistory = receiptAmendmentHistory(previousHistory, amendment, request.id);
     const updatedSnapshot: PaymentReceiptSnapshot = {
         ...previousSnapshot,
-        amendmentHistory: [...previousHistory, amendment],
+        amendmentHistory,
         amendmentSummary: `${fieldLabel} change pending Admin approval`,
         auditReference: amendment.auditReference,
         changeDate: amendment.changeDate,

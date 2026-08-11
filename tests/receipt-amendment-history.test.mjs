@@ -23,8 +23,10 @@ test("payment correction approval syncs receipt status and amendment history", (
   assert.match(service, /export async function syncTenantPaymentReceiptForCorrection/);
   assert.match(service, /export async function markTenantPaymentReceiptPendingCorrection/);
   assert.match(service, /correctionReceiptStatus/);
-  assert.match(service, /amendmentHistory: \[\.\.\.previousHistory, amendment\]/);
+  assert.match(service, /receiptAmendmentHistory/);
+  assert.match(service, /getOne\(db, "rooms", row\.room_id/);
   assert.match(service, /status: receiptStatus/);
+  assert.match(service, /office_id: payment\.office_id \?\? request\.office_id \?\? existing\.office_id/);
   assert.match(collections, /syncTenantPaymentReceiptForCorrection/);
   assert.match(collections, /markTenantPaymentReceiptPendingCorrection/);
   assert.match(collections, /decision: input\.decision/);
@@ -47,6 +49,8 @@ test("receipt history loads amendments and exposes premium status filters", () =
   assert.match(historyConsole, /Corrected/);
   assert.match(historyConsole, /Cancelled/);
   assert.match(historyConsole, /receiptStatusConfig/);
+  assert.match(historyConsole, /View Corrections/);
+  assert.match(historyConsole, /border-orange-300 bg-orange-50/);
 });
 
 test("printed and downloaded receipts display status and amendment history", () => {
