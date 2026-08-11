@@ -1986,10 +1986,9 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
         const failedUpdate = await db
             .from("landlord_payment_expense_requests")
             .update({
-                status: "failed",
-                admin_comment: safeMessage,
-                reviewed_by: actorId,
-                reviewed_at: reviewedAt,
+                admin_comment: `[approval_failed] ${safeMessage}`,
+                reviewed_by: null,
+                reviewed_at: null,
                 updated_at: new Date().toISOString(),
             })
             .eq("id", request.id)
@@ -2010,6 +2009,54 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
         }
         throw new Error(safeMessage);
     }
+}
+
+export async function decideBulkLandlordPaidExpenseRequests(input: {
+    comment?: string;
+    decision: "approved" | "rejected";
+    requestIds: string[];
+}) {
+    const uniqueIds = Array.from(new Set((input.requestIds ?? []).filter(Boolean)));
+    if (!uniqueIds.length) throw new Error("Select at least one pending landlord payment request first.");
+    if (input.decision === "rejected" && !input.comment?.trim()) throw new Error("A rejection reason is required.");
+
+    const results: Array<{
+        error?: string;
+        ok: boolean;
+        requestId: string;
+        status: "approved" | "rejected" | "failed";
+    }> = [];
+
+    for (const requestId of uniqueIds) {
+        try {
+            await decideLandlordPaidExpenseRequest({
+                comment: input.comment ?? "",
+                decision: input.decision,
+                requestId,
+            });
+            results.push({
+                ok: true,
+                requestId,
+                status: input.decision,
+            });
+        } catch (error) {
+            results.push({
+                error: error instanceof Error ? error.message : "Unable to process landlord payment request.",
+                ok: false,
+                requestId,
+                status: "failed",
+            });
+        }
+    }
+
+    revalidateExpenseSurfaces();
+    return {
+        approved: results.filter((result) => result.ok && result.status === "approved").length,
+        failed: results.filter((result) => !result.ok).length,
+        rejected: results.filter((result) => result.ok && result.status === "rejected").length,
+        results,
+        total: uniqueIds.length,
+    };
 }
 
 async function createApprovedLandlordAdvanceFromExpenseRequest(input: {

@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Banknote, Bot, Camera, CheckCircle2, Download, Edit3, Eye, FileText, History, Loader2, Paperclip, Printer, ReceiptText, Search, Trash2, Upload, UserRound, WalletCards, X } from "lucide-react";
 import { decideTreasuryCashRequest, submitTreasuryCashRequest } from "@/app/actions/cash-banking";
-import { adminEditExpenseDirect, adminSafeDeleteExpense, approveExpense, createEmployeeExpenseFromExpenses, createExpense, createLandlordPaidExpenseRequest, decideEmployeeExpenseRequest, decideExpenseChangeRequest, decideLandlordExpenseEditRequest, decideLandlordPaidExpenseRequest, previewEmployeeExpense, previewLandlordPaymentExpense, rejectExpense, submitExpenseChangeRequest, submitLandlordExpenseEdit } from "@/app/actions/expenses";
+import { adminEditExpenseDirect, adminSafeDeleteExpense, approveExpense, createEmployeeExpenseFromExpenses, createExpense, createLandlordPaidExpenseRequest, decideBulkLandlordPaidExpenseRequests, decideEmployeeExpenseRequest, decideExpenseChangeRequest, decideLandlordExpenseEditRequest, decideLandlordPaidExpenseRequest, previewEmployeeExpense, previewLandlordPaymentExpense, rejectExpense, submitExpenseChangeRequest, submitLandlordExpenseEdit } from "@/app/actions/expenses";
 import { currentBusinessDate, formatBusinessDate } from "@/lib/business-date";
 import type { EmployeeExpensePreview, ExpenseBalanceFilters, ExpenseBalanceReport, ExpenseChangePayload, ExpenseItem, ExpensePeriodMode, ExpensesPageData, LandlordExpenseEditRequestType } from "@/lib/expenses/types";
 
@@ -2457,17 +2457,50 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
     const [filters, setFilters] = useState<RecordTableFilters>(() => defaultRecordTableFilters());
     const [isPending, startTransition] = useTransition();
     const [message, setMessage] = useState<string | null>(null);
-    const [pendingDecisionId, setPendingDecisionId] = useState<string | null>(null);
+    const [processingDecisionById, setProcessingDecisionById] = useState<Record<string, "approved" | "rejected">>({});
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [selected, setSelected] = useState<ExpensesPageData["landlordPaymentRequests"][number] | null>(null);
+    const [bulkModal, setBulkModal] = useState<{ decision: "approved" | "rejected"; ids: string[] } | null>(null);
+    const [bulkComment, setBulkComment] = useState("");
+    const [bulkResult, setBulkResult] = useState<Awaited<ReturnType<typeof decideBulkLandlordPaidExpenseRequests>> | null>(null);
     const range = useMemo(() => resolveRecordFilterRange(filters), [filters]);
     const visibleRequests = useMemo(() => requests.filter((request) => {
         if (isAdmin && filters.officeId && request.officeId !== filters.officeId) return false;
         return isDateInRange(request.paymentDate, range);
     }), [filters.officeId, isAdmin, range, requests]);
+    const pendingVisibleRequests = useMemo(() => visibleRequests.filter((request) => String(request.status).toLowerCase() === "pending"), [visibleRequests]);
+    const selectedVisibleRequests = useMemo(() => pendingVisibleRequests.filter((request) => selectedIds.includes(request.id)), [pendingVisibleRequests, selectedIds]);
+    const bulkModalRequests = useMemo(() => bulkModal ? pendingVisibleRequests.filter((request) => bulkModal.ids.includes(request.id)) : [], [bulkModal, pendingVisibleRequests]);
     const total = useMemo(() => visibleRequests.reduce((sum, request) => sum + Number(request.amount ?? 0), 0), [visibleRequests]);
     const officeLabel = isAdmin && filters.officeId ? offices.find((office) => office.id === filters.officeId)?.name ?? "Selected office" : isAdmin ? "All Offices" : activeOfficeName;
+
+    useEffect(() => {
+        const visibleIds = new Set(pendingVisibleRequests.map((request) => request.id));
+        setSelectedIds((current) => current.filter((id) => visibleIds.has(id)));
+    }, [pendingVisibleRequests]);
+
+    function setRowProcessing(requestIds: string[], decision: "approved" | "rejected" | null) {
+        setProcessingDecisionById((current) => {
+            const next = { ...current };
+            for (const requestId of requestIds) {
+                if (decision) next[requestId] = decision;
+                else delete next[requestId];
+            }
+            return next;
+        });
+    }
+
+    function toggleSelected(requestId: string, checked: boolean) {
+        setSelectedIds((current) => {
+            const next = new Set(current);
+            if (checked) next.add(requestId);
+            else next.delete(requestId);
+            return Array.from(next);
+        });
+    }
+
     function decide(request: ExpensesPageData["landlordPaymentRequests"][number], decision: "approved" | "rejected") {
-        if (pendingDecisionId) return;
+        if (processingDecisionById[request.id]) return;
         const comment = decision === "rejected"
             ? window.prompt("Enter the rejection reason for this landlord payment request.") ?? ""
             : window.prompt("Confirm approval note. Leave blank if not needed.") ?? "";
@@ -2476,7 +2509,7 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
             return;
         }
         setMessage(null);
-        setPendingDecisionId(request.id);
+        setRowProcessing([request.id], decision);
         startTransition(async () => {
             try {
                 await decideLandlordPaidExpenseRequest({ requestId: request.id, decision, comment });
@@ -2488,10 +2521,53 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
             } catch (error) {
                 setMessage(error instanceof Error ? error.message : "Unable to process landlord payment request.");
             } finally {
-                setPendingDecisionId(null);
+                setRowProcessing([request.id], null);
             }
         });
     }
+
+    function openBulk(decision: "approved" | "rejected", ids: string[]) {
+        const pendingIds = new Set(pendingVisibleRequests.map((request) => request.id));
+        const uniqueIds = Array.from(new Set(ids)).filter((id) => pendingIds.has(id));
+        if (!uniqueIds.length) {
+            setMessage("Select at least one visible pending landlord payment request first.");
+            return;
+        }
+        setBulkComment("");
+        setBulkResult(null);
+        setBulkModal({ decision, ids: uniqueIds });
+    }
+
+    function runBulk() {
+        if (!bulkModal) return;
+        if (bulkModal.decision === "rejected" && !bulkComment.trim()) {
+            setMessage("A rejection reason is required.");
+            return;
+        }
+        setMessage(null);
+        setBulkResult(null);
+        setRowProcessing(bulkModal.ids, bulkModal.decision);
+        startTransition(async () => {
+            try {
+                const result = await decideBulkLandlordPaidExpenseRequests({
+                    comment: bulkComment.trim(),
+                    decision: bulkModal.decision,
+                    requestIds: bulkModal.ids,
+                });
+                setBulkResult(result);
+                setMessage(`Bulk ${bulkModal.decision === "approved" ? "approval" : "rejection"} finished. Approved: ${result.approved}. Rejected: ${result.rejected}. Failed: ${result.failed}.`);
+                setSelectedIds((current) => current.filter((id) => result.results.some((row) => row.requestId === id && !row.ok)));
+                setBulkModal(null);
+                setBulkComment("");
+                router.refresh();
+            } catch (error) {
+                setMessage(error instanceof Error ? error.message : "Bulk landlord payment review failed.");
+            } finally {
+                setRowProcessing(bulkModal.ids, null);
+            }
+        });
+    }
+
     if (!requests.length) return null;
     return (
         <section className="mx-auto mt-5 max-w-6xl overflow-hidden rounded-[26px] border border-white/70 bg-white shadow-2xl shadow-slate-950/15">
@@ -2499,6 +2575,19 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
                 <p className="text-xs font-black uppercase tracking-wide text-amber-600">Landlord payment approval queue</p>
                 <h2 className="text-lg font-black text-slate-950">Expense-routed Landlord Payments</h2>
                 {message ? <p className="mt-2 rounded-2xl border border-amber-100 bg-amber-50 px-3 py-2 text-sm font-black text-slate-800">{message}</p> : null}
+                {bulkResult ? (
+                    <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-700">
+                        <p className="font-black text-slate-950">Bulk Approval Result</p>
+                        <p>Approved: {bulkResult.approved} · Rejected: {bulkResult.rejected} · Failed: {bulkResult.failed}</p>
+                        {bulkResult.results.filter((result) => !result.ok).length ? (
+                            <div className="mt-2 space-y-1 text-xs text-rose-700">
+                                {bulkResult.results.filter((result) => !result.ok).map((result) => (
+                                    <p key={`landlord-payment-bulk-failure:${result.requestId}`}>{result.requestId.slice(0, 8)}: {result.error}</p>
+                                ))}
+                            </div>
+                        ) : null}
+                    </div>
+                ) : null}
                 <RecordTableFilterBar
                     activeOfficeName={activeOfficeName}
                     filters={filters}
@@ -2508,11 +2597,37 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
                     onChange={setFilters}
                 />
                 <RecordTableSummary count={visibleRequests.length} dateLabel={range.label} officeLabel={officeLabel} total={total} />
+                {isAdmin && pendingVisibleRequests.length ? (
+                    <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                        <label className="inline-flex items-center gap-2 text-xs font-black text-slate-700">
+                            <input
+                                checked={pendingVisibleRequests.length > 0 && pendingVisibleRequests.every((request) => selectedIds.includes(request.id))}
+                                disabled={isPending}
+                                type="checkbox"
+                                onChange={(event) => setSelectedIds(event.target.checked ? pendingVisibleRequests.map((request) => request.id) : [])}
+                                className="h-4 w-4 rounded border-slate-300 text-amber-700"
+                            />
+                            Select All Visible ({pendingVisibleRequests.length})
+                        </label>
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                            <button disabled={isPending || selectedIds.length === 0} onClick={() => openBulk("approved", selectedIds)} className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-black text-white disabled:opacity-40">Approve Selected</button>
+                            <button disabled={isPending || selectedIds.length === 0} onClick={() => openBulk("rejected", selectedIds)} className="rounded-xl bg-rose-700 px-3 py-2 text-xs font-black text-white disabled:opacity-40">Reject Selected</button>
+                            <button disabled={isPending || pendingVisibleRequests.length === 0} onClick={() => openBulk("approved", pendingVisibleRequests.map((request) => request.id))} className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-black text-emerald-800 disabled:opacity-40">Approve All Visible Pending</button>
+                            <span className="text-xs font-bold text-slate-500">{selectedVisibleRequests.length} visible selected</span>
+                            {isPending && Object.keys(processingDecisionById).length ? (
+                                <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-amber-800">
+                                    {Object.values(processingDecisionById)[0] === "approved" ? "Approving" : "Rejecting"} {Object.keys(processingDecisionById).length} selected...
+                                </span>
+                            ) : null}
+                        </div>
+                    </div>
+                ) : null}
             </div>
             <div className="overflow-auto">
                 <table className="w-full min-w-[900px] text-left text-sm">
                     <thead className="bg-slate-950 text-xs uppercase text-slate-200">
                         <tr>
+                            {isAdmin ? <th className="px-4 py-3">Select</th> : null}
                             <th className="px-4 py-3">Date</th>
                             <th className="px-4 py-3">Landlord</th>
                             <th className="px-4 py-3">Office</th>
@@ -2528,10 +2643,25 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
                     </thead>
                     <tbody>
                         {visibleRequests.map((request) => {
-                            const busy = isPending && pendingDecisionId === request.id;
+                            const rowDecision = processingDecisionById[request.id] ?? null;
+                            const busy = Boolean(rowDecision);
                             const isPendingRequest = String(request.status).toLowerCase() === "pending";
                             return (
                                 <tr key={`landlord-payment-expense-request:${request.id}`} onClick={() => setSelected(request)} className="cursor-pointer border-b border-slate-100 hover:bg-amber-50/70">
+                                    {isAdmin ? (
+                                        <td className="px-4 py-3">
+                                            {isPendingRequest ? (
+                                                <input
+                                                    checked={selectedIds.includes(request.id)}
+                                                    disabled={busy}
+                                                    onChange={(event) => { event.stopPropagation(); toggleSelected(request.id, event.target.checked); }}
+                                                    onClick={(event) => event.stopPropagation()}
+                                                    type="checkbox"
+                                                    className="h-4 w-4 rounded border-slate-300 text-amber-700"
+                                                />
+                                            ) : null}
+                                        </td>
+                                    ) : null}
                                     <td className="px-4 py-3 font-bold text-slate-500">{request.paymentDate}</td>
                                     <td className="px-4 py-3 font-black text-slate-950">{request.landlordName}</td>
                                     <td className="px-4 py-3 font-bold text-slate-500">{request.officeName}</td>
@@ -2549,11 +2679,11 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
                                             </button>
                                             {isAdmin && isPendingRequest ? (
                                                 <>
-                                                    <button type="button" disabled={isPending} onClick={(event) => { event.stopPropagation(); decide(request, "approved"); }} className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-black text-white shadow-lg shadow-emerald-900/15 hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus:ring-4 focus:ring-emerald-100">
-                                                        {busy ? "Approving..." : "Approve"}
+                                                    <button type="button" disabled={busy} onClick={(event) => { event.stopPropagation(); decide(request, "approved"); }} className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-black text-white shadow-lg shadow-emerald-900/15 hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus:ring-4 focus:ring-emerald-100">
+                                                        {rowDecision === "approved" ? "Approving..." : "Approve"}
                                                     </button>
-                                                    <button type="button" disabled={isPending} onClick={(event) => { event.stopPropagation(); decide(request, "rejected"); }} className="rounded-xl bg-rose-700 px-3 py-2 text-xs font-black text-white shadow-lg shadow-rose-900/15 hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus:ring-4 focus:ring-rose-100">
-                                                        Reject
+                                                    <button type="button" disabled={busy} onClick={(event) => { event.stopPropagation(); decide(request, "rejected"); }} className="rounded-xl bg-rose-700 px-3 py-2 text-xs font-black text-white shadow-lg shadow-rose-900/15 hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus:ring-4 focus:ring-rose-100">
+                                                        {rowDecision === "rejected" ? "Rejecting..." : "Reject"}
                                                     </button>
                                                 </>
                                             ) : null}
@@ -2566,6 +2696,31 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
                 </table>
             </div>
             {!visibleRequests.length ? <p className="p-5 text-sm font-bold text-slate-500">No landlord payment records match the selected filters.</p> : null}
+            {bulkModal ? (
+                <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4">
+                    <div className="w-full max-w-xl rounded-[28px] border border-white/70 bg-white p-5 shadow-2xl shadow-slate-950/30">
+                        <p className="text-xs font-black uppercase tracking-wide text-amber-600">Confirm bulk landlord payment review</p>
+                        <h3 className="mt-2 text-2xl font-black text-slate-950">
+                            {bulkModal.decision === "approved" ? "Approve" : "Reject"} {bulkModal.ids.length} landlord payment request{bulkModal.ids.length === 1 ? "" : "s"}?
+                        </h3>
+                        <div className="mt-4 grid gap-2 rounded-2xl bg-slate-50 p-3 text-sm font-bold text-slate-700">
+                            <p>Total amount: {money(bulkModalRequests.reduce((sum, request) => sum + Number(request.amount ?? 0), 0))}</p>
+                            <p>Affected offices: {Array.from(new Set(bulkModalRequests.map((request) => request.officeName))).join(", ") || "--"}</p>
+                            <p>Affected landlords: {Array.from(new Set(bulkModalRequests.map((request) => request.landlordName))).join(", ") || "--"}</p>
+                        </div>
+                        <label className="mt-4 block">
+                            <span className="text-xs font-black uppercase tracking-wide text-slate-500">{bulkModal.decision === "rejected" ? "Rejection reason" : "Approval note"}</span>
+                            <textarea value={bulkComment} onChange={(event) => setBulkComment(event.target.value)} rows={3} className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm font-bold text-slate-900 outline-none focus:ring-4 focus:ring-amber-100" />
+                        </label>
+                        <div className="mt-5 flex flex-wrap justify-end gap-2">
+                            <button type="button" disabled={isPending} onClick={() => setBulkModal(null)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 disabled:opacity-40">Cancel</button>
+                            <button type="button" disabled={isPending || (bulkModal.decision === "rejected" && !bulkComment.trim())} onClick={runBulk} className={`rounded-xl px-4 py-2 text-sm font-black text-white disabled:opacity-40 ${bulkModal.decision === "approved" ? "bg-emerald-700" : "bg-rose-700"}`}>
+                                {isPending ? `${bulkModal.decision === "approved" ? "Approving" : "Rejecting"}...` : `${bulkModal.decision === "approved" ? "Approve" : "Reject"} ${bulkModal.ids.length} Request${bulkModal.ids.length === 1 ? "" : "s"}`}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
             {selected ? (
                 <RecordDetailsModal
                     onClose={() => setSelected(null)}

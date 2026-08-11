@@ -309,6 +309,30 @@ test("notifications only expose landlord payment approval actions for truly pend
   assert.match(notificationsSource, /request\.status === "pending" \? \(/);
 });
 
+test("landlord payment queue uses row-scoped loading and visible bulk selection", () => {
+  const expensesConsole = readFileSync(new URL("../components/office/expenses/ExpensesConsole.tsx", import.meta.url), "utf8");
+  const ledgerBody = expensesConsole.slice(expensesConsole.indexOf("function LandlordPaymentRequestLedger"), expensesConsole.indexOf("function RecordTableFilterBar"));
+  assert.match(ledgerBody, /processingDecisionById/);
+  assert.match(ledgerBody, /rowDecision === "approved" \? "Approving\.\.\."/);
+  assert.match(ledgerBody, /rowDecision === "rejected" \? "Rejecting\.\.\."/);
+  assert.match(ledgerBody, /disabled=\{busy\}/);
+  assert.match(ledgerBody, /Select All Visible/);
+  assert.match(ledgerBody, /Approve All Visible Pending/);
+  assert.match(ledgerBody, /Bulk Approval Result/);
+  assert.doesNotMatch(ledgerBody, /pendingDecisionId/);
+});
+
+test("bulk landlord payment review shares the canonical single approval service", () => {
+  const expensesSource = readFileSync(new URL("../app/actions/expenses.ts", import.meta.url), "utf8");
+  const bulkBody = expensesSource.slice(expensesSource.indexOf("export async function decideBulkLandlordPaidExpenseRequests"), expensesSource.indexOf("async function createApprovedLandlordAdvanceFromExpenseRequest"));
+  assert.match(bulkBody, /await decideLandlordPaidExpenseRequest/);
+  assert.match(bulkBody, /results\.push/);
+  assert.match(bulkBody, /failed/);
+  assert.match(bulkBody, /Select at least one pending landlord payment request first/);
+  assert.match(expensesSource, /\[approval_failed\]/);
+  assert.doesNotMatch(bulkBody, /applyApprovedLandlordPaymentToLedger/);
+});
+
 test("controlled landlord advance recovery reduces payable without creating a new advance", () => {
   const plan = allocationPlan(500000, [{ settlement_month: "2026-07-01", monthly_net_payable: 800000, amount_paid: 0 }], 300000);
   assert.equal(plan.advanceRecovery, 300000);
