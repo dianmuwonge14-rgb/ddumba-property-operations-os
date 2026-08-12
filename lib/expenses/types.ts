@@ -62,6 +62,9 @@ export type ExpenseChangeRequestItem = {
     requestedByAccountType: string | null;
     createdAt: string | null;
     adminComment: string | null;
+    reviewedAt?: string | null;
+    reviewedByName?: string | null;
+    proofUrl?: string | null;
 };
 
 export type LandlordExpenseEditRequestItem = {
@@ -385,6 +388,7 @@ export type ExpenseChangePayload = {
 export type SubmitExpenseChangeRequestInput = {
     changeType?: string;
     expenseId: string;
+    proofUrl?: string | null;
     reason: string;
     requested: ExpenseChangePayload;
 };

@@ -54,7 +54,10 @@ function physicalCollectionAmount(collection: CollectionRow) {
 }
 
 function isApprovedExpense(expense: Record<string, unknown>) {
-    return expenseStatus(expense) === "approved";
+    const status = expenseStatus(expense);
+    if (expense.financial_effective === false) return false;
+    if (expense.deleted_at || expense.reversed_at || expense.voided_at) return false;
+    return status === "approved" || status === "corrected";
 }
 
 function monthBounds(monthKey: string | null | undefined) {
@@ -487,8 +490,12 @@ function hydrateExpenseItems(
 
     return expenses.map((expense) => {
         const rawExpense = expense as ExpenseRow & {
+            delete_reason?: string | null;
+            deleted_at?: string | null;
+            financial_effective?: boolean | null;
             employee_id?: string | null;
             payment_method?: string | null;
+            reversed_at?: string | null;
             status?: string | null;
         };
         const property = expense.property_id ? propertyById.get(expense.property_id) ?? null : null;
@@ -810,6 +817,9 @@ async function getExpenseChangeRequests(input: {
                 requestedByAccountType: typeof request.requested_by_account_type === "string" ? request.requested_by_account_type : null,
                 createdAt: typeof request.created_at === "string" ? request.created_at : null,
                 adminComment: typeof request.admin_comment === "string" ? request.admin_comment : null,
+                reviewedAt: typeof request.reviewed_at === "string" ? request.reviewed_at : null,
+                reviewedByName: typeof request.reviewed_by === "string" ? input.userById.get(request.reviewed_by) ?? "Admin" : null,
+                proofUrl: typeof request.proof_url === "string" ? request.proof_url : null,
             };
         });
     } catch (error) {

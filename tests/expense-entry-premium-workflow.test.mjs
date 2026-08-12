@@ -146,6 +146,22 @@ test("recorded expense list filters by business expense date and supports all da
   assert.match(expenseData, /\.gte\("expense_date", resolved\.startDate\)/);
 });
 
+test("expense records expose amount and deletion correction workflow without office date changes", () => {
+  assert.match(expensesConsole, /Change Amount/);
+  assert.match(expensesConsole, /Request Deletion Approval/);
+  assert.match(expensesConsole, new RegExp("Delete / Reverse Expense"));
+  assert.match(expensesConsole, new RegExp("View Changes / Audit History"));
+  assert.match(expensesConsole, /Pending Changes/);
+  assert.match(expensesConsole, new RegExp("Deleted / Reversed"));
+  assert.doesNotMatch(expensesConsole, /Change Date/);
+  assert.doesNotMatch(expensesConsole, /Request Edit/);
+  assert.doesNotMatch(expensesConsole, /Assign Employee/);
+  assert.match(expenseActions, /Only expense amount corrections and deletion requests are allowed here/);
+  assert.match(expenseActions, /This expense already has a pending change awaiting Admin approval/);
+  assert.match(expenseActions, /financial_effective: false/);
+  assert.doesNotMatch(expenseActions, /amount: 0,\\n\\s+deleted_at/);
+});
+
 test("expense page keeps the existing queues and recorded expenses ledger below entry", () => {
   assert.match(expensesConsole, /<LandlordPaymentRequestLedger activeOfficeName=\{activeOfficeName\} isAdmin=\{isAdmin\} offices=\{data\.offices\} requests=\{data\.landlordPaymentRequests\}/);
   assert.match(expensesConsole, /<GenericExpenseApprovalQueue/);

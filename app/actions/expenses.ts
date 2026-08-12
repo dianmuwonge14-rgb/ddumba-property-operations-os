@@ -26,6 +26,7 @@ import type {
     EmployeeExpensePreview,
     EditExpenseInput,
     ExpenseDecisionInput,
+    ExpenseChangePayload,
     SubmitLandlordExpenseEditInput,
     SubmitExpenseChangeRequestInput,
 } from "@/lib/expenses/types";
@@ -2669,6 +2670,33 @@ async function applyExpensePatch(db: { from: (table: string) => any }, expenseId
     return data as Record<string, unknown>;
 }
 
+function normalizeExpenseChangeType(value: string | null | undefined) {
+    return String(value ?? "").toLowerCase();
+}
+
+function assertFinanciallyActiveExpense(expense: Record<string, unknown>) {
+    const status = String(expense.status ?? "approved").toLowerCase();
+    if (expense.financial_effective === false || expense.deleted_at || expense.reversed_at || ["deleted", "reversed", "voided", "cancelled", "canceled", "rejected"].includes(status)) {
+        throw new Error("This expense is no longer financially active.");
+    }
+}
+
+function validateExpenseCorrectionPayload(changeType: string, payload: ExpenseChangePayload, isAdminDirect: boolean) {
+    const normalized = normalizeExpenseChangeType(changeType || "amount_change");
+    if (normalized === "amount_change") {
+        const keys = Object.keys(payload as Record<string, unknown>).filter((key) => (payload as Record<string, unknown>)[key as keyof ExpenseChangePayload] !== undefined);
+        if (keys.some((key) => key !== "amount")) throw new Error("Only the expense amount can be changed in this workflow.");
+        const newAmount = Number(payload.amount);
+        if (!Number.isFinite(newAmount) || newAmount <= 0) throw new Error("Enter a valid requested expense amount.");
+        return { changeType: "amount_change", requested: { amount: newAmount } as ExpenseChangePayload };
+    }
+    if (normalized === "delete_request") {
+        if (isAdminDirect) throw new Error("Use Delete Expense for Admin direct reversal.");
+        return { changeType: "delete_request", requested: { status: "deleted" } as ExpenseChangePayload };
+    }
+    throw new Error("Only expense amount corrections and deletion requests are allowed here.");
+}
+
 export async function submitExpenseChangeRequest(input: SubmitExpenseChangeRequestInput) {
     const context = await expenseCorrectionContext();
     const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
@@ -2679,31 +2707,49 @@ export async function submitExpenseChangeRequest(input: SubmitExpenseChangeReque
     if (!companyId) throw new Error("Active company is required.");
     if (!input.expenseId) throw new Error("Expense id is required.");
     if (!input.reason?.trim()) throw new Error("Reason for expense correction is required.");
+    if (context.isCompanyReadOnlyManager) throw new Error("Read-only managers may view expense changes but cannot request or apply them.");
     const expense = await loadExpenseForCompany(db, { companyId, expenseId: input.expenseId });
+    assertFinanciallyActiveExpense(expense);
     if (!isCollector && !context.isCompanyAdmin && context.activeOffice?.id && String(expense.office_id ?? "") !== context.activeOffice.id) {
         throw new Error("You can only request corrections for expenses in your active office.");
     }
     const requestOfficeId = typeof expense.office_id === "string" && expense.office_id ? expense.office_id : context.activeOffice?.id ?? null;
-    const requestedPatch = requestedExpensePatch(input.requested as Record<string, unknown>);
+    const validated = validateExpenseCorrectionPayload(input.changeType || "amount_change", input.requested, false);
+    const requestedPatch = requestedExpensePatch(validated.requested as Record<string, unknown>);
     if (!Object.keys(requestedPatch).length) throw new Error("Enter at least one expense field to change.");
+    const { data: pendingExisting, error: pendingError } = await db
+        .from("expense_change_requests")
+        .select("id")
+        .eq("expense_id", input.expenseId)
+        .eq("status", "pending")
+        .in("change_type", ["amount_change", "delete_request"])
+        .limit(1);
+    if (pendingError && !isMissingSchemaError(pendingError)) throw new Error(pendingError.message);
+    if (pendingExisting?.length) throw new Error("This expense already has a pending change awaiting Admin approval.");
 
     const { data: request, error } = await db
         .from("expense_change_requests")
         .insert({
-            change_type: input.changeType || "general_edit",
+            change_type: validated.changeType,
             company_id: companyId,
             expense_id: input.expenseId,
             office_id: requestOfficeId,
             original_value: expenseSnapshot(expense),
+            proof_url: input.proofUrl || null,
             reason: input.reason.trim(),
             requested_by: actorId,
             requested_by_account_type: context.profile?.account_type ?? null,
-            requested_value: input.requested,
+            requested_value: validated.changeType === "delete_request" ? { status: "deleted", value: "deleted" } : validated.requested,
             status: "pending",
         })
         .select("*")
         .single();
-    if (error) throw new Error(`Expense change request could not be created: ${error.message}`);
+    if (error) {
+        if (/idx_expense_change_requests_one_pending|duplicate key|unique/i.test(error.message ?? "")) {
+            throw new Error("This expense already has a pending change awaiting Admin approval.");
+        }
+        throw new Error(`Expense change request could not be created: ${error.message}`);
+    }
 
     await createNotificationWithEmail(db, {
         action_url: "/office/expenses",
@@ -2713,7 +2759,7 @@ export async function submitExpenseChangeRequest(input: SubmitExpenseChangeReque
         entity_id: request.id,
         entity_type: "expense_change_request",
         is_read: false,
-        message: `Expense correction requested for ${String(expense.item ?? expense.expense_number ?? "expense")} (${input.reason.trim()}).`,
+        message: `${validated.changeType === "delete_request" ? "Expense deletion" : "Expense amount correction"} requested for ${String(expense.item ?? expense.expense_number ?? "expense")} (${input.reason.trim()}).`,
         office_id: requestOfficeId ?? undefined,
         recipient_type: "admin",
         severity: "warning",
@@ -2744,13 +2790,15 @@ export async function adminEditExpenseDirect(input: SubmitExpenseChangeRequestIn
     if (!input.expenseId) throw new Error("Expense id is required.");
     if (!input.reason?.trim()) throw new Error("Reason for expense edit is required.");
     const expense = await loadExpenseForCompany(db, { companyId, expenseId: input.expenseId });
-    const patch = requestedExpensePatch(input.requested as Record<string, unknown>);
+    assertFinanciallyActiveExpense(expense);
+    const validated = validateExpenseCorrectionPayload(input.changeType || "amount_change", input.requested, true);
+    const patch = requestedExpensePatch(validated.requested as Record<string, unknown>);
     if (!Object.keys(patch).length) throw new Error("Enter at least one expense field to change.");
     const updated = await applyExpensePatch(db, input.expenseId, {
         ...patch,
         approved_at: new Date().toISOString(),
         approved_by: expenseActorId,
-        status: "approved",
+        status: "corrected",
     });
     await logUserAction({
         action: "expense_admin_direct_edit",
@@ -3060,6 +3108,7 @@ export async function decideExpenseChangeRequest(input: DecideExpenseChangeReque
     if (request.status !== "pending") throw new Error("This expense change request has already been reviewed.");
     const reviewedAt = new Date().toISOString();
     const beforeExpense = await loadExpenseForCompany(db, { companyId, expenseId: request.expense_id });
+    assertFinanciallyActiveExpense(beforeExpense);
     if (input.decision === "rejected") {
         const { data, error } = await db
             .from("expense_change_requests")
@@ -3092,7 +3141,21 @@ export async function decideExpenseChangeRequest(input: DecideExpenseChangeReque
         return data;
     }
 
-    const patch = requestedExpensePatch((request.requested_value ?? {}) as Record<string, unknown>);
+    const changeType = normalizeExpenseChangeType(request.change_type);
+    const patch = changeType === "delete_request"
+        ? {
+            deleted_at: reviewedAt,
+            deleted_by: actorId,
+            delete_reason: String(request.reason ?? "Approved expense deletion"),
+            financial_effective: false,
+            reversed_at: reviewedAt,
+            reversed_by: actorId,
+            status: "deleted",
+        }
+        : {
+            ...requestedExpensePatch((request.requested_value ?? {}) as Record<string, unknown>),
+            status: "corrected",
+        };
     const updatedExpense = await applyExpensePatch(db, request.expense_id, patch);
     const { data: reviewedRequest, error: reviewError } = await db
         .from("expense_change_requests")
@@ -3132,13 +3195,17 @@ export async function adminSafeDeleteExpense(input: DeleteExpenseInput) {
     const companyId = context.activeCompany?.id;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
     if (!companyId) throw new Error("Active company is required.");
+    if (!input.reason?.trim()) throw new Error("Reason for deletion is required.");
     const expense = await loadExpenseForCompany(db, { companyId, expenseId: input.expenseId });
+    assertFinanciallyActiveExpense(expense);
     const now = new Date().toISOString();
     const deleted = await applyExpensePatch(db, input.expenseId, {
-        amount: 0,
         deleted_at: now,
         deleted_by: actorId,
-        delete_reason: input.reason || "Admin safe delete",
+        delete_reason: input.reason.trim(),
+        financial_effective: false,
+        reversed_at: now,
+        reversed_by: actorId,
         status: "deleted",
     });
     await logUserAction({

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Banknote, Bot, Camera, CheckCircle2, Download, Edit3, Eye, FileText, History, Loader2, Paperclip, Printer, ReceiptText, Search, Trash2, Upload, UserRound, WalletCards, X } from "lucide-react";
+import { AlertTriangle, Banknote, Bot, Camera, CheckCircle2, Download, Edit3, Eye, FileText, History, Loader2, Paperclip, Printer, ReceiptText, Search, Trash2, Upload, WalletCards, X } from "lucide-react";
 import { decideTreasuryCashRequest, submitTreasuryCashRequest } from "@/app/actions/cash-banking";
 import { adminEditExpenseDirect, adminSafeDeleteExpense, approveExpense, createEmployeeExpenseFromExpenses, createExpense, createLandlordPaidExpenseRequest, decideBulkLandlordPaidExpenseRequests, decideEmployeeExpenseRequest, decideExpenseChangeRequest, decideLandlordExpenseEditRequest, decideLandlordPaidExpenseRequest, previewEmployeeExpense, previewLandlordPaymentExpense, rejectExpense, submitExpenseChangeRequest, submitLandlordExpenseEdit } from "@/app/actions/expenses";
 import { currentBusinessDate, formatBusinessDate } from "@/lib/business-date";
@@ -117,10 +117,11 @@ type ExpenseFilters = {
 type LandlordPaymentPreview = Awaited<ReturnType<typeof previewLandlordPaymentExpense>>;
 type ExpenseEntryMode = "landlord_payment" | "authorised" | "unauthorised" | "banking" | "cash_handover_admin";
 type AuthorisedExpenseType = "employee_lunch" | "airtime" | "internet" | "transport_kampala";
-type ExpenseModalMode = "view" | "edit" | "date" | "employee" | "history";
+type ExpenseModalMode = "view" | "amount" | "delete" | "history";
 type SummaryDrilldownKind = "collections" | "adminCapitalInjection" | "expenses";
 type RecordDatePreset = "today" | "yesterday" | "week" | "month" | "custom_date" | "custom_range" | "all_dates";
 type LandlordDueFilter = "" | "due_today" | "due_this_week" | "overdue" | "no_due_date" | "paid" | "outstanding";
+type ExpenseStatusFilter = "active" | "pending_changes" | "corrected" | "deleted" | "all";
 type RecordTableFilters = {
     datePreset: RecordDatePreset;
     customDate: string;
@@ -262,6 +263,34 @@ function dueStatusClass(tone: ReturnType<typeof landlordPaymentDueStatus>["tone"
     return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
+function expenseFinancialStatus(expense: ExpenseItem) {
+    const row = expense as ExpenseItem & { deleted_at?: string | null; financial_effective?: boolean | null; reversed_at?: string | null };
+    const status = normalizeStatus(expense.status ?? expense.approvalState);
+    if (row.financial_effective === false || row.deleted_at || row.reversed_at || ["deleted", "reversed"].includes(status)) return "Deleted / Reversed";
+    if (status === "corrected") return "Corrected";
+    if (["pending", "submitted", "pending_admin_approval"].includes(status)) return "Pending";
+    if (status === "rejected") return "Rejected";
+    return "Active";
+}
+
+function expenseChangeTypeLabel(changeType: string) {
+    if (changeType === "amount_change") return "EXPENSE AMOUNT CORRECTION";
+    if (changeType === "delete_request") return "EXPENSE DELETION";
+    return changeType.replaceAll("_", " ").toUpperCase();
+}
+
+function expenseRequestOldValue(request: ExpensesPageData["expenseChangeRequests"][number]) {
+    return request.changeType === "delete_request"
+        ? request.originalValue.item ?? request.itemName
+        : request.originalValue.amount ?? request.originalValue.value;
+}
+
+function expenseRequestNewValue(request: ExpensesPageData["expenseChangeRequests"][number]) {
+    return request.changeType === "delete_request"
+        ? "Deleted / Reversed"
+        : request.requestedValue.amount ?? request.requestedValue.value;
+}
+
 function expenseField(expense: ExpenseItem, key: keyof ExpenseChangePayload) {
     const row = expense as ExpenseItem & {
         employee_id?: string | null;
@@ -349,6 +378,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
     const [showPrintPreview, setShowPrintPreview] = useState(false);
     const [selectedExpenseIds, setSelectedExpenseIds] = useState<string[]>([]);
     const [expenseModal, setExpenseModal] = useState<null | { expense: ExpenseItem; mode: ExpenseModalMode }>(null);
+    const [expenseStatusFilter, setExpenseStatusFilter] = useState<ExpenseStatusFilter>("active");
     const [landlordEditModal, setLandlordEditModal] = useState<LandlordEditModalState | null>(null);
     const [summaryDrilldown, setSummaryDrilldown] = useState<SummaryDrilldownKind | null>(null);
     const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -365,7 +395,17 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
     const landlordSearchAbortRef = useRef<AbortController | null>(null);
     const detailAbortRef = useRef<AbortController | null>(null);
 
-    const expenses = useMemo(() => report?.expenses ?? [], [report]);
+    const allExpenseRows = useMemo(() => report?.expenses ?? [], [report]);
+    const pendingExpenseIds = useMemo(() => new Set(data.expenseChangeRequests.filter((request) => request.status === "pending").map((request) => request.expenseId)), [data.expenseChangeRequests]);
+    const expenses = useMemo(() => allExpenseRows.filter((expense) => {
+        const status = expenseFinancialStatus(expense);
+        if (expenseStatusFilter === "all") return true;
+        if (expenseStatusFilter === "active") return status === "Active";
+        if (expenseStatusFilter === "pending_changes") return pendingExpenseIds.has(expense.id);
+        if (expenseStatusFilter === "corrected") return status === "Corrected";
+        if (expenseStatusFilter === "deleted") return status === "Deleted / Reversed";
+        return true;
+    }), [allExpenseRows, expenseStatusFilter, pendingExpenseIds]);
     const activeOfficeName = data.office?.office_name ?? data.office?.name ?? "Office";
     const activeOfficeId = data.office?.id ?? "";
     const canSelectEntryOffice = isAdmin || isManager;
@@ -1685,6 +1725,16 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                     </button>
                                 ) : null}
                                 <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-700">{loadingReport ? "Loading" : `${expenses.length} rows`}</span>
+                                <label className="inline-flex h-9 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700">
+                                    Status
+                                    <select value={expenseStatusFilter} onChange={(event) => setExpenseStatusFilter(event.target.value as ExpenseStatusFilter)} className="bg-transparent text-xs font-black text-slate-900 outline-none">
+                                        <option value="active">Active</option>
+                                        <option value="pending_changes">Pending Changes</option>
+                                        <option value="corrected">Corrected</option>
+                                        <option value="deleted">Deleted / Reversed</option>
+                                        <option value="all">All</option>
+                                    </select>
+                                </label>
                                 <button type="button" onClick={exportSelectedExpenses} className="inline-flex h-9 items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black text-slate-700">
                                     <Download size={14} />
                                     Export Selected
@@ -1737,14 +1787,13 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                             <td className="px-4 py-3 font-bold text-slate-500">{(expense as ExpenseItem & { approved_by?: string | null }).approved_by ?? "--"}</td>
                                             <td className="max-w-[260px] truncate px-4 py-3 font-bold text-slate-500" title={expense.description ?? ""}>{expense.description ?? "--"}</td>
                                             <td className="px-4 py-3 font-bold text-slate-500">{expense.expense_number ?? expense.id.slice(0, 8)}</td>
-                                            <td className="px-4 py-3"><StatusBadge status={expense.status ?? expense.approvalState} /></td>
+                                            <td className="px-4 py-3"><StatusBadge status={expenseFinancialStatus(expense)} /></td>
                                             <td className="px-4 py-3">
                                                 <div className="flex min-w-[260px] flex-wrap gap-1">
                                                     <IconAction label="View" icon={<Eye size={14} />} onClick={() => setExpenseModal({ expense, mode: "view" })} />
-                                                    <IconAction label={isAdmin ? "Edit" : "Request Edit"} icon={<Edit3 size={14} />} onClick={() => setExpenseModal({ expense, mode: "edit" })} />
-                                                    <IconAction label="Change Date" icon={<FileText size={14} />} onClick={() => setExpenseModal({ expense, mode: "date" })} />
-                                                    <IconAction label="Assign Employee" icon={<UserRound size={14} />} onClick={() => setExpenseModal({ expense, mode: "employee" })} />
-                                                    <IconAction label="History" icon={<History size={14} />} onClick={() => setExpenseModal({ expense, mode: "history" })} />
+                                                    {!isManager ? <IconAction label="Change Amount" icon={<Edit3 size={14} />} onClick={() => setExpenseModal({ expense, mode: "amount" })} /> : null}
+                                                    {!isManager ? <IconAction label="Delete" icon={<Trash2 size={14} />} onClick={() => setExpenseModal({ expense, mode: "delete" })} /> : null}
+                                                    <IconAction label="View Changes" icon={<History size={14} />} onClick={() => setExpenseModal({ expense, mode: "history" })} />
                                                 </div>
                                             </td>
                                         </tr>
@@ -1785,12 +1834,9 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
             ) : null}
             {expenseModal ? (
                 <ExpenseActionModal
-                    categories={data.categories}
-                    employeeOptions={data.employeeOptions}
                     expense={expenseModal.expense}
                     isAdmin={isAdmin}
                     mode={expenseModal.mode}
-                    offices={data.offices}
                     onClose={() => setExpenseModal(null)}
                     onDone={(text) => {
                         setActionMessage(text);
@@ -3693,14 +3739,19 @@ function ExpenseChangeRequestLedger({ activeOfficeName, isAdmin, offices, onRevi
                             <th className="px-4 py-3">Change Type</th>
                             <th className="px-4 py-3">Old Value</th>
                             <th className="px-4 py-3">Requested New Value</th>
+                            <th className="px-4 py-3">Difference</th>
                             <th className="px-4 py-3">Reason</th>
+                            <th className="px-4 py-3">Proof</th>
                             <th className="px-4 py-3">Requested By</th>
                             <th className="px-4 py-3">Status</th>
                             {isAdmin ? <th className="px-4 py-3">Admin action</th> : null}
                         </tr>
                     </thead>
                     <tbody>
-                        {visibleRequests.map((request) => (
+                        {visibleRequests.map((request) => {
+                            const isAmountChange = request.changeType === "amount_change";
+                            const difference = isAmountChange ? Number(request.requestedValue.amount ?? 0) - Number(request.originalValue.amount ?? 0) : 0;
+                            return (
                             <tr key={`expense-change:${request.id}`} onClick={() => setSelected(request)} className="cursor-pointer border-b border-slate-100 align-top hover:bg-purple-50/70">
                                 {isAdmin ? (
                                     <td className="px-4 py-3" onClick={(event) => event.stopPropagation()}>
@@ -3712,10 +3763,12 @@ function ExpenseChangeRequestLedger({ activeOfficeName, isAdmin, offices, onRevi
                                 <td className="px-4 py-3 font-bold text-slate-500">{request.createdAt ? new Date(request.createdAt).toLocaleString() : "--"}</td>
                                 <td className="px-4 py-3 font-black text-slate-950">{request.itemName}</td>
                                 <td className="px-4 py-3 font-bold text-slate-500">{request.officeName}</td>
-                                <td className="px-4 py-3 font-bold text-slate-700">{request.changeType.replaceAll("_", " ")}</td>
-                                <td className="px-4 py-3 font-bold text-slate-500">{formatRequestValue(request.originalValue.value ?? request.originalValue.amount ?? request.originalValue.status ?? request.originalValue.expenseDate)}</td>
-                                <td className="px-4 py-3 font-black text-slate-950">{formatRequestValue(request.requestedValue.value ?? request.requestedValue.amount ?? request.requestedValue.status ?? request.requestedValue.expenseDate)}</td>
+                                <td className="px-4 py-3 font-bold text-slate-700">{expenseChangeTypeLabel(request.changeType)}</td>
+                                <td className="px-4 py-3 font-bold text-slate-500">{formatRequestValue(expenseRequestOldValue(request))}</td>
+                                <td className="px-4 py-3 font-black text-slate-950">{formatRequestValue(expenseRequestNewValue(request))}</td>
+                                <td className={`px-4 py-3 font-black ${difference < 0 ? "text-emerald-700" : difference > 0 ? "text-rose-700" : "text-slate-500"}`}>{isAmountChange ? money(difference) : "--"}</td>
                                 <td className="max-w-xs px-4 py-3 font-semibold text-slate-600">{request.reason}</td>
+                                <td className="px-4 py-3 font-bold text-slate-500">{request.proofUrl ? <a href={request.proofUrl} target="_blank" rel="noreferrer" className="text-blue-700 underline">View proof</a> : "No proof"}</td>
                                 <td className="px-4 py-3 font-bold text-slate-500">{request.requestedByName}</td>
                                 <td className="px-4 py-3"><StatusBadge status={request.status} /></td>
                                 {isAdmin ? (
@@ -3734,7 +3787,8 @@ function ExpenseChangeRequestLedger({ activeOfficeName, isAdmin, offices, onRevi
                                     </td>
                                 ) : null}
                             </tr>
-                        ))}
+                            );
+                        })}
                     </tbody>
                 </table>
             </div>
@@ -3746,12 +3800,16 @@ function ExpenseChangeRequestLedger({ activeOfficeName, isAdmin, offices, onRevi
                         ["Submitted Date", selected.createdAt ? new Date(selected.createdAt).toLocaleString() : "--"],
                         ["Expense", selected.itemName],
                         ["Office", selected.officeName],
-                        ["Change Type", selected.changeType.replaceAll("_", " ")],
-                        ["Old Value", formatRequestValue(selected.originalValue.value ?? selected.originalValue.amount ?? selected.originalValue.status ?? selected.originalValue.expenseDate)],
-                        ["Requested New Value", formatRequestValue(selected.requestedValue.value ?? selected.requestedValue.amount ?? selected.requestedValue.status ?? selected.requestedValue.expenseDate)],
+                        ["Change Type", expenseChangeTypeLabel(selected.changeType)],
+                        ["Old Value", formatRequestValue(expenseRequestOldValue(selected))],
+                        ["Requested New Value", formatRequestValue(expenseRequestNewValue(selected))],
+                        ["Difference", selected.changeType === "amount_change" ? money(Number(selected.requestedValue.amount ?? 0) - Number(selected.originalValue.amount ?? 0)) : "--"],
                         ["Reason", selected.reason],
+                        ["Proof", selected.proofUrl ?? "No proof"],
                         ["Requested By", selected.requestedByName],
                         ["Status", selected.status],
+                        ["Reviewed By", selected.reviewedByName ?? "--"],
+                        ["Reviewed At", selected.reviewedAt ? new Date(selected.reviewedAt).toLocaleString() : "--"],
                         ["Admin Comment", selected.adminComment ?? "No comment"],
                     ]}
                     title="Expense Change Request"
@@ -3789,183 +3847,159 @@ function IconAction({ icon, label, onClick }: { icon: ReactNode; label: string; 
 }
 
 function ExpenseActionModal({
-    categories,
-    employeeOptions,
     expense,
     isAdmin,
     mode,
-    offices,
     onClose,
     onDone,
 }: {
-    categories: ExpensesPageData["categories"];
-    employeeOptions: ExpensesPageData["employeeOptions"];
     expense: ExpenseItem;
     isAdmin: boolean;
     mode: ExpenseModalMode;
-    offices: ExpensesPageData["offices"];
     onClose: () => void;
     onDone: (message: string) => void;
 }) {
-    const [draft, setDraft] = useState<ExpenseChangePayload>({
-        amount: Number(expense.amount ?? 0),
-        category: expenseField(expense, "category") as string,
-        categoryId: expenseField(expense, "categoryId") as string,
-        description: expenseField(expense, "description") as string,
-        employeeId: expenseField(expense, "employeeId") as string,
-        expenseDate: expenseField(expense, "expenseDate") as string,
-        item: expenseField(expense, "item") as string,
-        officeId: expenseField(expense, "officeId") as string,
-        paymentMethod: expenseField(expense, "paymentMethod") as string,
-        receiptUrl: expenseField(expense, "receiptUrl") as string,
-        status: expenseField(expense, "status") as string,
-        vendor: expenseField(expense, "vendor") as string,
-    });
-    const [employeeQuery, setEmployeeQuery] = useState("");
+    const currentAmount = Number(expense.amount ?? 0);
+    const [newAmount, setNewAmount] = useState(String(currentAmount || ""));
     const [reason, setReason] = useState("");
+    const [proofUrl, setProofUrl] = useState("");
+    const [confirming, setConfirming] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [isPending, startTransition] = useTransition();
     const readOnly = mode === "view" || mode === "history";
-    const filteredEmployees = useMemo(() => {
-        const query = employeeQuery.trim().toLowerCase();
-        if (!query) return employeeOptions.slice(0, 80);
-        return employeeOptions.filter((employee) => [
-            employee.name,
-            employee.phone,
-            employee.email,
-            employee.role,
-            employee.officeName,
-            employee.assignmentType,
-        ].some((value) => String(value ?? "").toLowerCase().includes(query))).slice(0, 80);
-    }, [employeeOptions, employeeQuery]);
+    const isDelete = mode === "delete";
+    const isAmount = mode === "amount";
+    const requestedAmount = Number(newAmount || 0);
+    const difference = isAmount && Number.isFinite(requestedAmount) ? requestedAmount - currentAmount : 0;
     const proofPath = String((expense as ExpenseItem & { supporting_document?: string | null }).supporting_document ?? "");
     const proofName = String((expense as ExpenseItem & { supporting_document_original_name?: string | null }).supporting_document_original_name ?? "Supporting proof");
     const proofMime = String((expense as ExpenseItem & { supporting_document_mime_type?: string | null }).supporting_document_mime_type ?? "");
     const proofUploadedAt = String((expense as ExpenseItem & { supporting_document_uploaded_at?: string | null }).supporting_document_uploaded_at ?? "");
-    const proofUrl = `/api/expenses/proof/${encodeURIComponent(expense.id)}`;
-
-    function update<Key extends keyof ExpenseChangePayload>(key: Key, value: ExpenseChangePayload[Key]) {
-        setDraft((current) => ({ ...current, [key]: value }));
-    }
+    const existingProofUrl = `/api/expenses/proof/${encodeURIComponent(expense.id)}`;
+    const title = mode === "history" ? "View Changes / Audit History" : mode === "view" ? "Expense Details" : isDelete ? "Delete Expense" : "Change Amount";
+    const actionLabel = isDelete ? (isAdmin ? "Delete / Reverse Expense" : "Request Deletion Approval") : (isAdmin ? "Save Amount Change" : "Request Admin Approval");
 
     function save() {
+        if (readOnly) return;
         if (!reason.trim()) {
-            setError("Enter a reason for the expense change.");
+            setError(isDelete ? "Reason for deletion is required." : "Reason for correction is required.");
             return;
         }
-        const payload: ExpenseChangePayload = mode === "date"
-            ? { expenseDate: draft.expenseDate }
-            : mode === "employee"
-                ? { employeeId: draft.employeeId }
-                : draft;
-        const changeType = mode === "date" ? "date_change" : mode === "employee" ? "employee_assignment" : "general_edit";
+        if (isAmount && (!Number.isFinite(requestedAmount) || requestedAmount <= 0)) {
+            setError("Enter a valid requested expense amount.");
+            return;
+        }
+        if (isAdmin && !confirming) {
+            setConfirming(true);
+            return;
+        }
         setError(null);
         startTransition(async () => {
             try {
-                if (isAdmin) {
-                    await adminEditExpenseDirect({ changeType, expenseId: expense.id, reason, requested: payload });
-                    onDone("Expense updated directly by Admin.");
+                if (isDelete) {
+                    if (isAdmin) {
+                        await adminSafeDeleteExpense({ expenseId: expense.id, reason: reason.trim() });
+                        onDone("Expense deleted / reversed by Admin. Active totals are updating.");
+                    } else {
+                        await submitExpenseChangeRequest({ changeType: "delete_request", expenseId: expense.id, proofUrl: proofUrl.trim() || null, reason: reason.trim(), requested: { status: "deleted" } });
+                        onDone("Deletion approval request sent to Admin. The expense remains active until approved.");
+                    }
                 } else {
-                    await submitExpenseChangeRequest({ changeType, expenseId: expense.id, reason, requested: payload });
-                    onDone("Expense change request sent to Admin.");
+                    const requested = { amount: requestedAmount, receiptUrl: proofUrl.trim() || null };
+                    if (isAdmin) {
+                        await adminEditExpenseDirect({ changeType: "amount_change", expenseId: expense.id, reason: reason.trim(), requested: { amount: requested.amount } });
+                        onDone("Expense amount changed directly by Admin. Active totals are updating.");
+                    } else {
+                        await submitExpenseChangeRequest({ changeType: "amount_change", expenseId: expense.id, proofUrl: requested.receiptUrl, reason: reason.trim(), requested: { amount: requested.amount } });
+                        onDone("Expense amount correction request sent to Admin. The expense remains financially unchanged until approval.");
+                    }
                 }
             } catch (saveError) {
-                setError(saveError instanceof Error ? saveError.message : "Expense change could not be saved.");
+                setError(saveError instanceof Error ? saveError.message : "Expense action could not be saved.");
             }
         });
     }
 
+    const contextRows = [
+        ["Expense reference", expense.expense_number ?? expense.id.slice(0, 8)],
+        ["Expense item", expense.item ?? expense.categoryName ?? expense.category ?? "Expense"],
+        ["Landlord / Person", expense.landlordName ?? expense.employeeName ?? expense.vendor ?? "--"],
+        ["Office", expense.officeName ?? "Office"],
+        ["Payment method", expense.paymentMethod ?? "Not specified"],
+        ["Recorded by", expense.submittedByName ?? "System"],
+        ["Original expense date", expense.expense_date ?? expense.created_at?.slice(0, 10) ?? "--"],
+        ["Current status", expenseFinancialStatus(expense)],
+    ];
+
     return (
         <div className="fixed inset-0 z-[120] overflow-auto bg-slate-950/70 p-4 backdrop-blur-sm">
-            <div className="mx-auto my-8 max-w-4xl rounded-[28px] bg-white p-5 shadow-2xl">
+            <div className="mx-auto my-8 max-w-3xl rounded-[28px] bg-white p-5 shadow-2xl">
                 <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-start sm:justify-between">
                     <div>
-                        <p className="text-xs font-black uppercase tracking-wide text-blue-700">{mode === "history" ? "Expense history" : mode === "view" ? "Expense details" : isAdmin ? "Admin direct expense edit" : "Expense correction request"}</p>
-                        <h2 className="mt-1 text-2xl font-black text-slate-950">{expense.item ?? expense.expense_number ?? "Expense"}</h2>
-                        <p className="mt-1 text-sm font-bold text-slate-500">{expense.officeName ?? "Office"} · {money(expense.amount)}</p>
+                        <p className="text-xs font-black uppercase tracking-wide text-blue-700">{isAdmin && !readOnly ? "Admin direct expense action" : readOnly ? "Expense audit" : "Expense approval request"}</p>
+                        <h2 className="mt-1 text-2xl font-black text-slate-950">{title}</h2>
+                        <p className="mt-1 text-sm font-bold text-slate-500">{expense.officeName ?? "Office"} · {money(currentAmount)}</p>
                     </div>
                     <button type="button" onClick={onClose} className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700">Close</button>
                 </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    {contextRows.map(([label, value]) => (
+                        <ModalField key={`expense-context:${label}`} label={label}>
+                            <input readOnly value={String(value)} className="modal-input" />
+                        </ModalField>
+                    ))}
+                </div>
+
                 {mode === "history" ? (
                     <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-700">
+                        <p>Original Amount: {money(currentAmount)}</p>
+                        <p>Current Amount: {money(currentAmount)}</p>
                         <p>Created: {expense.created_at ? new Date(expense.created_at).toLocaleString() : "--"}</p>
                         <p>Updated: {expense.updated_at ? new Date(expense.updated_at).toLocaleString() : "--"}</p>
                         <p>Approved: {expense.approved_at ? new Date(expense.approved_at).toLocaleString() : "Not approved timestamped"}</p>
-                        <p>Status: {expense.status ?? expense.approvalState}</p>
+                        <p>Status: {expenseFinancialStatus(expense)}</p>
                         <p>Recorded by: {expense.submittedByName ?? "System"}</p>
                         <p>Supporting proof: {proofPath ? proofName : "No supporting proof attached."}</p>
                         {proofUploadedAt ? <p>Proof uploaded: {new Date(proofUploadedAt).toLocaleString()}</p> : null}
                     </div>
-                ) : (
-                    <div className="mt-4 grid gap-3 md:grid-cols-2">
-                        <ModalField label="Amount">
-                            <input disabled={readOnly || mode === "date" || mode === "employee"} type="number" value={draft.amount ?? ""} onChange={(event) => update("amount", Number(event.target.value))} className="modal-input" />
-                        </ModalField>
-                        <ModalField label="Expense date">
-                            <input disabled={readOnly || mode === "employee"} type="date" value={draft.expenseDate ?? ""} onChange={(event) => update("expenseDate", event.target.value)} className="modal-input" />
-                        </ModalField>
-                        <ModalField label="Expense item">
-                            <input disabled={readOnly || mode === "date" || mode === "employee"} value={draft.item ?? ""} onChange={(event) => update("item", event.target.value)} className="modal-input" />
-                        </ModalField>
-                        <ModalField label="Category">
-                            <select disabled={readOnly || mode === "date" || mode === "employee"} value={draft.categoryId ?? ""} onChange={(event) => update("categoryId", event.target.value)} className="modal-input">
-                                <option value="">Keep text category</option>
-                                {categories.map((category) => <option key={`expense-modal-category:${category.id}`} value={category.id}>{category.name}</option>)}
-                            </select>
-                        </ModalField>
-                        <ModalField label="Payment method">
-                            <select disabled={readOnly || mode === "date" || mode === "employee"} value={draft.paymentMethod ?? ""} onChange={(event) => update("paymentMethod", event.target.value)} className="modal-input">
-                                <option value="">Not specified</option>
-                                <option value="cash">Cash</option>
-                                <option value="mobile_money">Mobile Money</option>
-                                <option value="bank">Bank</option>
-                                <option value="cheque">Cheque</option>
-                                <option value="other">Other</option>
-                            </select>
-                        </ModalField>
-                        <ModalField label="Office">
-                            <select disabled={readOnly || !isAdmin || mode === "date" || mode === "employee"} value={draft.officeId ?? ""} onChange={(event) => update("officeId", event.target.value)} className="modal-input">
-                                <option value="">No office</option>
-                                {offices.map((office) => <option key={`expense-modal-office:${office.id}`} value={office.id}>{office.name}</option>)}
-                            </select>
-                        </ModalField>
-                        <div className="md:col-span-2">
-                            <ModalField label="Employee / person responsible">
-                                <input disabled={readOnly || mode === "date"} value={employeeQuery} onChange={(event) => setEmployeeQuery(event.target.value)} placeholder="Search name, phone, email, role, office..." className="modal-input mb-2" />
-                                <select disabled={readOnly || mode === "date"} value={draft.employeeId ?? ""} onChange={(event) => update("employeeId", event.target.value)} className="modal-input">
-                                    <option value="">No employee assigned</option>
-                                    {filteredEmployees.map((employee) => (
-                                        <option key={`expense-modal-employee:${employee.id}`} value={employee.id}>
-                                            {employee.name}{employee.phone ? ` · ${employee.phone}` : ""}{employee.officeName ? ` · ${employee.officeName}` : ""}{employee.role ? ` · ${employee.role}` : ""}
-                                        </option>
-                                    ))}
-                                </select>
-                            </ModalField>
-                        </div>
-                        <ModalField label="Receipt / attachment URL">
-                            <input disabled={readOnly || mode === "date" || mode === "employee"} value={draft.receiptUrl ?? ""} onChange={(event) => update("receiptUrl", event.target.value)} className="modal-input" />
-                        </ModalField>
-                        <ModalField label="Status">
-                            <select disabled={readOnly || mode === "date" || mode === "employee"} value={draft.status ?? "approved"} onChange={(event) => update("status", event.target.value)} className="modal-input">
-                                <option value="approved">Approved / Active</option>
-                                <option value="pending">Pending</option>
-                                <option value="rejected">Rejected</option>
-                                <option value="deleted">Deleted</option>
-                            </select>
-                        </ModalField>
-                        <div className="md:col-span-2">
-                            <ModalField label="Notes">
-                                <textarea disabled={readOnly || mode === "date" || mode === "employee"} value={draft.description ?? ""} onChange={(event) => update("description", event.target.value)} className="min-h-24 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
-                            </ModalField>
-                        </div>
+                ) : null}
+
+                {mode === "view" ? (
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-700">
+                        <p>Amount: {money(currentAmount)}</p>
+                        <p>Description: {expense.description ?? "--"}</p>
+                        <p>Reference: {expense.expense_number ?? expense.id}</p>
                     </div>
-                )}
+                ) : null}
+
+                {isAmount ? (
+                    <div className="mt-4 grid gap-3 md:grid-cols-3">
+                        <ModalField label="Current amount">
+                            <input readOnly value={money(currentAmount)} className="modal-input" />
+                        </ModalField>
+                        <ModalField label={isAdmin ? "New amount" : "Requested new amount"}>
+                            <input type="number" value={newAmount} onChange={(event) => { setNewAmount(event.target.value); setConfirming(false); }} className="modal-input" />
+                        </ModalField>
+                        <ModalField label="Difference">
+                            <input readOnly value={money(difference)} className="modal-input" />
+                        </ModalField>
+                    </div>
+                ) : null}
+
+                {isDelete ? (
+                    <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-4">
+                        <p className="text-xs font-black uppercase tracking-wide text-rose-700">Deletion request</p>
+                        <p className="mt-2 text-sm font-bold text-rose-900">{isAdmin ? "This will mark the expense Deleted / Reversed and remove it from active totals without erasing history." : "The expense remains financially active until Admin approves this deletion request."}</p>
+                    </div>
+                ) : null}
+
                 <section className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                     <p className="text-xs font-black uppercase tracking-wide text-slate-500">Supporting Proof</p>
                     {proofPath ? (
                         <div className="mt-3 grid gap-3 sm:grid-cols-[96px_minmax(0,1fr)] sm:items-center">
                             {proofMime.startsWith("image/") ? (
-                                <img src={proofUrl} alt={`${proofName} thumbnail`} className="h-24 w-24 rounded-2xl border border-slate-200 object-cover" loading="lazy" />
+                                <img src={existingProofUrl} alt={`${proofName} thumbnail`} className="h-24 w-24 rounded-2xl border border-slate-200 object-cover" loading="lazy" />
                             ) : (
                                 <div className="flex h-24 w-24 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-500"><FileText size={30} /></div>
                             )}
@@ -3973,26 +4007,39 @@ function ExpenseActionModal({
                                 <p className="break-words text-sm font-black text-slate-950">{proofName}</p>
                                 <p className="mt-1 text-xs font-bold text-slate-500">{proofMime || "Private supporting document"}</p>
                                 <div className="mt-2 flex flex-wrap gap-2">
-                                    <a href={proofUrl} target="_blank" rel="noreferrer" className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white">View Full Size</a>
-                                    <a href={`${proofUrl}?download=1`} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Download</a>
+                                    <a href={existingProofUrl} target="_blank" rel="noreferrer" className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white">View Full Size</a>
+                                    <a href={`${existingProofUrl}?download=1`} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700">Download</a>
                                 </div>
                             </div>
                         </div>
                     ) : (
                         <p className="mt-2 rounded-xl bg-white px-3 py-2 text-sm font-bold text-slate-500">No supporting proof attached.</p>
                     )}
+                    {!readOnly ? (
+                        <label className="mt-3 block text-sm font-bold text-slate-700">
+                            Optional supporting proof reference
+                            <input value={proofUrl} onChange={(event) => setProofUrl(event.target.value)} placeholder="Paste proof link or reference, optional" className="modal-input mt-2" />
+                        </label>
+                    ) : null}
                 </section>
+
                 {!readOnly ? (
                     <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                         <label className="block text-sm font-bold text-slate-700">
-                            Reason for change
-                            <textarea value={reason} onChange={(event) => setReason(event.target.value)} className="mt-2 min-h-24 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900" />
+                            {isDelete ? "Reason for deletion" : "Reason for correction"}
+                            <textarea value={reason} onChange={(event) => { setReason(event.target.value); setConfirming(false); }} className="mt-2 min-h-24 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900" />
                         </label>
+                        {confirming ? (
+                            <div className="mt-3 rounded-2xl border border-blue-200 bg-blue-50 p-4">
+                                <p className="text-xs font-black uppercase tracking-wide text-blue-700">Confirm Admin direct action</p>
+                                <p className="mt-2 text-sm font-black text-slate-950">{isDelete ? `Delete / reverse this expense of ${money(currentAmount)}?` : `Change this expense from ${money(currentAmount)} to ${money(requestedAmount)}?`}</p>
+                            </div>
+                        ) : null}
                         {error ? <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">{error}</p> : null}
                         <div className="mt-4 flex flex-wrap justify-end gap-2">
-                            <button disabled={isPending} onClick={onClose} className="rounded-xl bg-white px-4 py-2 text-sm font-black text-slate-700 disabled:opacity-40">Cancel</button>
-                            <button disabled={isPending} onClick={save} className="rounded-xl bg-blue-700 px-4 py-2 text-sm font-black text-white disabled:opacity-40">
-                                {isPending ? "Saving..." : isAdmin ? "Update Expense Now" : "Send Change Request"}
+                            <button disabled={isPending} onClick={confirming ? () => setConfirming(false) : onClose} className="rounded-xl bg-white px-4 py-2 text-sm font-black text-slate-700 disabled:opacity-40">{confirming ? "Back" : "Cancel"}</button>
+                            <button disabled={isPending} onClick={save} className={`rounded-xl px-4 py-2 text-sm font-black text-white disabled:opacity-40 ${isDelete ? "bg-rose-700" : "bg-blue-700"}`}>
+                                {isPending ? "Saving..." : isAdmin && confirming ? "Confirm Change" : actionLabel}
                             </button>
                         </div>
                     </div>
