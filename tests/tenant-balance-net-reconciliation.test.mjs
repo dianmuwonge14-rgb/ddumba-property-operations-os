@@ -103,8 +103,13 @@ test("advance rent assistant distinguishes legacy arrears from mismatches", () =
   const dataSource = fs.readFileSync("lib/collections/data.ts", "utf8");
   const uiSource = fs.readFileSync("components/office/payments/FastPaymentsEntry.tsx", "utf8");
   assert.match(dataSource, /tenant_pre_system_arrears_periods/);
-  assert.match(dataSource, /type: "legacy_arrears"/);
-  assert.match(dataSource, /LEGACY ARREARS DETECTED/);
-  assert.match(uiSource, /Legacy \/ Pre-System Arrears/);
-  assert.match(uiSource, /Imported opening debt is part of outstanding balance, not advance rent/);
+  assert.match(dataSource, /type: "legacy_arrears_reconciled"/);
+  assert.match(dataSource, /LEGACY ARREARS RECONCILED/);
+  assert.match(dataSource, /type: "genuine_advance"/);
+  assert.match(dataSource, /type: "real_allocation_mismatch"/);
+  assert.match(dataSource, /type: "needs_manual_review"/);
+  assert.match(uiSource, /Legacy Arrears Reconciled/);
+  assert.match(uiSource, /Genuine Advance/);
+  assert.match(uiSource, /Real Allocation Mismatch/);
+  assert.match(uiSource, /Needs Manual Review/);
 });

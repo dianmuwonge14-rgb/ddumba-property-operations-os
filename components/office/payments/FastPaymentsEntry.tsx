@@ -258,6 +258,13 @@ function assistantBadgeClass(severity: AdvanceRentAssistantItem["severity"]) {
     return "border-emerald-200 bg-emerald-50 text-emerald-800";
 }
 
+function assistantCategoryLabel(type: AdvanceRentAssistantItem["type"]) {
+    if (type === "legacy_arrears_reconciled") return "Legacy Arrears Reconciled";
+    if (type === "genuine_advance") return "Genuine Advance";
+    if (type === "real_allocation_mismatch") return "Real Allocation Mismatch";
+    return "Needs Manual Review";
+}
+
 export default function FastPaymentsEntry({
     activeCompany,
     activeOffice,
@@ -2719,10 +2726,10 @@ function TenantBalance({ isAdmin, loadingDetails, onEditOutstanding, tenant }: {
 }
 
 function AdvanceRentAssistantPanel({ items, loading }: { items: AdvanceRentAssistantItem[]; loading: boolean }) {
-    const advanceCount = items.filter((item) => item.type === "advance_rent" || item.type === "prepaid_multiple_months").length;
-    const resolvedCount = items.filter((item) => item.type === "resolved").length;
-    const legacyCount = items.filter((item) => item.type === "legacy_arrears").length;
-    const mismatchCount = items.filter((item) => item.type === "allocation_mismatch" || item.type === "coverage_mismatch").length;
+    const legacyCount = items.filter((item) => item.type === "legacy_arrears_reconciled").length;
+    const advanceCount = items.filter((item) => item.type === "genuine_advance").length;
+    const mismatchCount = items.filter((item) => item.type === "real_allocation_mismatch").length;
+    const manualReviewCount = items.filter((item) => item.type === "needs_manual_review").length;
 
     return (
         <section className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
@@ -2733,14 +2740,14 @@ function AdvanceRentAssistantPanel({ items, loading }: { items: AdvanceRentAssis
                     </span>
                     <div>
                         <p className="text-sm font-black text-slate-950">AI Advance Rent Assistant</p>
-                        <p className="text-xs font-bold text-slate-500">Live Supabase scan for prepaid rooms, legacy arrears and true allocation mismatches.</p>
+                        <p className="text-xs font-bold text-slate-500">Live Supabase scan for reconciled legacy arrears, genuine advances and real allocation issues.</p>
                     </div>
                 </div>
                 <div className="flex flex-wrap gap-2 text-xs font-black">
-                    <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-800">{advanceCount} advance rooms</span>
-                    <span className="rounded-full bg-amber-100 px-3 py-1 text-amber-900">{legacyCount} legacy arrears</span>
-                    <span className="rounded-full bg-sky-100 px-3 py-1 text-sky-800">{resolvedCount} resolved</span>
-                    <span className="rounded-full bg-amber-100 px-3 py-1 text-amber-900">{mismatchCount} review items</span>
+                    <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-800">{legacyCount} legacy reconciled</span>
+                    <span className="rounded-full bg-sky-100 px-3 py-1 text-sky-800">{advanceCount} genuine advance</span>
+                    <span className="rounded-full bg-rose-100 px-3 py-1 text-rose-800">{mismatchCount} real mismatch</span>
+                    <span className="rounded-full bg-amber-100 px-3 py-1 text-amber-900">{manualReviewCount} manual review</span>
                 </div>
             </div>
 
@@ -2759,14 +2766,14 @@ function AdvanceRentAssistantPanel({ items, loading }: { items: AdvanceRentAssis
                                     <p className="mt-1 text-xs font-bold opacity-80">{item.tenantName} · {item.officeName}</p>
                                 </div>
                                 <span className="shrink-0 rounded-full bg-white/70 px-2 py-1 text-[10px] font-black uppercase">
-                                    {item.type.replaceAll("_", " ")}
+                                    {assistantCategoryLabel(item.type)}
                                 </span>
                             </div>
                             <p className="mt-2 text-xs font-bold">{item.message}</p>
                             <div className="mt-3 grid grid-cols-3 gap-2 text-[11px] font-black">
                                 <span>Rent {money(item.monthlyRent)}</span>
                                 <span>Paid {money(item.currentMonthPaid)}</span>
-                                <span>{item.type === "legacy_arrears" ? `Legacy ${money(item.legacyArrearsBalance ?? 0)}` : `Advance ${money(item.advanceRentBalance)}`}</span>
+                                <span>{item.type === "legacy_arrears_reconciled" ? `Legacy ${money(item.legacyArrearsBalance ?? 0)}` : `Advance ${money(item.advanceRentBalance)}`}</span>
                             </div>
                         </div>
                     ))}

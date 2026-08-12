@@ -309,7 +309,7 @@ export type FastPaymentRecentResult = {
 
 export type AdvanceRentAssistantItem = {
     id: string;
-    type: "advance_rent" | "prepaid_multiple_months" | "resolved" | "legacy_arrears" | "allocation_mismatch" | "coverage_mismatch";
+    type: "legacy_arrears_reconciled" | "genuine_advance" | "real_allocation_mismatch" | "needs_manual_review";
     severity: "success" | "warning" | "danger";
     roomNumber: string;
     tenantName: string;

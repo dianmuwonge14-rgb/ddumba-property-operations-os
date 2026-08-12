@@ -1776,30 +1776,12 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
         }
         const hasOverpaymentWithoutAllocation = unresolvedOverpayments.length > 0;
 
-        if (advanceRentBalance > 0) {
-            items.push({
-                id: `advance-${tenantId}`,
-                type: advanceRentBalance >= monthlyRent * 2 ? "prepaid_multiple_months" : "advance_rent",
-                severity: "success",
-                roomNumber,
-                tenantName,
-                officeName,
-                monthlyRent,
-                currentMonthPaid,
-                outstandingBalance,
-                advanceRentBalance,
-                monthsCovered,
-                message: `Room ${roomNumber} has UGX ${Math.round(advanceRentBalance).toLocaleString()} already allocated to ${monthsCovered.join(", ") || "future rent"}.`,
-            });
-            continue;
-        }
-
         if (tenantLegacyArrears.length) {
             const reconstructedTotal = tenantLegacyArrears.reduce((total, row) => total + Number(row.legacy_arrears_amount ?? 0), 0);
             items.push({
                 id: `legacy-arrears-${tenantId}`,
-                type: "legacy_arrears",
-                severity: activeLegacyArrearsBalance > 0 ? "warning" : "success",
+                type: "legacy_arrears_reconciled",
+                severity: "success",
                 roomNumber,
                 tenantName,
                 officeName,
@@ -1809,7 +1791,25 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
                 advanceRentBalance,
                 legacyArrearsBalance: activeLegacyArrearsBalance,
                 monthsCovered: legacyArrearsMonths,
-                message: `LEGACY ARREARS DETECTED: Room ${roomNumber} has UGX ${Math.round(reconstructedTotal).toLocaleString()} of imported outstanding from before the system's billing history. It has been allocated to ${legacyArrearsMonths.join(", ") || "prior months"} as pre-system arrears, not advance rent.`,
+                message: `LEGACY ARREARS RECONCILED: Room ${roomNumber} has UGX ${Math.round(reconstructedTotal).toLocaleString()} of imported outstanding from before the system's billing history. It has been allocated to ${legacyArrearsMonths.join(", ") || "prior months"} as pre-system arrears, not advance rent.`,
+            });
+            continue;
+        }
+
+        if (advanceRentBalance > 0) {
+            items.push({
+                id: `advance-${tenantId}`,
+                type: "genuine_advance",
+                severity: "success",
+                roomNumber,
+                tenantName,
+                officeName,
+                monthlyRent,
+                currentMonthPaid,
+                outstandingBalance,
+                advanceRentBalance,
+                monthsCovered,
+                message: `GENUINE ADVANCE: Room ${roomNumber} has UGX ${Math.round(advanceRentBalance).toLocaleString()} already allocated to ${monthsCovered.join(", ") || "future rent"}.`,
             });
             continue;
         }
@@ -1819,7 +1819,7 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
             const resolvedMonths = [...new Set(resolvedOverpayments.flatMap((item) => item.months))];
             items.push({
                 id: `resolved-${tenantId}`,
-                type: "resolved",
+                type: "genuine_advance",
                 severity: "success",
                 roomNumber,
                 tenantName,
@@ -1829,7 +1829,7 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
                 outstandingBalance,
                 advanceRentBalance,
                 monthsCovered: resolvedMonths,
-                message: `Room ${roomNumber} overpayment of UGX ${Math.round(resolvedAmount).toLocaleString()} is resolved and allocated to ${resolvedMonths.join(", ") || "the correct rent month"}.`,
+                message: `GENUINE ADVANCE: Room ${roomNumber} overpayment of UGX ${Math.round(resolvedAmount).toLocaleString()} is resolved and allocated to ${resolvedMonths.join(", ") || "the correct rent month"}.`,
             });
             continue;
         }
@@ -1838,7 +1838,7 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
             const missingAmount = unresolvedOverpayments.reduce((total, item) => total + item.missing, 0);
             items.push({
                 id: `missing-allocation-${tenantId}`,
-                type: "allocation_mismatch",
+                type: "real_allocation_mismatch",
                 severity: "danger",
                 roomNumber,
                 tenantName,
@@ -1848,7 +1848,7 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
                 outstandingBalance,
                 advanceRentBalance,
                 monthsCovered: [],
-                message: `Room ${roomNumber} has UGX ${Math.round(missingAmount).toLocaleString()} of overpayment history that still needs a rent-month allocation.`,
+                message: `REAL ALLOCATION MISMATCH: Room ${roomNumber} has UGX ${Math.round(missingAmount).toLocaleString()} of overpayment history that still needs a rent-month allocation.`,
             });
             continue;
         }
@@ -1856,7 +1856,7 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
         if (outstandingBalance === 0 && monthlyRent > 0 && currentMonthPaid > 0 && currentMonthPaid < monthlyRent) {
             items.push({
                 id: `coverage-mismatch-${tenantId}`,
-                type: "coverage_mismatch",
+                type: "needs_manual_review",
                 severity: "warning",
                 roomNumber,
                 tenantName,
@@ -1866,7 +1866,7 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
                 outstandingBalance,
                 advanceRentBalance,
                 monthsCovered: [],
-                message: `Room ${roomNumber} shows zero balance, but current-month allocation is below rent. Review whether an earlier advance or manual adjustment cleared the balance.`,
+                message: `NEEDS MANUAL REVIEW: Room ${roomNumber} shows zero balance, but current-month allocation is below rent. Review whether an earlier advance or manual adjustment cleared the balance.`,
             });
         }
     }
