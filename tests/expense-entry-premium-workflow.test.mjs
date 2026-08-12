@@ -40,7 +40,7 @@ test("landlord payment entry has payment-style search, cards, and edit affordanc
   assert.match(expensesConsole, /Search landlord/);
   assert.match(expensesConsole, /\/api\/expenses\/entry-search\?type=landlord/);
   assert.match(expensesConsole, /\/api\/expenses\/entry-detail\?type=\$\{type\}/);
-  assert.doesNotMatch(expensesConsole, /landlordOptions\.map/);
+  assert.match(expensesConsole, /landlordOptionById/);
   assert.doesNotMatch(expensesConsole, /employeeOptions\.slice\(0, 18\)\.map/);
   for (const label of [
     "Landlord Name",
@@ -69,6 +69,12 @@ test("landlord payment entry has payment-style search, cards, and edit affordanc
   assert.match(expensesConsole, /Overdue by X days/);
   assert.match(expensesConsole, /Request Admin Approval/);
   assert.match(expensesConsole, /function LandlordEditModal/);
+  assert.match(expensesConsole, /function LandlordPaymentManageModal/);
+  assert.match(expensesConsole, /Request Outstanding Balance Change/);
+  assert.match(expensesConsole, /Request Payment Due Date Change/);
+  assert.match(expensesConsole, /View Pending Request \/ Status/);
+  assert.match(expensesConsole, /View Audit \/ Changes/);
+  assert.match(expensesConsole, /Manager access is read-only for landlord balance and due-date changes/);
   assert.match(expensesConsole, /Landlord Summary/);
   assert.match(expensesConsole, /Financial Position/);
   assert.match(expensesConsole, /Payment Schedule/);
@@ -163,7 +169,10 @@ test("expense records expose amount and deletion correction workflow without off
 });
 
 test("expense page keeps the existing queues and recorded expenses ledger below entry", () => {
-  assert.match(expensesConsole, /<LandlordPaymentRequestLedger activeOfficeName=\{activeOfficeName\} isAdmin=\{isAdmin\} offices=\{data\.offices\} requests=\{data\.landlordPaymentRequests\}/);
+  assert.match(expensesConsole, /<LandlordPaymentRequestLedger/);
+  assert.match(expensesConsole, /editRequests=\{data\.landlordExpenseEditRequests\}/);
+  assert.match(expensesConsole, /landlordOptions=\{data\.landlordOptions\}/);
+  assert.match(expensesConsole, /requests=\{data\.landlordPaymentRequests\}/);
   assert.match(expensesConsole, /<GenericExpenseApprovalQueue/);
   assert.match(expensesConsole, /<EmployeeExpenseRequestLedger/);
   assert.match(expensesConsole, /<TreasuryCashRequestLedger/);

@@ -1681,7 +1681,16 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                     </div>
                 </section>
 
-                <LandlordPaymentRequestLedger activeOfficeName={activeOfficeName} isAdmin={isAdmin} offices={data.offices} requests={data.landlordPaymentRequests} />
+                <LandlordPaymentRequestLedger
+                    activeOfficeName={activeOfficeName}
+                    editRequests={data.landlordExpenseEditRequests}
+                    expenseDate={expenseDate}
+                    isAdmin={isAdmin}
+                    isManager={isManager}
+                    landlordOptions={data.landlordOptions}
+                    offices={data.offices}
+                    requests={data.landlordPaymentRequests}
+                />
                 <GenericExpenseApprovalQueue
                     isAdmin={isAdmin}
                     requests={data.expenses.filter((expense) => (expense.status ?? expense.approvalState) === "pending")}
@@ -2535,7 +2544,25 @@ function AgreementField({ children, label }: { children: ReactNode; label: strin
     );
 }
 
-function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requests }: { activeOfficeName: string; isAdmin: boolean; offices: ExpensesPageData["offices"]; requests: ExpensesPageData["landlordPaymentRequests"] }) {
+function LandlordPaymentRequestLedger({
+    activeOfficeName,
+    editRequests,
+    expenseDate,
+    isAdmin,
+    isManager,
+    landlordOptions,
+    offices,
+    requests,
+}: {
+    activeOfficeName: string;
+    editRequests: ExpensesPageData["landlordExpenseEditRequests"];
+    expenseDate: string;
+    isAdmin: boolean;
+    isManager: boolean;
+    landlordOptions: ExpensesPageData["landlordOptions"];
+    offices: ExpensesPageData["offices"];
+    requests: ExpensesPageData["landlordPaymentRequests"];
+}) {
     const router = useRouter();
     const [filters, setFilters] = useState<RecordTableFilters>(() => defaultRecordTableFilters());
     const [isPending, startTransition] = useTransition();
@@ -2543,6 +2570,8 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
     const [processingDecisionById, setProcessingDecisionById] = useState<Record<string, "approved" | "rejected">>({});
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [selected, setSelected] = useState<ExpensesPageData["landlordPaymentRequests"][number] | null>(null);
+    const [manageRequest, setManageRequest] = useState<ExpensesPageData["landlordPaymentRequests"][number] | null>(null);
+    const [landlordEditModal, setLandlordEditModal] = useState<LandlordEditModalState | null>(null);
     const [bulkModal, setBulkModal] = useState<{ decision: "approved" | "rejected"; ids: string[] } | null>(null);
     const [bulkComment, setBulkComment] = useState("");
     const [bulkResult, setBulkResult] = useState<Awaited<ReturnType<typeof decideBulkLandlordPaidExpenseRequests>> | null>(null);
@@ -2569,6 +2598,7 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
     const bulkModalRequests = useMemo(() => bulkModal ? pendingVisibleRequests.filter((request) => bulkModal.ids.includes(request.id)) : [], [bulkModal, pendingVisibleRequests]);
     const total = useMemo(() => visibleRequests.reduce((sum, request) => sum + Number(request.amount ?? 0), 0), [visibleRequests]);
     const officeLabel = isAdmin && filters.officeId ? offices.find((office) => office.id === filters.officeId)?.name ?? "Selected office" : isAdmin ? "All Offices" : activeOfficeName;
+    const landlordOptionById = useMemo(() => new Map(landlordOptions.map((landlord) => [landlord.id, landlord])), [landlordOptions]);
 
     useEffect(() => {
         const visibleIds = new Set(pendingVisibleRequests.map((request) => request.id));
@@ -2664,6 +2694,39 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
         });
     }
 
+    function detailFromRequest(request: ExpensesPageData["landlordPaymentRequests"][number]): LandlordEntryDetail {
+        const option = landlordOptionById.get(request.landlordId);
+        return {
+            id: request.landlordId,
+            name: request.landlordName,
+            officeId: request.officeId ?? option?.officeId ?? null,
+            officeName: request.officeName ?? option?.officeName ?? null,
+            location: option?.location ?? null,
+            commissionType: option?.commissionType ?? null,
+            commissionRate: option?.commissionRate ?? null,
+            outstandingBalance: Number(request.outstandingAmount ?? request.currentNetPayable ?? 0),
+            lastPaymentAmount: Number(request.alreadyPaidAmount ?? 0),
+            lastPaymentDate: request.paymentDate ?? null,
+            landlordPaymentDate: request.landlordPaymentDueDate ?? null,
+            landlordBillingDate: request.paymentMonth ?? null,
+            fullRentRoll: Number(option?.portfolioValue ?? 0),
+            netPayable: Number(request.currentNetPayable ?? 0),
+            portfolioValue: Number(option?.portfolioValue ?? 0),
+            totalRooms: Number(option?.numberOfRooms ?? 0),
+            occupiedRooms: Number(option?.occupiedRooms ?? 0),
+            vacantRooms: Number(option?.vacantRooms ?? 0),
+            vacatedWithDebt: Number(option?.vacatedWithDebt ?? 0),
+            advanceBalance: Number(request.remainingAdvanceBalance ?? 0),
+            paymentStatus: request.status,
+        };
+    }
+
+    function openLandlordManageEdit(request: ExpensesPageData["landlordPaymentRequests"][number], requestType: LandlordExpenseEditRequestType) {
+        setMessage(null);
+        setManageRequest(null);
+        setLandlordEditModal({ landlord: detailFromRequest(request), requestType });
+    }
+
     if (!requests.length) return null;
     return (
         <section className="mx-auto mt-5 max-w-6xl overflow-hidden rounded-[26px] border border-white/70 bg-white shadow-2xl shadow-slate-950/15">
@@ -2744,6 +2807,9 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
                             const busy = Boolean(rowDecision);
                             const isPendingRequest = String(request.status).toLowerCase() === "pending";
                             const dueStatus = landlordPaymentDueStatus(request.landlordPaymentDueDate, request.outstandingAmount, request.status);
+                            const rowEditRequests = editRequests.filter((editRequest) => editRequest.landlordId === request.landlordId);
+                            const hasPendingBalanceRequest = rowEditRequests.some((editRequest) => editRequest.requestType === "landlord_outstanding_balance_edit" && editRequest.status === "pending");
+                            const hasPendingDueDateRequest = rowEditRequests.some((editRequest) => editRequest.requestType === "landlord_payment_date_edit" && editRequest.status === "pending");
                             return (
                                 <tr key={`landlord-payment-expense-request:${request.id}`} onClick={() => setSelected(request)} className="cursor-pointer border-b border-slate-100 hover:bg-amber-50/70">
                                     {isAdmin ? (
@@ -2779,6 +2845,23 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
                                             <button type="button" onClick={(event) => { event.stopPropagation(); setSelected(request); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-amber-100">
                                                 View
                                             </button>
+                                            <button type="button" onClick={(event) => { event.stopPropagation(); setManageRequest(request); }} className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white shadow-lg shadow-slate-950/15 hover:bg-slate-800 focus:outline-none focus:ring-4 focus:ring-slate-200">
+                                                Manage
+                                            </button>
+                                            {!isManager ? (
+                                                <>
+                                                    <button type="button" disabled={hasPendingBalanceRequest} onClick={(event) => { event.stopPropagation(); openLandlordManageEdit(request, "landlord_outstanding_balance_edit"); }} className="rounded-xl bg-blue-700 px-3 py-2 text-xs font-black text-white shadow-lg shadow-blue-900/15 hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-45 focus:outline-none focus:ring-4 focus:ring-blue-100">
+                                                        {isAdmin ? "Edit Outstanding Balance" : "Request Outstanding Balance Change"}
+                                                    </button>
+                                                    <button type="button" disabled={hasPendingDueDateRequest} onClick={(event) => { event.stopPropagation(); openLandlordManageEdit(request, "landlord_payment_date_edit"); }} className="rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs font-black text-blue-800 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-45 focus:outline-none focus:ring-4 focus:ring-blue-100">
+                                                        {isAdmin ? "Set / Change Landlord Payment Due Date" : "Request Payment Due Date Change"}
+                                                    </button>
+                                                </>
+                                            ) : (
+                                                <button type="button" onClick={(event) => { event.stopPropagation(); setManageRequest(request); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-slate-100">
+                                                    View Audit / Changes
+                                                </button>
+                                            )}
                                             {isAdmin && isPendingRequest ? (
                                                 <>
                                                     <button type="button" disabled={busy} onClick={(event) => { event.stopPropagation(); decide(request, "approved"); }} className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-black text-white shadow-lg shadow-emerald-900/15 hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus:ring-4 focus:ring-emerald-100">
@@ -2841,7 +2924,122 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
                     title="Landlord Payment Record"
                 />
             ) : null}
+            {manageRequest ? (
+                <LandlordPaymentManageModal
+                    editRequests={editRequests.filter((request) => request.landlordId === manageRequest.landlordId)}
+                    isAdmin={isAdmin}
+                    isManager={isManager}
+                    onClose={() => setManageRequest(null)}
+                    onEdit={(requestType) => openLandlordManageEdit(manageRequest, requestType)}
+                    request={manageRequest}
+                />
+            ) : null}
+            {landlordEditModal ? (
+                <LandlordEditModal
+                    expenseDate={expenseDate}
+                    isAdmin={isAdmin}
+                    modal={landlordEditModal}
+                    onClose={() => setLandlordEditModal(null)}
+                    onDone={(nextMessage) => {
+                        setMessage(nextMessage);
+                        setLandlordEditModal(null);
+                        router.refresh();
+                    }}
+                />
+            ) : null}
         </section>
+    );
+}
+
+function LandlordPaymentManageModal({
+    editRequests,
+    isAdmin,
+    isManager,
+    onClose,
+    onEdit,
+    request,
+}: {
+    editRequests: ExpensesPageData["landlordExpenseEditRequests"];
+    isAdmin: boolean;
+    isManager: boolean;
+    onClose: () => void;
+    onEdit: (requestType: LandlordExpenseEditRequestType) => void;
+    request: ExpensesPageData["landlordPaymentRequests"][number];
+}) {
+    const pendingBalanceRequest = editRequests.find((editRequest) => editRequest.requestType === "landlord_outstanding_balance_edit" && editRequest.status === "pending");
+    const pendingDueDateRequest = editRequests.find((editRequest) => editRequest.requestType === "landlord_payment_date_edit" && editRequest.status === "pending");
+    const dueStatus = landlordPaymentDueStatus(request.landlordPaymentDueDate, request.outstandingAmount, request.status);
+    return (
+        <div className="fixed inset-0 z-[130] overflow-auto bg-slate-950/70 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+            <div className="mx-auto my-8 max-w-3xl overflow-hidden rounded-[28px] bg-white shadow-2xl shadow-slate-950/30">
+                <div className="flex items-start justify-between gap-4 bg-slate-950 p-5 text-white">
+                    <div>
+                        <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200">Landlord payment management</p>
+                        <h2 className="mt-2 text-2xl font-black">{request.landlordName}</h2>
+                        <p className="mt-1 text-sm font-bold text-slate-300">{request.officeName} · {money(request.amount)} payment request</p>
+                    </div>
+                    <button type="button" onClick={onClose} className="inline-flex min-h-10 items-center justify-center rounded-xl bg-white/10 px-4 text-sm font-black text-white hover:bg-white/15">Close</button>
+                </div>
+                <div className="grid gap-3 p-5 md:grid-cols-2">
+                    <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-xs font-black uppercase tracking-wide text-slate-500">Outstanding Balance</p>
+                        <p className="mt-2 text-2xl font-black text-slate-950">{money(request.outstandingAmount)}</p>
+                        {pendingBalanceRequest ? <p className="mt-2 rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-900">Pending request awaiting Admin approval</p> : null}
+                    </div>
+                    <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-xs font-black uppercase tracking-wide text-slate-500">Landlord Payment Due Date</p>
+                        <p className="mt-2 text-2xl font-black text-slate-950">{request.landlordPaymentDueDate ?? "Not set"}</p>
+                        <span className={`mt-2 inline-flex rounded-full border px-3 py-1 text-xs font-black uppercase ${dueStatusClass(dueStatus.tone)}`}>{dueStatus.label}</span>
+                        {pendingDueDateRequest ? <p className="mt-2 rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-900">Pending request awaiting Admin approval</p> : null}
+                    </div>
+                    <div className="md:col-span-2 rounded-3xl border border-blue-100 bg-blue-50 p-4">
+                        <p className="text-xs font-black uppercase tracking-wide text-blue-700">Manage</p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                            {!isManager ? (
+                                <>
+                                    <button type="button" disabled={Boolean(pendingBalanceRequest)} onClick={() => onEdit("landlord_outstanding_balance_edit")} className="rounded-xl bg-blue-700 px-4 py-2 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-45">
+                                        {isAdmin ? "Edit Outstanding Balance" : "Request Outstanding Balance Change"}
+                                    </button>
+                                    <button type="button" disabled={Boolean(pendingDueDateRequest)} onClick={() => onEdit("landlord_payment_date_edit")} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-45">
+                                        {isAdmin ? "Set / Change Landlord Payment Due Date" : "Request Payment Due Date Change"}
+                                    </button>
+                                </>
+                            ) : null}
+                            <button type="button" className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700">
+                                {isManager ? "View Audit / Changes" : isAdmin ? "View Audit / Changes" : "View Pending Request / Status"}
+                            </button>
+                        </div>
+                        {isManager ? <p className="mt-3 text-xs font-bold text-slate-600">Manager access is read-only for landlord balance and due-date changes.</p> : null}
+                        {pendingBalanceRequest ? <p className="mt-3 text-xs font-bold text-amber-800">An outstanding balance change request is already awaiting Admin approval.</p> : null}
+                        {pendingDueDateRequest ? <p className="mt-1 text-xs font-bold text-amber-800">A Landlord Payment Due Date change request is already awaiting Admin approval.</p> : null}
+                    </div>
+                    <div className="md:col-span-2 rounded-3xl border border-slate-200 bg-white p-4">
+                        <p className="text-xs font-black uppercase tracking-wide text-slate-500">Change history</p>
+                        {editRequests.length ? (
+                            <div className="mt-3 space-y-2">
+                                {editRequests.slice(0, 8).map((editRequest) => (
+                                    <div key={`landlord-payment-manage-edit:${editRequest.id}`} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <p className="text-sm font-black text-slate-950">{landlordEditRequestLabel(editRequest.requestType)}</p>
+                                            <StatusBadge status={editRequest.status} />
+                                        </div>
+                                        <p className="mt-1 text-xs font-bold text-slate-600">
+                                            {formatRequestValue(editRequest.oldValue.value)} → {formatRequestValue(editRequest.requestedValue.value)}
+                                        </p>
+                                        <p className="mt-1 text-xs font-semibold text-slate-500">
+                                            Requested by {editRequest.requestedByName} {editRequest.createdAt ? `on ${formatDateTime(editRequest.createdAt)}` : ""}. Reason: {editRequest.reason || "--"}
+                                        </p>
+                                        {editRequest.adminComment ? <p className="mt-1 text-xs font-bold text-slate-600">Admin: {editRequest.adminComment}</p> : null}
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <p className="mt-2 text-sm font-bold text-slate-500">No landlord balance or due-date changes recorded yet.</p>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
     );
 }
 
