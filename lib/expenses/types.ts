@@ -80,6 +80,7 @@ export type LandlordExpenseEditRequestItem = {
     requestedByName: string;
     createdAt: string | null;
     adminComment: string | null;
+    proofUrl?: string | null;
 };
 
 export type ExpensesPageData = {
@@ -123,6 +124,7 @@ export type ExpensesPageData = {
         outstandingAmount: number;
         flagReason: string | null;
         paymentDate: string;
+        landlordPaymentDueDate: string | null;
         paymentMonth: string | null;
         paymentMethod: string;
         status: string;
@@ -341,8 +343,7 @@ export type DecideLandlordPaidExpenseRequestInput = {
 
 export type LandlordExpenseEditRequestType =
     | "landlord_outstanding_balance_edit"
-    | "landlord_payment_date_edit"
-    | "landlord_billing_date_edit";
+    | "landlord_payment_date_edit";
 
 export type SubmitLandlordExpenseEditInput = {
     landlordId: string;
@@ -353,6 +354,7 @@ export type SubmitLandlordExpenseEditInput = {
     reason: string;
     effectiveDate?: string;
     effectiveMonth?: string;
+    proofUrl?: string | null;
 };
 
 export type DecideLandlordExpenseEditRequestInput = {

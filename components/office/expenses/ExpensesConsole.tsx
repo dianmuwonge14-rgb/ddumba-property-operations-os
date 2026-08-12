@@ -120,12 +120,14 @@ type AuthorisedExpenseType = "employee_lunch" | "airtime" | "internet" | "transp
 type ExpenseModalMode = "view" | "edit" | "date" | "employee" | "history";
 type SummaryDrilldownKind = "collections" | "adminCapitalInjection" | "expenses";
 type RecordDatePreset = "today" | "yesterday" | "week" | "month" | "custom_date" | "custom_range" | "all_dates";
+type LandlordDueFilter = "" | "due_today" | "due_this_week" | "overdue" | "no_due_date" | "paid" | "outstanding";
 type RecordTableFilters = {
     datePreset: RecordDatePreset;
     customDate: string;
     startDate: string;
     endDate: string;
     officeId: string;
+    landlordDueFilter: LandlordDueFilter;
 };
 type LandlordEditModalState = {
     requestType: LandlordExpenseEditRequestType;
@@ -188,6 +190,7 @@ function defaultRecordTableFilters(): RecordTableFilters {
         customDate: value,
         datePreset: "all_dates",
         endDate: value,
+        landlordDueFilter: "",
         officeId: "",
         startDate: value,
     };
@@ -228,6 +231,35 @@ function isDateInRange(value: string | null | undefined, range: { start: string 
 
 function normalizeStatus(status: string | null | undefined) {
     return String(status ?? "").toLowerCase();
+}
+
+function dateDiffDays(fromDate: string, toDate: string) {
+    const from = new Date(`${fromDate}T00:00:00`);
+    const to = new Date(`${toDate}T00:00:00`);
+    return Math.round((to.getTime() - from.getTime()) / 86_400_000);
+}
+
+function landlordPaymentDueStatus(dueDate: string | null | undefined, outstandingBalance: number, paidStatus?: string | null) {
+    const normalizedStatus = normalizeStatus(paidStatus);
+    if (normalizedStatus === "paid" || outstandingBalance <= 0) {
+        return { label: "Paid", tone: "emerald" as const };
+    }
+    const date = String(dueDate ?? "").slice(0, 10);
+    if (!date) return { label: "No Due Date", tone: "slate" as const };
+    const diff = dateDiffDays(today(), date);
+    if (diff < 0) return { label: `Overdue by ${Math.abs(diff)} day${Math.abs(diff) === 1 ? "" : "s"}`, tone: "rose" as const };
+    if (diff === 0) return { label: "Due Today", tone: "amber" as const };
+    if (diff === 1) return { label: "Due Tomorrow", tone: "cyan" as const };
+    return { label: `Due in ${diff} days`, tone: "blue" as const };
+}
+
+function dueStatusClass(tone: ReturnType<typeof landlordPaymentDueStatus>["tone"]) {
+    if (tone === "emerald") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+    if (tone === "rose") return "border-rose-200 bg-rose-50 text-rose-800";
+    if (tone === "amber") return "border-amber-200 bg-amber-50 text-amber-900";
+    if (tone === "cyan") return "border-cyan-200 bg-cyan-50 text-cyan-800";
+    if (tone === "blue") return "border-blue-200 bg-blue-50 text-blue-800";
+    return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
 function expenseField(expense: ExpenseItem, key: keyof ExpenseChangePayload) {
@@ -1270,6 +1302,11 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                 </div>
                                 {selectedLandlordOption ? (
                                     <div className="space-y-4">
+                                        {selectedLandlordDetail ? (
+                                            <div className={`rounded-3xl border px-4 py-3 text-sm font-black ${dueStatusClass(landlordPaymentDueStatus(selectedLandlordDetail.landlordPaymentDate, selectedLandlordDetail.outstandingBalance, selectedLandlordDetail.paymentStatus).tone)}`}>
+                                                Landlord Payment Due Date status: {landlordPaymentDueStatus(selectedLandlordDetail.landlordPaymentDate, selectedLandlordDetail.outstandingBalance, selectedLandlordDetail.paymentStatus).label}
+                                            </div>
+                                        ) : null}
                                         <PremiumCardSection title="Landlord Summary">
                                             <PremiumEntryCard label="Landlord Name" value={selectedLandlordOption.name} />
                                             <PremiumEntryCard label="Office" value={selectedLandlordOption.officeName ?? selectedEntryOfficeName} />
@@ -1277,7 +1314,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                             <PremiumEntryCard label="Payment Status" value={selectedLandlordDetail?.paymentStatus ?? (landlordPreview ? (landlordPreview.advanceAmount > 0 ? "Review advance" : "Within payable") : "Enter amount")} />
                                         </PremiumCardSection>
                                         <PremiumCardSection title="Financial Position" featured>
-                                            <PremiumEntryCard featured label="Outstanding Balance" value={loadingLandlordDetail ? "Loading..." : money(selectedLandlordDetail?.outstandingBalance ?? landlordPreview?.outstandingAmount ?? 0)} actionLabel="Edit" onAction={() => openLandlordEdit("landlord_outstanding_balance_edit")} />
+                                            <PremiumEntryCard featured label="Outstanding Balance" value={loadingLandlordDetail ? "Loading..." : money(selectedLandlordDetail?.outstandingBalance ?? landlordPreview?.outstandingAmount ?? 0)} actionLabel={isManager ? undefined : "Edit Outstanding Balance"} onAction={isManager ? undefined : () => openLandlordEdit("landlord_outstanding_balance_edit")} />
                                             <PremiumEntryCard featured label="Net Payable" value={loadingLandlordDetail ? "Loading..." : money(selectedLandlordDetail?.netPayable ?? landlordPreview?.currentNetPayable ?? 0)} />
                                             <PremiumEntryCard featured label="Last Payment Amount" value={loadingLandlordDetail ? "Loading..." : money(selectedLandlordDetail?.lastPaymentAmount ?? 0)} />
                                             <PremiumEntryCard featured label="Full Rent Roll" value={money(selectedLandlordDetail?.fullRentRoll ?? 0)} />
@@ -1287,8 +1324,8 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                         </PremiumCardSection>
                                         <PremiumCardSection title="Payment Schedule">
                                             <PremiumEntryCard label="Last Payment Date" value={selectedLandlordDetail?.lastPaymentDate ?? "--"} />
-                                            <PremiumEntryCard label="Landlord Payment Date" value={selectedLandlordDetail?.landlordPaymentDate?.slice(0, 10) ?? expenseDate} actionLabel="Edit" onAction={() => openLandlordEdit("landlord_payment_date_edit")} />
-                                            <PremiumEntryCard label="Landlord Billing Date" value={selectedLandlordDetail?.landlordBillingDate?.slice(0, 10) ?? `${expenseDate.slice(0, 7)}-01`} actionLabel="Edit" onAction={() => openLandlordEdit("landlord_billing_date_edit")} />
+                                            <PremiumEntryCard label="Landlord Payment Due Date" value={selectedLandlordDetail?.landlordPaymentDate?.slice(0, 10) ?? "No due date"} actionLabel={isManager ? undefined : "Set / Change"} onAction={isManager ? undefined : () => openLandlordEdit("landlord_payment_date_edit")} />
+                                            <PremiumEntryCard label="Due Date Status" value={selectedLandlordDetail ? landlordPaymentDueStatus(selectedLandlordDetail.landlordPaymentDate, selectedLandlordDetail.outstandingBalance, selectedLandlordDetail.paymentStatus).label : "--"} />
                                         </PremiumCardSection>
                                         <PremiumCardSection title="Portfolio">
                                             <PremiumEntryCard label="Total Rooms" value={String(selectedLandlordDetail?.totalRooms ?? 0)} />
@@ -2466,8 +2503,21 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
     const range = useMemo(() => resolveRecordFilterRange(filters), [filters]);
     const visibleRequests = useMemo(() => requests.filter((request) => {
         if (isAdmin && filters.officeId && request.officeId !== filters.officeId) return false;
-        return isDateInRange(request.paymentDate, range);
-    }), [filters.officeId, isAdmin, range, requests]);
+        if (!isDateInRange(request.paymentDate, range)) return false;
+        const dueDate = request.landlordPaymentDueDate;
+        const dueStatus = landlordPaymentDueStatus(dueDate, request.outstandingAmount, request.status);
+        if (filters.landlordDueFilter === "due_today") return dueStatus.label === "Due Today";
+        if (filters.landlordDueFilter === "due_this_week") {
+            if (!dueDate || normalizeStatus(request.status) === "paid") return false;
+            const diff = dateDiffDays(today(), dueDate);
+            return diff >= 0 && diff <= 7;
+        }
+        if (filters.landlordDueFilter === "overdue") return dueStatus.label.startsWith("Overdue");
+        if (filters.landlordDueFilter === "no_due_date") return !dueDate;
+        if (filters.landlordDueFilter === "paid") return dueStatus.label === "Paid";
+        if (filters.landlordDueFilter === "outstanding") return Number(request.outstandingAmount ?? 0) > 0;
+        return true;
+    }), [filters.landlordDueFilter, filters.officeId, isAdmin, range, requests]);
     const pendingVisibleRequests = useMemo(() => visibleRequests.filter((request) => String(request.status).toLowerCase() === "pending"), [visibleRequests]);
     const selectedVisibleRequests = useMemo(() => pendingVisibleRequests.filter((request) => selectedIds.includes(request.id)), [pendingVisibleRequests, selectedIds]);
     const bulkModalRequests = useMemo(() => bulkModal ? pendingVisibleRequests.filter((request) => bulkModal.ids.includes(request.id)) : [], [bulkModal, pendingVisibleRequests]);
@@ -2637,6 +2687,7 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
                             <th className="px-4 py-3 text-right">New Advance</th>
                             <th className="px-4 py-3">Method</th>
                             <th className="px-4 py-3">Status</th>
+                            <th className="px-4 py-3">Payment Due Date</th>
                             <th className="px-4 py-3">Admin comment</th>
                             <th className="px-4 py-3">Action</th>
                         </tr>
@@ -2646,6 +2697,7 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
                             const rowDecision = processingDecisionById[request.id] ?? null;
                             const busy = Boolean(rowDecision);
                             const isPendingRequest = String(request.status).toLowerCase() === "pending";
+                            const dueStatus = landlordPaymentDueStatus(request.landlordPaymentDueDate, request.outstandingAmount, request.status);
                             return (
                                 <tr key={`landlord-payment-expense-request:${request.id}`} onClick={() => setSelected(request)} className="cursor-pointer border-b border-slate-100 hover:bg-amber-50/70">
                                     {isAdmin ? (
@@ -2671,6 +2723,10 @@ function LandlordPaymentRequestLedger({ activeOfficeName, isAdmin, offices, requ
                                     <td className="px-4 py-3 text-right font-black text-amber-700">{money(request.advanceAmount)}</td>
                                     <td className="px-4 py-3 font-bold capitalize text-slate-500">{request.paymentMethod.replaceAll("_", " ")}</td>
                                     <td className="px-4 py-3"><StatusBadge status={request.status} /></td>
+                                    <td className="px-4 py-3">
+                                        <p className="font-black text-slate-950">{request.landlordPaymentDueDate ?? "No due date"}</p>
+                                        <span className={`mt-1 inline-flex rounded-full border px-2 py-1 text-[10px] font-black uppercase ${dueStatusClass(dueStatus.tone)}`}>{dueStatus.label}</span>
+                                    </td>
                                     <td className="px-4 py-3 font-bold text-slate-500">{request.adminComment ?? request.notes ?? "No comment"}</td>
                                     <td className="px-4 py-3">
                                         <div className="flex flex-wrap gap-2">
@@ -2828,11 +2884,37 @@ function RecordTableFilterBar({
                     </div>
                 )}
             </div>
+            {label === "Expense Routed Landlord Payments" ? (
+                <div className="mt-3 grid gap-3 md:grid-cols-[260px_minmax(0,1fr)]">
+                    <label className="block">
+                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Landlord payment due filter</span>
+                        <div className="mt-1 flex h-11 items-center rounded-2xl border border-slate-200 bg-white px-2">
+                            <select value={filters.landlordDueFilter} onChange={(event) => update("landlordDueFilter", event.target.value as LandlordDueFilter)} className="min-w-0 flex-1 bg-transparent text-sm font-black text-slate-900 outline-none">
+                                <option value="">All landlord payments</option>
+                                <option value="due_today">Payment Due Today</option>
+                                <option value="due_this_week">Due This Week</option>
+                                <option value="overdue">Overdue</option>
+                                <option value="no_due_date">No Due Date</option>
+                                <option value="paid">Paid</option>
+                                <option value="outstanding">Outstanding Balance &gt; 0</option>
+                            </select>
+                            <button type="button" onClick={() => update("landlordDueFilter", "")} className="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Clear landlord payment due filter">
+                                <X size={15} />
+                            </button>
+                        </div>
+                    </label>
+                    <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2">
+                        <p className="text-xs font-black uppercase tracking-wide text-slate-500">Due date intelligence</p>
+                        <p className="mt-1 text-sm font-black text-slate-900">Due Today · Due Tomorrow · Due in X days · Overdue by X days</p>
+                    </div>
+                </div>
+            ) : null}
             <div className="mt-3 flex flex-wrap items-center gap-2">
                 <span className="text-xs font-black uppercase tracking-wide text-slate-500">Showing results for:</span>
                 {filters.datePreset === "all_dates" && !filters.officeId ? <span className="text-xs font-bold text-slate-500">All authorised records</span> : null}
                 {filters.datePreset !== "all_dates" ? <FilterChip label={`Date: ${range.label}`} onClear={clearDate} /> : null}
                 {officeName ? <FilterChip label={`Office: ${officeName}`} onClear={clearOffice} /> : null}
+                {filters.landlordDueFilter ? <FilterChip label={`Due: ${filters.landlordDueFilter.replaceAll("_", " ")}`} onClear={() => update("landlordDueFilter", "")} /> : null}
                 <button type="button" onClick={clearAll} className="ml-auto rounded-xl bg-slate-950 px-3 py-2 text-xs font-black uppercase tracking-wide text-white hover:bg-slate-800">
                     Clear All Filters
                 </button>
@@ -3068,22 +3150,26 @@ function LandlordEditModal({
 }) {
     const currentValue = modal.requestType === "landlord_outstanding_balance_edit"
         ? modal.landlord.outstandingBalance
-        : modal.requestType === "landlord_payment_date_edit"
-            ? modal.landlord.landlordPaymentDate?.slice(0, 10) ?? expenseDate
-            : modal.landlord.landlordBillingDate?.slice(0, 10) ?? `${expenseDate.slice(0, 7)}-01`;
+        : modal.landlord.landlordPaymentDate?.slice(0, 10) ?? "";
     const [newValue, setNewValue] = useState(String(currentValue ?? ""));
     const [reason, setReason] = useState("");
+    const [proofUrl, setProofUrl] = useState("");
+    const [confirmingDirectChange, setConfirmingDirectChange] = useState(false);
     const [effectiveDate, setEffectiveDate] = useState(expenseDate);
     const [effectiveMonth, setEffectiveMonth] = useState(expenseDate.slice(0, 7));
     const [error, setError] = useState<string | null>(null);
     const [isPending, startTransition] = useTransition();
     const isBalance = modal.requestType === "landlord_outstanding_balance_edit";
-    const title = isBalance ? "Outstanding Balance Edit" : modal.requestType === "landlord_payment_date_edit" ? "Landlord Payment Date Edit" : "Landlord Billing Date Edit";
+    const title = isBalance ? "Edit Landlord Outstanding Balance" : "Set / Change Landlord Payment Due Date";
     const adjustmentAmount = isBalance ? Number(newValue || 0) - Number(currentValue || 0) : 0;
 
     function save() {
         if (!reason.trim()) {
             setError("Reason is required.");
+            return;
+        }
+        if (isAdmin && !confirmingDirectChange) {
+            setConfirmingDirectChange(true);
             return;
         }
         setError(null);
@@ -3096,10 +3182,11 @@ function LandlordEditModal({
                     newValue: isBalance ? Number(newValue) : newValue,
                     officeId: modal.landlord.officeId,
                     oldValue: currentValue,
+                    proofUrl: proofUrl.trim() || null,
                     reason: reason.trim(),
                     requestType: modal.requestType,
                 });
-                onDone(result.direct ? `${title} applied by Admin.` : `${title} sent for Admin approval.`);
+                onDone(result.direct ? `${title} applied by Admin.` : `${title} request sent for Admin approval.`);
             } catch (saveError) {
                 setError(saveError instanceof Error ? saveError.message : "Landlord edit could not be saved.");
             }
@@ -3126,10 +3213,10 @@ function LandlordEditModal({
                     <ModalField label="Office">
                         <input readOnly value={modal.landlord.officeName ?? "Office"} className="modal-input" />
                     </ModalField>
-                    <ModalField label={isBalance ? "Current outstanding balance" : modal.requestType === "landlord_payment_date_edit" ? "Current payment date" : "Current billing date"}>
-                        <input readOnly value={isBalance ? money(currentValue) : String(currentValue ?? "")} className="modal-input" />
+                    <ModalField label={isBalance ? "Current Outstanding Balance" : "Current Payment Due Date"}>
+                        <input readOnly value={isBalance ? money(currentValue) : String(currentValue || "No due date")} className="modal-input" />
                     </ModalField>
-                    <ModalField label={isBalance ? "New requested balance" : modal.requestType === "landlord_payment_date_edit" ? "New payment date" : "New billing date"}>
+                    <ModalField label={isBalance ? (isAdmin ? "New Outstanding Balance" : "New Requested Outstanding Balance") : "Requested New Payment Due Date"}>
                         <input type={isBalance ? "number" : "date"} value={newValue} onChange={(event) => setNewValue(event.target.value)} className="modal-input" />
                     </ModalField>
                     {isBalance ? (
@@ -3149,12 +3236,27 @@ function LandlordEditModal({
                             <textarea value={reason} onChange={(event) => setReason(event.target.value)} className="min-h-28 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
                         </ModalField>
                     </div>
+                    <div className="md:col-span-2">
+                        <ModalField label="Optional Supporting Proof">
+                            <input value={proofUrl} onChange={(event) => setProofUrl(event.target.value)} placeholder="Paste proof link or reference, optional" className="modal-input" />
+                        </ModalField>
+                    </div>
                 </div>
+                {confirmingDirectChange ? (
+                    <div className="mx-5 rounded-3xl border border-blue-200 bg-blue-50 p-4">
+                        <p className="text-xs font-black uppercase tracking-wide text-blue-700">Confirm Admin direct change</p>
+                        <p className="mt-2 text-sm font-black text-slate-950">
+                            {isBalance
+                                ? `Change landlord outstanding balance from ${money(currentValue)} to ${money(newValue)}?`
+                                : `Change Landlord Payment Due Date from ${String(currentValue || "No due date")} to ${String(newValue || "No due date")}?`}
+                        </p>
+                    </div>
+                ) : null}
                 {error ? <p className="mx-5 rounded-2xl bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</p> : null}
                 <div className="flex flex-wrap justify-end gap-2 p-5">
-                    <button type="button" disabled={isPending} onClick={onClose} className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 disabled:opacity-40">Cancel</button>
+                    <button type="button" disabled={isPending} onClick={confirmingDirectChange ? () => setConfirmingDirectChange(false) : onClose} className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 disabled:opacity-40">{confirmingDirectChange ? "Back" : "Cancel"}</button>
                     <button type="button" disabled={isPending} onClick={save} className="rounded-xl bg-blue-700 px-4 py-2 text-sm font-black text-white disabled:opacity-40">
-                        {isPending ? "Saving..." : isAdmin ? "Apply Now" : "Submit for Approval"}
+                        {isPending ? "Saving..." : isAdmin ? confirmingDirectChange ? "Confirm Change" : "Save Change" : "Request Admin Approval"}
                     </button>
                 </div>
             </div>
@@ -3423,7 +3525,9 @@ function LandlordEditRequestLedger({ isAdmin, onReviewed, requests }: { isAdmin:
                             <th className="px-4 py-3">Request Type</th>
                             <th className="px-4 py-3">Old Value</th>
                             <th className="px-4 py-3">New Value</th>
+                            <th className="px-4 py-3">Difference</th>
                             <th className="px-4 py-3">Reason</th>
+                            <th className="px-4 py-3">Proof</th>
                             <th className="px-4 py-3">Office</th>
                             <th className="px-4 py-3">Requested By</th>
                             <th className="px-4 py-3">Status</th>
@@ -3431,14 +3535,19 @@ function LandlordEditRequestLedger({ isAdmin, onReviewed, requests }: { isAdmin:
                         </tr>
                     </thead>
                     <tbody>
-                        {visibleRequests.map((request) => (
+                        {visibleRequests.map((request) => {
+                            const isBalanceRequest = request.requestType === "landlord_outstanding_balance_edit";
+                            const difference = isBalanceRequest ? Number(request.requestedValue.value ?? 0) - Number(request.oldValue.value ?? 0) : 0;
+                            return (
                             <tr key={`landlord-edit-request:${request.id}`} className="border-b border-slate-100 align-top">
                                 <td className="px-4 py-3 font-bold text-slate-500">{request.createdAt ? new Date(request.createdAt).toLocaleString() : "--"}</td>
                                 <td className="px-4 py-3 font-black text-slate-950">{request.landlordName}</td>
-                                <td className="px-4 py-3 font-bold text-slate-700">{request.requestType.replaceAll("_", " ")}</td>
+                                <td className="px-4 py-3 font-bold text-slate-700">{landlordEditRequestLabel(request.requestType)}</td>
                                 <td className="px-4 py-3 font-bold text-slate-500">{formatRequestValue(request.oldValue.value)}</td>
                                 <td className="px-4 py-3 font-black text-slate-950">{formatRequestValue(request.requestedValue.value)}</td>
+                                <td className={`px-4 py-3 font-black ${difference < 0 ? "text-rose-700" : difference > 0 ? "text-emerald-700" : "text-slate-500"}`}>{isBalanceRequest ? money(difference) : "--"}</td>
                                 <td className="max-w-xs px-4 py-3 font-semibold text-slate-600">{request.reason}</td>
+                                <td className="px-4 py-3 font-bold text-slate-500">{request.proofUrl ? <a href={request.proofUrl} target="_blank" rel="noreferrer" className="text-blue-700 underline">View proof</a> : "No proof"}</td>
                                 <td className="px-4 py-3 font-bold text-slate-500">{request.officeName}</td>
                                 <td className="px-4 py-3 font-bold text-slate-500">{request.requestedByName}</td>
                                 <td className="px-4 py-3"><StatusBadge status={request.status} /></td>
@@ -3459,7 +3568,8 @@ function LandlordEditRequestLedger({ isAdmin, onReviewed, requests }: { isAdmin:
                                     </td>
                                 ) : null}
                             </tr>
-                        ))}
+                            );
+                        })}
                     </tbody>
                 </table>
             </div>
@@ -3471,6 +3581,12 @@ function formatRequestValue(value: unknown) {
     if (typeof value === "number") return money(value);
     if (typeof value === "string" && /^\d+(\.\d+)?$/.test(value)) return money(Number(value));
     return String(value ?? "--");
+}
+
+function landlordEditRequestLabel(requestType: string) {
+    if (requestType === "landlord_outstanding_balance_edit") return "Outstanding Balance Change";
+    if (requestType === "landlord_payment_date_edit") return "Payment Due Date Change";
+    return "Landlord Edit";
 }
 
 function ExpenseChangeRequestLedger({ activeOfficeName, isAdmin, offices, onReviewed, requests }: { activeOfficeName: string; isAdmin: boolean; offices: ExpensesPageData["offices"]; onReviewed: () => void; requests: ExpensesPageData["expenseChangeRequests"] }) {

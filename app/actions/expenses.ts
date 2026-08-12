@@ -2792,14 +2792,16 @@ async function resolveLandlordOfficeForEdit(db: { from: (table: string) => any }
 }
 
 function landlordEditLabel(type: SubmitLandlordExpenseEditInput["requestType"]) {
-    if (type === "landlord_outstanding_balance_edit") return "Landlord outstanding balance edit";
-    if (type === "landlord_payment_date_edit") return "Landlord payment date edit";
-    return "Landlord billing date edit";
+    if (type === "landlord_outstanding_balance_edit") return "Outstanding balance change";
+    return "Landlord Payment Due Date change";
 }
 
 function validateLandlordEdit(input: SubmitLandlordExpenseEditInput) {
     if (!validUuid(input.landlordId)) throw new Error("Select a landlord.");
     if (!input.reason?.trim()) throw new Error("Reason is required.");
+    if (!["landlord_outstanding_balance_edit", "landlord_payment_date_edit"].includes(input.requestType)) {
+        throw new Error("Only landlord outstanding balance and Landlord Payment Due Date can be changed here.");
+    }
     if (input.requestType === "landlord_outstanding_balance_edit") {
         const newBalance = Number(input.newValue);
         if (!Number.isFinite(newBalance) || newBalance < 0) throw new Error("Enter a valid new outstanding balance.");
@@ -2816,6 +2818,7 @@ async function applyLandlordCardEdit(db: { from: (table: string) => any }, input
     effectiveMonth?: string | null;
     landlord: Record<string, unknown>;
     officeId: string | null;
+    proofUrl?: string | null;
     reason: string;
     requestType: SubmitLandlordExpenseEditInput["requestType"];
     newValue: number | string;
@@ -2836,6 +2839,7 @@ async function applyLandlordCardEdit(db: { from: (table: string) => any }, input
                 new_balance: newBalance,
                 office_id: input.officeId,
                 old_balance: oldBalance,
+                proof_url: input.proofUrl || null,
                 reason: input.reason,
                 requested_by: input.actorId,
                 status: "approved",
@@ -2854,10 +2858,9 @@ async function applyLandlordCardEdit(db: { from: (table: string) => any }, input
         return { adjustment, updated };
     }
 
-    const field = input.requestType === "landlord_payment_date_edit" ? "payment_date" : "billing_date";
     const { data: updated, error } = await db
         .from("landlords")
-        .update({ [field]: String(input.newValue).slice(0, 10), updated_at: new Date().toISOString() })
+        .update({ payment_date: String(input.newValue).slice(0, 10), updated_at: new Date().toISOString() })
         .eq("company_id", input.companyId)
         .eq("id", landlordId)
         .select("*")
@@ -2869,6 +2872,9 @@ async function applyLandlordCardEdit(db: { from: (table: string) => any }, input
 export async function submitLandlordExpenseEdit(input: SubmitLandlordExpenseEditInput) {
     validateLandlordEdit(input);
     const context = await expenseCorrectionContext();
+    if (context.isCompanyReadOnlyManager) {
+        throw new Error("Read-only managers may view landlord balances and due dates but cannot request or apply changes.");
+    }
     const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
     const db = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
     const companyId = context.activeCompany?.id;
@@ -2896,6 +2902,7 @@ export async function submitLandlordExpenseEdit(input: SubmitLandlordExpenseEdit
             landlord,
             newValue: input.newValue,
             officeId,
+            proofUrl: input.proofUrl ?? null,
             reason: input.reason.trim(),
             requestType: input.requestType,
         });
@@ -2921,6 +2928,7 @@ export async function submitLandlordExpenseEdit(input: SubmitLandlordExpenseEdit
             landlord_id: input.landlordId,
             office_id: officeId,
             old_value: oldValue,
+            proof_url: input.proofUrl || null,
             reason: input.reason.trim(),
             requested_by: actorId,
             requested_value: requestedValue,
@@ -2929,7 +2937,14 @@ export async function submitLandlordExpenseEdit(input: SubmitLandlordExpenseEdit
         })
         .select("*")
         .single();
-    if (error) throw new Error(`Landlord edit request could not be created: ${error.message}`);
+    if (error) {
+        if (/idx_landlord_expense_edit_one_pending|duplicate key|unique/i.test(error.message ?? "")) {
+            throw new Error(input.requestType === "landlord_outstanding_balance_edit"
+                ? "An outstanding balance change request is already awaiting Admin approval."
+                : "A Landlord Payment Due Date change request is already awaiting Admin approval.");
+        }
+        throw new Error(`Landlord edit request could not be created: ${error.message}`);
+    }
     await createNotificationWithEmail(db, {
         action_url: "/office/expenses",
         channel: "in_app",
@@ -2998,6 +3013,7 @@ export async function decideLandlordExpenseEditRequest(input: DecideLandlordExpe
         landlord,
         newValue: Number.isFinite(Number(requested.value)) ? Number(requested.value) : String(requested.value ?? ""),
         officeId: typeof request.office_id === "string" ? request.office_id : null,
+        proofUrl: typeof request.proof_url === "string" ? request.proof_url : null,
         reason: String(request.reason ?? "Approved landlord edit request"),
         requestType: request.request_type as SubmitLandlordExpenseEditInput["requestType"],
     });

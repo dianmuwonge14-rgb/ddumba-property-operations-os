@@ -48,8 +48,8 @@ test("landlord payment entry has payment-style search, cards, and edit affordanc
     "Outstanding Balance",
     "Last Payment Amount",
     "Last Payment Date",
-    "Landlord Payment Date",
-    "Landlord Billing Date",
+    "Landlord Payment Due Date",
+    "Due Date Status",
     "Commission Type",
     "Full Rent Roll",
     "Portfolio Value",
@@ -60,10 +60,14 @@ test("landlord payment entry has payment-style search, cards, and edit affordanc
   ]) {
     assert.match(expensesConsole, new RegExp(label));
   }
-  assert.match(expensesConsole, /actionLabel="Edit"/);
+  assert.match(expensesConsole, /actionLabel=\{isManager \? undefined : "Edit Outstanding Balance"\}/);
   assert.match(expensesConsole, /openLandlordEdit\("landlord_outstanding_balance_edit"\)/);
   assert.match(expensesConsole, /openLandlordEdit\("landlord_payment_date_edit"\)/);
-  assert.match(expensesConsole, /openLandlordEdit\("landlord_billing_date_edit"\)/);
+  assert.doesNotMatch(expensesConsole, /openLandlordEdit\("landlord_billing_date_edit"\)/);
+  assert.match(expensesConsole, /Payment Due Today/);
+  assert.match(expensesConsole, /Due This Week/);
+  assert.match(expensesConsole, /Overdue by X days/);
+  assert.match(expensesConsole, /Request Admin Approval/);
   assert.match(expensesConsole, /function LandlordEditModal/);
   assert.match(expensesConsole, /Landlord Summary/);
   assert.match(expensesConsole, /Financial Position/);
@@ -72,6 +76,8 @@ test("landlord payment entry has payment-style search, cards, and edit affordanc
   assert.match(expensesConsole, /LandlordEditRequestLedger/);
   assert.match(expenseActions, /submitLandlordExpenseEdit/);
   assert.match(expenseActions, /decideLandlordExpenseEditRequest/);
+  assert.match(expenseActions, /An outstanding balance change request is already awaiting Admin approval/);
+  assert.match(expenseActions, /Landlord Payment Due Date change request is already awaiting Admin approval/);
   assert.match(expenseData, /landlord_expense_edit_requests/);
   assert.match(entryDetailRoute, /landlord_balance_adjustments/);
   assert.match(expenseTypes, /portfolioValue\?: number/);

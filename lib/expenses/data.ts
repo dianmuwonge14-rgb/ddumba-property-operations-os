@@ -284,6 +284,7 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
         officeById,
         officeId: selectedOfficeId,
         landlordById: new Map(landlords.map((landlord) => [landlord.id, landlord.full_name ?? "Landlord"])),
+        landlordDueDateById: new Map(landlords.map((landlord) => [landlord.id, typeof (landlord as Record<string, unknown>).payment_date === "string" ? String((landlord as Record<string, unknown>).payment_date).slice(0, 10) : null])),
         supabase,
     });
     const employeeExpenseRequests = await getEmployeeExpenseRequests({
@@ -821,6 +822,7 @@ async function getLandlordExpenseEditRequests(input: {
     companyId: string;
     isAdmin: boolean;
     landlordById: Map<string, string>;
+    landlordDueDateById?: Map<string, string | null>;
     officeById: Map<string, string>;
     officeId: string | null;
     supabase: { from: (table: string) => any };
@@ -859,6 +861,7 @@ async function getLandlordExpenseEditRequests(input: {
                 requestedByName: input.userById.get(requestedBy) ?? "User",
                 createdAt: typeof request.created_at === "string" ? request.created_at : null,
                 adminComment: typeof request.admin_comment === "string" ? request.admin_comment : null,
+                proofUrl: typeof request.proof_url === "string" ? request.proof_url : null,
             };
         });
     } catch (error) {
@@ -928,6 +931,7 @@ async function getLandlordPaymentExpenseRequests(input: {
     officeById: Map<string, string>;
     officeId: string | null;
     landlordById: Map<string, string>;
+    landlordDueDateById?: Map<string, string | null>;
     supabase: { from: (table: string) => any };
 }) {
     try {
@@ -963,6 +967,7 @@ async function getLandlordPaymentExpenseRequests(input: {
                 outstandingAmount: Number(request.outstanding_amount ?? 0),
                 flagReason: typeof request.flag_reason === "string" ? request.flag_reason : null,
                 paymentDate: String(request.payment_date ?? ""),
+                landlordPaymentDueDate: input.landlordDueDateById?.get(landlordId) ?? null,
                 paymentMonth: typeof request.payment_month === "string" ? request.payment_month : null,
                 paymentMethod: String(request.payment_method ?? "cash"),
                 status: String(request.status ?? "pending"),
