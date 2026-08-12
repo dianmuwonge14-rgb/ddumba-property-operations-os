@@ -179,6 +179,26 @@ async function resolveExpenseUserActorId(context: Awaited<ReturnType<typeof requ
     return context.profile?.id ?? null;
 }
 
+async function resolveSalaryExpenseActorId(input: {
+    context: Awaited<ReturnType<typeof requireAuth>>;
+    db: { from: (table: string) => any };
+    employeeId: string;
+    companyId: string;
+}) {
+    const actorEmployeeId = await resolveExpenseEmployeeActorId(input.context);
+    if (actorEmployeeId) return actorEmployeeId;
+
+    const { data, error } = await input.db
+        .from("employees")
+        .select("id")
+        .eq("company_id", input.companyId)
+        .eq("id", input.employeeId)
+        .limit(1)
+        .maybeSingle();
+    if (error) throw new Error(error.message);
+    return data?.id ? String(data.id) : null;
+}
+
 async function expenseCorrectionContext() {
     const context = await requireAuth();
     const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
@@ -1220,7 +1240,7 @@ async function createSalaryPaymentFromExpensesImpl(input: CreateSalaryPaymentInp
     const db = createSupabaseAdminClient() as unknown as { from: (table: string) => any; storage: any };
     const companyId = context.activeCompany!.id;
     const actorId = await resolveExpenseUserActorId(context);
-    const expenseActorId = await resolveExpenseEmployeeActorId(context);
+    const expenseActorId = await resolveSalaryExpenseActorId({ companyId, context, db, employeeId: input.employeeId });
     const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
     if (isCompanyOperationalManager(context) && !isDirectAdmin) {
         throw new Error("Manager can view salary records but cannot submit salary payments.");
@@ -1853,8 +1873,8 @@ export async function createEmployeeExpenseFromExpenses(input: CreateEmployeeExp
     const officeId = await resolveOperationalExpenseOfficeId(context, input.officeId);
     if (!officeId) throw new Error("Select an office for this employee expense.");
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
-    const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
     const expenseActorId = await resolveExpenseEmployeeActorId(context);
+    const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
     const value = Number(input.amount);
     assertAmount(value);
     if (!input.employeeId) throw new Error("Select employee.");
@@ -2242,7 +2262,6 @@ export async function decideSalaryPaymentRequest(input: DecideSalaryPaymentReque
     const companyId = context.activeCompany?.id;
     if (!companyId) throw new Error("Active company is required.");
     const actorId = await resolveExpenseUserActorId(context);
-    const expenseActorId = await resolveExpenseEmployeeActorId(context);
     const reviewedAt = new Date().toISOString();
 
     const { data: request, error: requestError } = await db
@@ -2287,7 +2306,7 @@ export async function decideSalaryPaymentRequest(input: DecideSalaryPaymentReque
 
     const result = await applySalaryPayment({
         actorId,
-        expenseActorId,
+        expenseActorId: await resolveSalaryExpenseActorId({ companyId, context, db, employeeId: String(request.employee_id) }),
         amount: amount(request.requested_amount),
         companyId,
         db,
