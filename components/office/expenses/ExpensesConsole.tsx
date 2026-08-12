@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Banknote, Bot, Camera, CheckCircle2, Download, Edit3, Eye, FileText, History, Loader2, Paperclip, Printer, ReceiptText, Search, Trash2, Upload, WalletCards, X } from "lucide-react";
+import { AlertTriangle, Banknote, Bot, Building2, Camera, CheckCircle2, Download, Edit3, Eye, FileText, HandCoins, History, Landmark, Loader2, Paperclip, Printer, ReceiptText, Search, ShieldCheck, Trash2, TriangleAlert, Upload, UsersRound, WalletCards, X } from "lucide-react";
 import { decideTreasuryCashRequest, submitTreasuryCashRequest } from "@/app/actions/cash-banking";
 import { adminEditExpenseDirect, adminSafeDeleteExpense, approveExpense, createEmployeeExpenseFromExpenses, createExpense, createLandlordPaidExpenseRequest, createSalaryPaymentFromExpenses, decideBulkLandlordPaidExpenseRequests, decideEmployeeExpenseRequest, decideExpenseChangeRequest, decideLandlordExpenseEditRequest, decideLandlordPaidExpenseRequest, decideSalaryPaymentRequest, previewEmployeeExpense, previewLandlordPaymentExpense, rejectExpense, submitExpenseChangeRequest, submitLandlordExpenseEdit } from "@/app/actions/expenses";
 import { currentBusinessDate, formatBusinessDate } from "@/lib/business-date";
@@ -147,10 +147,22 @@ type EntrySearchResult = {
     name: string;
     officeId: string | null;
     officeName: string | null;
+    payrollOfficeId?: string | null;
+    payrollOfficeName?: string | null;
     location?: string | null;
     phone?: string | null;
     role?: string | null;
     employeeCode?: string | null;
+    monthlySalary?: number;
+    baseSalary?: number;
+    alreadyPaid?: number;
+    remainingSalary?: number;
+    salaryAdvanceOutstanding?: number;
+    previousSalaryAdvanceRecovery?: number;
+    eligibleAmountNow?: number;
+    salaryDueDate?: string | null;
+    paymentStatus?: string;
+    pendingSalaryRequestId?: string | null;
 };
 type EmployeeLunchDetail = EntrySearchResult & {
     position: string;
@@ -199,6 +211,60 @@ type LandlordEntryDetail = EntrySearchResult & {
     advanceBalance: number;
     paymentStatus: string;
 };
+
+function workflowCardMeta(mode: ExpenseEntryMode) {
+    switch (mode) {
+        case "landlord_payment":
+            return {
+                icon: <Building2 size={20} />,
+                eyebrow: "Settlement",
+                className: "from-emerald-500/20 via-emerald-400/10 to-lime-300/10 border-emerald-300/30 text-emerald-50",
+                activeClassName: "border-emerald-200 bg-emerald-300/20 shadow-emerald-400/30",
+                iconClassName: "bg-emerald-300/20 text-emerald-100",
+            };
+        case "authorised":
+            return {
+                icon: <ShieldCheck size={20} />,
+                eyebrow: "Approved spend",
+                className: "from-amber-400/20 via-orange-400/10 to-yellow-300/10 border-amber-300/30 text-amber-50",
+                activeClassName: "border-amber-200 bg-amber-300/20 shadow-amber-400/30",
+                iconClassName: "bg-amber-300/20 text-amber-100",
+            };
+        case "unauthorised":
+            return {
+                icon: <TriangleAlert size={20} />,
+                eyebrow: "Admin review",
+                className: "from-rose-500/20 via-red-400/10 to-orange-300/10 border-rose-300/30 text-rose-50",
+                activeClassName: "border-rose-200 bg-rose-300/20 shadow-rose-400/30",
+                iconClassName: "bg-rose-300/20 text-rose-100",
+            };
+        case "salary_payment":
+            return {
+                icon: <UsersRound size={20} />,
+                eyebrow: "Payroll",
+                className: "from-cyan-400/20 via-blue-400/10 to-violet-400/10 border-cyan-300/30 text-cyan-50",
+                activeClassName: "border-cyan-200 bg-cyan-300/20 shadow-cyan-400/30",
+                iconClassName: "bg-cyan-300/20 text-cyan-100",
+            };
+        case "banking":
+            return {
+                icon: <Landmark size={20} />,
+                eyebrow: "Treasury",
+                className: "from-indigo-400/20 via-blue-400/10 to-sky-300/10 border-indigo-300/30 text-indigo-50",
+                activeClassName: "border-indigo-200 bg-indigo-300/20 shadow-indigo-400/30",
+                iconClassName: "bg-indigo-300/20 text-indigo-100",
+            };
+        case "cash_handover_admin":
+        default:
+            return {
+                icon: <HandCoins size={20} />,
+                eyebrow: "Cash transfer",
+                className: "from-teal-400/20 via-emerald-400/10 to-yellow-300/10 border-teal-300/30 text-teal-50",
+                activeClassName: "border-teal-200 bg-teal-300/20 shadow-teal-400/30",
+                iconClassName: "bg-teal-300/20 text-teal-100",
+            };
+    }
+}
 
 const AUTHORISED_EXPENSES: Array<{ value: AuthorisedExpenseType; label: string; amount: number }> = [
     { value: "employee_lunch", label: "Employee Lunch", amount: 7000 },
@@ -374,6 +440,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
     const [employeeSearchResults, setEmployeeSearchResults] = useState<EntrySearchResult[]>([]);
     const [selectedEmployeeDetail, setSelectedEmployeeDetail] = useState<EmployeeLunchDetail | null>(null);
     const [loadingEmployeeSearch, setLoadingEmployeeSearch] = useState(false);
+    const [employeeSearchError, setEmployeeSearchError] = useState<string | null>(null);
     const [loadingEmployeeDetail, setLoadingEmployeeDetail] = useState(false);
     const [employeePreview, setEmployeePreview] = useState<EmployeeExpensePreview | null>(null);
     const [loadingEmployeePreview, setLoadingEmployeePreview] = useState(false);
@@ -446,6 +513,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
     const isCashHandoverMode = entryMode === "cash_handover_admin";
     const isSalaryPaymentMode = entryMode === "salary_payment";
     const isEmployeeExpenseMode = isAuthorisedMode && authorisedType === "employee_lunch";
+    const showSalaryEmployeeSearchPanel = isSalaryPaymentMode && employeeSearch.trim().length > 0 && employeeSearch.trim() !== selectedEmployeeDetail?.name;
     const currentKampalaDate = today();
     const adminBackdatedExpense = isAdmin && expenseDate < currentKampalaDate;
     const trimmedBackdatingReason = backdatingReason.trim();
@@ -554,18 +622,21 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
             employeeSearchAbortRef.current?.abort();
             setEmployeeSearchResults([]);
             setLoadingEmployeeSearch(false);
+            setEmployeeSearchError(null);
             return;
         }
         const controller = new AbortController();
         employeeSearchAbortRef.current?.abort();
         employeeSearchAbortRef.current = controller;
         setLoadingEmployeeSearch(true);
+        setEmployeeSearchError(null);
         const timer = setTimeout(() => {
             void (async () => {
                 try {
                     const searchType = isSalaryPaymentMode ? "salary_employee" : "employee";
                     const params = new URLSearchParams({ type: searchType, q: query });
                     if (selectedEntryOfficeId) params.set("officeId", selectedEntryOfficeId);
+                    if (isSalaryPaymentMode) params.set("salaryMonth", paymentMonth);
                     const response = await fetch(`/api/expenses/entry-search?${params.toString()}`, {
                         cache: "no-store",
                         signal: controller.signal,
@@ -575,7 +646,12 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                     if (!response.ok) throw new Error(payload.error ?? "Employee search failed.");
                     setEmployeeSearchResults(payload.results ?? []);
                 } catch (error) {
-                    if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "Employee search failed.");
+                    if (!controller.signal.aborted) {
+                        const errorMessage = error instanceof Error ? error.message : "Employee search failed.";
+                        setEmployeeSearchError(errorMessage);
+                        setEmployeeSearchResults([]);
+                        setMessage(errorMessage);
+                    }
                 } finally {
                     if (!controller.signal.aborted) setLoadingEmployeeSearch(false);
                 }
@@ -585,7 +661,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
             clearTimeout(timer);
             controller.abort();
         };
-    }, [employeeSearch, isEmployeeExpenseMode, isSalaryPaymentMode, selectedEmployeeDetail?.name, selectedEntryOfficeId]);
+    }, [employeeSearch, isEmployeeExpenseMode, isSalaryPaymentMode, paymentMonth, selectedEmployeeDetail?.name, selectedEntryOfficeId]);
 
     useEffect(() => {
         const query = landlordSearch.trim();
@@ -1300,22 +1376,37 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                 <h2 className="mt-1 text-2xl font-black">Record the correct workflow first</h2>
                                 <p className="mt-1 text-sm font-semibold text-slate-300">Landlord payments, authorised office allowances, and unauthorised requests are routed separately.</p>
                             </div>
-                            <div className={`grid gap-2 sm:grid-cols-2 ${isManager ? "lg:w-[560px] lg:grid-cols-3" : "lg:w-[860px] lg:grid-cols-5"}`}>
-                                {expenseEntryModes.map(([mode, label]) => (
-                                    <button
-                                        key={`expense-entry-mode:${mode}`}
-                                        type="button"
-                                        onClick={() => {
-                                            setEntryMode(mode);
-                                            setMessage(null);
-                                            setExpenseItem("");
-                                            setAmount("");
-                                        }}
-                                        className={`h-12 rounded-2xl border px-3 text-sm font-black transition ${entryMode === mode ? "border-cyan-300 bg-cyan-300 text-slate-950 shadow-lg shadow-cyan-950/30" : "border-white/10 bg-white/10 text-white hover:bg-white/15"}`}
-                                    >
-                                        {label}
-                                    </button>
-                                ))}
+                            <div className={`grid gap-3 sm:grid-cols-2 ${isManager ? "lg:w-[640px] lg:grid-cols-3" : "lg:w-[980px] lg:grid-cols-3 2xl:grid-cols-6"}`}>
+                                {expenseEntryModes.map(([mode, label]) => {
+                                    const meta = workflowCardMeta(mode);
+                                    const active = entryMode === mode;
+                                    const isLongLabel = label.length > 15;
+                                    return (
+                                        <button
+                                            key={`expense-entry-mode:${mode}`}
+                                            type="button"
+                                            title={label}
+                                            onClick={() => {
+                                                setEntryMode(mode);
+                                                setMessage(null);
+                                                setExpenseItem("");
+                                                setAmount("");
+                                            }}
+                                            className={`group min-h-[92px] overflow-hidden rounded-3xl border bg-gradient-to-br p-3 text-left transition hover:-translate-y-0.5 hover:shadow-xl ${meta.className} ${active ? `${meta.activeClassName} shadow-lg` : "hover:border-white/35 hover:bg-white/10"}`}
+                                        >
+                                            <div className="flex items-start justify-between gap-2">
+                                                <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-2xl ${meta.iconClassName}`}>{meta.icon}</span>
+                                                {active ? <span className="rounded-full bg-white/90 px-2 py-1 text-[10px] font-black uppercase text-slate-950">Active</span> : null}
+                                            </div>
+                                            <div className="mt-3 min-w-0">
+                                                <span className="text-[10px] font-black uppercase tracking-wide text-white/55">{meta.eyebrow}</span>
+                                                <span className="workflow-card-label-window mt-1 block" aria-label={label}>
+                                                    <span className={`workflow-card-label ${isLongLabel ? "workflow-card-label-marquee" : ""}`}>{label}</span>
+                                                </span>
+                                            </div>
+                                        </button>
+                                    );
+                                })}
                             </div>
                         </div>
                     </div>
@@ -1547,15 +1638,18 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                         <div className="mt-1 flex h-16 items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 focus-within:border-blue-400 focus-within:bg-white focus-within:ring-4 focus-within:ring-blue-100">
                                             <Search size={18} className="text-slate-400" />
                                             <input value={employeeSearch} onChange={(event) => {
+                                                setMessage(null);
+                                                setEmployeeSearchError(null);
                                                 setEmployeeSearch(event.target.value);
                                                 setEmployeeId("");
                                                 setSelectedEmployeeDetail(null);
                                             }} placeholder="Search employee, collector or manager..." className="h-full min-w-0 flex-1 bg-transparent text-lg font-black text-slate-950 outline-none" />
                                             {employeeSearch ? <button type="button" onClick={() => { setEmployeeSearch(""); setEmployeeId(""); setSelectedEmployeeDetail(null); setEmployeeSearchResults([]); }} className="rounded-full p-1 text-slate-400 hover:bg-white hover:text-slate-700"><X size={16} /></button> : null}
                                         </div>
-                                        {employeeSearchResults.length || loadingEmployeeSearch ? (
-                                            <div className="absolute z-30 mt-2 max-h-72 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl shadow-slate-950/20">
+                                        {showSalaryEmployeeSearchPanel ? (
+                                            <div className="absolute z-30 mt-2 max-h-[32rem] w-full overflow-auto rounded-3xl border border-slate-200 bg-white p-2 shadow-2xl shadow-slate-950/20">
                                                 {loadingEmployeeSearch ? <div className="px-3 py-2 text-sm font-bold text-slate-500">Searching payroll employees...</div> : null}
+                                                {!loadingEmployeeSearch && employeeSearchError ? <div className="rounded-2xl border border-red-100 bg-red-50 px-3 py-2 text-sm font-bold text-red-700">{employeeSearchError}</div> : null}
                                                 {employeeSearchResults.map((employee) => (
                                                     <button key={`salary-employee-search:${employee.id}:${employee.officeId ?? "company"}`} type="button" onClick={() => {
                                                         setEmployeeId(employee.id);
@@ -1563,12 +1657,36 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                                         setSelectedEmployeeDetail(employee as EmployeeLunchDetail);
                                                         setEmployeeSearchResults([]);
                                                         loadEntryDetail("salary_employee", employee.id);
-                                                    }} className="block w-full rounded-xl px-3 py-2 text-left hover:bg-blue-50">
-                                                        <p className="text-sm font-black text-slate-950">{employee.name}</p>
-                                                        <p className="text-xs font-bold text-slate-500">{employee.officeName ?? "Payroll"}{employee.role ? ` · ${employee.role}` : ""}{employee.employeeCode ? ` · ${employee.employeeCode}` : ""}{employee.phone ? ` · ${employee.phone}` : ""}</p>
+                                                    }} className="block w-full rounded-2xl border border-slate-100 bg-slate-50/70 p-3 text-left transition hover:border-cyan-200 hover:bg-cyan-50 hover:shadow-lg hover:shadow-cyan-100/70">
+                                                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                                            <div className="min-w-0">
+                                                                <p className="truncate text-sm font-black uppercase tracking-wide text-slate-950">{employee.name}</p>
+                                                                <p className="mt-1 text-xs font-bold text-slate-500">{employee.role ?? "Employee"}{employee.employeeCode ? ` · ${employee.employeeCode}` : ""}{employee.phone ? ` · ${employee.phone}` : ""}</p>
+                                                                <p className="mt-2 text-xs font-black uppercase tracking-wide text-slate-400">Payroll Office</p>
+                                                                <p className="text-sm font-extrabold text-slate-800">{employee.payrollOfficeName ?? employee.officeName ?? "Company Payroll"}</p>
+                                                            </div>
+                                                            <span className={`w-fit rounded-full px-3 py-1 text-xs font-black ${employee.paymentStatus === "Paid" ? "bg-emerald-100 text-emerald-800" : employee.paymentStatus === "Pending Admin Approval" ? "bg-amber-100 text-amber-800" : employee.paymentStatus === "Partially Paid" ? "bg-blue-100 text-blue-800" : "bg-slate-200 text-slate-700"}`}>{employee.paymentStatus ?? "Upcoming"}</span>
+                                                        </div>
+                                                        <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                                                            <div className="rounded-xl bg-white px-3 py-2">
+                                                                <p className="text-[10px] font-black uppercase text-slate-400">Salary</p>
+                                                                <p className="text-sm font-black text-slate-950">{money(employee.monthlySalary ?? 0)}</p>
+                                                            </div>
+                                                            <div className="rounded-xl bg-white px-3 py-2">
+                                                                <p className="text-[10px] font-black uppercase text-slate-400">Remaining</p>
+                                                                <p className="text-sm font-black text-slate-950">{money(employee.remainingSalary ?? 0)}</p>
+                                                            </div>
+                                                            <div className="rounded-xl bg-white px-3 py-2">
+                                                                <p className="text-[10px] font-black uppercase text-slate-400">Advance</p>
+                                                                <p className="text-sm font-black text-slate-950">{money(employee.salaryAdvanceOutstanding ?? 0)}</p>
+                                                            </div>
+                                                            <div className="flex items-center justify-center rounded-xl bg-slate-950 px-3 py-2 text-xs font-black uppercase text-white">
+                                                                Select Employee
+                                                            </div>
+                                                        </div>
                                                     </button>
                                                 ))}
-                                                {!loadingEmployeeSearch && !employeeSearchResults.length ? <div className="px-3 py-2 text-sm font-bold text-slate-500">No eligible payroll employee matches found.</div> : null}
+                                                {!loadingEmployeeSearch && !employeeSearchError && !employeeSearchResults.length ? <div className="px-3 py-2 text-sm font-bold text-slate-500">No eligible payroll employee matches found.</div> : null}
                                             </div>
                                         ) : null}
                                     </label>

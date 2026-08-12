@@ -38,6 +38,36 @@ function isManager(row: Record<string, unknown>) {
     return [row.role, row.job_title, row.position, row.account_type].some((value) => normalizedRole(value).includes("manager"));
 }
 
+function amount(value: unknown) {
+    const numberValue = Number(value ?? 0);
+    return Number.isFinite(numberValue) ? numberValue : 0;
+}
+
+function monthStart(value: string | null) {
+    const source = value && /^\d{4}-\d{2}/.test(value) ? value : new Date().toISOString().slice(0, 10);
+    return `${source.slice(0, 7)}-01`;
+}
+
+function salaryPaymentDay(value: unknown) {
+    const parsed = Math.trunc(amount(value));
+    return Math.min(31, Math.max(1, parsed || 1));
+}
+
+function salaryDueDate(monthKey: string, day: number) {
+    const [year, month] = monthKey.slice(0, 7).split("-").map(Number);
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const safeDay = Math.min(lastDay, Math.max(1, day));
+    return `${monthKey.slice(0, 7)}-${String(safeDay).padStart(2, "0")}`;
+}
+
+function salaryStatus(netSalary: number, alreadyPaid: number, remainingSalary: number, hasPendingRequest: boolean) {
+    if (netSalary <= 0) return "Salary has not yet been configured";
+    if (hasPendingRequest) return "Pending Admin Approval";
+    if (remainingSalary <= 0) return "Paid";
+    if (alreadyPaid > 0) return "Partially Paid";
+    return "Upcoming";
+}
+
 export async function GET(request: NextRequest) {
     try {
         const context = await requirePermission("expenses.read");
@@ -84,35 +114,124 @@ export async function GET(request: NextRequest) {
 
         if (type === "salary_employee") {
             const admin = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
-            const { data, error } = await admin
-                .from("employees")
-                .select("id, full_name, office_id, role, job_title, phone, email, status, employee_assignment_type, employee_code, basic_salary, users:employee_id(id, account_type, full_name, status), offices:office_id(id, office_name, name)")
-                .eq("company_id", companyId)
-                .or(`full_name.ilike.${like},phone.ilike.${like},employee_code.ilike.${like},role.ilike.${like},job_title.ilike.${like}`)
-                .order("full_name", { ascending: true, nullsFirst: false })
-                .limit(80);
-            if (error) throw new Error(error.message);
-            const results = ((data ?? []) as Array<Record<string, unknown>>)
+            const salaryMonth = monthStart(request.nextUrl.searchParams.get("salaryMonth"));
+            const [employeeResult, officeResult] = await Promise.all([
+                admin
+                    .from("employees")
+                    .select("id, full_name, office_id, role, job_title, phone, email, status, employee_assignment_type, employee_code, basic_salary, salary_payment_day, salary_receiving_day")
+                    .eq("company_id", companyId)
+                    .order("full_name", { ascending: true, nullsFirst: false })
+                    .limit(500),
+                admin.from("offices").select("id, office_name, name").eq("company_id", companyId),
+            ]);
+            if (employeeResult.error) throw new Error(employeeResult.error.message);
+            if (officeResult.error) throw new Error(officeResult.error.message);
+            const offices = new Map<string, Record<string, unknown>>();
+            for (const office of (officeResult.data ?? []) as Array<Record<string, unknown>>) {
+                if (office.id) offices.set(String(office.id), office);
+            }
+            const queryNeedle = q.toLowerCase();
+            const employees = ((employeeResult.data ?? []) as Array<Record<string, unknown>>)
                 .filter(isRealEmployee)
+                .filter((row) => String(row.status ?? "active").toLowerCase() === "active")
                 .filter((row) => {
                     if (canSeeAll) return true;
                     const employeeOfficeId = typeof row.office_id === "string" ? row.office_id : null;
                     return Boolean(activeOfficeId && employeeOfficeId === activeOfficeId) || isFieldCollector(row) || isManager(row);
                 })
+                .filter((row) => {
+                    const office = typeof row.office_id === "string" ? offices.get(row.office_id) : null;
+                    const haystack = [
+                        row.full_name,
+                        row.phone,
+                        row.employee_code,
+                        row.role,
+                        row.job_title,
+                        row.position,
+                        row.employee_assignment_type,
+                        row.assignment_type,
+                        office?.office_name,
+                        office?.name,
+                    ].map((value) => String(value ?? "").toLowerCase()).join(" ");
+                    return haystack.includes(queryNeedle);
+                })
+                .filter((row, index, rows) => rows.findIndex((candidate) => String(candidate.id) === String(row.id)) === index)
+                .slice(0, 20);
+            const employeeIds = employees.map((employee) => String(employee.id)).filter(Boolean);
+            const [profileRows, bonusRows, payrollExpenseRows, advanceRows, fineRows, paymentRows, pendingRows] = employeeIds.length
+                ? await Promise.all([
+                    admin.from("payroll_profiles").select("*").eq("company_id", companyId).in("employee_id", employeeIds),
+                    admin.from("employee_bonuses").select("employee_id, amount").eq("company_id", companyId).in("employee_id", employeeIds).eq("month_key", salaryMonth).eq("active", true),
+                    admin.from("employee_expenses").select("employee_id, amount").eq("company_id", companyId).in("employee_id", employeeIds).eq("month_key", salaryMonth).eq("active", true).eq("approved_for_payroll", true),
+                    admin.from("employee_advances").select("employee_id, amount, remaining_balance, status, active").eq("company_id", companyId).in("employee_id", employeeIds).eq("month_key", salaryMonth).eq("active", true),
+                    admin.from("employee_fines").select("employee_id, amount").eq("company_id", companyId).in("employee_id", employeeIds).eq("month_key", salaryMonth).eq("active", true),
+                    admin.from("employee_salary_payments").select("employee_id, paid_amount").eq("company_id", companyId).in("employee_id", employeeIds).eq("month_key", salaryMonth),
+                    admin.from("employee_salary_payment_requests").select("id, employee_id, status").eq("company_id", companyId).in("employee_id", employeeIds).eq("month_key", salaryMonth).eq("active", true),
+                ])
+                : [
+                    { data: [], error: null },
+                    { data: [], error: null },
+                    { data: [], error: null },
+                    { data: [], error: null },
+                    { data: [], error: null },
+                    { data: [], error: null },
+                    { data: [], error: null },
+                ];
+            for (const result of [profileRows, bonusRows, payrollExpenseRows, advanceRows, fineRows, paymentRows, pendingRows]) {
+                if (result.error && !/does not exist|schema cache/i.test(result.error.message ?? "")) throw new Error(result.error.message);
+            }
+            const profileByEmployee = new Map<string, Record<string, unknown>>();
+            for (const profile of (profileRows.data ?? []) as Array<Record<string, unknown>>) {
+                if (profile.employee_id && !profileByEmployee.has(String(profile.employee_id))) profileByEmployee.set(String(profile.employee_id), profile);
+            }
+            const sumFor = (rows: unknown, employeeId: string, field: string) => ((rows ?? []) as Array<Record<string, unknown>>)
+                .filter((row) => String(row.employee_id ?? "") === employeeId)
+                .reduce((total, row) => total + amount(row[field]), 0);
+            const advanceFor = (employeeId: string) => ((advanceRows.data ?? []) as Array<Record<string, unknown>>)
+                .filter((row) => String(row.employee_id ?? "") === employeeId)
+                .filter((row) => ["approved", "active", "partially_deducted"].includes(String(row.status ?? "approved").toLowerCase()))
+                .reduce((total, row) => total + Math.max(amount(row.remaining_balance), amount(row.amount)), 0);
+            const pendingByEmployee = new Map<string, string>();
+            for (const row of (pendingRows.data ?? []) as Array<Record<string, unknown>>) {
+                if (String(row.status ?? "").toLowerCase() === "pending" && row.employee_id && row.id) pendingByEmployee.set(String(row.employee_id), String(row.id));
+            }
+            const results = employees
                 .map((row) => {
-                    const office = row.offices as Record<string, unknown> | null;
+                    const employeeId = String(row.id);
+                    const profile = profileByEmployee.get(employeeId);
+                    const payrollOfficeId = typeof profile?.office_id === "string" ? profile.office_id : typeof row.office_id === "string" ? row.office_id : null;
+                    const office = payrollOfficeId ? offices.get(payrollOfficeId) : null;
+                    const baseSalary = amount(profile?.base_salary ?? row.basic_salary);
+                    const bonuses = sumFor(bonusRows.data, employeeId, "amount");
+                    const payrollExpenses = sumFor(payrollExpenseRows.data, employeeId, "amount");
+                    const advanceOutstanding = advanceFor(employeeId);
+                    const fines = sumFor(fineRows.data, employeeId, "amount");
+                    const netSalary = Math.max(0, baseSalary + bonuses - payrollExpenses - advanceOutstanding - fines);
+                    const alreadyPaid = sumFor(paymentRows.data, employeeId, "paid_amount");
+                    const remainingSalary = Math.max(0, netSalary - alreadyPaid);
+                    const pendingSalaryRequestId = pendingByEmployee.get(employeeId) ?? null;
                     return {
-                        id: String(row.id),
+                        id: employeeId,
                         name: String(row.full_name ?? "Employee"),
                         officeId: typeof row.office_id === "string" ? row.office_id : null,
                         officeName: String(office?.office_name ?? office?.name ?? "Company Payroll"),
-                        role: String(row.role ?? row.job_title ?? "Employee"),
+                        payrollOfficeId,
+                        payrollOfficeName: String(office?.office_name ?? office?.name ?? "Company Payroll"),
+                        role: String(row.role ?? row.job_title ?? row.position ?? "Employee"),
                         phone: typeof row.phone === "string" ? row.phone : null,
                         employeeCode: typeof row.employee_code === "string" ? row.employee_code : null,
-                        monthlySalary: Number(row.basic_salary ?? 0),
+                        monthlySalary: netSalary,
+                        baseSalary,
+                        alreadyPaid,
+                        remainingSalary,
+                        salaryAdvanceOutstanding: advanceOutstanding,
+                        previousSalaryAdvanceRecovery: advanceOutstanding,
+                        eligibleAmountNow: remainingSalary,
+                        salaryDueDate: salaryDueDate(salaryMonth, salaryPaymentDay(profile?.salary_payment_day ?? row.salary_payment_day ?? row.salary_receiving_day ?? 1)),
+                        paymentStatus: salaryStatus(netSalary, alreadyPaid, remainingSalary, Boolean(pendingSalaryRequestId)),
+                        pendingSalaryRequestId,
                     };
-                })
-                .slice(0, 20);
+                });
             return NextResponse.json({ results }, { headers: { "Cache-Control": "no-store" } });
         }
 

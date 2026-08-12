@@ -183,13 +183,15 @@ export async function GET(request: NextRequest) {
         if (type === "salary_employee") {
             const admin = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
             const salaryMonth = monthStart(request.nextUrl.searchParams.get("salaryMonth") ?? expenseDate);
-            const [employeeResult, bonusRows, expenseRows, advanceRows, fineRows, existingPayments, pendingRows] = await Promise.all([
+            const [employeeResult, profileRows, officeRows, bonusRows, expenseRows, advanceRows, fineRows, existingPayments, pendingRows] = await Promise.all([
                 admin
                     .from("employees")
                     .select("id, full_name, office_id, role, job_title, phone, email, status, employee_assignment_type, basic_salary, salary_payment_day, salary_receiving_day, offices:office_id(id, office_name, name)")
                     .eq("company_id", companyId)
                     .eq("id", id)
                     .maybeSingle(),
+                admin.from("payroll_profiles").select("*").eq("company_id", companyId).eq("employee_id", id).limit(1),
+                admin.from("offices").select("id, office_name, name").eq("company_id", companyId),
                 admin.from("employee_bonuses").select("amount").eq("company_id", companyId).eq("employee_id", id).eq("month_key", salaryMonth).eq("active", true),
                 admin.from("employee_expenses").select("amount").eq("company_id", companyId).eq("employee_id", id).eq("month_key", salaryMonth).eq("active", true).eq("approved_for_payroll", true),
                 admin.from("employee_advances").select("amount,remaining_balance,status,active").eq("company_id", companyId).eq("employee_id", id).eq("month_key", salaryMonth).eq("active", true),
@@ -198,7 +200,7 @@ export async function GET(request: NextRequest) {
                 admin.from("employee_salary_payment_requests").select("id,requested_amount,status,requesting_office_id").eq("company_id", companyId).eq("employee_id", id).eq("month_key", salaryMonth).eq("active", true),
             ]);
             if (employeeResult.error) throw new Error(employeeResult.error.message);
-            for (const result of [bonusRows, expenseRows, advanceRows, fineRows, existingPayments]) {
+            for (const result of [profileRows, officeRows, bonusRows, expenseRows, advanceRows, fineRows, existingPayments]) {
                 if (result.error && !/does not exist|schema cache/i.test(result.error.message ?? "")) throw new Error(result.error.message);
             }
             if (pendingRows.error && !/does not exist|schema cache/i.test(pendingRows.error.message ?? "")) throw new Error(pendingRows.error.message);
@@ -207,20 +209,27 @@ export async function GET(request: NextRequest) {
             if (!isEligibleSalaryEmployee(employee, selectedOfficeId, canSeeAll)) {
                 throw new Error("This employee is not available for salary payment from the selected office.");
             }
-            const office = employee.offices as Record<string, unknown> | null;
+            const profile = ((profileRows.data ?? []) as Array<Record<string, unknown>>)[0] ?? null;
+            const officeById = new Map<string, Record<string, unknown>>();
+            for (const officeRow of (officeRows.data ?? []) as Array<Record<string, unknown>>) {
+                if (officeRow.id) officeById.set(String(officeRow.id), officeRow);
+            }
+            const employeeOffice = employee.offices as Record<string, unknown> | null;
+            const payrollOfficeId = typeof profile?.office_id === "string" ? profile.office_id : typeof employee.office_id === "string" ? employee.office_id : null;
+            const office = payrollOfficeId ? officeById.get(payrollOfficeId) ?? employeeOffice : employeeOffice;
             const bonuses = ((bonusRows.data ?? []) as Array<Record<string, unknown>>).reduce((total, row) => total + amount(row.amount), 0);
             const expenses = ((expenseRows.data ?? []) as Array<Record<string, unknown>>).reduce((total, row) => total + amount(row.amount), 0);
             const advanceOutstanding = ((advanceRows.data ?? []) as Array<Record<string, unknown>>)
                 .filter((row) => ["approved", "active", "partially_deducted"].includes(String(row.status ?? "approved").toLowerCase()))
                 .reduce((total, row) => total + Math.max(amount(row.remaining_balance), amount(row.amount)), 0);
             const fines = ((fineRows.data ?? []) as Array<Record<string, unknown>>).reduce((total, row) => total + amount(row.amount), 0);
-            const monthlySalary = amount(employee.basic_salary);
+            const monthlySalary = amount(profile?.base_salary ?? employee.basic_salary);
             const deductions = expenses + advanceOutstanding + fines;
             const netSalary = Math.max(0, monthlySalary + bonuses - deductions);
             const alreadyPaid = ((existingPayments.data ?? []) as Array<Record<string, unknown>>).reduce((total, row) => total + amount(row.paid_amount), 0);
             const remainingSalary = Math.max(0, netSalary - alreadyPaid);
             const pendingRequest = ((pendingRows.data ?? []) as Array<Record<string, unknown>>).find((row) => String(row.status ?? "").toLowerCase() === "pending") ?? null;
-            const dueDate = salaryDueDate(salaryMonth, salaryPaymentDay(employee.salary_payment_day ?? employee.salary_receiving_day ?? 1));
+            const dueDate = salaryDueDate(salaryMonth, salaryPaymentDay(profile?.salary_payment_day ?? employee.salary_payment_day ?? employee.salary_receiving_day ?? 1));
             const status = netSalary <= 0
                 ? "Salary has not yet been configured"
                 : pendingRequest
@@ -237,7 +246,7 @@ export async function GET(request: NextRequest) {
                     position: String(employee.role ?? employee.job_title ?? "Employee"),
                     officeId: typeof employee.office_id === "string" ? employee.office_id : null,
                     officeName: String(office?.office_name ?? office?.name ?? "Company Payroll"),
-                    payrollOfficeId: typeof employee.office_id === "string" ? employee.office_id : null,
+                    payrollOfficeId,
                     payrollOfficeName: String(office?.office_name ?? office?.name ?? "Company Payroll"),
                     submittingOfficeId: selectedOfficeId,
                     submittingOfficeName: String(context.offices.find((office) => office.id === selectedOfficeId)?.office_name ?? context.offices.find((office) => office.id === selectedOfficeId)?.name ?? context.activeOffice?.office_name ?? context.activeOffice?.name ?? "Submitting office"),

@@ -11,6 +11,54 @@ body {
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+.workflow-card-label-window {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.workflow-card-label {
+  display: inline-block;
+  max-width: 100%;
+  font-size: 0.875rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1.15;
+  vertical-align: top;
+}
+
+.workflow-card-label-marquee {
+  max-width: none;
+  min-width: max-content;
+  padding-right: 1.5rem;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .workflow-card-label-marquee {
+    animation: ddumba-workflow-label-marquee 7.5s ease-in-out infinite;
+  }
+
+  .group:hover .workflow-card-label-marquee {
+    animation-play-state: paused;
+  }
+}
+
+@keyframes ddumba-workflow-label-marquee {
+  0%,
+  18% {
+    transform: translateX(0);
+  }
+
+  52%,
+  70% {
+    transform: translateX(-34%);
+  }
+
+  100% {
+    transform: translateX(0);
+  }
+}
+
 .tenant-receipt-slip {
   width: min(100%, 80mm);
   max-width: 80mm;
