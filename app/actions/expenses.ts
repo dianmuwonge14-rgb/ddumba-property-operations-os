@@ -129,6 +129,56 @@ async function resolveExpenseEmployeeActorId(context: Awaited<ReturnType<typeof 
     return null;
 }
 
+async function resolveExpenseUserActorId(context: Awaited<ReturnType<typeof requireAuth>>) {
+    const companyId = context.activeCompany?.id ?? context.profile?.company_id ?? null;
+    if (!companyId) return context.profile?.id ?? null;
+
+    const admin = createSupabaseAdminClient();
+    const adminDb = admin as unknown as { from: (table: string) => any };
+    const candidateIds = [
+        context.profile?.id,
+        context.authUser?.id,
+    ].filter((value): value is string => Boolean(value));
+
+    if (candidateIds.length) {
+        const { data, error } = await adminDb
+            .from("users")
+            .select("id")
+            .eq("company_id", companyId)
+            .in("id", candidateIds)
+            .limit(1);
+        if (error) throw new Error(error.message);
+        if (data?.[0]?.id) return String(data[0].id);
+    }
+
+    const profile = context.profile as Record<string, unknown> | null;
+    const employeeId = String(profile?.employee_id ?? "").trim();
+    if (employeeId) {
+        const { data, error } = await adminDb
+            .from("users")
+            .select("id")
+            .eq("company_id", companyId)
+            .eq("employee_id", employeeId)
+            .limit(1);
+        if (error) throw new Error(error.message);
+        if (data?.[0]?.id) return String(data[0].id);
+    }
+
+    const email = String(profile?.email ?? context.authUser?.email ?? "").trim();
+    if (email) {
+        const { data, error } = await adminDb
+            .from("users")
+            .select("id")
+            .eq("company_id", companyId)
+            .ilike("email", email)
+            .limit(1);
+        if (error) throw new Error(error.message);
+        if (data?.[0]?.id) return String(data[0].id);
+    }
+
+    return context.profile?.id ?? null;
+}
+
 async function expenseCorrectionContext() {
     const context = await requireAuth();
     const isCollector = context.authMode === "collector" || context.roles.some((role) => role.role?.key === "field_collector");
@@ -237,6 +287,32 @@ function landlordPaymentBusinessError(error: unknown) {
     if (message.includes("no live monthly payable")) return "No live monthly payable record was found for this landlord payment.";
     if (message.includes("office cash")) return raw;
     return raw || "Unable to process landlord payment request.";
+}
+
+function salaryPaymentBusinessError(error: unknown) {
+    const raw = error instanceof Error ? error.message : String(error ?? "Salary payment could not be recorded.");
+    const message = raw.toLowerCase();
+    if (message.includes("already has a salary payment") || message.includes("pending salary request") || message.includes("already fully paid")) {
+        return "This employee already has a salary payment or pending salary request for this period.";
+    }
+    if (message.includes("salary has not yet been configured")) {
+        return "Salary request could not be created because the employee has no active salary record.";
+    }
+    if (message.includes("not available for salary payment")) {
+        return "This employee is not available for salary payment from the selected office.";
+    }
+    if (message.includes("insufficient")) return raw;
+    if (
+        message.includes("foreign key constraint") ||
+        message.includes("violates foreign key") ||
+        message.includes("approved_by") ||
+        message.includes("submitted_by") ||
+        message.includes("paid_by") ||
+        message.includes("requested_by")
+    ) {
+        return "Salary payment could not be recorded because the acting account is not linked to a valid employee/user profile.";
+    }
+    return raw || "Salary payment could not be recorded.";
 }
 
 function validUuid(value: unknown): value is string {
@@ -752,6 +828,7 @@ async function getSalaryPaymentPreview(input: {
 
 async function createSalaryExpenseRow(input: {
     actorId: string | null;
+    expenseActorId: string | null;
     amount: number;
     category: string;
     companyId: string;
@@ -770,7 +847,7 @@ async function createSalaryExpenseRow(input: {
         .insert({
             amount: input.amount,
             approved_at: new Date().toISOString(),
-            approved_by: input.actorId,
+            approved_by: input.expenseActorId,
             cash_source_id: input.officeId,
             cash_source_type: "office_cash",
             category: input.category,
@@ -785,7 +862,7 @@ async function createSalaryExpenseRow(input: {
             payment_method: input.paymentMethod,
             receipt_url: input.reference,
             status: "approved",
-            submitted_by: input.actorId,
+            submitted_by: input.expenseActorId,
             vendor: input.employeeName,
         } as any)
         .select("id")
@@ -809,6 +886,7 @@ async function createSalaryExpenseRow(input: {
 
 async function applySalaryPayment(input: {
     actorId: string | null;
+    expenseActorId: string | null;
     amount: number;
     companyId: string;
     db: { from: (table: string) => any };
@@ -916,6 +994,7 @@ async function applySalaryPayment(input: {
     if (preview.salaryAmount > 0) {
         salaryExpenseId = await createSalaryExpenseRow({
             actorId: input.actorId,
+            expenseActorId: input.expenseActorId,
             amount: preview.salaryAmount,
             category: "Salary Expense",
             companyId: input.companyId,
@@ -934,6 +1013,7 @@ async function applySalaryPayment(input: {
     if (preview.advanceAmount > 0) {
         advanceExpenseId = await createSalaryExpenseRow({
             actorId: input.actorId,
+            expenseActorId: input.expenseActorId,
             amount: preview.advanceAmount,
             category: "Salary Advance",
             companyId: input.companyId,
@@ -1135,11 +1215,12 @@ export async function createExpense(input: CreateExpenseInput) {
     return data;
 }
 
-export async function createSalaryPaymentFromExpenses(input: CreateSalaryPaymentInput) {
+async function createSalaryPaymentFromExpensesImpl(input: CreateSalaryPaymentInput) {
     const context = await activeWriteContext();
     const db = createSupabaseAdminClient() as unknown as { from: (table: string) => any; storage: any };
     const companyId = context.activeCompany!.id;
-    const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    const actorId = await resolveExpenseUserActorId(context);
+    const expenseActorId = await resolveExpenseEmployeeActorId(context);
     const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
     if (isCompanyOperationalManager(context) && !isDirectAdmin) {
         throw new Error("Manager can view salary records but cannot submit salary payments.");
@@ -1171,6 +1252,7 @@ export async function createSalaryPaymentFromExpenses(input: CreateSalaryPayment
     if (isDirectAdmin) {
         const result = await applySalaryPayment({
             actorId,
+            expenseActorId,
             amount: value,
             companyId,
             db,
@@ -1270,6 +1352,18 @@ export async function createSalaryPaymentFromExpenses(input: CreateSalaryPayment
     });
     revalidateExpenseSurfaces();
     return { direct: false, preview, request };
+}
+
+export async function createSalaryPaymentFromExpenses(input: CreateSalaryPaymentInput) {
+    try {
+        return await createSalaryPaymentFromExpensesImpl(input);
+    } catch (error) {
+        return {
+            direct: false,
+            error: salaryPaymentBusinessError(error),
+            ok: false as const,
+        };
+    }
 }
 
 async function resolveLandlordPaymentOfficeId(input: {
@@ -2147,7 +2241,8 @@ export async function decideSalaryPaymentRequest(input: DecideSalaryPaymentReque
     const db = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
     const companyId = context.activeCompany?.id;
     if (!companyId) throw new Error("Active company is required.");
-    const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    const actorId = await resolveExpenseUserActorId(context);
+    const expenseActorId = await resolveExpenseEmployeeActorId(context);
     const reviewedAt = new Date().toISOString();
 
     const { data: request, error: requestError } = await db
@@ -2192,6 +2287,7 @@ export async function decideSalaryPaymentRequest(input: DecideSalaryPaymentReque
 
     const result = await applySalaryPayment({
         actorId,
+        expenseActorId,
         amount: amount(request.requested_amount),
         companyId,
         db,

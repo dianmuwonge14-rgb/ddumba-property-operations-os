@@ -25,6 +25,10 @@ function thisMonth() {
     return today().slice(0, 7);
 }
 
+function isSalaryPaymentErrorResult(result: unknown): result is { error: string; ok: false } {
+    return Boolean(result && typeof result === "object" && "ok" in result && (result as { ok?: unknown }).ok === false);
+}
+
 function addDays(dateValue: string, days: number) {
     const date = new Date(`${dateValue}T00:00:00`);
     date.setDate(date.getDate() + days);
@@ -1138,6 +1142,10 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                         salaryMonth: paymentMonth,
                         supportingProof,
                     });
+                    if (isSalaryPaymentErrorResult(result)) {
+                        setMessage(result.error || "Salary payment could not be recorded.");
+                        return;
+                    }
                     const salaryAmount = Number(result.preview?.salaryAmount ?? 0);
                     const advanceAmount = Number(result.preview?.advanceAmount ?? 0);
                     const salaryRecordId = "salaryExpenseId" in result
