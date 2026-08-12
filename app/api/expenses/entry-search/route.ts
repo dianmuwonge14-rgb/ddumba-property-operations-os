@@ -23,6 +23,21 @@ function isRealEmployee(row: Record<string, unknown>) {
     return !["terminated", "archived", "deleted", "inactive"].includes(String(row.status ?? "").toLowerCase());
 }
 
+function normalizedRole(value: unknown) {
+    return String(value ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function isFieldCollector(row: Record<string, unknown>) {
+    return [row.employee_assignment_type, row.assignment_type, row.role, row.job_title, row.position].some((value) => {
+        const normalized = normalizedRole(value);
+        return normalized === "fieldcollector" || normalized === "collector" || normalized === "allrounder";
+    });
+}
+
+function isManager(row: Record<string, unknown>) {
+    return [row.role, row.job_title, row.position, row.account_type].some((value) => normalizedRole(value).includes("manager"));
+}
+
 export async function GET(request: NextRequest) {
     try {
         const context = await requirePermission("expenses.read");
@@ -64,6 +79,40 @@ export async function GET(request: NextRequest) {
                     };
                 })
                 .filter(isRealEmployee);
+            return NextResponse.json({ results }, { headers: { "Cache-Control": "no-store" } });
+        }
+
+        if (type === "salary_employee") {
+            const admin = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
+            const { data, error } = await admin
+                .from("employees")
+                .select("id, full_name, office_id, role, job_title, phone, email, status, employee_assignment_type, employee_code, basic_salary, users:employee_id(id, account_type, full_name, status), offices:office_id(id, office_name, name)")
+                .eq("company_id", companyId)
+                .or(`full_name.ilike.${like},phone.ilike.${like},employee_code.ilike.${like},role.ilike.${like},job_title.ilike.${like}`)
+                .order("full_name", { ascending: true, nullsFirst: false })
+                .limit(80);
+            if (error) throw new Error(error.message);
+            const results = ((data ?? []) as Array<Record<string, unknown>>)
+                .filter(isRealEmployee)
+                .filter((row) => {
+                    if (canSeeAll) return true;
+                    const employeeOfficeId = typeof row.office_id === "string" ? row.office_id : null;
+                    return Boolean(activeOfficeId && employeeOfficeId === activeOfficeId) || isFieldCollector(row) || isManager(row);
+                })
+                .map((row) => {
+                    const office = row.offices as Record<string, unknown> | null;
+                    return {
+                        id: String(row.id),
+                        name: String(row.full_name ?? "Employee"),
+                        officeId: typeof row.office_id === "string" ? row.office_id : null,
+                        officeName: String(office?.office_name ?? office?.name ?? "Company Payroll"),
+                        role: String(row.role ?? row.job_title ?? "Employee"),
+                        phone: typeof row.phone === "string" ? row.phone : null,
+                        employeeCode: typeof row.employee_code === "string" ? row.employee_code : null,
+                        monthlySalary: Number(row.basic_salary ?? 0),
+                    };
+                })
+                .slice(0, 20);
             return NextResponse.json({ results }, { headers: { "Cache-Control": "no-store" } });
         }
 

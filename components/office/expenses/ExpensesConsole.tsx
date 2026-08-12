@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Banknote, Bot, Camera, CheckCircle2, Download, Edit3, Eye, FileText, History, Loader2, Paperclip, Printer, ReceiptText, Search, Trash2, Upload, WalletCards, X } from "lucide-react";
 import { decideTreasuryCashRequest, submitTreasuryCashRequest } from "@/app/actions/cash-banking";
-import { adminEditExpenseDirect, adminSafeDeleteExpense, approveExpense, createEmployeeExpenseFromExpenses, createExpense, createLandlordPaidExpenseRequest, decideBulkLandlordPaidExpenseRequests, decideEmployeeExpenseRequest, decideExpenseChangeRequest, decideLandlordExpenseEditRequest, decideLandlordPaidExpenseRequest, previewEmployeeExpense, previewLandlordPaymentExpense, rejectExpense, submitExpenseChangeRequest, submitLandlordExpenseEdit } from "@/app/actions/expenses";
+import { adminEditExpenseDirect, adminSafeDeleteExpense, approveExpense, createEmployeeExpenseFromExpenses, createExpense, createLandlordPaidExpenseRequest, createSalaryPaymentFromExpenses, decideBulkLandlordPaidExpenseRequests, decideEmployeeExpenseRequest, decideExpenseChangeRequest, decideLandlordExpenseEditRequest, decideLandlordPaidExpenseRequest, decideSalaryPaymentRequest, previewEmployeeExpense, previewLandlordPaymentExpense, rejectExpense, submitExpenseChangeRequest, submitLandlordExpenseEdit } from "@/app/actions/expenses";
 import { currentBusinessDate, formatBusinessDate } from "@/lib/business-date";
 import type { EmployeeExpensePreview, ExpenseBalanceFilters, ExpenseBalanceReport, ExpenseChangePayload, ExpenseItem, ExpensePeriodMode, ExpensesPageData, LandlordExpenseEditRequestType } from "@/lib/expenses/types";
 
@@ -40,6 +40,14 @@ function startOfWeek(dateValue: string) {
 
 function money(value: number | string | null | undefined) {
     return `UGX ${Math.round(Number(value ?? 0)).toLocaleString()}`;
+}
+
+function methodLabel(value: string | null | undefined) {
+    const normalized = String(value ?? "cash").toLowerCase();
+    if (normalized.includes("mobile")) return "Mobile Money";
+    if (normalized.includes("bank")) return "Bank";
+    if (normalized.includes("cash")) return "Cash";
+    return normalized.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) || "Cash";
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -115,7 +123,7 @@ type ExpenseFilters = {
 };
 
 type LandlordPaymentPreview = Awaited<ReturnType<typeof previewLandlordPaymentExpense>>;
-type ExpenseEntryMode = "landlord_payment" | "authorised" | "unauthorised" | "banking" | "cash_handover_admin";
+type ExpenseEntryMode = "landlord_payment" | "authorised" | "unauthorised" | "banking" | "cash_handover_admin" | "salary_payment";
 type AuthorisedExpenseType = "employee_lunch" | "airtime" | "internet" | "transport_kampala";
 type ExpenseModalMode = "view" | "amount" | "delete" | "history";
 type SummaryDrilldownKind = "collections" | "adminCapitalInjection" | "expenses";
@@ -158,6 +166,20 @@ type EmployeeLunchDetail = EntrySearchResult & {
     remainingLunchBalance: number;
     lastLunchExpenseDate: string | null;
     approvalStatus: string;
+    payrollOfficeId?: string | null;
+    payrollOfficeName?: string | null;
+    salaryMonth?: string | null;
+    salaryMonthLabel?: string | null;
+    salaryDueDate?: string | null;
+    monthlySalary?: number;
+    baseSalary?: number;
+    alreadyPaid?: number;
+    remainingSalary?: number;
+    salaryAdvanceOutstanding?: number;
+    previousSalaryAdvanceRecovery?: number;
+    eligibleAmountNow?: number;
+    paymentStatus?: string;
+    pendingSalaryRequestId?: string | null;
 };
 type LandlordEntryDetail = EntrySearchResult & {
     outstandingBalance: number;
@@ -422,6 +444,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
     const isAuthorisedMode = entryMode === "authorised";
     const isBankingMode = entryMode === "banking";
     const isCashHandoverMode = entryMode === "cash_handover_admin";
+    const isSalaryPaymentMode = entryMode === "salary_payment";
     const isEmployeeExpenseMode = isAuthorisedMode && authorisedType === "employee_lunch";
     const currentKampalaDate = today();
     const adminBackdatedExpense = isAdmin && expenseDate < currentKampalaDate;
@@ -473,6 +496,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
         ["landlord_payment", "Landlord Payment"],
         ["authorised", "Authorised Expenses"],
         ["unauthorised", "Unauthorised Expenses"],
+        ["salary_payment", "Salary Payment"],
         ...(!isManager ? [
             ["banking", "Banking"],
             ["cash_handover_admin", "Cash Handover to Admin"],
@@ -525,7 +549,8 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
 
     useEffect(() => {
         const query = employeeSearch.trim();
-        if (!isEmployeeExpenseMode || !query || query === selectedEmployeeDetail?.name) {
+        const activeEmployeeSearch = isEmployeeExpenseMode || isSalaryPaymentMode;
+        if (!activeEmployeeSearch || !query || query === selectedEmployeeDetail?.name) {
             employeeSearchAbortRef.current?.abort();
             setEmployeeSearchResults([]);
             setLoadingEmployeeSearch(false);
@@ -538,9 +563,10 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
         const timer = setTimeout(() => {
             void (async () => {
                 try {
-                    const params = new URLSearchParams({ type: "employee", q: query });
+                    const searchType = isSalaryPaymentMode ? "salary_employee" : "employee";
+                    const params = new URLSearchParams({ type: searchType, q: query });
                     if (selectedEntryOfficeId) params.set("officeId", selectedEntryOfficeId);
-                    const response = await fetch(`/api/expenses/entry-search?type=employee&${params.toString().replace(/^type=employee&?/, "")}`, {
+                    const response = await fetch(`/api/expenses/entry-search?${params.toString()}`, {
                         cache: "no-store",
                         signal: controller.signal,
                     });
@@ -559,7 +585,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
             clearTimeout(timer);
             controller.abort();
         };
-    }, [employeeSearch, isEmployeeExpenseMode, selectedEmployeeDetail?.name, selectedEntryOfficeId]);
+    }, [employeeSearch, isEmployeeExpenseMode, isSalaryPaymentMode, selectedEmployeeDetail?.name, selectedEntryOfficeId]);
 
     useEffect(() => {
         const query = landlordSearch.trim();
@@ -599,15 +625,16 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
         };
     }, [isLandlordPaidMode, landlordSearch, selectedEntryOfficeId, selectedLandlordDetail?.name]);
 
-    function loadEntryDetail(type: "employee" | "landlord", id: string) {
+    function loadEntryDetail(type: "employee" | "salary_employee" | "landlord", id: string) {
         detailAbortRef.current?.abort();
         const controller = new AbortController();
         detailAbortRef.current = controller;
-        if (type === "employee") setLoadingEmployeeDetail(true);
+        if (type === "employee" || type === "salary_employee") setLoadingEmployeeDetail(true);
         if (type === "landlord") setLoadingLandlordDetail(true);
         void (async () => {
             try {
                 const params = new URLSearchParams({ id, expenseDate });
+                if (type === "salary_employee") params.set("salaryMonth", paymentMonth);
                 if (selectedEntryOfficeId) params.set("officeId", selectedEntryOfficeId);
                 const response = await fetch(`/api/expenses/entry-detail?type=${type}&${params.toString()}`, {
                     cache: "no-store",
@@ -616,13 +643,13 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                 const payload = await response.json();
                 if (controller.signal.aborted) return;
                 if (!response.ok) throw new Error(payload.error ?? "Selected record could not load.");
-                if (type === "employee") setSelectedEmployeeDetail(payload.detail ?? null);
+                if (type === "employee" || type === "salary_employee") setSelectedEmployeeDetail(payload.detail ?? null);
                 if (type === "landlord") setSelectedLandlordDetail(payload.detail ?? null);
             } catch (error) {
                 if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "Selected record could not load.");
             } finally {
                 if (!controller.signal.aborted) {
-                    if (type === "employee") setLoadingEmployeeDetail(false);
+                    if (type === "employee" || type === "salary_employee") setLoadingEmployeeDetail(false);
                     if (type === "landlord") setLoadingLandlordDetail(false);
                 }
             }
@@ -631,9 +658,10 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
 
     useEffect(() => {
         if (employeeId && isEmployeeExpenseMode) loadEntryDetail("employee", employeeId);
+        if (employeeId && isSalaryPaymentMode) loadEntryDetail("salary_employee", employeeId);
         if (landlordId && isLandlordPaidMode) loadEntryDetail("landlord", landlordId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [expenseDate, refreshToken]);
+    }, [expenseDate, paymentMonth, refreshToken]);
 
     useEffect(() => {
         abortRef.current?.abort();
@@ -930,6 +958,18 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
             setMessage("Select employee.");
             return;
         }
+        if (isSalaryPaymentMode && !employeeId) {
+            setMessage("Select employee for salary payment.");
+            return;
+        }
+        if (isSalaryPaymentMode && !paymentMonth) {
+            setMessage("Select salary month.");
+            return;
+        }
+        if (isSalaryPaymentMode && selectedEmployeeDetail?.pendingSalaryRequestId) {
+            setMessage("This employee already has a salary payment or pending salary request for this period.");
+            return;
+        }
         if (isAuthorisedMode && authorisedType === "internet" && authorisedUsage.internetRecorded && !isAdmin) {
             setMessage("Internet has already been claimed this month.");
             return;
@@ -1010,6 +1050,27 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                         : result.preview.extraAmount > 0
                         ? "Requested lunch amount exceeds the employee's available lunch balance. Submit to Admin for approval."
                         : `Employee lunch recorded. Remaining lunch balance: ${money(result.preview.remainingAllowance - result.preview.allowedPortion)}.`);
+                } else if (isSalaryPaymentMode) {
+                    const supportingProof = proofFile ? await proofPayloadFromFile(proofFile) : null;
+                    const result = await createSalaryPaymentFromExpenses({
+                        amount: value,
+                        backdatingReason: adminBackdatedExpense ? trimmedBackdatingReason : null,
+                        employeeId,
+                        notes: notes || trimmedItem || undefined,
+                        officeId: selectedEntryOfficeId || null,
+                        paymentMethod,
+                        salaryMonth: paymentMonth,
+                        supportingProof,
+                    });
+                    const salaryAmount = Number(result.preview?.salaryAmount ?? 0);
+                    const advanceAmount = Number(result.preview?.advanceAmount ?? 0);
+                    const salaryRecordId = "salaryExpenseId" in result
+                        ? result.salaryExpenseId ?? result.advanceExpenseId
+                        : result.request?.id;
+                    flashExpense(String(salaryRecordId ?? Date.now()));
+                    setMessage(isAdmin
+                        ? `Salary payment recorded. Salary: ${money(salaryAmount)}${advanceAmount > 0 ? `, Advance: ${money(advanceAmount)}` : ""}.`
+                        : `Salary payment request submitted for Admin approval. Salary: ${money(salaryAmount)}${advanceAmount > 0 ? `, Advance: ${money(advanceAmount)}` : ""}.`);
                 } else {
                     const itemName = entryMode === "unauthorised" ? trimmedItem : authorisedLabel;
                     const categoryName = entryMode === "unauthorised" ? "Unauthorised Expenses" : "Authorised Expenses";
@@ -1037,6 +1098,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                 setEmployeePreview(null);
                 setRefreshToken((token) => token + 1);
                 if (isEmployeeExpenseMode && employeeId) loadEntryDetail("employee", employeeId);
+                if (isSalaryPaymentMode && employeeId) loadEntryDetail("salary_employee", employeeId);
                 if (isLandlordPaidMode && landlordId) loadEntryDetail("landlord", landlordId);
             } catch (error) {
                 setMessage(error instanceof Error ? error.message : "Expense could not be recorded.");
@@ -1477,6 +1539,84 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                             </div>
                         ) : null}
 
+                        {isSalaryPaymentMode ? (
+                            <div className="space-y-4">
+                                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_180px_190px]">
+                                    <label className="relative block">
+                                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Search employee</span>
+                                        <div className="mt-1 flex h-16 items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 focus-within:border-blue-400 focus-within:bg-white focus-within:ring-4 focus-within:ring-blue-100">
+                                            <Search size={18} className="text-slate-400" />
+                                            <input value={employeeSearch} onChange={(event) => {
+                                                setEmployeeSearch(event.target.value);
+                                                setEmployeeId("");
+                                                setSelectedEmployeeDetail(null);
+                                            }} placeholder="Search employee, collector or manager..." className="h-full min-w-0 flex-1 bg-transparent text-lg font-black text-slate-950 outline-none" />
+                                            {employeeSearch ? <button type="button" onClick={() => { setEmployeeSearch(""); setEmployeeId(""); setSelectedEmployeeDetail(null); setEmployeeSearchResults([]); }} className="rounded-full p-1 text-slate-400 hover:bg-white hover:text-slate-700"><X size={16} /></button> : null}
+                                        </div>
+                                        {employeeSearchResults.length || loadingEmployeeSearch ? (
+                                            <div className="absolute z-30 mt-2 max-h-72 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl shadow-slate-950/20">
+                                                {loadingEmployeeSearch ? <div className="px-3 py-2 text-sm font-bold text-slate-500">Searching payroll employees...</div> : null}
+                                                {employeeSearchResults.map((employee) => (
+                                                    <button key={`salary-employee-search:${employee.id}:${employee.officeId ?? "company"}`} type="button" onClick={() => {
+                                                        setEmployeeId(employee.id);
+                                                        setEmployeeSearch(employee.name);
+                                                        setSelectedEmployeeDetail(employee as EmployeeLunchDetail);
+                                                        setEmployeeSearchResults([]);
+                                                        loadEntryDetail("salary_employee", employee.id);
+                                                    }} className="block w-full rounded-xl px-3 py-2 text-left hover:bg-blue-50">
+                                                        <p className="text-sm font-black text-slate-950">{employee.name}</p>
+                                                        <p className="text-xs font-bold text-slate-500">{employee.officeName ?? "Payroll"}{employee.role ? ` · ${employee.role}` : ""}{employee.employeeCode ? ` · ${employee.employeeCode}` : ""}{employee.phone ? ` · ${employee.phone}` : ""}</p>
+                                                    </button>
+                                                ))}
+                                                {!loadingEmployeeSearch && !employeeSearchResults.length ? <div className="px-3 py-2 text-sm font-bold text-slate-500">No eligible payroll employee matches found.</div> : null}
+                                            </div>
+                                        ) : null}
+                                    </label>
+                                    <label className="block">
+                                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Salary Month</span>
+                                        <input type="month" value={paymentMonth} onChange={(event) => setPaymentMonth(event.target.value)} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
+                                    </label>
+                                    <label className="block">
+                                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Payment Method</span>
+                                        <select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100">
+                                            <option value="cash">Cash</option>
+                                            <option value="bank">Bank</option>
+                                            <option value="mobile_money">Mobile Money</option>
+                                        </select>
+                                    </label>
+                                </div>
+                                {selectedEmployeeDetail ? (
+                                    <>
+                                        <PremiumCardSection title="Employee Salary Card" featured>
+                                            <PremiumEntryCard featured label="Employee Name" value={selectedEmployeeDetail.name} />
+                                            <PremiumEntryCard label="Position" value={selectedEmployeeDetail.position ?? selectedEmployeeDetail.role ?? "Employee"} />
+                                            <PremiumEntryCard label="Payroll Office" value={selectedEmployeeDetail.payrollOfficeName ?? selectedEmployeeDetail.officeName ?? "Company Payroll"} />
+                                            <PremiumEntryCard featured label="Monthly Salary" value={loadingEmployeeDetail ? "Loading..." : money(selectedEmployeeDetail.monthlySalary ?? 0)} />
+                                            <PremiumEntryCard label="Salary Month" value={selectedEmployeeDetail.salaryMonthLabel ?? paymentMonth} />
+                                            <PremiumEntryCard label="Salary Due Date" value={selectedEmployeeDetail.salaryDueDate ?? "Not set"} />
+                                            <PremiumEntryCard label="Salary Already Paid" value={money(selectedEmployeeDetail.alreadyPaid ?? 0)} />
+                                            <PremiumEntryCard featured label="Remaining Salary" value={money(selectedEmployeeDetail.remainingSalary ?? 0)} />
+                                            <PremiumEntryCard label="Salary Advance Outstanding" value={money(selectedEmployeeDetail.salaryAdvanceOutstanding ?? 0)} />
+                                            <PremiumEntryCard label="Previous Salary Advance Recovery" value={money(selectedEmployeeDetail.previousSalaryAdvanceRecovery ?? 0)} />
+                                            <PremiumEntryCard featured label="Eligible Amount Now" value={money(selectedEmployeeDetail.eligibleAmountNow ?? 0)} />
+                                            <PremiumEntryCard label="Payment Status" value={selectedEmployeeDetail.paymentStatus ?? "Upcoming"} />
+                                        </PremiumCardSection>
+                                        <PremiumCardSection title="Payment Breakdown">
+                                            <PremiumEntryCard featured label="Requested Amount" value={money(Number(amount || 0))} />
+                                            <PremiumEntryCard label="Salary Portion" value={money(Math.min(Number(amount || 0), selectedEmployeeDetail.eligibleAmountNow ?? 0))} />
+                                            <PremiumEntryCard label="Salary Advance" value={money(Math.max(0, Number(amount || 0) - (selectedEmployeeDetail.eligibleAmountNow ?? 0)))} />
+                                            <PremiumEntryCard label="Remaining After Approval" value={money(Math.max(0, (selectedEmployeeDetail.eligibleAmountNow ?? 0) - Math.min(Number(amount || 0), selectedEmployeeDetail.eligibleAmountNow ?? 0)))} />
+                                        </PremiumCardSection>
+                                        {selectedEmployeeDetail.pendingSalaryRequestId ? (
+                                            <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-black text-amber-900">This employee already has a salary payment or pending salary request for this period.</p>
+                                        ) : null}
+                                    </>
+                                ) : (
+                                    <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm font-bold text-slate-500">Search and select a real employee, Field Collector or Manager to load the salary card.</div>
+                                )}
+                            </div>
+                        ) : null}
+
                         {entryMode === "unauthorised" ? (
                             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
                                 <label className="block">
@@ -1601,9 +1741,9 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
 
                         <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_240px]">
                             <label className="block">
-                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">{entryMode === "unauthorised" || isCashHandoverMode ? "Reason / Supporting Notes" : isBankingMode ? "Banking Notes" : "Supporting Notes"}</span>
-                                <input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder={entryMode === "unauthorised" ? "Reason and notes required..." : isCashHandoverMode ? "Reason for handing cash to Admin..." : isBankingMode ? "Controlled banking notes..." : "Optional notes..."} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
-                                {entryMode === "unauthorised" ? <span className="mt-1 block text-xs font-bold text-slate-500">Optional - attach a receipt, slip, invoice or other proof for Admin review.</span> : null}
+                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">{entryMode === "unauthorised" || isCashHandoverMode ? "Reason / Supporting Notes" : isBankingMode ? "Banking Notes" : isSalaryPaymentMode ? "Salary Notes" : "Supporting Notes"}</span>
+                                <input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder={entryMode === "unauthorised" ? "Reason and notes required..." : isCashHandoverMode ? "Reason for handing cash to Admin..." : isBankingMode ? "Controlled banking notes..." : isSalaryPaymentMode ? "Salary payment notes..." : "Optional notes..."} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
+                                {entryMode === "unauthorised" || isSalaryPaymentMode ? <span className="mt-1 block text-xs font-bold text-slate-500">Optional - attach a receipt, slip, invoice or other proof for Admin review.</span> : null}
                             </label>
                             <label className="block">
                                 <span className="text-xs font-black uppercase tracking-wide text-slate-500">{isCashHandoverMode ? "Handover Amount" : isBankingMode ? "Amount to Bank" : "Amount"}</span>
@@ -1611,7 +1751,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                             </label>
                         </div>
 
-                        {entryMode === "unauthorised" ? (
+                        {entryMode === "unauthorised" || isSalaryPaymentMode ? (
                             <section className="mt-4 rounded-3xl border border-dashed border-blue-200 bg-blue-50/70 p-4">
                                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                     <div className="min-w-0">
@@ -1662,7 +1802,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                         </div>
                                     </div>
                                 ) : (
-                                    <p className="mt-3 rounded-2xl bg-white px-3 py-2 text-xs font-bold text-slate-500">No attachment selected. You can still submit this unauthorised expense.</p>
+                                    <p className="mt-3 rounded-2xl bg-white px-3 py-2 text-xs font-bold text-slate-500">No attachment selected. You can still submit this {isSalaryPaymentMode ? "salary payment request" : "unauthorised expense"}.</p>
                                 )}
                             </section>
                         ) : null}
@@ -1671,7 +1811,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                         <div className="mt-5 flex flex-wrap items-center gap-3">
                             <button type="button" onClick={saveExpense} disabled={!canManage || isPending} className="inline-flex h-13 items-center gap-2 rounded-2xl bg-emerald-600 px-7 text-base font-black text-white shadow-lg shadow-emerald-100 transition hover:-translate-y-0.5 disabled:opacity-40">
                                 {isPending ? <Loader2 className="animate-spin" size={18} /> : <ReceiptText size={18} />}
-                                {isPending ? "Submitting..." : isCashHandoverMode ? "Submit Cash Handover to Admin" : isBankingMode ? "Bank Office Cash" : isLandlordPaidMode ? "Submit Landlord Payment" : isEmployeeExpenseMode ? "Record / Request Lunch" : entryMode === "unauthorised" ? "Submit for Admin Approval" : "Record / Request Authorised Expense"}
+                                {isPending ? "Submitting..." : isCashHandoverMode ? "Submit Cash Handover to Admin" : isBankingMode ? "Bank Office Cash" : isLandlordPaidMode ? "Submit Landlord Payment" : isEmployeeExpenseMode ? "Record / Request Lunch" : isSalaryPaymentMode ? (isAdmin ? "Record Salary Payment" : "Request Salary Payment") : entryMode === "unauthorised" ? "Submit for Admin Approval" : "Record / Request Authorised Expense"}
                             </button>
                             <button type="button" onClick={() => setShowPrintPreview(true)} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700"><Printer size={16} />Print A4 Report</button>
                             <button type="button" onClick={() => setShowPrintPreview(true)} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700"><Download size={16} />Export PDF</button>
@@ -1697,6 +1837,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                     onReviewed={() => setRefreshToken((token) => token + 1)}
                 />
                 <EmployeeExpenseRequestLedger isAdmin={isAdmin} requests={data.employeeExpenseRequests} />
+                <SalaryPaymentRequestLedger isAdmin={isAdmin} onReviewed={() => setRefreshToken((token) => token + 1)} requests={data.salaryPaymentRequests} />
                 <LandlordEditRequestLedger isAdmin={isAdmin} requests={data.landlordExpenseEditRequests} onReviewed={() => setRefreshToken((token) => token + 1)} />
                 <TreasuryCashRequestLedger activeOfficeName={activeOfficeName} isAdmin={isAdmin} requests={data.treasuryCashRequests} onReviewed={() => setRefreshToken((token) => token + 1)} />
                 <BankingRecordsLedger activeOfficeName={activeOfficeName} banking={data.banking} isAdmin={isAdmin} offices={data.offices} />
@@ -3379,6 +3520,92 @@ function EmployeeExpenseRequestLedger({ isAdmin, requests }: { isAdmin: boolean;
     );
 }
 
+function SalaryPaymentRequestLedger({ isAdmin, onReviewed, requests }: { isAdmin: boolean; onReviewed: () => void; requests: ExpensesPageData["salaryPaymentRequests"] }) {
+    const [comments, setComments] = useState<Record<string, string>>({});
+    const [message, setMessage] = useState<string | null>(null);
+    const [busyId, setBusyId] = useState<string | null>(null);
+    const [isPending, startTransition] = useTransition();
+    if (!requests.length) return null;
+
+    function decide(requestId: string, decision: "approved" | "rejected") {
+        setMessage(null);
+        setBusyId(requestId);
+        startTransition(async () => {
+            try {
+                await decideSalaryPaymentRequest({
+                    requestId,
+                    decision,
+                    comment: comments[requestId] ?? "",
+                });
+                setMessage(decision === "approved" ? "Salary payment request approved." : "Salary payment request rejected.");
+                onReviewed();
+            } catch (error) {
+                setMessage(error instanceof Error ? error.message : "Salary payment request could not be updated.");
+            } finally {
+                setBusyId(null);
+            }
+        });
+    }
+
+    return (
+        <section className="mx-auto mt-5 max-w-6xl overflow-hidden rounded-[26px] border border-white/70 bg-white shadow-2xl shadow-slate-950/15">
+            <div className="border-b border-slate-200 px-4 py-3">
+                <p className="text-xs font-black uppercase tracking-wide text-blue-600">Salary approval queue</p>
+                <h2 className="text-lg font-black text-slate-950">Salary Payment Requests</h2>
+                {message ? <p className="mt-2 text-sm font-bold text-slate-600">{message}</p> : null}
+            </div>
+            <div className="divide-y divide-slate-100">
+                {requests.map((request) => {
+                    const pending = request.status === "pending";
+                    const isBusy = busyId === request.id && isPending;
+                    return (
+                        <div key={`salary-request:${request.id}`} className="grid gap-3 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-start">
+                            <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <p className="text-base font-black text-slate-950">{request.employeeName}</p>
+                                    <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wide ${pending ? "bg-amber-100 text-amber-800" : request.status === "approved" ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}`}>{request.status}</span>
+                                    {request.advanceAmount > 0 ? <span className="rounded-full bg-cyan-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-cyan-800">Salary + Advance</span> : null}
+                                </div>
+                                <p className="mt-1 text-xs font-bold text-slate-500">{request.position ?? "Employee"} · Payroll: {request.payrollOfficeName} · Requested from {request.requestingOfficeName}</p>
+                                <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                                    <MiniMetric label="Salary Month" value={request.monthKey.slice(0, 7)} />
+                                    <MiniMetric label="Due Date" value={request.salaryDueDate?.slice(0, 10) ?? "Not set"} />
+                                    <MiniMetric label="Monthly Salary" value={money(request.monthlySalary)} />
+                                    <MiniMetric label="Already Paid" value={money(request.alreadyPaid)} />
+                                    <MiniMetric label="Eligible Salary" value={money(request.eligibleSalary)} />
+                                    <MiniMetric label="Requested Amount" value={money(request.requestedAmount)} />
+                                    <MiniMetric label="Salary Portion" value={money(request.salaryAmount)} />
+                                    <MiniMetric label="Advance Portion" value={money(request.advanceAmount)} />
+                                    <MiniMetric label="Payment Method" value={methodLabel(request.paymentMethod)} />
+                                    <MiniMetric label="Requested By" value={request.requestedByName} />
+                                    <MiniMetric label="Requested At" value={request.createdAt?.slice(0, 16).replace("T", " ") ?? "--"} />
+                                    <MiniMetric label="Reference" value={request.reference ?? "--"} />
+                                </div>
+                                {request.notes ? <p className="mt-3 rounded-2xl bg-slate-50 px-3 py-2 text-sm font-bold text-slate-600">{request.notes}</p> : null}
+                                {request.proofUrl ? <p className="mt-2 inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-blue-800"><Paperclip size={14} />Supporting proof attached</p> : null}
+                            </div>
+                            <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                                <input value={comments[request.id] ?? ""} onChange={(event) => setComments((current) => ({ ...current, [request.id]: event.target.value }))} placeholder="Admin comment / rejection reason" className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-900 outline-none focus:border-blue-300" />
+                                {isAdmin && pending ? (
+                                    <div className="flex flex-wrap gap-2">
+                                        <button disabled={isBusy} type="button" onClick={() => decide(request.id, "approved")} className="inline-flex h-9 items-center rounded-xl bg-emerald-700 px-3 text-xs font-black text-white disabled:opacity-40">
+                                            {isBusy ? "Working..." : "Approve"}
+                                        </button>
+                                        <button disabled={isBusy} type="button" onClick={() => decide(request.id, "rejected")} className="inline-flex h-9 items-center rounded-xl bg-red-700 px-3 text-xs font-black text-white disabled:opacity-40">Reject</button>
+                                    </div>
+                                ) : (
+                                    <p className="text-xs font-bold text-slate-500">{isAdmin ? "Already reviewed." : "Waiting for Admin review."}</p>
+                                )}
+                                {request.adminComment ? <p className="text-xs font-bold text-slate-500">Admin: {request.adminComment}</p> : null}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </section>
+    );
+}
+
 function LandlordEditModal({
     expenseDate,
     isAdmin,
@@ -4264,6 +4491,15 @@ function StatusBadge({ status }: { status: string }) {
             ? "bg-rose-50 text-rose-700 ring-rose-100"
             : "bg-amber-50 text-amber-700 ring-amber-100";
     return <span className={`rounded-full px-3 py-1 text-xs font-black uppercase ring-1 ${className}`}>{status}</span>;
+}
+
+function MiniMetric({ label, value }: { label: string; value: ReactNode }) {
+    return (
+        <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2">
+            <p className="text-[10px] font-black uppercase tracking-wide text-slate-500">{label}</p>
+            <p className="mt-1 break-words text-sm font-black text-slate-950">{value}</p>
+        </div>
+    );
 }
 
 function buildFinanceInsights(input: {

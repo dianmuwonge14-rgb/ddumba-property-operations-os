@@ -13,15 +13,18 @@ import { getExpenseInActiveOffice } from "@/lib/expenses/data";
 import { calculateLandlordAdvancePlan } from "@/lib/landlord-advances/calculator";
 import { assertLandlordPayableIntegrity } from "@/lib/landlord-payables/integrity";
 import { buildLandlordPaymentAllocationPlan, landlordMonthlyDue, landlordMonthlyPaid, summarizeLandlordPayables } from "@/lib/landlord-payables/payment-allocation";
+import { salaryDueDateForMonth } from "@/lib/salary-centre/data";
 import type {
     CreateExpenseCategoryInput,
     CreateExpenseInput,
     CreateEmployeeExpenseInput,
     CreateLandlordPaidExpenseRequestInput,
+    CreateSalaryPaymentInput,
     DecideExpenseChangeRequestInput,
     DecideEmployeeExpenseRequestInput,
     DecideLandlordExpenseEditRequestInput,
     DecideLandlordPaidExpenseRequestInput,
+    DecideSalaryPaymentRequestInput,
     DeleteExpenseInput,
     EmployeeExpensePreview,
     EditExpenseInput,
@@ -252,10 +255,28 @@ function isAllRounderEmployee(row: Record<string, unknown>) {
     return [row.employee_assignment_type, row.role, row.job_title].some((value) => normalizedEmployeeRole(value) === "allrounder");
 }
 
+function isFieldCollectorEmployee(row: Record<string, unknown>) {
+    return [row.employee_assignment_type, row.role, row.job_title, row.position].some((value) => {
+        const normalized = normalizedEmployeeRole(value);
+        return normalized === "fieldcollector" || normalized === "collector" || normalized === "allrounder";
+    });
+}
+
+function isManagerEmployee(row: Record<string, unknown>) {
+    return [row.role, row.job_title, row.position, row.account_type].some((value) => normalizedEmployeeRole(value).includes("manager"));
+}
+
 function isEligibleAuthorisedExpenseEmployee(row: Record<string, unknown>, submittingOfficeId: string) {
     if (String(row.status ?? "active").toLowerCase() !== "active") return false;
     const employeeOfficeId = typeof row.office_id === "string" ? row.office_id : null;
     return employeeOfficeId === submittingOfficeId || isAllRounderEmployee(row);
+}
+
+function isEligibleSalaryPaymentEmployee(row: Record<string, unknown>, submittingOfficeId: string, canSeeAll: boolean) {
+    if (String(row.status ?? "active").toLowerCase() !== "active") return false;
+    if (canSeeAll) return true;
+    const employeeOfficeId = typeof row.office_id === "string" ? row.office_id : null;
+    return employeeOfficeId === submittingOfficeId || isFieldCollectorEmployee(row) || isManagerEmployee(row);
 }
 
 function itemName(value: string | null | undefined) {
@@ -314,6 +335,9 @@ function revalidateExpenseSurfaces() {
     revalidatePath("/office/ai");
     revalidatePath("/office/automation");
     revalidatePath("/office/spreadsheet");
+    revalidatePath("/office/salary");
+    revalidatePath("/office/admin/payroll");
+    revalidatePath("/office/employees");
 }
 
 function isMissingSchemaError(error: { code?: string; message?: string } | null | undefined) {
@@ -391,6 +415,80 @@ async function postOfficeCashOutflow(input: {
     });
     if (error && !isMissingSchemaError(error)) {
         throw new Error(`Office cash ledger update failed: ${error.message}`);
+    }
+}
+
+async function postExpensePaymentOutflow(input: {
+    amount: number;
+    companyId: string;
+    db: { from: (table: string) => any };
+    description: string;
+    officeId: string;
+    paymentMethod: string;
+    recordedBy: string | null;
+    reference?: string | null;
+    sourceId: string;
+    sourceType: string;
+    transactionDate: string;
+}) {
+    const method = String(input.paymentMethod || "cash").toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    const accountType = method.includes("mobile") ? "mobile_money" : method.includes("bank") ? "bank" : "office_cash";
+    let accountResult = await input.db
+        .from("cash_accounts")
+        .select("id")
+        .eq("company_id", input.companyId)
+        .eq("account_type", accountType)
+        .eq("status", "active")
+        .eq("office_id", input.officeId)
+        .limit(1)
+        .maybeSingle();
+    if (accountResult.error && !isMissingSchemaError(accountResult.error)) {
+        throw new Error(`Cash account lookup failed: ${accountResult.error.message}`);
+    }
+    if (!accountResult.data?.id && accountType !== "office_cash") {
+        accountResult = await input.db
+            .from("cash_accounts")
+            .select("id")
+            .eq("company_id", input.companyId)
+            .eq("account_type", accountType)
+            .eq("status", "active")
+            .limit(1)
+            .maybeSingle();
+        if (accountResult.error && !isMissingSchemaError(accountResult.error)) {
+            throw new Error(`Cash account lookup failed: ${accountResult.error.message}`);
+        }
+    }
+    if (!accountResult.data?.id) return;
+
+    const existingTransaction = await input.db
+        .from("cash_transactions")
+        .select("id")
+        .eq("company_id", input.companyId)
+        .eq("source_type", input.sourceType)
+        .eq("source_id", input.sourceId)
+        .eq("transaction_type", "outflow")
+        .limit(1);
+    if (existingTransaction.error && !isMissingSchemaError(existingTransaction.error)) {
+        throw new Error(`Expense ledger duplicate check failed: ${existingTransaction.error.message}`);
+    }
+    if ((existingTransaction.data ?? []).length) return;
+
+    const { error } = await input.db.from("cash_transactions").insert({
+        amount: input.amount,
+        cash_account_id: accountResult.data.id,
+        company_id: input.companyId,
+        description: input.description,
+        office_id: input.officeId,
+        payment_method: input.paymentMethod,
+        recorded_by: input.recordedBy,
+        reference: input.reference ?? null,
+        source_id: input.sourceId,
+        source_type: input.sourceType,
+        transaction_date: input.transactionDate,
+        transaction_type: "outflow",
+    });
+    if (error && !isMissingSchemaError(error)) {
+        throw new Error(`Expense cash ledger update failed: ${error.message}`);
     }
 }
 
@@ -533,6 +631,348 @@ async function getLandlordPaymentPreview(input: {
         pendingRequestAmount,
         remainingAdvanceBalance: Math.max(0, activeAdvanceBalance - allocationPlan.advanceRecoveryAmount),
         remainingAfterPayment: allocationPlan.remainingAfterPayment,
+    };
+}
+
+function salaryPaymentDay(value: unknown) {
+    const parsed = Math.trunc(amount(value));
+    return Math.min(31, Math.max(1, parsed || 1));
+}
+
+function salaryPeriodLabel(monthKey: string) {
+    const date = new Date(`${monthKey.slice(0, 7)}-01T00:00:00Z`);
+    return date.toLocaleDateString("en-UG", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+function salaryAuditSummary(result: Awaited<ReturnType<typeof applySalaryPayment>>) {
+    return {
+        advanceAmount: result.preview.advanceAmount,
+        advanceExpenseId: result.advanceExpenseId,
+        advanceId: result.advanceId,
+        employeeId: String(result.preview.employee.id ?? ""),
+        employeeName: result.preview.employeeName,
+        monthKey: result.preview.monthKey,
+        payrollMonthId: result.payrollMonthId,
+        remainingAfter: result.preview.remainingAfter,
+        salaryAmount: result.preview.salaryAmount,
+        salaryExpenseId: result.salaryExpenseId,
+        salaryPaymentId: result.salaryPaymentId,
+    };
+}
+
+async function getSalaryPaymentPreview(input: {
+    companyId: string;
+    db: { from: (table: string) => any };
+    employeeId: string;
+    requestAmount?: number;
+    salaryMonth: string;
+}) {
+    const monthKey = monthStart(input.salaryMonth);
+    const [employeeResult, userResult, bonusRows, expenseRows, advanceRows, fineRows, existingPayments, pendingRows] = await Promise.all([
+        input.db.from("employees").select("*").eq("company_id", input.companyId).eq("id", input.employeeId).maybeSingle(),
+        input.db.from("users").select("id,account_type,full_name,status,employee_id").eq("company_id", input.companyId).eq("employee_id", input.employeeId).limit(1),
+        input.db.from("employee_bonuses").select("amount").eq("company_id", input.companyId).eq("employee_id", input.employeeId).eq("month_key", monthKey).eq("active", true),
+        input.db.from("employee_expenses").select("amount").eq("company_id", input.companyId).eq("employee_id", input.employeeId).eq("month_key", monthKey).eq("active", true).eq("approved_for_payroll", true),
+        input.db.from("employee_advances").select("amount,remaining_balance,status,active").eq("company_id", input.companyId).eq("employee_id", input.employeeId).eq("month_key", monthKey).eq("active", true),
+        input.db.from("employee_fines").select("amount").eq("company_id", input.companyId).eq("employee_id", input.employeeId).eq("month_key", monthKey).eq("active", true),
+        input.db.from("employee_salary_payments").select("paid_amount").eq("company_id", input.companyId).eq("employee_id", input.employeeId).eq("month_key", monthKey),
+        input.db.from("employee_salary_payment_requests").select("id,requested_amount,status").eq("company_id", input.companyId).eq("employee_id", input.employeeId).eq("month_key", monthKey).eq("active", true),
+    ]);
+    if (employeeResult.error) throw new Error(employeeResult.error.message);
+    if (userResult.error && !isMissingSchemaError(userResult.error)) throw new Error(userResult.error.message);
+    for (const result of [bonusRows, expenseRows, advanceRows, fineRows, existingPayments]) {
+        if (result.error && !isMissingSchemaError(result.error)) throw new Error(result.error.message);
+    }
+    if (pendingRows.error && !isMissingSchemaError(pendingRows.error)) throw new Error(pendingRows.error.message);
+    const employee = employeeResult.data as Record<string, unknown> | null;
+    if (!employee) throw new Error("Employee not found.");
+    const linkedUser = ((userResult.data ?? []) as Array<Record<string, unknown>>)[0] ?? null;
+    const accountType = String(linkedUser?.account_type ?? employee.account_type ?? "").toLowerCase();
+    const employeeName = String(employee.full_name ?? "Employee");
+    if (/\b(admin|system|shared login|office account)\b/.test(`${accountType} ${employeeName}`.toLowerCase())) {
+        throw new Error("Only real employee-linked personal accounts can receive salary payments.");
+    }
+    if (["terminated", "archived", "deleted", "inactive", "suspended"].includes(String(employee.status ?? "").toLowerCase())) {
+        throw new Error("This employee is not active for salary payment.");
+    }
+    const bonuses = ((bonusRows.data ?? []) as Array<Record<string, unknown>>).reduce((total, row) => total + amount(row.amount), 0);
+    const payrollExpenses = ((expenseRows.data ?? []) as Array<Record<string, unknown>>).reduce((total, row) => total + amount(row.amount), 0);
+    const advanceOutstanding = ((advanceRows.data ?? []) as Array<Record<string, unknown>>)
+        .filter(isApprovedActiveAdvance)
+        .reduce((total, row) => total + advanceRemaining(row), 0);
+    const fines = ((fineRows.data ?? []) as Array<Record<string, unknown>>).reduce((total, row) => total + amount(row.amount), 0);
+    const monthlySalary = amount(employee.basic_salary);
+    const deductions = payrollExpenses + advanceOutstanding + fines;
+    const netSalary = Math.max(0, monthlySalary + bonuses - deductions);
+    const alreadyPaid = ((existingPayments.data ?? []) as Array<Record<string, unknown>>).reduce((total, row) => total + amount(row.paid_amount), 0);
+    const remainingSalary = Math.max(0, netSalary - alreadyPaid);
+    const requestedAmount = Math.max(0, amount(input.requestAmount));
+    const salaryAmount = Math.min(requestedAmount, remainingSalary);
+    const advanceAmount = Math.max(0, requestedAmount - salaryAmount);
+    const pendingRequests = ((pendingRows.data ?? []) as Array<Record<string, unknown>>).filter((row) => String(row.status ?? "").toLowerCase() === "pending");
+    const salaryDay = salaryPaymentDay(employee.salary_payment_day ?? employee.salary_receiving_day ?? 1);
+    const dueDate = salaryDueDateForMonth(monthKey, salaryDay);
+    const paidAfter = alreadyPaid + salaryAmount;
+    const remainingAfter = Math.max(0, netSalary - paidAfter);
+    const status = netSalary <= 0
+        ? "Not Configured"
+        : pendingRequests.length
+            ? "Pending Admin Approval"
+            : remainingSalary <= 0
+                ? "Paid"
+                : alreadyPaid > 0
+                    ? "Partially Paid"
+                    : "Upcoming";
+
+    return {
+        advanceAmount,
+        advanceOutstanding,
+        alreadyPaid,
+        deductions,
+        dueDate,
+        eligibleSalary: remainingSalary,
+        employee,
+        employeeName,
+        monthKey,
+        monthlySalary,
+        netSalary,
+        paidAfter,
+        payrollOfficeId: typeof employee.office_id === "string" ? employee.office_id : null,
+        position: String(employee.role ?? employee.job_title ?? "Employee"),
+        previousAdvanceRecovery: advanceOutstanding,
+        remainingAfter,
+        remainingSalary,
+        requestedAmount,
+        salaryAmount,
+        salaryPeriodLabel: salaryPeriodLabel(monthKey),
+        status,
+        pendingRequestId: pendingRequests[0]?.id ? String(pendingRequests[0].id) : null,
+    };
+}
+
+async function createSalaryExpenseRow(input: {
+    actorId: string | null;
+    amount: number;
+    category: string;
+    companyId: string;
+    db: { from: (table: string) => any };
+    description: string;
+    employeeId: string;
+    employeeName: string;
+    expenseDate: string;
+    item: string;
+    officeId: string;
+    paymentMethod: string;
+    reference: string | null;
+}) {
+    const { data, error } = await input.db
+        .from("expenses")
+        .insert({
+            amount: input.amount,
+            approved_at: new Date().toISOString(),
+            approved_by: input.actorId,
+            cash_source_id: input.officeId,
+            cash_source_type: "office_cash",
+            category: input.category,
+            company_id: input.companyId,
+            description: input.description,
+            employee_id: input.employeeId,
+            expense_date: input.expenseDate,
+            expense_number: expenseNumber(),
+            financial_effective: true,
+            item: input.item,
+            office_id: input.officeId,
+            payment_method: input.paymentMethod,
+            receipt_url: input.reference,
+            status: "approved",
+            submitted_by: input.actorId,
+            vendor: input.employeeName,
+        } as any)
+        .select("id")
+        .single();
+    if (error) throw new Error(`Salary expense could not be saved: ${error.message}`);
+    await postExpensePaymentOutflow({
+        amount: input.amount,
+        companyId: input.companyId,
+        db: input.db,
+        description: input.description,
+        officeId: input.officeId,
+        paymentMethod: input.paymentMethod,
+        recordedBy: input.actorId,
+        reference: input.reference,
+        sourceId: data.id,
+        sourceType: itemKey(input.category),
+        transactionDate: input.expenseDate,
+    });
+    return data.id as string;
+}
+
+async function applySalaryPayment(input: {
+    actorId: string | null;
+    amount: number;
+    companyId: string;
+    db: { from: (table: string) => any };
+    employeeId: string;
+    notes?: string | null;
+    officeId: string;
+    paymentMethod: string;
+    reference?: string | null;
+    requestId?: string | null;
+    salaryMonth: string;
+}) {
+    const preview = await getSalaryPaymentPreview({
+        companyId: input.companyId,
+        db: input.db,
+        employeeId: input.employeeId,
+        requestAmount: input.amount,
+        salaryMonth: input.salaryMonth,
+    });
+    if (preview.pendingRequestId && preview.pendingRequestId !== input.requestId) {
+        throw new Error("This employee already has a salary payment or pending salary request for this period.");
+    }
+    if (preview.netSalary <= 0) throw new Error("Salary has not yet been configured for this employee.");
+    if (preview.remainingSalary <= 0) {
+        throw new Error("This employee already has a salary payment or pending salary request for this period.");
+    }
+    const status = preview.remainingAfter <= 0 ? "paid" : preview.paidAfter > 0 ? "partially_paid" : "pending_payment";
+    const { data: payroll, error: payrollError } = await input.db
+        .from("employee_payroll_months")
+        .upsert({
+            active: true,
+            allowances: 0,
+            amount_paid: preview.paidAfter,
+            advances: preview.previousAdvanceRecovery,
+            approved_by: input.actorId,
+            basic_salary: preview.monthlySalary,
+            company_id: input.companyId,
+            deductions: preview.deductions,
+            due_date: preview.dueDate,
+            employee_id: input.employeeId,
+            final_salary_payable: preview.netSalary,
+            gross_salary: preview.monthlySalary,
+            month_key: preview.monthKey,
+            net_salary: preview.netSalary,
+            office_id: preview.payrollOfficeId ?? input.officeId,
+            payment_status: status,
+            remaining_balance: preview.remainingAfter,
+            salary_month: preview.monthKey,
+            status,
+            updated_at: new Date().toISOString(),
+        } as any, { onConflict: "company_id,employee_id,month_key" })
+        .select("*")
+        .single();
+    if (payrollError) throw new Error(`Payroll month update failed: ${payrollError.message}`);
+
+    let salaryPaymentId: string | null = null;
+    if (preview.salaryAmount > 0) {
+        const { data: payment, error: paymentError } = await input.db
+            .from("employee_salary_payments")
+            .insert({
+                approved_by: input.actorId,
+                company_id: input.companyId,
+                employee_id: input.employeeId,
+                month_key: preview.monthKey,
+                notes: input.notes ?? null,
+                office_id: preview.payrollOfficeId ?? input.officeId,
+                paid_amount: preview.salaryAmount,
+                paid_by: input.actorId,
+                payment_method: input.paymentMethod,
+                payroll_month_id: payroll.id,
+                reference: input.reference ?? input.requestId ?? null,
+                remaining_balance_after: preview.remainingAfter,
+                salary_month: preview.monthKey,
+            } as any)
+            .select("id")
+            .single();
+        if (paymentError) throw new Error(`Salary payment record failed: ${paymentError.message}`);
+        salaryPaymentId = payment.id as string;
+    }
+
+    let advanceId: string | null = null;
+    if (preview.advanceAmount > 0) {
+        const { data: advance, error: advanceError } = await input.db
+            .from("employee_advances")
+            .insert({
+                amount: preview.advanceAmount,
+                approved_at: new Date().toISOString(),
+                approved_by: input.actorId,
+                company_id: input.companyId,
+                created_by: input.actorId,
+                employee_id: input.employeeId,
+                month_key: preview.monthKey,
+                office_id: preview.payrollOfficeId ?? input.officeId,
+                reason: input.notes || `Salary advance from ${preview.salaryPeriodLabel}`,
+                remaining_balance: preview.advanceAmount,
+                status: "approved",
+                active: true,
+            } as any)
+            .select("id")
+            .single();
+        if (advanceError) throw new Error(`Salary advance record failed: ${advanceError.message}`);
+        advanceId = advance.id as string;
+    }
+
+    let salaryExpenseId: string | null = null;
+    if (preview.salaryAmount > 0) {
+        salaryExpenseId = await createSalaryExpenseRow({
+            actorId: input.actorId,
+            amount: preview.salaryAmount,
+            category: "Salary Expense",
+            companyId: input.companyId,
+            db: input.db,
+            description: `Salary Payment | ${preview.employeeName} | ${preview.salaryPeriodLabel}${input.notes ? ` | ${input.notes}` : ""}`,
+            employeeId: input.employeeId,
+            employeeName: preview.employeeName,
+            expenseDate: currentBusinessDate(),
+            item: `Salary Payment - ${preview.employeeName}`,
+            officeId: input.officeId,
+            paymentMethod: input.paymentMethod,
+            reference: input.reference ?? input.requestId ?? null,
+        });
+    }
+    let advanceExpenseId: string | null = null;
+    if (preview.advanceAmount > 0) {
+        advanceExpenseId = await createSalaryExpenseRow({
+            actorId: input.actorId,
+            amount: preview.advanceAmount,
+            category: "Salary Advance",
+            companyId: input.companyId,
+            db: input.db,
+            description: `Salary Advance | ${preview.employeeName} | ${preview.salaryPeriodLabel}${input.notes ? ` | ${input.notes}` : ""}`,
+            employeeId: input.employeeId,
+            employeeName: preview.employeeName,
+            expenseDate: currentBusinessDate(),
+            item: `Salary Advance - ${preview.employeeName}`,
+            officeId: input.officeId,
+            paymentMethod: input.paymentMethod,
+            reference: input.reference ?? input.requestId ?? null,
+        });
+    }
+
+    await createNotificationWithEmail(input.db, {
+        action_url: "/office/salary",
+        channel: "in_app",
+        company_id: input.companyId,
+        delivery_status: "pending",
+        entity_id: input.employeeId,
+        entity_type: "employee_salary_payment",
+        is_read: false,
+        message: preview.advanceAmount > 0
+            ? `Salary paid with advance. Salary: UGX ${Math.round(preview.salaryAmount).toLocaleString()}. Advance: UGX ${Math.round(preview.advanceAmount).toLocaleString()}.`
+            : `Salary payment recorded: UGX ${Math.round(preview.salaryAmount).toLocaleString()}. Remaining: UGX ${Math.round(preview.remainingAfter).toLocaleString()}.`,
+        office_id: preview.payrollOfficeId ?? input.officeId,
+        recipient_type: "employee",
+        severity: preview.remainingAfter <= 0 ? "success" : "information",
+        title: preview.advanceAmount > 0 ? "Salary paid + advance taken" : "Salary payment recorded",
+    });
+
+    return {
+        advanceExpenseId,
+        advanceId,
+        payrollMonthId: payroll.id as string,
+        preview,
+        salaryExpenseId,
+        salaryPaymentId,
     };
 }
 
@@ -693,6 +1133,143 @@ export async function createExpense(input: CreateExpenseInput) {
 
     revalidateExpenseSurfaces();
     return data;
+}
+
+export async function createSalaryPaymentFromExpenses(input: CreateSalaryPaymentInput) {
+    const context = await activeWriteContext();
+    const db = createSupabaseAdminClient() as unknown as { from: (table: string) => any; storage: any };
+    const companyId = context.activeCompany!.id;
+    const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    const isDirectAdmin = context.isCompanyAdmin && !context.isOfficeMode;
+    if (isCompanyOperationalManager(context) && !isDirectAdmin) {
+        throw new Error("Manager can view salary records but cannot submit salary payments.");
+    }
+    const targetOfficeId = await resolveOperationalExpenseOfficeId(context, input.officeId);
+    if (!targetOfficeId) throw new Error("Select the office funding this salary payment.");
+    const value = amount(input.amount);
+    assertAmount(value);
+    const paymentMethod = String(input.paymentMethod || "cash").trim() || "cash";
+    const salaryMonth = monthStart(input.salaryMonth);
+    const preview = await getSalaryPaymentPreview({
+        companyId,
+        db,
+        employeeId: input.employeeId,
+        requestAmount: value,
+        salaryMonth,
+    });
+    if (!isEligibleSalaryPaymentEmployee(preview.employee, targetOfficeId, isDirectAdmin)) {
+        throw new Error("This employee is not available for salary payment from the selected office.");
+    }
+    if (preview.pendingRequestId) {
+        throw new Error("This employee already has a salary payment or pending salary request for this period.");
+    }
+    if (preview.netSalary <= 0) throw new Error("Salary has not yet been configured for this employee.");
+    if (preview.remainingSalary <= 0) {
+        throw new Error("This employee already has a salary payment or pending salary request for this period.");
+    }
+
+    if (isDirectAdmin) {
+        const result = await applySalaryPayment({
+            actorId,
+            amount: value,
+            companyId,
+            db,
+            employeeId: input.employeeId,
+            notes: input.notes ?? null,
+            officeId: targetOfficeId,
+            paymentMethod,
+            reference: input.reference ?? null,
+            salaryMonth,
+        });
+        await logUserAction({
+            action: "salary_payment_admin_direct",
+            entityType: "employee_salary_payment",
+            entityId: result.salaryPaymentId ?? result.advanceId ?? input.employeeId,
+            companyId,
+            officeId: targetOfficeId,
+            afterData: salaryAuditSummary(result),
+        });
+        revalidateExpenseSurfaces();
+        return { direct: true, ...result };
+    }
+
+    const proof = decodeExpenseProof(input.supportingProof ?? null);
+    const requestId = randomUUID();
+    const proofPath = proof
+        ? `${companyId}/${targetOfficeId}/${actorId ?? "unknown"}/salary/${salaryMonth.slice(0, 7)}/${requestId}.${proof.extension}`
+        : null;
+    if (proof && proofPath) {
+        const upload = await db.storage.from(EXPENSE_PROOF_BUCKET).upload(proofPath, proof.buffer, {
+            contentType: proof.mimeType,
+            upsert: false,
+        });
+        if (upload.error) throw new Error(`Supporting proof upload failed: ${upload.error.message}`);
+    }
+    const { data: request, error } = await db
+        .from("employee_salary_payment_requests")
+        .insert({
+            active: true,
+            already_paid: preview.alreadyPaid,
+            advance_amount: preview.advanceAmount,
+            company_id: companyId,
+            eligible_salary: preview.eligibleSalary,
+            employee_id: input.employeeId,
+            id: requestId,
+            monthly_salary: preview.netSalary,
+            month_key: salaryMonth,
+            notes: input.notes ?? null,
+            payment_method: paymentMethod,
+            payroll_office_id: preview.payrollOfficeId,
+            proof_url: proofPath,
+            reference: input.reference ?? null,
+            requested_amount: value,
+            requested_by: actorId,
+            requesting_office_id: targetOfficeId,
+            salary_amount: preview.salaryAmount,
+            salary_due_date: preview.dueDate,
+            status: "pending",
+            supporting_document: proofPath ? {
+                file_path: proofPath,
+                file_size: proof?.fileSize ?? null,
+                mime_type: proof?.mimeType ?? null,
+                original_name: proof?.fileName ?? null,
+                uploaded_by_user_id: actorId,
+                uploaded_at: new Date().toISOString(),
+            } : null,
+        } as any)
+        .select("*")
+        .single();
+    if (error) {
+        if (proofPath) await db.storage.from(EXPENSE_PROOF_BUCKET).remove([proofPath]);
+        if (/duplicate|unique/i.test(error.message)) {
+            throw new Error("This employee already has a salary payment or pending salary request for this period.");
+        }
+        throw new Error(`Salary payment request could not be saved: ${error.message}`);
+    }
+    await createNotificationWithEmail(db, {
+        action_url: "/office/expenses",
+        channel: "in_app",
+        company_id: companyId,
+        delivery_status: "pending",
+        entity_id: request.id,
+        entity_type: "employee_salary_payment_request",
+        is_read: false,
+        message: `${preview.employeeName} salary request for ${preview.salaryPeriodLabel}: UGX ${Math.round(value).toLocaleString()}. Salary: UGX ${Math.round(preview.salaryAmount).toLocaleString()}, advance: UGX ${Math.round(preview.advanceAmount).toLocaleString()}.${proofPath ? " Supporting proof attached." : ""}`,
+        office_id: targetOfficeId,
+        recipient_type: "admin",
+        severity: preview.advanceAmount > 0 ? "warning" : "information",
+        title: proofPath ? "Salary payment approval - Proof attached" : "Salary payment approval",
+    });
+    await logUserAction({
+        action: "salary_payment_requested",
+        entityType: "employee_salary_payment_request",
+        entityId: request.id,
+        companyId,
+        officeId: targetOfficeId,
+        afterData: request,
+    });
+    revalidateExpenseSurfaces();
+    return { direct: false, preview, request };
 }
 
 async function resolveLandlordPaymentOfficeId(input: {
@@ -1561,6 +2138,101 @@ export async function decideEmployeeExpenseRequest(input: DecideEmployeeExpenseR
         severity: "success",
     });
     await logUserAction({ action: "employee_expense_request_approved", entityType: "employee_expense_request", entityId: request.id, companyId, officeId: request.office_id, beforeData: request, afterData: data });
+    revalidateExpenseSurfaces();
+    return data;
+}
+
+export async function decideSalaryPaymentRequest(input: DecideSalaryPaymentRequestInput) {
+    const context = await requireCompanyAdminMode();
+    const db = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
+    const companyId = context.activeCompany?.id;
+    if (!companyId) throw new Error("Active company is required.");
+    const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    const reviewedAt = new Date().toISOString();
+
+    const { data: request, error: requestError } = await db
+        .from("employee_salary_payment_requests")
+        .select("*")
+        .eq("company_id", companyId)
+        .eq("id", input.requestId)
+        .maybeSingle();
+    if (requestError) throw new Error(requestError.message);
+    if (!request) throw new Error("Salary payment request not found.");
+    if (String(request.status ?? "").toLowerCase() !== "pending") {
+        throw new Error("This salary payment request has already been reviewed.");
+    }
+
+    if (input.decision === "rejected") {
+        const { data, error } = await db
+            .from("employee_salary_payment_requests")
+            .update({
+                admin_comment: input.comment ?? null,
+                rejected_at: reviewedAt,
+                rejected_by: actorId,
+                status: "rejected",
+                updated_at: reviewedAt,
+            } as any)
+            .eq("id", request.id)
+            .eq("status", "pending")
+            .select("*")
+            .single();
+        if (error) throw new Error(error.message);
+        await logUserAction({
+            action: "salary_payment_request_rejected",
+            entityType: "employee_salary_payment_request",
+            entityId: request.id,
+            companyId,
+            officeId: request.requesting_office_id ?? null,
+            beforeData: request,
+            afterData: data,
+        });
+        revalidateExpenseSurfaces();
+        return data;
+    }
+
+    const result = await applySalaryPayment({
+        actorId,
+        amount: amount(request.requested_amount),
+        companyId,
+        db,
+        employeeId: String(request.employee_id),
+        notes: [request.notes, input.comment ? `Admin: ${input.comment}` : null].filter(Boolean).join(" | ") || null,
+        officeId: String(request.requesting_office_id),
+        paymentMethod: String(request.payment_method ?? "cash"),
+        reference: String(request.reference ?? request.audit_reference ?? request.id),
+        requestId: String(request.id),
+        salaryMonth: String(request.month_key),
+    });
+
+    const { data, error } = await db
+        .from("employee_salary_payment_requests")
+        .update({
+            admin_comment: input.comment ?? null,
+            advance_expense_id: result.advanceExpenseId,
+            advance_id: result.advanceId,
+            approved_at: reviewedAt,
+            approved_by: actorId,
+            payroll_month_id: result.payrollMonthId,
+            salary_expense_id: result.salaryExpenseId,
+            salary_payment_id: result.salaryPaymentId,
+            status: "approved",
+            updated_at: reviewedAt,
+        } as any)
+        .eq("id", request.id)
+        .eq("status", "pending")
+        .select("*")
+        .single();
+    if (error) throw new Error(error.message);
+
+    await logUserAction({
+        action: "salary_payment_request_approved",
+        entityType: "employee_salary_payment_request",
+        entityId: request.id,
+        companyId,
+        officeId: request.requesting_office_id ?? null,
+        beforeData: request,
+        afterData: { request: data, result: salaryAuditSummary(result) },
+    });
     revalidateExpenseSurfaces();
     return data;
 }

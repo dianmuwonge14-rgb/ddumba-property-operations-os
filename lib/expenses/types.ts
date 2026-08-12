@@ -86,6 +86,33 @@ export type LandlordExpenseEditRequestItem = {
     proofUrl?: string | null;
 };
 
+export type SalaryPaymentRequestItem = {
+    id: string;
+    employeeId: string;
+    employeeName: string;
+    position: string | null;
+    payrollOfficeId: string | null;
+    payrollOfficeName: string;
+    requestingOfficeId: string | null;
+    requestingOfficeName: string;
+    monthKey: string;
+    salaryDueDate: string | null;
+    monthlySalary: number;
+    alreadyPaid: number;
+    eligibleSalary: number;
+    requestedAmount: number;
+    salaryAmount: number;
+    advanceAmount: number;
+    paymentMethod: string;
+    reference: string | null;
+    notes: string | null;
+    status: string;
+    requestedByName: string;
+    createdAt: string | null;
+    adminComment: string | null;
+    proofUrl?: string | null;
+};
+
 export type ExpensesPageData = {
     company: CompanyRow | null;
     office: OfficeRow | null;
@@ -154,6 +181,7 @@ export type ExpensesPageData = {
         createdAt: string | null;
         adminComment: string | null;
     }>;
+    salaryPaymentRequests: SalaryPaymentRequestItem[];
     banking: {
         records: Array<{
             id: string;
@@ -330,6 +358,24 @@ export type CreateEmployeeExpenseInput = {
     expenseItem: string;
     note?: string;
     officeId?: string | null;
+};
+
+export type CreateSalaryPaymentInput = {
+    amount: number;
+    backdatingReason?: string | null;
+    employeeId: string;
+    notes?: string | null;
+    officeId?: string | null;
+    paymentMethod: string;
+    reference?: string | null;
+    salaryMonth: string;
+    supportingProof?: ExpenseProofUploadInput | null;
+};
+
+export type DecideSalaryPaymentRequestInput = {
+    requestId: string;
+    decision: "approved" | "rejected";
+    comment?: string;
 };
 
 export type DecideEmployeeExpenseRequestInput = {

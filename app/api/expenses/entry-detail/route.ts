@@ -27,11 +27,45 @@ function isAllRounderEmployee(row: Record<string, unknown>) {
     return [row.employee_assignment_type, row.role, row.job_title].some((value) => normalizedRole(value) === "allrounder");
 }
 
+function isFieldCollectorEmployee(row: Record<string, unknown>) {
+    return [row.employee_assignment_type, row.role, row.job_title, row.position].some((value) => {
+        const normalized = normalizedRole(value);
+        return normalized === "fieldcollector" || normalized === "collector" || normalized === "allrounder";
+    });
+}
+
+function isManagerEmployee(row: Record<string, unknown>) {
+    return [row.role, row.job_title, row.position, row.account_type].some((value) => normalizedRole(value).includes("manager"));
+}
+
 function isEligibleEmployee(row: Record<string, unknown>, activeOfficeId: string | null, canSeeAll: boolean) {
     if (String(row.status ?? "active").toLowerCase() !== "active") return false;
     if (canSeeAll) return true;
     const employeeOfficeId = typeof row.office_id === "string" ? row.office_id : null;
     return Boolean(activeOfficeId && employeeOfficeId === activeOfficeId) || isAllRounderEmployee(row);
+}
+
+function isEligibleSalaryEmployee(row: Record<string, unknown>, activeOfficeId: string | null, canSeeAll: boolean) {
+    if (String(row.status ?? "active").toLowerCase() !== "active") return false;
+    if (canSeeAll) return true;
+    const employeeOfficeId = typeof row.office_id === "string" ? row.office_id : null;
+    return Boolean(activeOfficeId && employeeOfficeId === activeOfficeId) || isFieldCollectorEmployee(row) || isManagerEmployee(row);
+}
+
+function salaryPaymentDay(value: unknown) {
+    const parsed = Math.trunc(amount(value));
+    return Math.min(31, Math.max(1, parsed || 1));
+}
+
+function salaryDueDate(monthKey: string, day: number) {
+    const [year, month] = monthKey.slice(0, 7).split("-").map(Number);
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const safeDay = Math.min(lastDay, Math.max(1, day));
+    return `${monthKey.slice(0, 7)}-${String(safeDay).padStart(2, "0")}`;
+}
+
+function salaryPeriodLabel(monthKey: string) {
+    return new Date(`${monthKey.slice(0, 7)}-01T00:00:00Z`).toLocaleDateString("en-UG", { month: "long", year: "numeric", timeZone: "UTC" });
 }
 
 export async function GET(request: NextRequest) {
@@ -142,6 +176,83 @@ export async function GET(request: NextRequest) {
                     remainingLunchBalance,
                     lastLunchExpenseDate,
                     approvalStatus: pendingToday > 0 ? "Pending approval" : lunchUsedToday > 0 ? "Approved" : "Available",
+                },
+            }, { headers: { "Cache-Control": "no-store" } });
+        }
+
+        if (type === "salary_employee") {
+            const admin = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
+            const salaryMonth = monthStart(request.nextUrl.searchParams.get("salaryMonth") ?? expenseDate);
+            const [employeeResult, bonusRows, expenseRows, advanceRows, fineRows, existingPayments, pendingRows] = await Promise.all([
+                admin
+                    .from("employees")
+                    .select("id, full_name, office_id, role, job_title, phone, email, status, employee_assignment_type, basic_salary, salary_payment_day, salary_receiving_day, offices:office_id(id, office_name, name)")
+                    .eq("company_id", companyId)
+                    .eq("id", id)
+                    .maybeSingle(),
+                admin.from("employee_bonuses").select("amount").eq("company_id", companyId).eq("employee_id", id).eq("month_key", salaryMonth).eq("active", true),
+                admin.from("employee_expenses").select("amount").eq("company_id", companyId).eq("employee_id", id).eq("month_key", salaryMonth).eq("active", true).eq("approved_for_payroll", true),
+                admin.from("employee_advances").select("amount,remaining_balance,status,active").eq("company_id", companyId).eq("employee_id", id).eq("month_key", salaryMonth).eq("active", true),
+                admin.from("employee_fines").select("amount").eq("company_id", companyId).eq("employee_id", id).eq("month_key", salaryMonth).eq("active", true),
+                admin.from("employee_salary_payments").select("paid_amount").eq("company_id", companyId).eq("employee_id", id).eq("month_key", salaryMonth),
+                admin.from("employee_salary_payment_requests").select("id,requested_amount,status,requesting_office_id").eq("company_id", companyId).eq("employee_id", id).eq("month_key", salaryMonth).eq("active", true),
+            ]);
+            if (employeeResult.error) throw new Error(employeeResult.error.message);
+            for (const result of [bonusRows, expenseRows, advanceRows, fineRows, existingPayments]) {
+                if (result.error && !/does not exist|schema cache/i.test(result.error.message ?? "")) throw new Error(result.error.message);
+            }
+            if (pendingRows.error && !/does not exist|schema cache/i.test(pendingRows.error.message ?? "")) throw new Error(pendingRows.error.message);
+            const employee = employeeResult.data as Record<string, unknown> | null;
+            if (!employee) throw new Error("Employee not found.");
+            if (!isEligibleSalaryEmployee(employee, selectedOfficeId, canSeeAll)) {
+                throw new Error("This employee is not available for salary payment from the selected office.");
+            }
+            const office = employee.offices as Record<string, unknown> | null;
+            const bonuses = ((bonusRows.data ?? []) as Array<Record<string, unknown>>).reduce((total, row) => total + amount(row.amount), 0);
+            const expenses = ((expenseRows.data ?? []) as Array<Record<string, unknown>>).reduce((total, row) => total + amount(row.amount), 0);
+            const advanceOutstanding = ((advanceRows.data ?? []) as Array<Record<string, unknown>>)
+                .filter((row) => ["approved", "active", "partially_deducted"].includes(String(row.status ?? "approved").toLowerCase()))
+                .reduce((total, row) => total + Math.max(amount(row.remaining_balance), amount(row.amount)), 0);
+            const fines = ((fineRows.data ?? []) as Array<Record<string, unknown>>).reduce((total, row) => total + amount(row.amount), 0);
+            const monthlySalary = amount(employee.basic_salary);
+            const deductions = expenses + advanceOutstanding + fines;
+            const netSalary = Math.max(0, monthlySalary + bonuses - deductions);
+            const alreadyPaid = ((existingPayments.data ?? []) as Array<Record<string, unknown>>).reduce((total, row) => total + amount(row.paid_amount), 0);
+            const remainingSalary = Math.max(0, netSalary - alreadyPaid);
+            const pendingRequest = ((pendingRows.data ?? []) as Array<Record<string, unknown>>).find((row) => String(row.status ?? "").toLowerCase() === "pending") ?? null;
+            const dueDate = salaryDueDate(salaryMonth, salaryPaymentDay(employee.salary_payment_day ?? employee.salary_receiving_day ?? 1));
+            const status = netSalary <= 0
+                ? "Salary has not yet been configured"
+                : pendingRequest
+                    ? "Pending Admin Approval"
+                    : remainingSalary <= 0
+                        ? "Paid"
+                        : alreadyPaid > 0
+                            ? "Partially Paid"
+                            : "Upcoming";
+            return NextResponse.json({
+                detail: {
+                    id: String(employee.id),
+                    name: String(employee.full_name ?? "Employee"),
+                    position: String(employee.role ?? employee.job_title ?? "Employee"),
+                    officeId: typeof employee.office_id === "string" ? employee.office_id : null,
+                    officeName: String(office?.office_name ?? office?.name ?? "Company Payroll"),
+                    payrollOfficeId: typeof employee.office_id === "string" ? employee.office_id : null,
+                    payrollOfficeName: String(office?.office_name ?? office?.name ?? "Company Payroll"),
+                    submittingOfficeId: selectedOfficeId,
+                    submittingOfficeName: String(context.offices.find((office) => office.id === selectedOfficeId)?.office_name ?? context.offices.find((office) => office.id === selectedOfficeId)?.name ?? context.activeOffice?.office_name ?? context.activeOffice?.name ?? "Submitting office"),
+                    salaryMonth,
+                    salaryMonthLabel: salaryPeriodLabel(salaryMonth),
+                    salaryDueDate: dueDate,
+                    monthlySalary: netSalary,
+                    baseSalary: monthlySalary,
+                    alreadyPaid,
+                    remainingSalary,
+                    salaryAdvanceOutstanding: advanceOutstanding,
+                    previousSalaryAdvanceRecovery: advanceOutstanding,
+                    eligibleAmountNow: remainingSalary,
+                    paymentStatus: status,
+                    pendingSalaryRequestId: pendingRequest?.id ? String(pendingRequest.id) : null,
                 },
             }, { headers: { "Cache-Control": "no-store" } });
         }

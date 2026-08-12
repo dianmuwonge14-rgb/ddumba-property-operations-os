@@ -18,6 +18,7 @@ import type {
     LandlordExpenseEditRequestItem,
     LandlordRow,
     PropertyRow,
+    SalaryPaymentRequestItem,
     UserRow,
 } from "./types";
 
@@ -298,6 +299,16 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
         officeId: selectedOfficeId,
         supabase,
     });
+    const salaryPaymentRequests = await getSalaryPaymentRequests({
+        companyId,
+        employeeById,
+        employeesById: new Map(employees.map((employee) => [employee.id, employee])),
+        isAdmin,
+        officeById,
+        officeId: selectedOfficeId,
+        supabase,
+        userById,
+    });
     const expenseChangeRequests = await getExpenseChangeRequests({
         companyId,
         expensesById: new Map(items.map((expense) => [expense.id, expense])),
@@ -339,6 +350,7 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
         expenseChangeRequests,
         landlordExpenseEditRequests,
         employeeExpenseRequests,
+        salaryPaymentRequests,
         banking: buildBankingSnapshot({
             cashAccounts,
             cashTransactions,
@@ -358,6 +370,69 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
         kpis: calculateKpis(expenses, properties, collections, cashAccounts),
         expenses: items,
     };
+}
+
+async function getSalaryPaymentRequests(input: {
+    companyId: string;
+    employeeById: Map<string, string>;
+    employeesById: Map<string, EmployeeRow>;
+    isAdmin: boolean;
+    officeById: Map<string, string>;
+    officeId: string | null;
+    supabase: { from: (table: string) => any };
+    userById: Map<string, string>;
+}): Promise<SalaryPaymentRequestItem[]> {
+    try {
+        let query = input.supabase
+            .from("employee_salary_payment_requests")
+            .select("*")
+            .eq("company_id", input.companyId)
+            .eq("active", true)
+            .order("created_at", { ascending: false })
+            .limit(100);
+        if (!input.isAdmin && input.officeId) query = query.eq("requesting_office_id", input.officeId);
+        const { data, error } = await query;
+        if (error) {
+            if (/relation .*employee_salary_payment_requests|does not exist|schema cache/i.test(error.message ?? "")) return [];
+            throw new Error(error.message);
+        }
+        return ((data ?? []) as Array<Record<string, unknown>>).map((request) => {
+            const employeeId = String(request.employee_id ?? "");
+            const employee = input.employeesById.get(employeeId) as (EmployeeRow & Record<string, unknown>) | undefined;
+            const payrollOfficeId = typeof request.payroll_office_id === "string" ? request.payroll_office_id : null;
+            const requestingOfficeId = typeof request.requesting_office_id === "string" ? request.requesting_office_id : null;
+            const requestedBy = String(request.requested_by ?? "");
+            return {
+                id: String(request.id),
+                employeeId,
+                employeeName: input.employeeById.get(employeeId) ?? "Employee",
+                position: typeof employee?.role === "string" ? employee.role : typeof employee?.job_title === "string" ? employee.job_title : null,
+                payrollOfficeId,
+                payrollOfficeName: payrollOfficeId ? input.officeById.get(payrollOfficeId) ?? "Payroll office" : "Company payroll",
+                requestingOfficeId,
+                requestingOfficeName: requestingOfficeId ? input.officeById.get(requestingOfficeId) ?? "Office" : "Office",
+                monthKey: String(request.month_key ?? ""),
+                salaryDueDate: typeof request.salary_due_date === "string" ? request.salary_due_date : null,
+                monthlySalary: Number(request.monthly_salary ?? 0),
+                alreadyPaid: Number(request.already_paid ?? 0),
+                eligibleSalary: Number(request.eligible_salary ?? 0),
+                requestedAmount: Number(request.requested_amount ?? 0),
+                salaryAmount: Number(request.salary_amount ?? 0),
+                advanceAmount: Number(request.advance_amount ?? 0),
+                paymentMethod: String(request.payment_method ?? "cash"),
+                reference: typeof request.reference === "string" ? request.reference : null,
+                notes: typeof request.notes === "string" ? request.notes : null,
+                status: String(request.status ?? "pending"),
+                requestedByName: input.userById.get(requestedBy) ?? "User",
+                createdAt: typeof request.created_at === "string" ? request.created_at : null,
+                adminComment: typeof request.admin_comment === "string" ? request.admin_comment : null,
+                proofUrl: typeof request.proof_url === "string" ? request.proof_url : null,
+            };
+        });
+    } catch (error) {
+        console.warn("Salary payment requests could not load:", error instanceof Error ? error.message : error);
+        return [];
+    }
 }
 
 export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters = {}): Promise<ExpenseBalanceReport> {
@@ -749,6 +824,7 @@ function emptyData(): ExpensesPageData {
         expenseChangeRequests: [],
         landlordExpenseEditRequests: [],
         employeeExpenseRequests: [],
+        salaryPaymentRequests: [],
         banking: {
             records: [],
             summaries: [],
