@@ -12,9 +12,10 @@ import {
     resumeLandlordAdvance,
     settleLandlordAdvanceEarly,
 } from "@/app/actions/admin-finance";
-import { createLandlordPaidExpenseRequest, submitLandlordPaymentFromTerminal } from "@/app/actions/expenses";
+import { createLandlordPaidExpenseRequest, submitLandlordExpenseEdit, submitLandlordPaymentFromTerminal } from "@/app/actions/expenses";
 import { runMonthlyLandlordPayableSnapshot } from "@/app/actions/landlords";
 import { EmptyState, PageHero, StatusChip } from "@/components/office/shared/EnterpriseUI";
+import { currentBusinessDate } from "@/lib/business-date";
 import {
     calculateLandlordAdvancePlan,
     type AdvanceInterestMode,
@@ -34,6 +35,7 @@ import {
     summarizeLandlordPayables,
 } from "@/lib/landlord-payables/payment-allocation";
 import type { LandlordAdvanceGroup, LandlordMonthlyPayable, LandlordPayableGroup, LandlordPayablesData, LandlordPaymentApprovalRequest, LandlordPaymentOption, LandlordUnpaidMonthGroup, PaidLandlordPayment } from "@/lib/landlord-payables/types";
+import type { LandlordExpenseEditRequestType } from "@/lib/expenses/types";
 
 type Props = {
     data: LandlordPayablesData;
@@ -109,6 +111,27 @@ function dateLabel(value: string | null | undefined) {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
     return new Intl.DateTimeFormat("en-UG", { day: "2-digit", month: "short", year: "numeric" }).format(date);
+}
+
+function currentBusinessDateValue() {
+    return currentBusinessDate();
+}
+
+function dateDiffDays(fromDate: string, toDate: string) {
+    const from = new Date(`${fromDate}T00:00:00`);
+    const to = new Date(`${toDate}T00:00:00`);
+    return Math.round((to.getTime() - from.getTime()) / 86_400_000);
+}
+
+function landlordDueStatus(dueDate: string | null | undefined, outstandingBalance: number, paidStatus?: string | null) {
+    if (String(paidStatus ?? "").toLowerCase() === "paid" || outstandingBalance <= 0) return { label: "Paid", tone: "green" as const };
+    const date = String(dueDate ?? "").slice(0, 10);
+    if (!date) return { label: "No Due Date", tone: "slate" as const };
+    const diff = dateDiffDays(currentBusinessDateValue(), date);
+    if (diff < 0) return { label: `Overdue by ${Math.abs(diff)} day${Math.abs(diff) === 1 ? "" : "s"}`, tone: "red" as const };
+    if (diff === 0) return { label: "Due Today", tone: "orange" as const };
+    if (diff === 1) return { label: "Due Tomorrow", tone: "blue" as const };
+    return { label: `Due in ${diff} days`, tone: "blue" as const };
 }
 
 function printLandlordReceipt() {
@@ -309,6 +332,7 @@ export default function LandlordPaymentsConsole({ data }: Props) {
                         selected={selected}
                         selectedAdvanceGroup={advanceGroups.find((group) => group.landlordId === selected?.landlordId) ?? null}
                         selectedOption={landlords.find((landlord) => landlord.id === selected?.landlordId) ?? null}
+                        isReadOnlyManager={data.canAccessAllOffices && !data.canManage}
                         setMessage={setMessage}
                         onSearchChange={setLandlordSearch}
                         onSelect={(landlordId) => {
@@ -436,6 +460,7 @@ function ApprovalStatusChip({ status }: { status: string }) {
 function LandlordPaymentEntryPanel({
     canManage,
     currentMonthKey,
+    isReadOnlyManager,
     landlordOptions,
     search,
     searchResults,
@@ -448,6 +473,7 @@ function LandlordPaymentEntryPanel({
 }: {
     canManage: boolean;
     currentMonthKey: string;
+    isReadOnlyManager: boolean;
     landlordOptions: LandlordPaymentOption[];
     search: string;
     searchResults: Array<{ group: LandlordPayableGroup; option?: LandlordPaymentOption; searchText: string }>;
@@ -467,6 +493,7 @@ function LandlordPaymentEntryPanel({
     const [notes, setNotes] = useState("");
     const [advanceRecoveryMode, setAdvanceRecoveryMode] = useState<"none" | "full" | "custom">("none");
     const [customAdvanceRecovery, setCustomAdvanceRecovery] = useState("");
+    const [landlordEditModal, setLandlordEditModal] = useState<null | { requestType: LandlordExpenseEditRequestType }>(null);
     const [localMessage, setLocalMessage] = useState("");
     const [lastSubmission, setLastSubmission] = useState<{
         advanceAmount: number;
@@ -558,6 +585,9 @@ function LandlordPaymentEntryPanel({
     const riskLabel = amountEntered <= 0 ? "Low input readiness" : allocation.advanceAmount > 0 ? "Advance agreement required" : remainingAfterPayment > 0 ? "Outstanding remains" : "Balanced payment";
     const isSuccessMessage = Boolean(localMessage) && /recorded|sent/i.test(localMessage) && !/unable|error|select|enter/i.test(localMessage);
     const submitLabel = canManage ? "Submit Landlord Payment" : "Send for Admin Approval";
+    const selectedPaymentDueDate = selectedOption?.paymentDueDate ?? null;
+    const cardOutstandingBalance = Math.max(0, summary.totalOutstandingPayable || selected?.totalOutstanding || selectedOption?.outstandingBalance || 0);
+    const selectedDueStatus = landlordDueStatus(selectedPaymentDueDate, cardOutstandingBalance, currentPaymentStatus);
 
     function submitPayment() {
         if (!selected) {
@@ -639,6 +669,12 @@ function LandlordPaymentEntryPanel({
         });
     }
 
+    function onLandlordEditDone(message: string) {
+        setLocalMessage(message);
+        setMessage(message);
+        setLandlordEditModal(null);
+    }
+
     return (
         <section className="overflow-hidden rounded-[2rem] border border-slate-200 bg-slate-50 shadow-2xl shadow-slate-200/70">
             <div className="relative overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(34,197,94,0.28),transparent_34%),linear-gradient(135deg,#061826,#0f2f2a_44%,#0f172a)] p-5 text-white md:p-6">
@@ -660,6 +696,33 @@ function LandlordPaymentEntryPanel({
                         <PremiumHeaderStat label="Mode" value={canManage ? "Admin Direct" : "Office Approval"} tone={canManage ? "text-emerald-100" : "text-blue-100"} />
                     </div>
                 </div>
+                {selected ? (
+                    <div className="relative z-10 mt-5 rounded-[1.75rem] border border-white/10 bg-white/10 p-4 shadow-xl shadow-slate-950/10 backdrop-blur">
+                        <div className="grid gap-3 lg:grid-cols-[repeat(3,minmax(0,1fr))]">
+                            <PremiumHeaderStat label="Outstanding Balance" value={money(cardOutstandingBalance)} tone="text-white" />
+                            <PremiumHeaderStat label="Payment Due Date" value={dateLabel(selectedPaymentDueDate)} tone="text-white" />
+                            <div className="min-w-0 rounded-2xl border border-white/15 bg-white/10 px-3 py-2 shadow-lg shadow-slate-950/10">
+                                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">Due Status</p>
+                                <div className="mt-1"><StatusChip label={selectedDueStatus.label} tone={selectedDueStatus.tone} /></div>
+                            </div>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                            <a href={`/office/landlords?landlord=${selected.landlordId}`} className="rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-black text-white hover:bg-white/15">View Details</a>
+                            {!isReadOnlyManager ? (
+                                <>
+                                    <button type="button" onClick={() => setLandlordEditModal({ requestType: "landlord_outstanding_balance_edit" })} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-950 shadow-lg shadow-slate-950/10 hover:bg-slate-100">
+                                        {canManage ? "Edit Outstanding Balance" : "Request Balance Change"}
+                                    </button>
+                                    <button type="button" onClick={() => setLandlordEditModal({ requestType: "landlord_payment_date_edit" })} className="rounded-xl border border-cyan-200 bg-cyan-100 px-3 py-2 text-xs font-black text-slate-950 shadow-lg shadow-slate-950/10 hover:bg-cyan-50">
+                                        {canManage ? (selectedPaymentDueDate ? "Change Due Date" : "Set Due Date") : (selectedPaymentDueDate ? "Request Due Date Change" : "Request Due Date")}
+                                    </button>
+                                </>
+                            ) : null}
+                            <button type="button" onClick={() => document.getElementById("monthly-ledger")?.scrollIntoView({ behavior: "smooth", block: "start" })} className="rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-black text-white hover:bg-white/15">Payment History</button>
+                            {isReadOnlyManager ? <span className="rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-black text-white">View only</span> : null}
+                        </div>
+                    </div>
+                ) : null}
             </div>
 
             <div className="grid grid-cols-1 gap-5 p-4 md:p-5 2xl:grid-cols-[minmax(330px,0.95fr)_minmax(0,1.25fr)]">
@@ -956,6 +1019,18 @@ function LandlordPaymentEntryPanel({
                     </div>
                 </div>
             ) : null}
+            {selected && selectedOption && landlordEditModal ? (
+                <LandlordCardEditModal
+                    canManage={canManage}
+                    currentOutstandingBalance={cardOutstandingBalance}
+                    currentPaymentDueDate={selectedPaymentDueDate}
+                    landlord={selected}
+                    officeId={selectedOfficeId ?? selectedOption.officeId}
+                    onClose={() => setLandlordEditModal(null)}
+                    onDone={onLandlordEditDone}
+                    requestType={landlordEditModal.requestType}
+                />
+            ) : null}
         </section>
     );
 }
@@ -966,6 +1041,139 @@ function PremiumHeaderStat({ label, value, tone = "text-white" }: { label: strin
             <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">{label}</p>
             <p className={`mt-1 truncate text-sm font-black ${tone}`}>{value}</p>
         </div>
+    );
+}
+
+function LandlordCardEditModal({
+    canManage,
+    currentOutstandingBalance,
+    currentPaymentDueDate,
+    landlord,
+    officeId,
+    onClose,
+    onDone,
+    requestType,
+}: {
+    canManage: boolean;
+    currentOutstandingBalance: number;
+    currentPaymentDueDate: string | null;
+    landlord: LandlordPayableGroup;
+    officeId: string | null;
+    onClose: () => void;
+    onDone: (message: string) => void;
+    requestType: LandlordExpenseEditRequestType;
+}) {
+    const isBalance = requestType === "landlord_outstanding_balance_edit";
+    const currentValue = isBalance ? currentOutstandingBalance : currentPaymentDueDate ?? "";
+    const [newValue, setNewValue] = useState(String(currentValue ?? ""));
+    const [reason, setReason] = useState("");
+    const [proofUrl, setProofUrl] = useState("");
+    const [confirming, setConfirming] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [isPending, startTransition] = useTransition();
+    const difference = isBalance ? numeric(newValue) - currentOutstandingBalance : 0;
+    const title = isBalance ? "Edit Outstanding Balance" : canManage ? "Set / Change Landlord Payment Due Date" : "Request Payment Due Date Change";
+
+    function save() {
+        if (!reason.trim()) {
+            setError("Reason is required.");
+            return;
+        }
+        if (canManage && !confirming) {
+            setConfirming(true);
+            return;
+        }
+        setError(null);
+        startTransition(async () => {
+            try {
+                const result = await submitLandlordExpenseEdit({
+                    effectiveDate: currentBusinessDateValue(),
+                    effectiveMonth: currentBusinessDateValue().slice(0, 7),
+                    landlordId: landlord.landlordId,
+                    newValue: isBalance ? numeric(newValue) : newValue,
+                    officeId,
+                    oldValue: currentValue || null,
+                    proofUrl: proofUrl.trim() || null,
+                    reason: reason.trim(),
+                    requestType,
+                });
+                onDone(result.direct
+                    ? `${title} applied by Admin.`
+                    : `${title} request sent for Admin approval.`);
+            } catch (saveError) {
+                setError(saveError instanceof Error ? saveError.message : "Landlord card change could not be saved.");
+            }
+        });
+    }
+
+    return (
+        <div className="fixed inset-0 z-[160] overflow-auto bg-slate-950/70 p-4 backdrop-blur-sm">
+            <div className="mx-auto my-8 max-w-3xl overflow-hidden rounded-[28px] bg-white shadow-2xl shadow-slate-950/30">
+                <div className="flex items-start justify-between gap-4 bg-slate-950 p-5 text-white">
+                    <div>
+                        <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200">{canManage ? "Admin direct landlord edit" : "Landlord edit approval request"}</p>
+                        <h2 className="mt-2 text-2xl font-black">{title}</h2>
+                        <p className="mt-1 text-sm font-bold text-slate-300">{landlord.landlordName} · {landlord.officeName}</p>
+                    </div>
+                    <button type="button" disabled={isPending} onClick={onClose} className="rounded-xl bg-white/10 px-4 py-2 text-sm font-black text-white hover:bg-white/15 disabled:opacity-40">Close</button>
+                </div>
+                <div className="grid gap-3 p-5 md:grid-cols-2">
+                    <ModalField label="Landlord">
+                        <input readOnly value={landlord.landlordName} className="field" />
+                    </ModalField>
+                    <ModalField label="Office">
+                        <input readOnly value={landlord.officeName} className="field" />
+                    </ModalField>
+                    <ModalField label={isBalance ? "Current Outstanding Balance" : "Current Payment Due Date"}>
+                        <input readOnly value={isBalance ? money(currentOutstandingBalance) : dateLabel(currentPaymentDueDate)} className="field" />
+                    </ModalField>
+                    <ModalField label={isBalance ? (canManage ? "New Outstanding Balance" : "Requested New Balance") : "Requested New Payment Due Date"}>
+                        <input type={isBalance ? "number" : "date"} value={newValue} onChange={(event) => setNewValue(event.target.value)} className="field" />
+                    </ModalField>
+                    {isBalance ? (
+                        <ModalField label="Difference">
+                            <input readOnly value={money(difference)} className="field" />
+                        </ModalField>
+                    ) : null}
+                    <div className="md:col-span-2">
+                        <ModalField label="Reason - required">
+                            <textarea value={reason} onChange={(event) => setReason(event.target.value)} className="min-h-28 w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
+                        </ModalField>
+                    </div>
+                    <div className="md:col-span-2">
+                        <ModalField label="Optional proof">
+                            <input value={proofUrl} onChange={(event) => setProofUrl(event.target.value)} placeholder="Paste proof link or reference, optional" className="field" />
+                        </ModalField>
+                    </div>
+                </div>
+                {confirming ? (
+                    <div className="mx-5 rounded-3xl border border-blue-200 bg-blue-50 p-4">
+                        <p className="text-xs font-black uppercase tracking-wide text-blue-700">Confirm Admin direct change</p>
+                        <p className="mt-2 text-sm font-black text-slate-950">
+                            {isBalance
+                                ? `Change landlord outstanding balance from ${money(currentOutstandingBalance)} to ${money(newValue)}?`
+                                : `Change Landlord Payment Due Date from ${dateLabel(currentPaymentDueDate)} to ${dateLabel(newValue)}?`}
+                        </p>
+                    </div>
+                ) : null}
+                {error ? <p className="mx-5 rounded-2xl bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</p> : null}
+                <div className="flex flex-wrap justify-end gap-2 p-5">
+                    <button type="button" disabled={isPending} onClick={confirming ? () => setConfirming(false) : onClose} className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700 disabled:opacity-40">{confirming ? "Back" : "Cancel"}</button>
+                    <button type="button" disabled={isPending} onClick={save} className="rounded-xl bg-blue-700 px-4 py-2 text-sm font-black text-white disabled:opacity-40">
+                        {isPending ? "Saving..." : canManage ? confirming ? "Confirm Change" : "Save Change" : "Request Admin Approval"}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function ModalField({ children, label }: { children: ReactNode; label: string }) {
+    return (
+        <label className="block">
+            <span className="text-xs font-black uppercase tracking-wide text-slate-500">{label}</span>
+            <div className="mt-1">{children}</div>
+        </label>
     );
 }
 

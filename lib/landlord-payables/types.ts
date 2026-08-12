@@ -189,6 +189,8 @@ export type LandlordPaymentOption = {
     officeId: string | null;
     officeName: string;
     phone?: string | null;
+    paymentDueDate?: string | null;
+    outstandingBalance?: number;
     searchText?: string | null;
     roomNumbersText?: string | null;
     locationText?: string | null;

@@ -25,6 +25,30 @@ test("landlord payments page previews allocation using shared payable calculator
   assert.match(source, /Advance is created only after every genuine unpaid balance becomes zero/);
 });
 
+test("landlord cards expose outstanding balance and payment due date management", () => {
+  assert.match(source, /Outstanding Balance/);
+  assert.match(source, /Payment Due Date/);
+  assert.match(source, /Due Status/);
+  assert.match(source, /Edit Outstanding Balance/);
+  assert.match(source, /Request Balance Change/);
+  assert.match(source, /Set Due Date/);
+  assert.match(source, /Change Due Date/);
+  assert.match(source, /Request Due Date/);
+  assert.match(source, /Request Due Date Change/);
+  assert.match(source, /Payment History/);
+  assert.match(source, /LandlordCardEditModal/);
+  assert.match(source, /submitLandlordExpenseEdit/);
+  assert.match(source, /landlord_outstanding_balance_edit/);
+  assert.match(source, /landlord_payment_date_edit/);
+  assert.match(source, /Request Admin Approval/);
+  assert.match(source, /Save Change/);
+  assert.match(source, /isReadOnlyManager \? <span/);
+  assert.match(dataSource, /payment_date/);
+  assert.match(dataSource, /balance_remaining/);
+  assert.match(dataSource, /paymentDueDate/);
+  assert.match(dataSource, /outstandingBalance/);
+});
+
 test("landlord payment receipt workflow appears only after successful direct payment", () => {
   assert.match(source, /lastSubmission/);
   assert.match(source, /LandlordPaymentReceiptPreview/);

@@ -161,7 +161,7 @@ export async function getLandlordPayablesData(): Promise<LandlordPayablesData> {
     const [payablesResult, advancesResult, landlordsResult, officesResult, roomsResult, paymentsResult, approvalRequestsResult, paymentDetailsResult] = await Promise.all([
         payablesQuery,
         advancesQuery,
-        db.from("landlords").select("id, full_name, phone").eq("company_id", companyId).order("full_name", { ascending: true }),
+        db.from("landlords").select("id, full_name, phone, payment_date, balance_remaining").eq("company_id", companyId).order("full_name", { ascending: true }),
         db.from("offices").select("id, name").eq("company_id", companyId).order("name", { ascending: true }),
         roomsQuery,
         paymentsQuery,
@@ -183,7 +183,7 @@ export async function getLandlordPayablesData(): Promise<LandlordPayablesData> {
         name: office.name ?? "Office",
     }));
     const officeById = new Map(offices.map((office) => [office.id, office.name]));
-    const landlordRows = (landlordsResult.data ?? []) as Array<{ id: string; full_name: string | null; phone?: string | null }>;
+    const landlordRows = (landlordsResult.data ?? []) as Array<{ id: string; full_name: string | null; phone?: string | null; payment_date?: string | null; balance_remaining?: number | string | null }>;
     const landlordById = new Map(landlordRows.map((landlord) => [landlord.id, landlord.full_name ?? "Landlord"]));
     const searchIndexResult = await safeRows(
         db
@@ -324,6 +324,8 @@ export async function getLandlordPayablesData(): Promise<LandlordPayablesData> {
                 name: landlord.full_name ?? "Landlord",
                 officeId,
                 officeName: officeId ? officeById.get(officeId) ?? String(searchIndex?.office_name ?? "Office") : String(searchIndex?.office_name ?? "Office"),
+                outstandingBalance: amount(landlord.balance_remaining),
+                paymentDueDate: typeof landlord.payment_date === "string" ? landlord.payment_date.slice(0, 10) : null,
                 phone: landlord.phone ?? (typeof searchIndex?.phone === "string" ? searchIndex.phone : null),
                 locationText: typeof searchIndex?.location_text === "string" ? searchIndex.location_text : null,
                 roomNumbersText: typeof searchIndex?.room_numbers_text === "string" ? searchIndex.room_numbers_text : null,
