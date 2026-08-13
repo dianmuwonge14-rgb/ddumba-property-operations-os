@@ -116,6 +116,8 @@ export type SalaryPaymentRequestItem = {
 export type ExpensesPageData = {
     company: CompanyRow | null;
     office: OfficeRow | null;
+    preparedByName: string | null;
+    preparedByRole: string | null;
     offices: Array<{ id: string; name: string }>;
     categories: ExpenseCategoryRow[];
     properties: PropertyRow[];
@@ -323,6 +325,7 @@ export type CreateLandlordPaidExpenseRequestInput = {
     paymentMethod?: string;
     paymentMonth?: string;
     notes?: string;
+    supportingProof?: ExpenseProofUploadInput | null;
 };
 
 export type EmployeeExpensePreview = {
@@ -392,6 +395,7 @@ export type DecideLandlordPaidExpenseRequestInput = {
 
 export type LandlordExpenseEditRequestType =
     | "landlord_outstanding_balance_edit"
+    | "landlord_advance_balance_edit"
     | "landlord_payment_date_edit";
 
 export type SubmitLandlordExpenseEditInput = {

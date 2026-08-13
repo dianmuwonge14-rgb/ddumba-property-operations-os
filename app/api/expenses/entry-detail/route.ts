@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isCompanyOperationalManager, requirePermission } from "@/lib/auth/permissions";
+import { normalizeSettlementTiming, summarizeLandlordPayables } from "@/lib/landlord-payables/payment-allocation";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -66,6 +67,32 @@ function salaryDueDate(monthKey: string, day: number) {
 
 function salaryPeriodLabel(monthKey: string) {
     return new Date(`${monthKey.slice(0, 7)}-01T00:00:00Z`).toLocaleDateString("en-UG", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+function currentSettlementMonth() {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
+function monthLabel(value: string | null | undefined) {
+    if (!value) return null;
+    return new Date(`${value.slice(0, 7)}-01T00:00:00Z`).toLocaleDateString("en-UG", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+function landlordAdvanceRemaining(row: Record<string, unknown>) {
+    return Math.max(
+        amount(row.remaining_total_balance),
+        amount(row.remaining_balance),
+        amount(row.advance_amount) - amount(row.deducted_amount),
+        0,
+    );
+}
+
+function activeLandlordAdvance(row: Record<string, unknown>) {
+    const status = String(row.status ?? "pending").toLowerCase();
+    const lifecycle = String(row.lifecycle_status ?? "active").toLowerCase();
+    return !["fully_deducted", "cleared", "cancelled", "rejected", "voided"].includes(status)
+        && !["cleared", "cancelled", "rejected", "voided"].includes(lifecycle);
 }
 
 export async function GET(request: NextRequest) {
@@ -267,7 +294,7 @@ export async function GET(request: NextRequest) {
         }
 
         if (type === "landlord") {
-            const [landlordResult, roomsResult, payablesResult, advancesResult, paymentsResult, adjustmentResult] = await Promise.all([
+            const [landlordResult, roomsResult, payablesResult, advancesResult, paymentsResult, adjustmentResult, propertyResult] = await Promise.all([
                 db
                     .from("landlords")
                     .select("*")
@@ -277,7 +304,7 @@ export async function GET(request: NextRequest) {
                 (() => {
                     let query = db
                         .from("rooms")
-                        .select("id, office_id, status, monthly_rent, outstanding_balance, offices:office_id(id, office_name, name)")
+                        .select("id, office_id, property_id, room_number, status, monthly_rent, outstanding_balance, updated_at, offices:office_id(id, office_name, name)")
                         .eq("company_id", companyId)
                         .eq("landlord_id", id)
                         .not("status", "in", "(archived,inactive,deleted,removed)");
@@ -315,6 +342,10 @@ export async function GET(request: NextRequest) {
                     .order("effective_date", { ascending: false, nullsFirst: false })
                     .order("created_at", { ascending: false, nullsFirst: false })
                     .limit(1),
+                db
+                    .from("properties")
+                    .select("id, property_name, name, location")
+                    .eq("company_id", companyId),
             ]);
             if (landlordResult.error) throw new Error(landlordResult.error.message);
             if (roomsResult.error) throw new Error(roomsResult.error.message);
@@ -322,6 +353,7 @@ export async function GET(request: NextRequest) {
             if (advancesResult.error && !/does not exist|schema cache/i.test(advancesResult.error.message ?? "")) throw new Error(advancesResult.error.message);
             if (paymentsResult.error && !/does not exist|schema cache/i.test(paymentsResult.error.message ?? "")) throw new Error(paymentsResult.error.message);
             if (adjustmentResult.error && !/does not exist|schema cache/i.test(adjustmentResult.error.message ?? "")) throw new Error(adjustmentResult.error.message);
+            if (propertyResult.error && !/does not exist|schema cache/i.test(propertyResult.error.message ?? "")) throw new Error(propertyResult.error.message);
             const landlord = landlordResult.data as Record<string, unknown> | null;
             if (!landlord) throw new Error("Landlord not found.");
             const rooms = (roomsResult.data ?? []) as Array<Record<string, unknown>>;
@@ -329,18 +361,48 @@ export async function GET(request: NextRequest) {
             const firstRoom = rooms[0];
             const office = firstRoom?.offices as Record<string, unknown> | null;
             const payables = ((payablesResult.data ?? []) as Array<Record<string, unknown>>).filter(activeStatus);
-            const ledgerOutstandingBalance = payables.reduce((total, row) => total + amount(row.unpaid_balance ?? row.outstanding_amount ?? row.balance_due ?? row.net_payable), 0);
+            const activeAdvances = ((advancesResult.data ?? []) as Array<Record<string, unknown>>).filter(activeLandlordAdvance);
+            const advanceBalance = activeAdvances.reduce((total, row) => total + landlordAdvanceRemaining(row), 0);
+            const currentMonth = currentSettlementMonth();
+            const settlementTiming = normalizeSettlementTiming(landlord.settlement_timing);
+            const summary = summarizeLandlordPayables({
+                activeAdvanceBalance: advanceBalance,
+                currentMonth,
+                payables,
+                settlementTiming,
+            });
+            const ledgerOutstandingBalance = summary.totalOutstandingPayable;
             const latestAdjustment = ((adjustmentResult.data ?? []) as Array<Record<string, unknown>>)[0] ?? null;
             const outstandingBalance = latestAdjustment ? amount(latestAdjustment.new_balance) : ledgerOutstandingBalance;
-            const currentPayable = payables[0] ?? {};
-            const advanceBalance = ((advancesResult.data ?? []) as Array<Record<string, unknown>>)
-                .filter(activeStatus)
-                .reduce((total, row) => total + amount(row.remaining_balance ?? row.balance ?? row.amount), 0);
+            const currentPayable = payables.find((row) => String(row.settlement_month ?? "").slice(0, 10) === summary.payablePeriod) ?? payables[0] ?? {};
             const lastPayment = ((paymentsResult.data ?? []) as Array<Record<string, unknown>>)[0] ?? null;
             const fullRentRoll = rooms.reduce((total, room) => total + amount(room.monthly_rent), 0);
             const occupiedRooms = rooms.filter((room) => !String(room.status ?? "").toLowerCase().includes("vacant") && !String(room.status ?? "").toLowerCase().includes("vacated")).length;
             const vacantRooms = rooms.filter((room) => String(room.status ?? "").toLowerCase().includes("vacant")).length;
             const vacatedWithDebt = rooms.filter((room) => String(room.status ?? "").toLowerCase().includes("vacated") || amount(room.outstanding_balance) > 0 && String(room.status ?? "").toLowerCase().includes("debt")).length;
+            const propertiesById = new Map(((propertyResult.data ?? []) as Array<Record<string, unknown>>).map((property) => [String(property.id), property]));
+            const vacantRoomDetails = rooms
+                .filter((room) => String(room.status ?? "").toLowerCase().includes("vacant"))
+                .map((room) => {
+                    const property = typeof room.property_id === "string" ? propertiesById.get(room.property_id) : null;
+                    return {
+                        id: String(room.id),
+                        monthlyRent: amount(room.monthly_rent),
+                        outstandingTenantDebt: amount(room.outstanding_balance),
+                        previousTenant: "",
+                        property: String(property?.property_name ?? property?.name ?? property?.location ?? "Property"),
+                        roomNumber: String(room.room_number ?? "Room"),
+                        vacantSince: typeof room.updated_at === "string" ? String(room.updated_at).slice(0, 10) : null,
+                    };
+                });
+            const deductionRows = [
+                { type: "Commission", amount: amount(currentPayable.commission_amount), period: summary.payablePeriod, reason: "Landlord commission", date: String(currentPayable.updated_at ?? currentPayable.created_at ?? "").slice(0, 10), reference: String(currentPayable.id ?? "") },
+                { type: "Vacant Room Deduction", amount: amount(currentPayable.vacant_room_deductions), period: summary.payablePeriod, reason: "Vacant rooms deducted from payable", date: String(currentPayable.updated_at ?? currentPayable.created_at ?? "").slice(0, 10), reference: String(currentPayable.id ?? "") },
+                { type: "Unrecovered Tenant Debt", amount: amount(currentPayable.vacated_tenant_debt_deductions), period: summary.payablePeriod, reason: "Unrecovered tenant debt", date: String(currentPayable.updated_at ?? currentPayable.created_at ?? "").slice(0, 10), reference: String(currentPayable.id ?? "") },
+                { type: "Previous Advance Recovery", amount: amount(currentPayable.advance_deductions), period: summary.payablePeriod, reason: "Landlord advance recovery", date: String(currentPayable.updated_at ?? currentPayable.created_at ?? "").slice(0, 10), reference: String(currentPayable.id ?? "") },
+                { type: "Other Approved Deduction", amount: amount(currentPayable.other_deductions), period: summary.payablePeriod, reason: String(currentPayable.reasons_notes ?? currentPayable.accounting_notes ?? "Other approved deduction"), date: String(currentPayable.updated_at ?? currentPayable.created_at ?? "").slice(0, 10), reference: String(currentPayable.id ?? "") },
+            ].filter((row) => row.amount > 0);
+            const totalDeductions = deductionRows.reduce((total, row) => total + row.amount, 0);
             return NextResponse.json({
                 detail: {
                     id: String(landlord.id),
@@ -353,16 +415,27 @@ export async function GET(request: NextRequest) {
                     lastPaymentDate: lastPayment?.paid_at ? String(lastPayment.paid_at).slice(0, 10) : null,
                     landlordPaymentDate: String(landlord.payment_date ?? landlord.landlord_payment_date ?? landlord.preferred_payment_date ?? expenseDate).slice(0, 10),
                     landlordBillingDate: String(landlord.billing_date ?? landlord.landlord_billing_date ?? `${expenseDate.slice(0, 7)}-01`).slice(0, 10),
+                    paymentDueDate: String(landlord.payment_date ?? landlord.landlord_payment_date ?? landlord.preferred_payment_date ?? "").slice(0, 10) || null,
                     commissionType: String(landlord.commission_calculation_mode ?? landlord.commission_input_mode ?? ""),
                     commissionRate: Number.isFinite(Number(landlord.commission_rate)) ? Number(landlord.commission_rate) : null,
                     fullRentRoll: amount(currentPayable.full_rent_roll ?? currentPayable.gross_rent ?? fullRentRoll),
-                    netPayable: amount(currentPayable.net_payable ?? currentPayable.amount_due ?? outstandingBalance),
+                    netPayable: summary.currentMonthNetPayable || amount(currentPayable.net_payable ?? currentPayable.amount_due ?? outstandingBalance),
                     portfolioValue: fullRentRoll,
                     totalRooms: rooms.length,
                     occupiedRooms,
                     vacantRooms,
                     vacatedWithDebt,
                     advanceBalance,
+                    currentMonthPendingSettlement: summary.currentMonthPendingSettlement,
+                    deductionBreakdown: deductionRows,
+                    lastPaymentReference: typeof lastPayment?.payout_reference === "string" ? lastPayment.payout_reference : typeof lastPayment?.reference === "string" ? lastPayment.reference : null,
+                    payablePeriod: summary.payablePeriod,
+                    payablePeriodLabel: monthLabel(summary.payablePeriod),
+                    portfolioGross: amount(currentPayable.full_rent_roll ?? fullRentRoll),
+                    settlementCycleLabel: settlementTiming === "current_month" ? "Current Month" : "Previous Month",
+                    settlementTiming,
+                    totalDeductions,
+                    vacantRoomDetails,
                     paymentStatus: outstandingBalance > 0 ? "Payable outstanding" : advanceBalance > 0 ? "Advance active" : "Settled",
                 },
             }, { headers: { "Cache-Control": "no-store" } });

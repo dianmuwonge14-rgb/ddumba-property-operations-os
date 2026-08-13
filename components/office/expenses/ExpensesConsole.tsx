@@ -155,6 +155,8 @@ type EntrySearchResult = {
     payrollOfficeId?: string | null;
     payrollOfficeName?: string | null;
     location?: string | null;
+    numberOfRooms?: number;
+    outstandingBalance?: number;
     phone?: string | null;
     role?: string | null;
     employeeCode?: string | null;
@@ -168,6 +170,7 @@ type EntrySearchResult = {
     salaryDueDate?: string | null;
     paymentStatus?: string;
     pendingSalaryRequestId?: string | null;
+    settlementTiming?: string | null;
 };
 type EmployeeLunchDetail = EntrySearchResult & {
     position: string;
@@ -199,23 +202,51 @@ type EmployeeLunchDetail = EntrySearchResult & {
     pendingSalaryRequestId?: string | null;
 };
 type LandlordEntryDetail = EntrySearchResult & {
+    currentMonthPendingSettlement?: number;
+    deductionBreakdown?: Array<{
+        amount: number;
+        date: string | null;
+        period: string | null;
+        reason: string;
+        reference: string;
+        type: string;
+    }>;
     outstandingBalance: number;
     lastPaymentAmount: number;
     lastPaymentDate: string | null;
     landlordPaymentDate: string | null;
     landlordBillingDate: string | null;
+    lastPaymentReference?: string | null;
+    payablePeriod?: string | null;
+    payablePeriodLabel?: string | null;
+    paymentDueDate?: string | null;
     commissionType: string | null;
     commissionRate: number | null;
     fullRentRoll: number;
     netPayable: number;
+    portfolioGross?: number;
     portfolioValue: number;
+    settlementCycleLabel?: string | null;
+    settlementTiming?: string | null;
     totalRooms: number;
     occupiedRooms: number;
     vacantRooms: number;
     vacatedWithDebt: number;
     advanceBalance: number;
+    totalDeductions?: number;
+    vacantRoomDetails?: Array<{
+        id: string;
+        monthlyRent: number;
+        outstandingTenantDebt: number;
+        previousTenant: string;
+        property: string;
+        roomNumber: string;
+        vacantSince: string | null;
+    }>;
     paymentStatus: string;
 };
+
+type LandlordWorkspaceModal = "deductions" | "vacant_rooms" | "report" | null;
 
 function workflowCardMeta(mode: ExpenseEntryMode) {
     switch (mode) {
@@ -406,6 +437,7 @@ function expenseField(expense: ExpenseItem, key: keyof ExpenseChangePayload) {
 }
 
 export default function ExpensesConsole({ canManage, data, initialFilters, isAdmin, isManager = false }: Props) {
+    const router = useRouter();
     const [filters, setFilters] = useState<ExpenseFilters>({
         mode: initialFilters?.mode ?? "single_date",
         singleDate: initialFilters?.singleDate ?? today(),
@@ -474,6 +506,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
     const [expenseModal, setExpenseModal] = useState<null | { expense: ExpenseItem; mode: ExpenseModalMode }>(null);
     const [expenseStatusFilter, setExpenseStatusFilter] = useState<ExpenseStatusFilter>("active");
     const [landlordEditModal, setLandlordEditModal] = useState<LandlordEditModalState | null>(null);
+    const [landlordWorkspaceModal, setLandlordWorkspaceModal] = useState<LandlordWorkspaceModal>(null);
     const [summaryDrilldown, setSummaryDrilldown] = useState<SummaryDrilldownKind | null>(null);
     const [actionMessage, setActionMessage] = useState<string | null>(null);
     const [deleteReason, setDeleteReason] = useState("Admin safe delete");
@@ -860,6 +893,50 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
         setLandlordEditModal({ landlord: selectedLandlordDetail, requestType });
     }
 
+    function openSelectedLandlordPortfolio() {
+        if (!selectedLandlordDetail?.id) {
+            setMessage("Select a landlord first.");
+            return;
+        }
+        router.push(`/office/landlords?landlord=${encodeURIComponent(selectedLandlordDetail.id)}&section=portfolio`);
+    }
+
+    function openLandlordReport() {
+        if (!selectedLandlordDetail) {
+            setMessage("Select a landlord first.");
+            return;
+        }
+        setLandlordWorkspaceModal("report");
+    }
+
+    async function shareLandlordReport() {
+        if (!selectedLandlordDetail) {
+            setMessage("Select a landlord first.");
+            return;
+        }
+        const title = `${selectedLandlordDetail.name} landlord payment report`;
+        const text = [
+            title,
+            `Office: ${selectedLandlordDetail.officeName ?? selectedEntryOfficeName}`,
+            `Settlement Cycle: ${selectedLandlordDetail.settlementCycleLabel ?? "--"}`,
+            `Payable Period: ${selectedLandlordDetail.payablePeriodLabel ?? selectedLandlordDetail.payablePeriod ?? "--"}`,
+            `Outstanding: ${money(selectedLandlordDetail.outstandingBalance)}`,
+            `Amount: ${money(amount || 0)}`,
+            `Payment Method: ${methodLabel(paymentMethod)}`,
+        ].join("\n");
+        try {
+            if (navigator.share) {
+                await navigator.share({ title, text });
+                return;
+            }
+            await navigator.clipboard.writeText(text);
+            setMessage("Landlord e-report summary copied. Use Print Landlord Report to save the full A4 PDF.");
+        } catch {
+            setMessage("Landlord e-report is ready in the report preview. Use Print / Save PDF.");
+            setLandlordWorkspaceModal("report");
+        }
+    }
+
     function applyExpenseListPreset(preset: "today" | "yesterday" | "week" | "month" | "custom_date" | "custom_range" | "all_dates") {
         const todayValue = today();
         if (preset === "today") {
@@ -1092,6 +1169,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                             : "Landlord has already received what they are supposed to get for this month. Review the warning and click Continue as Advance before submitting.");
                         return;
                     }
+                    const supportingProof = proofFile ? await proofPayloadFromFile(proofFile) : null;
                     const request = await createLandlordPaidExpenseRequest({
                         advanceAgreement: landlordPreview?.advanceAmount && landlordPreview.advanceAmount > 0 ? {
                             ...advanceAgreement,
@@ -1110,6 +1188,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                         paymentMethod,
                         paymentMonth,
                         notes: notes || trimmedItem || undefined,
+                        supportingProof,
                     });
                     flashExpense(String(request.expense_id ?? request.id));
                     setMessage(isAdmin
@@ -1460,13 +1539,13 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                                     setLandlordId("");
                                                     setSelectedLandlordDetail(null);
                                                 }}
-                                                placeholder="Type landlord name..."
+                                                placeholder="Search name, phone, room, property or office..."
                                                 className="h-full min-w-0 flex-1 bg-transparent text-lg font-black text-slate-950 outline-none"
                                             />
                                             {landlordSearch ? <button type="button" onClick={() => { setLandlordSearch(""); setLandlordId(""); setSelectedLandlordDetail(null); setLandlordSearchResults([]); }} className="rounded-full p-1 text-slate-400 hover:bg-white hover:text-slate-700"><X size={16} /></button> : null}
                                         </div>
                                         {landlordSearchResults.length || loadingLandlordSearch ? (
-                                            <div className="absolute z-30 mt-2 max-h-72 w-full overflow-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl shadow-slate-950/20">
+                                            <div className="absolute z-30 mt-2 max-h-96 w-full overflow-auto rounded-3xl border border-slate-200 bg-white p-3 shadow-2xl shadow-slate-950/20">
                                                 {loadingLandlordSearch ? <div className="px-3 py-2 text-sm font-bold text-slate-500">Searching landlords...</div> : null}
                                                 {landlordSearchResults.map((landlord) => (
                                                     <button key={`landlord-search:${landlord.id}:${landlord.officeId ?? "company"}`} type="button" onClick={() => {
@@ -1475,9 +1554,19 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                                         setSelectedLandlordDetail(landlord as LandlordEntryDetail);
                                                         setLandlordSearchResults([]);
                                                         loadEntryDetail("landlord", landlord.id);
-                                                    }} className="block w-full rounded-xl px-3 py-2 text-left hover:bg-blue-50">
-                                                        <p className="text-sm font-black text-slate-950">{landlord.name}</p>
-                                                        <p className="text-xs font-bold text-slate-500">{landlord.officeName ?? "Company"}{landlord.location ? ` · ${landlord.location}` : ""}</p>
+                                                    }} className="mb-2 block w-full rounded-2xl border border-slate-100 bg-gradient-to-br from-white via-slate-50 to-emerald-50/60 p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-lg">
+                                                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                                            <div className="min-w-0">
+                                                                <OverflowSafeText mode="marquee" className="text-sm font-black text-slate-950">{landlord.name}</OverflowSafeText>
+                                                                <p className="mt-1 text-xs font-bold text-slate-500">{landlord.officeName ?? "Company"}{landlord.phone ? ` · ${landlord.phone}` : ""}</p>
+                                                            </div>
+                                                            <span className="rounded-full bg-emerald-600 px-3 py-1 text-[11px] font-black uppercase text-white">Select Landlord</span>
+                                                        </div>
+                                                        <div className="mt-3 grid gap-2 text-xs font-bold text-slate-600 sm:grid-cols-3">
+                                                            <span className="rounded-xl bg-white px-2 py-2">Rooms: {landlord.numberOfRooms ?? 0}</span>
+                                                            <span className="rounded-xl bg-white px-2 py-2">Outstanding: {money(landlord.outstandingBalance ?? 0)}</span>
+                                                            <span className="rounded-xl bg-white px-2 py-2">Cycle: {landlord.settlementTiming === "current_month" ? "Current Month" : "Previous Month"}</span>
+                                                        </div>
                                                     </button>
                                                 ))}
                                                 {!loadingLandlordSearch && !landlordSearchResults.length ? <div className="px-3 py-2 text-sm font-bold text-slate-500">No landlord matches found.</div> : null}
@@ -1500,40 +1589,26 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                     </label>
                                 </div>
                                 {selectedLandlordOption ? (
-                                    <div className="space-y-4">
-                                        {selectedLandlordDetail ? (
-                                            <div className={`rounded-3xl border px-4 py-3 text-sm font-black ${dueStatusClass(landlordPaymentDueStatus(selectedLandlordDetail.landlordPaymentDate, selectedLandlordDetail.outstandingBalance, selectedLandlordDetail.paymentStatus).tone)}`}>
-                                                Landlord Payment Due Date status: {landlordPaymentDueStatus(selectedLandlordDetail.landlordPaymentDate, selectedLandlordDetail.outstandingBalance, selectedLandlordDetail.paymentStatus).label}
-                                            </div>
-                                        ) : null}
-                                        <PremiumCardSection title="Landlord Summary">
-                                            <PremiumEntryCard label="Landlord Name" value={selectedLandlordOption.name} />
-                                            <PremiumEntryCard label="Office" value={selectedLandlordOption.officeName ?? selectedEntryOfficeName} />
-                                            <PremiumEntryCard label="Location" value={selectedLandlordOption.location ?? "--"} />
-                                            <PremiumEntryCard label="Payment Status" value={selectedLandlordDetail?.paymentStatus ?? (landlordPreview ? (landlordPreview.advanceAmount > 0 ? "Review advance" : "Within payable") : "Enter amount")} />
-                                        </PremiumCardSection>
-                                        <PremiumCardSection title="Financial Position" featured>
-                                            <PremiumEntryCard featured label="Outstanding Balance" value={loadingLandlordDetail ? "Loading..." : money(selectedLandlordDetail?.outstandingBalance ?? landlordPreview?.outstandingAmount ?? 0)} actionLabel={isManager ? undefined : "Edit Outstanding Balance"} onAction={isManager ? undefined : () => openLandlordEdit("landlord_outstanding_balance_edit")} />
-                                            <PremiumEntryCard featured label="Net Payable" value={loadingLandlordDetail ? "Loading..." : money(selectedLandlordDetail?.netPayable ?? landlordPreview?.currentNetPayable ?? 0)} />
-                                            <PremiumEntryCard featured label="Last Payment Amount" value={loadingLandlordDetail ? "Loading..." : money(selectedLandlordDetail?.lastPaymentAmount ?? 0)} />
-                                            <PremiumEntryCard featured label="Full Rent Roll" value={money(selectedLandlordDetail?.fullRentRoll ?? 0)} />
-                                            <PremiumEntryCard label="Commission Rate" value={selectedLandlordOption.commissionRate == null ? "--" : `${selectedLandlordOption.commissionRate}%`} />
-                                            <PremiumEntryCard label="Commission Type" value={selectedLandlordOption.commissionType ?? "--"} />
-                                            <PremiumEntryCard label="Advance Balance" value={money(selectedLandlordDetail?.advanceBalance ?? 0)} />
-                                        </PremiumCardSection>
-                                        <PremiumCardSection title="Payment Schedule">
-                                            <PremiumEntryCard label="Last Payment Date" value={selectedLandlordDetail?.lastPaymentDate ?? "--"} />
-                                            <PremiumEntryCard label="Landlord Payment Due Date" value={selectedLandlordDetail?.landlordPaymentDate?.slice(0, 10) ?? "No due date"} actionLabel={isManager ? undefined : "Set / Change"} onAction={isManager ? undefined : () => openLandlordEdit("landlord_payment_date_edit")} />
-                                            <PremiumEntryCard label="Due Date Status" value={selectedLandlordDetail ? landlordPaymentDueStatus(selectedLandlordDetail.landlordPaymentDate, selectedLandlordDetail.outstandingBalance, selectedLandlordDetail.paymentStatus).label : "--"} />
-                                        </PremiumCardSection>
-                                        <PremiumCardSection title="Portfolio">
-                                            <PremiumEntryCard label="Total Rooms" value={String(selectedLandlordDetail?.totalRooms ?? 0)} />
-                                            <PremiumEntryCard label="Occupied Rooms" value={String(selectedLandlordDetail?.occupiedRooms ?? 0)} />
-                                            <PremiumEntryCard label="Vacant Rooms" value={String(selectedLandlordDetail?.vacantRooms ?? 0)} />
-                                            <PremiumEntryCard label="Vacated With Debt" value={String(selectedLandlordDetail?.vacatedWithDebt ?? 0)} />
-                                            <PremiumEntryCard label="Portfolio Value" value={money(selectedLandlordDetail?.portfolioValue ?? 0)} />
-                                        </PremiumCardSection>
-                                    </div>
+                                    <LandlordFinancialWorkspace
+                                        amount={amount}
+                                        dueStatus={selectedLandlordDetail ? landlordPaymentDueStatus(selectedLandlordDetail.paymentDueDate ?? selectedLandlordDetail.landlordPaymentDate, selectedLandlordDetail.outstandingBalance, selectedLandlordDetail.paymentStatus) : null}
+                                        isAdmin={isAdmin}
+                                        isManager={isManager}
+                                        landlord={selectedLandlordDetail}
+                                        loading={loadingLandlordDetail}
+                                        onEditAdvance={() => openLandlordEdit("landlord_advance_balance_edit")}
+                                        onEditDueDate={() => openLandlordEdit("landlord_payment_date_edit")}
+                                        onEditOutstanding={() => openLandlordEdit("landlord_outstanding_balance_edit")}
+                                        onOpenDeductions={() => setLandlordWorkspaceModal("deductions")}
+                                        onOpenPortfolio={openSelectedLandlordPortfolio}
+                                        onOpenReport={openLandlordReport}
+                                        onOpenVacantRooms={() => setLandlordWorkspaceModal("vacant_rooms")}
+                                        onShareReport={shareLandlordReport}
+                                        paymentMethod={paymentMethod}
+                                        preparedBy={data.preparedByName ?? "Current user"}
+                                        companyName={data.company?.name ?? "Ddumba Property Operations OS"}
+                                        selectedOfficeName={selectedEntryOfficeName}
+                                    />
                                 ) : (
                                     <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm font-bold text-slate-500">Search and select a landlord to load payment cards.</div>
                                 )}
@@ -1875,7 +1950,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                             </label>
                         </div>
 
-                        {entryMode === "unauthorised" || isSalaryPaymentMode ? (
+                        {entryMode === "unauthorised" || isSalaryPaymentMode || isLandlordPaidMode ? (
                             <section className="mt-4 rounded-3xl border border-dashed border-blue-200 bg-blue-50/70 p-4">
                                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                     <div className="min-w-0">
@@ -1926,7 +2001,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                         </div>
                                     </div>
                                 ) : (
-                                    <p className="mt-3 rounded-2xl bg-white px-3 py-2 text-xs font-bold text-slate-500">No attachment selected. You can still submit this {isSalaryPaymentMode ? "salary payment request" : "unauthorised expense"}.</p>
+                                    <p className="mt-3 rounded-2xl bg-white px-3 py-2 text-xs font-bold text-slate-500">No attachment selected. You can still submit this {isLandlordPaidMode ? "landlord payment request" : isSalaryPaymentMode ? "salary payment request" : "unauthorised expense"}.</p>
                                 )}
                             </section>
                         ) : null}
@@ -1935,10 +2010,19 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                         <div className="mt-5 flex flex-wrap items-center gap-3">
                             <button type="button" onClick={saveExpense} disabled={!canManage || isPending} className="inline-flex h-13 items-center gap-2 rounded-2xl bg-emerald-600 px-7 text-base font-black text-white shadow-lg shadow-emerald-100 transition hover:-translate-y-0.5 disabled:opacity-40">
                                 {isPending ? <Loader2 className="animate-spin" size={18} /> : <ReceiptText size={18} />}
-                                {isPending ? "Submitting..." : isCashHandoverMode ? "Submit Cash Handover to Admin" : isBankingMode ? "Bank Office Cash" : isLandlordPaidMode ? "Submit Landlord Payment" : isEmployeeExpenseMode ? "Record / Request Lunch" : isSalaryPaymentMode ? (isAdmin ? "Record Salary Payment" : "Request Salary Payment") : entryMode === "unauthorised" ? "Submit for Admin Approval" : "Record / Request Authorised Expense"}
+                                {isPending ? "Submitting..." : isCashHandoverMode ? "Submit Cash Handover to Admin" : isBankingMode ? "Bank Office Cash" : isLandlordPaidMode ? (isAdmin ? "Record Landlord Payment" : "Request Landlord Payment Approval") : isEmployeeExpenseMode ? "Record / Request Lunch" : isSalaryPaymentMode ? (isAdmin ? "Record Salary Payment" : "Request Salary Payment") : entryMode === "unauthorised" ? "Submit for Admin Approval" : "Record / Request Authorised Expense"}
                             </button>
-                            <button type="button" onClick={() => setShowPrintPreview(true)} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700"><Printer size={16} />Print A4 Report</button>
-                            <button type="button" onClick={() => setShowPrintPreview(true)} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700"><Download size={16} />Export PDF</button>
+                            {isLandlordPaidMode ? (
+                                <>
+                                    <button type="button" onClick={openLandlordReport} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700"><Printer size={16} />Print Landlord Report</button>
+                                    <button type="button" onClick={shareLandlordReport} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700"><Download size={16} />Share E-Report</button>
+                                </>
+                            ) : (
+                                <>
+                                    <button type="button" onClick={() => setShowPrintPreview(true)} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700"><Printer size={16} />Print A4 Report</button>
+                                    <button type="button" onClick={() => setShowPrintPreview(true)} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700"><Download size={16} />Export PDF</button>
+                                </>
+                            )}
                             <button type="button" onClick={exportCsv} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-black text-slate-700"><Download size={16} />Export CSV</button>
                             <span className="text-xs font-bold text-slate-500">{isCashHandoverMode ? "Office handovers wait for Admin approval before cash or expenses change." : isBankingMode ? "Banking is a cash-location transfer, not an expense." : isAdmin ? "Admin overrides are audited immediately." : "Office entries that exceed limits or are unauthorised require Admin approval."}</span>
                         </div>
@@ -2138,6 +2222,23 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                         setRefreshToken((token) => token + 1);
                         if (landlordId) loadEntryDetail("landlord", landlordId);
                     }}
+                />
+            ) : null}
+            {landlordWorkspaceModal === "deductions" && selectedLandlordDetail ? (
+                <LandlordDeductionsModal landlord={selectedLandlordDetail} onClose={() => setLandlordWorkspaceModal(null)} />
+            ) : null}
+            {landlordWorkspaceModal === "vacant_rooms" && selectedLandlordDetail ? (
+                <LandlordVacantRoomsModal landlord={selectedLandlordDetail} onClose={() => setLandlordWorkspaceModal(null)} />
+            ) : null}
+            {landlordWorkspaceModal === "report" && selectedLandlordDetail ? (
+                <LandlordReportModal
+                    amount={Number(amount || 0)}
+                    companyName={data.company?.name ?? "Ddumba Property Operations OS"}
+                    landlord={selectedLandlordDetail}
+                    onClose={() => setLandlordWorkspaceModal(null)}
+                    paymentMethod={paymentMethod}
+                    preparedBy={data.preparedByName ?? "Current user"}
+                    status={isAdmin ? "Ready for Admin direct payment" : "Pending Admin Approval after submission"}
                 />
             ) : null}
         </main>
@@ -2358,6 +2459,139 @@ function PremiumEntryCard({ actionLabel, featured = false, label, onAction, valu
     );
 }
 
+type LandlordFinancialWorkspaceProps = {
+    amount: string;
+    companyName: string;
+    dueStatus: ReturnType<typeof landlordPaymentDueStatus> | null;
+    isAdmin: boolean;
+    isManager?: boolean;
+    landlord: LandlordEntryDetail | null;
+    loading: boolean;
+    onEditAdvance: () => void;
+    onEditDueDate: () => void;
+    onEditOutstanding: () => void;
+    onOpenDeductions: () => void;
+    onOpenPortfolio: () => void;
+    onOpenReport: () => void;
+    onOpenVacantRooms: () => void;
+    onShareReport: () => void;
+    paymentMethod: string;
+    preparedBy: string;
+    selectedOfficeName: string;
+};
+
+function LandlordFinancialWorkspace({
+    amount,
+    companyName,
+    dueStatus,
+    isAdmin,
+    isManager,
+    landlord,
+    loading,
+    onEditAdvance,
+    onEditDueDate,
+    onEditOutstanding,
+    onOpenDeductions,
+    onOpenPortfolio,
+    onOpenReport,
+    onOpenVacantRooms,
+    onShareReport,
+    paymentMethod,
+    preparedBy,
+    selectedOfficeName,
+}: LandlordFinancialWorkspaceProps) {
+    const outstanding = landlord?.outstandingBalance ?? 0;
+    const amountPaid = Number(amount || 0);
+    const remainingAfter = Math.max(0, outstanding - (Number.isFinite(amountPaid) ? amountPaid : 0));
+    const canRequest = !isManager;
+    const actionWord = isAdmin ? "Edit" : "Request";
+    const dueLabel = dueStatus?.label ?? "--";
+    return (
+        <section className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-2xl shadow-slate-950/10">
+            <div className="bg-gradient-to-br from-slate-950 via-blue-950 to-emerald-950 p-5 text-white">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0">
+                        <p className="text-xs font-black uppercase tracking-[0.2em] text-emerald-200">Selected Landlord Workspace</p>
+                        <OverflowSafeText mode="marquee" className="mt-2 text-3xl font-black">{landlord?.name ?? "Loading landlord..."}</OverflowSafeText>
+                        <p className="mt-2 text-sm font-bold text-slate-300">{landlord?.officeName ?? selectedOfficeName} · {landlord?.phone ?? "No phone"} · {landlord?.settlementCycleLabel ?? "--"}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        <span className={`rounded-2xl border px-3 py-2 text-xs font-black ${dueStatusClass(dueStatus?.tone ?? "slate")}`}>{dueLabel}</span>
+                        <span className="rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-black">Payable Period: {landlord?.payablePeriodLabel ?? landlord?.payablePeriod ?? "--"}</span>
+                    </div>
+                </div>
+            </div>
+            <div className="p-4">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+                    <WorkspaceMetricCard actionLabel="Open Portfolio" label="Portfolio Gross" onAction={onOpenPortfolio} tone="indigo" value={loading ? "Loading..." : money(landlord?.portfolioGross ?? landlord?.fullRentRoll ?? 0)} />
+                    <WorkspaceMetricCard label="Net Payable" subtitle={`Payable Period: ${landlord?.payablePeriodLabel ?? "--"}`} tone="emerald" value={loading ? "Loading..." : money(landlord?.netPayable ?? 0)} />
+                    <WorkspaceMetricCard actionLabel={canRequest ? `${actionWord} Advance` : undefined} label="Advance Taken" onAction={canRequest ? onEditAdvance : undefined} tone="amber" value={loading ? "Loading..." : money(landlord?.advanceBalance ?? 0)} />
+                    <WorkspaceMetricCard actionLabel="View Deductions" label="Total Deductions" onAction={onOpenDeductions} tone="rose" value={loading ? "Loading..." : money(landlord?.totalDeductions ?? 0)} />
+                    <WorkspaceMetricCard actionLabel="View Vacant Rooms" label="Vacant Rooms" onAction={onOpenVacantRooms} tone="violet" value={loading ? "Loading..." : String(landlord?.vacantRooms ?? 0)} />
+                    <WorkspaceMetricCard actionLabel={canRequest ? `${actionWord} Outstanding` : undefined} label="Total Outstanding" onAction={canRequest ? onEditOutstanding : undefined} tone="gold" value={loading ? "Loading..." : money(outstanding)} />
+                    <WorkspaceMetricCard label="Last Amount Paid" tone="teal" value={loading ? "Loading..." : money(landlord?.lastPaymentAmount ?? 0)} />
+                    <WorkspaceMetricCard label="Last Payment Date" tone="slate" value={loading ? "Loading..." : landlord?.lastPaymentDate ?? "--"} />
+                    <WorkspaceMetricCard actionLabel={canRequest ? (landlord?.paymentDueDate || landlord?.landlordPaymentDate ? `${actionWord} Due Date` : "Set Due Date") : undefined} label="Payment Due Date" onAction={canRequest ? onEditDueDate : undefined} tone="cyan" value={loading ? "Loading..." : landlord?.paymentDueDate ?? landlord?.landlordPaymentDate ?? "Not Set"} />
+                </div>
+                <div className="mt-4 grid gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+                    <div className="min-w-0">
+                        <p className="text-xs font-black uppercase tracking-wide text-blue-700">Payment entry</p>
+                        <h3 className="mt-1 text-xl font-black text-slate-950">{isAdmin ? "Record Landlord Payment" : "Request Landlord Payment Approval"}</h3>
+                        <p className="mt-2 text-sm font-bold text-slate-600">Use the amount, payment method, payment month, reference and notes fields below this workspace. Office submissions remain pending until Admin approval.</p>
+                    </div>
+                    <div className="grid gap-2 text-sm font-bold text-slate-700 sm:grid-cols-2">
+                        <span className="rounded-2xl bg-white px-3 py-2">Method: {methodLabel(paymentMethod)}</span>
+                        <span className="rounded-2xl bg-white px-3 py-2">Entered Amount: {money(amount || 0)}</span>
+                        <span className="rounded-2xl bg-white px-3 py-2">Outstanding Before: {money(outstanding)}</span>
+                        <span className="rounded-2xl bg-white px-3 py-2">Outstanding After: {money(remainingAfter)}</span>
+                    </div>
+                </div>
+                <div className="mt-4 overflow-hidden rounded-[26px] border border-slate-200 bg-white">
+                    <div className="border-b border-slate-200 px-4 py-3">
+                        <p className="text-xs font-black uppercase tracking-wide text-slate-500">Landlord Payment Report Preview</p>
+                        <h3 className="text-lg font-black text-slate-950">A4 report will use these live values</h3>
+                    </div>
+                    <div className="p-4">
+                        <LandlordReportPaper amount={amountPaid} companyName={companyName} landlord={landlord} paymentMethod={paymentMethod} preparedBy={preparedBy} status={amountPaid > 0 ? "Draft / Pending until submitted" : "Not prepared"} />
+                        <div className="mt-3 flex flex-wrap gap-2 print:hidden">
+                            <button type="button" onClick={onOpenReport} className="inline-flex h-11 items-center gap-2 rounded-2xl bg-slate-950 px-4 text-sm font-black text-white"><Printer size={16} />Print Landlord Report</button>
+                            <button type="button" onClick={onShareReport} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-4 text-sm font-black text-blue-800"><Download size={16} />Share Landlord E-Report</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    );
+}
+
+function WorkspaceMetricCard({ actionLabel, label, onAction, subtitle, tone, value }: { actionLabel?: string; label: string; onAction?: () => void; subtitle?: string; tone: "indigo" | "emerald" | "amber" | "rose" | "violet" | "gold" | "teal" | "slate" | "cyan"; value: string }) {
+    const tones = {
+        amber: "from-amber-500 via-orange-500 to-yellow-500 text-white shadow-amber-200",
+        cyan: "from-cyan-500 via-sky-500 to-blue-500 text-white shadow-cyan-200",
+        emerald: "from-emerald-600 via-green-500 to-lime-500 text-white shadow-emerald-200",
+        gold: "from-yellow-500 via-amber-500 to-orange-500 text-white shadow-amber-200",
+        indigo: "from-indigo-700 via-blue-600 to-sky-500 text-white shadow-indigo-200",
+        rose: "from-rose-600 via-red-500 to-orange-500 text-white shadow-rose-200",
+        slate: "from-slate-700 via-slate-600 to-blue-700 text-white shadow-slate-200",
+        teal: "from-teal-600 via-emerald-500 to-cyan-500 text-white shadow-teal-200",
+        violet: "from-violet-700 via-purple-600 to-fuchsia-500 text-white shadow-violet-200",
+    }[tone];
+    return (
+        <div className={`group min-h-[150px] overflow-hidden rounded-3xl bg-gradient-to-br p-4 shadow-xl transition hover:-translate-y-0.5 hover:shadow-2xl ${tones}`}>
+            <div className="flex items-start justify-between gap-2">
+                <OverflowSafeText mode="marquee" className="text-xs font-black uppercase tracking-wide text-white/75">{label}</OverflowSafeText>
+                {actionLabel && onAction ? (
+                    <button type="button" onClick={onAction} title={actionLabel} className="rounded-xl bg-white/20 px-2 py-1 text-[11px] font-black text-white ring-1 ring-white/20 transition hover:bg-white/30">
+                        <OverflowSafeText mode="marquee" className="max-w-[110px]">{actionLabel}</OverflowSafeText>
+                    </button>
+                ) : null}
+            </div>
+            <OverflowSafeText mode="marquee" className="mt-5 text-2xl font-black leading-tight">{value}</OverflowSafeText>
+            {subtitle ? <OverflowSafeText mode="marquee" className="mt-2 text-xs font-bold text-white/75">{subtitle}</OverflowSafeText> : null}
+        </div>
+    );
+}
+
 function Total({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
     return (
         <div className="flex items-center justify-between gap-3 rounded-2xl bg-slate-50 px-3 py-2">
@@ -2432,6 +2666,174 @@ function PrintPreview({ companyName, onClose, report }: { companyName: string; o
                 </div>
             </div>
         </div>
+    );
+}
+
+function LandlordDeductionsModal({ landlord, onClose }: { landlord: LandlordEntryDetail; onClose: () => void }) {
+    const rows = landlord.deductionBreakdown ?? [];
+    return (
+        <div className="fixed inset-0 z-[150] overflow-auto bg-slate-950/75 p-4 backdrop-blur-sm">
+            <div className="mx-auto my-8 max-w-4xl overflow-hidden rounded-[28px] bg-white shadow-2xl">
+                <div className="flex flex-wrap items-start justify-between gap-3 bg-rose-700 p-5 text-white">
+                    <div className="min-w-0">
+                        <p className="text-xs font-black uppercase tracking-wide text-rose-100">Landlord deductions</p>
+                        <OverflowSafeText mode="marquee" className="mt-1 text-2xl font-black">{landlord.name}</OverflowSafeText>
+                    </div>
+                    <button type="button" onClick={onClose} className="rounded-xl bg-white/15 px-4 py-2 text-sm font-black text-white">Close</button>
+                </div>
+                <div className="p-5">
+                    {!rows.length ? <p className="rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-500">No deductions are recorded for the current payable period.</p> : null}
+                    {rows.length ? (
+                        <div className="overflow-auto rounded-2xl border border-slate-200">
+                            <table className="w-full min-w-[760px] text-left text-sm">
+                                <thead className="bg-slate-950 text-xs uppercase text-white">
+                                    <tr>
+                                        <th className="px-4 py-3">Type</th>
+                                        <th className="px-4 py-3">Amount</th>
+                                        <th className="px-4 py-3">Period</th>
+                                        <th className="px-4 py-3">Reason</th>
+                                        <th className="px-4 py-3">Date</th>
+                                        <th className="px-4 py-3">Reference</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {rows.map((row, index) => (
+                                        <tr key={`landlord-deduction:${row.type}:${index}`} className="border-b border-slate-100">
+                                            <td className="px-4 py-3 font-black text-slate-950">{row.type}</td>
+                                            <td className="px-4 py-3 font-black text-rose-700">{money(row.amount)}</td>
+                                            <td className="px-4 py-3 font-bold text-slate-600">{row.period ?? "--"}</td>
+                                            <td className="max-w-xs px-4 py-3 font-semibold text-slate-600"><OverflowSafeText mode="truncate">{row.reason}</OverflowSafeText></td>
+                                            <td className="px-4 py-3 font-bold text-slate-600">{row.date || "--"}</td>
+                                            <td className="px-4 py-3 font-mono text-xs font-bold text-slate-500">{row.reference || "--"}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    ) : null}
+                    <p className="mt-4 rounded-2xl bg-rose-50 px-4 py-3 text-right text-lg font-black text-rose-800">Total Deductions: {money(landlord.totalDeductions ?? 0)}</p>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function LandlordVacantRoomsModal({ landlord, onClose }: { landlord: LandlordEntryDetail; onClose: () => void }) {
+    const rows = landlord.vacantRoomDetails ?? [];
+    return (
+        <div className="fixed inset-0 z-[150] overflow-auto bg-slate-950/75 p-4 backdrop-blur-sm">
+            <div className="mx-auto my-8 max-w-4xl overflow-hidden rounded-[28px] bg-white shadow-2xl">
+                <div className="flex flex-wrap items-start justify-between gap-3 bg-violet-700 p-5 text-white">
+                    <div className="min-w-0">
+                        <p className="text-xs font-black uppercase tracking-wide text-violet-100">Vacant rooms</p>
+                        <OverflowSafeText mode="marquee" className="mt-1 text-2xl font-black">{landlord.name}</OverflowSafeText>
+                    </div>
+                    <button type="button" onClick={onClose} className="rounded-xl bg-white/15 px-4 py-2 text-sm font-black text-white">Close</button>
+                </div>
+                <div className="grid gap-3 p-5 md:grid-cols-2">
+                    {!rows.length ? <p className="rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-500 md:col-span-2">No vacant rooms are currently recorded for this landlord.</p> : null}
+                    {rows.map((room) => (
+                        <article key={room.id} className="rounded-3xl border border-violet-100 bg-violet-50/70 p-4">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <OverflowSafeText mode="marquee" className="text-xl font-black text-slate-950">{room.roomNumber}</OverflowSafeText>
+                                    <OverflowSafeText mode="truncate" className="mt-1 text-sm font-bold text-slate-600">{room.property}</OverflowSafeText>
+                                </div>
+                                <span className="rounded-full bg-violet-700 px-3 py-1 text-xs font-black text-white">{money(room.monthlyRent)}</span>
+                            </div>
+                            <div className="mt-3 grid gap-2 text-xs font-bold text-slate-600">
+                                <span>Vacant Since: {room.vacantSince ?? "--"}</span>
+                                <span>Previous Tenant: {room.previousTenant || "--"}</span>
+                                <span>Outstanding Tenant Debt: {money(room.outstandingTenantDebt)}</span>
+                            </div>
+                        </article>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function LandlordReportModal({ amount, companyName, landlord, onClose, paymentMethod, preparedBy, status }: { amount: number; companyName: string; landlord: LandlordEntryDetail; onClose: () => void; paymentMethod: string; preparedBy: string; status: string }) {
+    return (
+        <div className="fixed inset-0 z-[150] overflow-auto bg-slate-950/80 p-4 backdrop-blur-sm">
+            <div className="mx-auto max-w-5xl rounded-3xl bg-white p-5 shadow-2xl">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3 print:hidden">
+                    <div>
+                        <p className="text-xs font-black uppercase text-blue-700">Landlord report</p>
+                        <h2 className="text-xl font-black text-slate-950">A4 Payment Report</h2>
+                    </div>
+                    <div className="flex gap-2">
+                        <button type="button" onClick={() => window.print()} className="rounded-2xl bg-slate-950 px-4 py-2 text-sm font-black text-white">Print / Save PDF</button>
+                        <button type="button" onClick={onClose} className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700">Close</button>
+                    </div>
+                </div>
+                <LandlordReportPaper amount={amount} companyName={companyName} landlord={landlord} paymentMethod={paymentMethod} preparedBy={preparedBy} status={status} />
+            </div>
+        </div>
+    );
+}
+
+function LandlordReportPaper({ amount, companyName, landlord, paymentMethod, preparedBy, status }: { amount: number; companyName: string; landlord: LandlordEntryDetail | null; paymentMethod: string; preparedBy: string; status: string }) {
+    const outstandingBefore = landlord?.outstandingBalance ?? 0;
+    const safeAmount = Number.isFinite(amount) ? amount : 0;
+    const outstandingAfter = Math.max(0, outstandingBefore - safeAmount);
+    return (
+        <div className="print-report mx-auto min-h-[1050px] max-w-[794px] bg-white p-8 text-slate-950 shadow-inner print:shadow-none">
+            <header className="border-b-2 border-slate-950 pb-4">
+                <p className="text-sm font-black uppercase tracking-wide text-slate-500">{companyName}</p>
+                <h1 className="mt-1 text-3xl font-black">Landlord Payment Report</h1>
+                <p className="mt-2 text-sm font-bold text-slate-600">Status: {status}</p>
+            </header>
+            <section className="mt-5 grid gap-3 text-sm font-semibold sm:grid-cols-2">
+                <ReportLine label="Landlord Name" value={landlord?.name ?? "--"} />
+                <ReportLine label="Phone" value={landlord?.phone ?? "--"} />
+                <ReportLine label="Office" value={landlord?.officeName ?? "--"} />
+                <ReportLine label="Payment Period" value={landlord?.payablePeriodLabel ?? landlord?.payablePeriod ?? "--"} />
+                <ReportLine label="Settlement Cycle" value={landlord?.settlementCycleLabel ?? "--"} />
+                <ReportLine label="Payment Method" value={methodLabel(paymentMethod)} />
+            </section>
+            <section className="mt-6 grid gap-3 sm:grid-cols-3">
+                <ReportBox label="Portfolio Gross" value={money(landlord?.portfolioGross ?? landlord?.fullRentRoll ?? 0)} />
+                <ReportBox label="Net Payable" value={money(landlord?.netPayable ?? 0)} />
+                <ReportBox label="Total Deductions" value={money(landlord?.totalDeductions ?? 0)} />
+                <ReportBox label="Outstanding Before" value={money(outstandingBefore)} />
+                <ReportBox label="Amount Paid" value={money(safeAmount)} />
+                <ReportBox label="Outstanding After" value={money(outstandingAfter)} />
+                <ReportBox label="Advance Taken" value={money(landlord?.advanceBalance ?? 0)} />
+                <ReportBox label="Advance Recovery" value={money(landlord?.deductionBreakdown?.find((row) => row.type === "Previous Advance Recovery")?.amount ?? 0)} />
+                <ReportBox label="Vacant Rooms" value={String(landlord?.vacantRooms ?? 0)} />
+            </section>
+            <section className="mt-6 grid gap-2 text-sm font-semibold sm:grid-cols-2">
+                <ReportLine label="Reference" value={landlord?.lastPaymentReference ?? "--"} />
+                <ReportLine label="Payment Date" value={today()} />
+                <ReportLine label="Prepared By" value={preparedBy} />
+                <ReportLine label="Approved By" value={status.toLowerCase().includes("pending") ? "Pending Admin Approval" : "Admin"} />
+            </section>
+            <footer className="mt-14 grid gap-10 text-sm font-semibold sm:grid-cols-2">
+                <div>
+                    <p className="font-black">Receptionist / Prepared By Signature</p>
+                    <p className="mt-5">Name: ________________________________</p>
+                    <p className="mt-5">Signature: _____________________________</p>
+                    <p className="mt-5">Date: _________________________________</p>
+                </div>
+                <div>
+                    <p className="font-black">Landlord Signature</p>
+                    <p className="mt-5">Name: ________________________________</p>
+                    <p className="mt-5">Signature: _____________________________</p>
+                    <p className="mt-5">Date: _________________________________</p>
+                </div>
+            </footer>
+        </div>
+    );
+}
+
+function ReportLine({ label, value }: { label: string; value: string }) {
+    return (
+        <p className="rounded-xl border border-slate-200 px-3 py-2">
+            <span className="font-black">{label}: </span>
+            <span>{value}</span>
+        </p>
     );
 }
 
@@ -3750,6 +4152,8 @@ function LandlordEditModal({
 }) {
     const currentValue = modal.requestType === "landlord_outstanding_balance_edit"
         ? modal.landlord.outstandingBalance
+        : modal.requestType === "landlord_advance_balance_edit"
+            ? modal.landlord.advanceBalance
         : modal.landlord.landlordPaymentDate?.slice(0, 10) ?? "";
     const [newValue, setNewValue] = useState(String(currentValue ?? ""));
     const [reason, setReason] = useState("");
@@ -3760,8 +4164,10 @@ function LandlordEditModal({
     const [error, setError] = useState<string | null>(null);
     const [isPending, startTransition] = useTransition();
     const isBalance = modal.requestType === "landlord_outstanding_balance_edit";
-    const title = isBalance ? "Edit Landlord Outstanding Balance" : "Set / Change Landlord Payment Due Date";
-    const adjustmentAmount = isBalance ? Number(newValue || 0) - Number(currentValue || 0) : 0;
+    const isAdvance = modal.requestType === "landlord_advance_balance_edit";
+    const isMoneyEdit = isBalance || isAdvance;
+    const title = isBalance ? "Edit Landlord Outstanding Balance" : isAdvance ? "Edit Landlord Advance Balance" : "Set / Change Landlord Payment Due Date";
+    const adjustmentAmount = isMoneyEdit ? Number(newValue || 0) - Number(currentValue || 0) : 0;
 
     function save() {
         if (!reason.trim()) {
@@ -3779,7 +4185,7 @@ function LandlordEditModal({
                     effectiveDate,
                     effectiveMonth,
                     landlordId: modal.landlord.id,
-                    newValue: isBalance ? Number(newValue) : newValue,
+                    newValue: isMoneyEdit ? Number(newValue) : newValue,
                     officeId: modal.landlord.officeId,
                     oldValue: currentValue,
                     proofUrl: proofUrl.trim() || null,
@@ -3813,13 +4219,13 @@ function LandlordEditModal({
                     <ModalField label="Office">
                         <input readOnly value={modal.landlord.officeName ?? "Office"} className="modal-input" />
                     </ModalField>
-                    <ModalField label={isBalance ? "Current Outstanding Balance" : "Current Payment Due Date"}>
-                        <input readOnly value={isBalance ? money(currentValue) : String(currentValue || "No due date")} className="modal-input" />
+                    <ModalField label={isBalance ? "Current Outstanding Balance" : isAdvance ? "Current Advance Balance" : "Current Payment Due Date"}>
+                        <input readOnly value={isMoneyEdit ? money(currentValue) : String(currentValue || "No due date")} className="modal-input" />
                     </ModalField>
-                    <ModalField label={isBalance ? (isAdmin ? "New Outstanding Balance" : "New Requested Outstanding Balance") : "Requested New Payment Due Date"}>
-                        <input type={isBalance ? "number" : "date"} value={newValue} onChange={(event) => setNewValue(event.target.value)} className="modal-input" />
+                    <ModalField label={isBalance ? (isAdmin ? "New Outstanding Balance" : "New Requested Outstanding Balance") : isAdvance ? (isAdmin ? "New Advance Balance" : "Requested New Advance Balance") : "Requested New Payment Due Date"}>
+                        <input type={isMoneyEdit ? "number" : "date"} value={newValue} onChange={(event) => setNewValue(event.target.value)} className="modal-input" />
                     </ModalField>
-                    {isBalance ? (
+                    {isMoneyEdit ? (
                         <ModalField label="Adjustment amount">
                             <input readOnly value={money(adjustmentAmount)} className="modal-input" />
                         </ModalField>
@@ -3848,6 +4254,8 @@ function LandlordEditModal({
                         <p className="mt-2 text-sm font-black text-slate-950">
                             {isBalance
                                 ? `Change landlord outstanding balance from ${money(currentValue)} to ${money(newValue)}?`
+                                : isAdvance
+                                    ? `Change landlord advance balance from ${money(currentValue)} to ${money(newValue)}?`
                                 : `Change Landlord Payment Due Date from ${String(currentValue || "No due date")} to ${String(newValue || "No due date")}?`}
                         </p>
                     </div>

@@ -331,6 +331,8 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
     return {
         company: context.activeCompany,
         office: context.activeOffice,
+        preparedByName: context.profile?.full_name ?? context.profile?.email ?? "Current user",
+        preparedByRole: context.profile?.account_type ?? null,
         offices,
         categories,
         properties,
@@ -814,6 +816,8 @@ function emptyData(): ExpensesPageData {
     return {
         company: null,
         office: null,
+        preparedByName: null,
+        preparedByRole: null,
         offices: [],
         categories: [],
         properties: [],

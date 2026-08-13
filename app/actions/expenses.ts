@@ -1590,7 +1590,21 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
         }
     }
 
+    const requestId = randomUUID();
+    const proof = !isDirectAdmin ? decodeExpenseProof(input.supportingProof ?? null) : null;
+    const proofPath = proof
+        ? `${companyId}/${officeId}/${actorId ?? "unknown"}/landlord-payments/${paymentMonth.slice(0, 7)}/${requestId}.${proof.extension}`
+        : null;
+    if (proof && proofPath) {
+        const upload = await supabase.storage.from(EXPENSE_PROOF_BUCKET).upload(proofPath, proof.buffer, {
+            contentType: proof.mimeType,
+            upsert: false,
+        });
+        if (upload.error) throw new Error(`Supporting proof upload failed: ${upload.error.message}`);
+    }
+
     const requestPayload = {
+            id: requestId,
             company_id: companyId,
             office_id: officeId,
             landlord_id: input.landlordId,
@@ -1618,6 +1632,7 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
                 input.notes || null,
                 paymentEntryDate.isBackdated ? `BACKDATED ADMIN ENTRY | Entered on: ${paymentEntryDate.enteredOnDate} | Reason: ${paymentEntryDate.backdatingReason}` : null,
             ].filter(Boolean).join(" | ") || null,
+            proof_url: proofPath,
             status: "pending",
             submitted_by: actorId,
         };
@@ -1632,6 +1647,7 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
             advance_balance_before: _advanceBalanceBefore,
             advance_recovery_amount: _advanceRecoveryAmount,
             cash_payment_amount: _cashPaymentAmount,
+            proof_url: _proofUrl,
             ...fallbackPayload
         } = requestPayload;
         requestInsert = await db
@@ -1642,6 +1658,7 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
     }
     const { data: request, error: requestError } = requestInsert;
     if (requestError) {
+        if (proofPath) await supabase.storage.from(EXPENSE_PROOF_BUCKET).remove([proofPath]);
         console.error("Landlord payment approval request insert failed:", requestError.message);
         throw new Error(`Approval request could not be created: ${requestError.message}`);
     }
@@ -1671,12 +1688,12 @@ export async function createLandlordPaidExpenseRequest(input: CreateLandlordPaid
         entity_type: "landlord_payment_expense_request",
         is_read: false,
         message: preview.advanceAmount > 0
-            ? `Landlord payment approval requested for ${landlord.full_name ?? "Landlord"}: UGX ${Math.round(preview.normalPaymentAmount).toLocaleString()} payment + UGX ${Math.round(preview.advanceAmount).toLocaleString()} advance.`
-            : `Landlord payment approval requested for ${landlord.full_name ?? "Landlord"}: UGX ${Math.round(amount).toLocaleString()} on ${paymentDate}.`,
+            ? `Landlord payment approval requested for ${landlord.full_name ?? "Landlord"}: UGX ${Math.round(preview.normalPaymentAmount).toLocaleString()} payment + UGX ${Math.round(preview.advanceAmount).toLocaleString()} advance.${proofPath ? " Supporting proof attached." : ""}`
+            : `Landlord payment approval requested for ${landlord.full_name ?? "Landlord"}: UGX ${Math.round(amount).toLocaleString()} on ${paymentDate}.${proofPath ? " Supporting proof attached." : ""}`,
         office_id: officeId,
         recipient_type: "admin",
         severity: "warning",
-        title: "Landlord payment pending approval",
+        title: proofPath ? "Landlord payment pending approval - Proof attached" : "Landlord payment pending approval",
     });
 
     await logUserAction({
@@ -3662,18 +3679,19 @@ async function resolveLandlordOfficeForEdit(db: { from: (table: string) => any }
 
 function landlordEditLabel(type: SubmitLandlordExpenseEditInput["requestType"]) {
     if (type === "landlord_outstanding_balance_edit") return "Outstanding balance change";
+    if (type === "landlord_advance_balance_edit") return "Advance balance change";
     return "Landlord Payment Due Date change";
 }
 
 function validateLandlordEdit(input: SubmitLandlordExpenseEditInput) {
     if (!validUuid(input.landlordId)) throw new Error("Select a landlord.");
     if (!input.reason?.trim()) throw new Error("Reason is required.");
-    if (!["landlord_outstanding_balance_edit", "landlord_payment_date_edit"].includes(input.requestType)) {
-        throw new Error("Only landlord outstanding balance and Landlord Payment Due Date can be changed here.");
+    if (!["landlord_outstanding_balance_edit", "landlord_advance_balance_edit", "landlord_payment_date_edit"].includes(input.requestType)) {
+        throw new Error("Only landlord outstanding balance, advance balance and Landlord Payment Due Date can be changed here.");
     }
-    if (input.requestType === "landlord_outstanding_balance_edit") {
+    if (input.requestType === "landlord_outstanding_balance_edit" || input.requestType === "landlord_advance_balance_edit") {
         const newBalance = Number(input.newValue);
-        if (!Number.isFinite(newBalance) || newBalance < 0) throw new Error("Enter a valid new outstanding balance.");
+        if (!Number.isFinite(newBalance) || newBalance < 0) throw new Error(input.requestType === "landlord_advance_balance_edit" ? "Enter a valid new advance balance." : "Enter a valid new outstanding balance.");
     } else {
         const newDate = String(input.newValue ?? "");
         if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) throw new Error("Enter a valid date.");
@@ -3693,6 +3711,66 @@ async function applyLandlordCardEdit(db: { from: (table: string) => any }, input
     newValue: number | string;
 }) {
     const landlordId = String(input.landlord.id);
+    if (input.requestType === "landlord_advance_balance_edit") {
+        const advancesResult = await db
+            .from("landlord_advances")
+            .select("*")
+            .eq("company_id", input.companyId)
+            .eq("landlord_id", landlordId);
+        if (advancesResult.error) throw new Error(advancesResult.error.message);
+        const activeAdvances = ((advancesResult.data ?? []) as Array<Record<string, unknown>>)
+            .filter(isApprovedActiveAdvance)
+            .sort((a, b) => String(a.date_given ?? a.created_at ?? "").localeCompare(String(b.date_given ?? b.created_at ?? "")));
+        const oldBalance = activeAdvances.reduce((total, advance) => total + advanceRemaining(advance), 0);
+        const newBalance = amount(input.newValue);
+        const difference = newBalance - oldBalance;
+        const updatedAdvances: Array<Record<string, unknown>> = [];
+        if (difference > 0) {
+            const { data, error } = await db
+                .from("landlord_advances")
+                .insert({
+                    advance_amount: difference,
+                    company_id: input.companyId,
+                    date_given: input.effectiveDate || new Date().toISOString().slice(0, 10),
+                    deducted_amount: 0,
+                    landlord_id: landlordId,
+                    lifecycle_status: "active",
+                    note: `Advance balance correction: ${input.reason}`,
+                    office_id: input.officeId,
+                    principal_amount: difference,
+                    reason: `Advance balance correction: ${input.reason}`,
+                    status: "partially_deducted",
+                })
+                .select("*")
+                .single();
+            if (error) throw new Error(`Landlord advance adjustment failed: ${error.message}`);
+            updatedAdvances.push(data);
+        } else if (difference < 0) {
+            let reductionRemaining = Math.abs(difference);
+            for (const advance of activeAdvances) {
+                if (reductionRemaining <= 0) break;
+                const currentRemaining = advanceRemaining(advance);
+                if (currentRemaining <= 0) continue;
+                const applied = Math.min(currentRemaining, reductionRemaining);
+                const nextRemaining = Math.max(0, currentRemaining - applied);
+                const { data, error } = await db
+                    .from("landlord_advances")
+                    .update({
+                        deducted_amount: amount(advance.deducted_amount) + applied,
+                        lifecycle_status: nextRemaining <= 0 ? "cleared" : "active",
+                        status: nextRemaining <= 0 ? "fully_deducted" : "partially_deducted",
+                        updated_at: new Date().toISOString(),
+                    })
+                    .eq("id", String(advance.id))
+                    .select("*")
+                    .single();
+                if (error) throw new Error(`Landlord advance update failed: ${error.message}`);
+                updatedAdvances.push(data);
+                reductionRemaining -= applied;
+            }
+        }
+        return { oldBalance, newBalance, difference, updatedAdvances };
+    }
     if (input.requestType === "landlord_outstanding_balance_edit") {
         const oldBalance = amount(input.landlord.balance_remaining);
         const newBalance = amount(input.newValue);
@@ -3810,7 +3888,9 @@ export async function submitLandlordExpenseEdit(input: SubmitLandlordExpenseEdit
         if (/idx_landlord_expense_edit_one_pending|duplicate key|unique/i.test(error.message ?? "")) {
             throw new Error(input.requestType === "landlord_outstanding_balance_edit"
                 ? "An outstanding balance change request is already awaiting Admin approval."
-                : "A Landlord Payment Due Date change request is already awaiting Admin approval.");
+                : input.requestType === "landlord_advance_balance_edit"
+                    ? "A landlord advance balance change request is already awaiting Admin approval."
+                    : "A Landlord Payment Due Date change request is already awaiting Admin approval.");
         }
         throw new Error(`Landlord edit request could not be created: ${error.message}`);
     }
