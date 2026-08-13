@@ -34,10 +34,13 @@ comment on column public.landlords.settlement_timing is
 comment on table public.landlord_settlement_timing_audit is
   'Audit trail for Admin changes to landlord settlement cycle timing.';
 
+-- Production note: the operational Kapeeka Office landlord portfolios are attached
+-- to this existing office id, even though its stored display label is KIGUNGU OFFICE.
+-- Do not use the separate "Kapeeka Town" name match for this business rule.
 with kapeeka_offices as (
   select id, company_id
   from public.offices
-  where lower(coalesce(name, '')) like '%kapeeka%'
+  where id = '365ca586-4501-45b3-8d21-f7244ef36603'::uuid
 ),
 listed_landlords as (
   select unnest(array[
@@ -58,7 +61,9 @@ listed_landlords as (
     'alex costa',
     'mawanda',
     'kiyingi cosmas',
+    'kiyinji cosmos',
     'asuman kiyingi',
+    'asumani kiyinji',
     'bayise noah',
     'bayiise noah',
     'noah 2',
@@ -99,11 +104,11 @@ with current_month_targets as (
     from public.rooms r
     join public.offices o on o.id = r.office_id and o.company_id = r.company_id
     where r.landlord_id is not null
-      and lower(coalesce(o.name, '')) like '%kapeeka%'
+      and o.id = '365ca586-4501-45b3-8d21-f7244ef36603'::uuid
   ) kl on kl.landlord_id = l.id
   left join (
     select unnest(array[
-      'kawoya umar','umar kawooya','mkyala umar','mklya umaru','kisitu charles','kisitu charlse','sekabembe','nsiko','mama mzee','god mulokole','maama bill','mama bill','kigongo','ssegujja anthony','alex costa','mawanda','kiyingi cosmas','asuman kiyingi','bayise noah','bayiise noah','noah 2','mukiibi','mukiibi vicent','mulangira','kamya gerald','luyima deogratias','luyima deogratias tebugulwa'
+      'kawoya umar','umar kawooya','mkyala umar','mklya umaru','kisitu charles','kisitu charlse','sekabembe','nsiko','mama mzee','god mulokole','maama bill','mama bill','kigongo','ssegujja anthony','alex costa','mawanda','kiyingi cosmas','kiyinji cosmos','asuman kiyingi','asumani kiyinji','bayise noah','bayiise noah','noah 2','mukiibi','mukiibi vicent','mulangira','kamya gerald','luyima deogratias','luyima deogratias tebugulwa'
     ]) as normalized_name
   ) ll on regexp_replace(lower(trim(coalesce(l.full_name, ''))), '[^a-z0-9]+', ' ', 'g') = ll.normalized_name
   where kl.landlord_id is not null
