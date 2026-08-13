@@ -1,7 +1,7 @@
 import { requireAuth } from "@/lib/auth/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { AuthContext } from "@/lib/auth/types";
-import { buildLandlordPaymentAllocationPlan, landlordMonthlyDue, summarizeLandlordPayables } from "@/lib/landlord-payables/payment-allocation";
+import { buildLandlordPaymentAllocationPlan, landlordMonthlyDue, normalizeSettlementTiming, summarizeLandlordPayables } from "@/lib/landlord-payables/payment-allocation";
 
 type Db = {
     from: (table: string) => any;
@@ -506,7 +506,7 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
     const [rooms, tenants, landlords, offices, users, payments, landlordPaymentPayables] = await Promise.all([
         roomIds.length ? safeRows(db.from("rooms").select("id, room_number").in("id", roomIds).limit(200)) : { data: [], error: null },
         tenantIds.length ? safeRows(db.from("tenants").select("id, full_name, phone").in("id", tenantIds).limit(200)) : { data: [], error: null },
-        landlordIds.length ? safeRows(db.from("landlords").select("id, full_name, phone").in("id", landlordIds).limit(200)) : { data: [], error: null },
+        landlordIds.length ? safeRows(db.from("landlords").select("id, full_name, phone, settlement_timing").in("id", landlordIds).limit(200)) : { data: [], error: null },
         officeIds.length ? safeRows(db.from("offices").select("id, office_name, name").in("id", officeIds).limit(50)) : { data: [], error: null },
         userIds.length ? safeRows(db.from("users").select("id, full_name, email").in("id", userIds).limit(200)) : { data: [], error: null },
         paymentIds.length ? safeRows(db.from("collections").select("id, amount, amount_paid, paid_at, payment_method").eq("company_id", context.activeCompany.id).in("id", paymentIds).limit(200)) : { data: [], error: null },
@@ -522,6 +522,10 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
     ]);
 
     const livePayablesByLandlordOffice = new Map<string, Array<Record<string, unknown>>>();
+    const settlementTimingByLandlordId = new Map<string, string>();
+    for (const landlord of (landlords.data ?? []) as Array<Record<string, unknown>>) {
+        settlementTimingByLandlordId.set(String(landlord.id ?? ""), normalizeSettlementTiming(landlord.settlement_timing));
+    }
     for (const row of (landlordPaymentPayables.data ?? []) as Array<Record<string, unknown>>) {
         const key = `${row.landlord_id ?? ""}:${row.office_id ?? ""}`;
         livePayablesByLandlordOffice.set(key, [...(livePayablesByLandlordOffice.get(key) ?? []), row]);
@@ -529,13 +533,15 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
     const liveLandlordPaymentRequests = landlordPaymentRequests.map((request) => {
         const rows = livePayablesByLandlordOffice.get(`${request.landlord_id ?? ""}:${request.office_id ?? ""}`) ?? [];
         const paymentMonth = String(request.payment_month ?? request.payment_date ?? "").slice(0, 10);
+        const settlementTiming = settlementTimingByLandlordId.get(String(request.landlord_id ?? "")) ?? "previous_month";
         const scopedRows = paymentMonth ? rows.filter((row) => String(row.settlement_month ?? "").slice(0, 10) <= paymentMonth) : rows;
-        const summary = summarizeLandlordPayables({ currentMonth: paymentMonth || null, payables: scopedRows });
+        const summary = summarizeLandlordPayables({ currentMonth: paymentMonth || null, payables: scopedRows, settlementTiming });
         const plan = buildLandlordPaymentAllocationPlan({
             advanceRecoveryAmount: Number(request.advance_recovery_amount ?? 0) || 0,
             amount: Number(request.requested_amount ?? 0) || 0,
             currentMonth: paymentMonth || undefined,
             payables: scopedRows,
+            settlementTiming,
         });
         return {
             ...request,

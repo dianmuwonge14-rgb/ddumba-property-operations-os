@@ -63,6 +63,14 @@ type ChangeLandlordPortfolioOfficeInput = {
     moveMode?: "portfolio" | "rooms";
 };
 
+type LandlordSettlementTiming = "current_month" | "previous_month";
+
+type UpdateLandlordSettlementTimingInput = {
+    landlordId: string;
+    settlementTiming: LandlordSettlementTiming;
+    reason: string;
+};
+
 async function activeWriteContext() {
     const context = await requirePermission("landlords.manage");
     if (!context.activeCompany?.id || !context.activeOffice?.id) {
@@ -97,6 +105,10 @@ function revalidateLandlordPaymentDetailsSurfaces() {
     for (const path of ["/office/landlords", "/office/landlord-payments", "/office/expenses", "/office/notifications", "/office/audit", "/office/admin"]) {
         revalidatePath(path);
     }
+}
+
+function cleanSettlementTiming(value: unknown): LandlordSettlementTiming {
+    return value === "current_month" ? "current_month" : "previous_month";
 }
 
 function cleanPaymentMethod(value: unknown): "cash" | "mobile_money" | "bank" {
@@ -224,6 +236,68 @@ export async function createLandlord(input: CreateLandlordInput) {
 
     revalidatePath("/office/landlords");
     return data;
+}
+
+export async function updateLandlordSettlementTiming(input: UpdateLandlordSettlementTimingInput) {
+    const context = await activeAdminWriteContext();
+    const db = createSupabaseAdminClient() as unknown as LooseDb;
+    const companyId = context.activeCompany!.id;
+    const landlordId = input.landlordId;
+    const newTiming = cleanSettlementTiming(input.settlementTiming);
+    const reason = String(input.reason ?? "").trim();
+    if (!landlordId) throw new Error("Select a landlord.");
+    if (!reason) throw new Error("Reason is required when changing the Landlord Settlement Cycle.");
+
+    const landlordResult = await db
+        .from("landlords")
+        .select("id, company_id, full_name, settlement_timing")
+        .eq("company_id", companyId)
+        .eq("id", landlordId)
+        .single();
+    if (landlordResult.error) throw new Error(landlordResult.error.message);
+
+    const landlord = landlordResult.data as Record<string, unknown>;
+    const oldTiming = cleanSettlementTiming(landlord.settlement_timing);
+    if (oldTiming === newTiming) {
+        return {
+            ok: true,
+            message: "Landlord Settlement Cycle is already set to that value.",
+        };
+    }
+
+    const updateResult = await db
+        .from("landlords")
+        .update({ settlement_timing: newTiming, updated_at: new Date().toISOString() })
+        .eq("company_id", companyId)
+        .eq("id", landlordId)
+        .select("id, full_name, settlement_timing")
+        .single();
+    if (updateResult.error) throw new Error(updateResult.error.message);
+
+    await db.from("landlord_settlement_timing_audit").insert({
+        changed_by: context.profile?.id ?? context.authUser?.id ?? null,
+        company_id: companyId,
+        landlord_id: landlordId,
+        new_settlement_timing: newTiming,
+        old_settlement_timing: oldTiming,
+        reason,
+    });
+
+    await logUserAction({
+        action: "landlord_settlement_cycle_changed",
+        afterData: jsonSafe({ settlementTiming: newTiming, reason }),
+        beforeData: jsonSafe({ settlementTiming: oldTiming }),
+        companyId,
+        entityId: landlordId,
+        entityType: "landlord",
+        officeId: context.activeOffice?.id ?? null,
+    });
+
+    revalidateLandlordPaymentDetailsSurfaces();
+    return {
+        ok: true,
+        message: `Landlord Settlement Cycle updated for ${String(landlord.full_name ?? "landlord")}.`,
+    };
 }
 
 export async function editLandlord(input: EditLandlordInput) {

@@ -11,7 +11,7 @@ import type {
     LandlordPaymentOption,
     PaidLandlordPayment,
 } from "./types";
-import { landlordMonthlyDue, landlordMonthlyPaid, landlordMonthlyUnpaid, summarizeLandlordPayables } from "./payment-allocation";
+import { eligibleLandlordPayableMonth, landlordMonthlyDue, landlordMonthlyPaid, landlordMonthlyUnpaid, normalizeSettlementTiming, summarizeLandlordPayables } from "./payment-allocation";
 
 function amount(value: number | string | null | undefined) {
     return Number(value ?? 0) || 0;
@@ -161,7 +161,7 @@ export async function getLandlordPayablesData(): Promise<LandlordPayablesData> {
     const [payablesResult, advancesResult, landlordsResult, officesResult, roomsResult, paymentsResult, approvalRequestsResult, paymentDetailsResult] = await Promise.all([
         payablesQuery,
         advancesQuery,
-        db.from("landlords").select("id, full_name, phone, payment_date, balance_remaining").eq("company_id", companyId).order("full_name", { ascending: true }),
+        db.from("landlords").select("id, full_name, phone, payment_date, balance_remaining, settlement_timing").eq("company_id", companyId).order("full_name", { ascending: true }),
         db.from("offices").select("id, name").eq("company_id", companyId).order("name", { ascending: true }),
         roomsQuery,
         paymentsQuery,
@@ -183,8 +183,9 @@ export async function getLandlordPayablesData(): Promise<LandlordPayablesData> {
         name: office.name ?? "Office",
     }));
     const officeById = new Map(offices.map((office) => [office.id, office.name]));
-    const landlordRows = (landlordsResult.data ?? []) as Array<{ id: string; full_name: string | null; phone?: string | null; payment_date?: string | null; balance_remaining?: number | string | null }>;
+    const landlordRows = (landlordsResult.data ?? []) as Array<{ id: string; full_name: string | null; phone?: string | null; payment_date?: string | null; balance_remaining?: number | string | null; settlement_timing?: string | null }>;
     const landlordById = new Map(landlordRows.map((landlord) => [landlord.id, landlord.full_name ?? "Landlord"]));
+    const settlementTimingByLandlordId = new Map(landlordRows.map((landlord) => [landlord.id, normalizeSettlementTiming(landlord.settlement_timing)]));
     const searchIndexResult = await safeRows(
         db
             .from("landlord_search_index")
@@ -227,7 +228,8 @@ export async function getLandlordPayablesData(): Promise<LandlordPayablesData> {
     for (const [landlordId, details] of paymentDetailsByLandlord.entries()) {
         paymentDetailsByLandlord.set(landlordId, [...(details ?? [])].sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || String(a.label ?? "").localeCompare(String(b.label ?? ""))));
     }
-    const groups = groupPayables(rows).map((group) => {
+    const currentMonth = currentSettlementMonth();
+    const groups = groupPayables(rows, settlementTimingByLandlordId, currentMonth).map((group) => {
         const approvedPaymentDetails = paymentDetailsByLandlord.get(group.landlordId) ?? [];
         return {
             ...group,
@@ -235,9 +237,11 @@ export async function getLandlordPayablesData(): Promise<LandlordPayablesData> {
             approvedPaymentDetails,
         };
     });
-    const currentMonth = currentSettlementMonth();
     const currentMonthRows = rows.filter((row) => isCurrentMonth(row, currentMonth));
-    const unpaidBalanceRows = rows.filter((row) => unpaidBalance(row) > 0 && payableStatus(row) !== "paid");
+    const unpaidBalanceRows = rows.filter((row) => {
+        const eligibleMonth = eligibleLandlordPayableMonth(currentMonth, settlementTimingByLandlordId.get(row.landlord_id));
+        return String(row.settlement_month).slice(0, 10) <= eligibleMonth && unpaidBalance(row) > 0 && payableStatus(row) !== "paid";
+    });
     const paidLedgerRows = rows.filter((row) => unpaidBalance(row) <= 0 && (amount(row.amount_paid) > 0 || ["paid", "overpaid"].includes(payableStatus(row))));
     const unpaidLedgerRows = unpaidBalanceRows.filter((row) => amount(row.amount_paid) <= 0 || payableStatus(row) === "unpaid");
     const partialLedgerRows = unpaidBalanceRows.filter((row) => amount(row.amount_paid) > 0 || ["partial", "partially_paid"].includes(payableStatus(row)));
@@ -326,6 +330,7 @@ export async function getLandlordPayablesData(): Promise<LandlordPayablesData> {
                 officeName: officeId ? officeById.get(officeId) ?? String(searchIndex?.office_name ?? "Office") : String(searchIndex?.office_name ?? "Office"),
                 outstandingBalance: amount(landlord.balance_remaining),
                 paymentDueDate: typeof landlord.payment_date === "string" ? landlord.payment_date.slice(0, 10) : null,
+                settlementTiming: normalizeSettlementTiming(landlord.settlement_timing),
                 phone: landlord.phone ?? (typeof searchIndex?.phone === "string" ? searchIndex.phone : null),
                 locationText: typeof searchIndex?.location_text === "string" ? searchIndex.location_text : null,
                 roomNumbersText: typeof searchIndex?.room_numbers_text === "string" ? searchIndex.room_numbers_text : null,
@@ -352,6 +357,7 @@ export async function getLandlordPayablesData(): Promise<LandlordPayablesData> {
         landlords: landlordOptions,
         offices: officeOptions,
         summary: {
+            currentMonthPendingSettlement: groups.reduce((total, group) => total + group.currentMonthPendingSettlement, 0),
             totalUnpaidLandlordMoney: unpaidBalanceRows.reduce((total, row) => total + unpaidBalance(row), 0),
             totalUnpaidAcrossMonths: unpaidBalanceRows.reduce((total, row) => total + unpaidBalance(row), 0),
             unpaidLandlords: unpaidLandlordKeys.size,
@@ -420,7 +426,7 @@ function groupUnpaidByMonth(rows: LandlordMonthlyPayable[]): LandlordPayablesDat
         });
 }
 
-function groupPayables(rows: LandlordMonthlyPayable[]): LandlordPayableGroup[] {
+function groupPayables(rows: LandlordMonthlyPayable[], settlementTimingByLandlordId: Map<string, ReturnType<typeof normalizeSettlementTiming>>, currentMonth: string): LandlordPayableGroup[] {
     const grouped = new Map<string, LandlordMonthlyPayable[]>();
     for (const row of rows) {
         const key = row.landlord_id;
@@ -428,9 +434,12 @@ function groupPayables(rows: LandlordMonthlyPayable[]): LandlordPayableGroup[] {
     }
 
     return [...grouped].map(([landlordId, groupRows]) => {
-        const unpaidRows = groupRows.filter((row) => unpaidBalance(row) > 0 && payableStatus(row) !== "paid");
+        const settlementTiming = settlementTimingByLandlordId.get(landlordId) ?? "previous_month";
+        const payablePeriod = eligibleLandlordPayableMonth(currentMonth, settlementTiming);
+        const eligibleRows = groupRows.filter((row) => String(row.settlement_month).slice(0, 10) <= payablePeriod);
+        const unpaidRows = eligibleRows.filter((row) => unpaidBalance(row) > 0 && payableStatus(row) !== "paid");
         const sortedRows = [...groupRows].sort((a, b) => String(b.settlement_month).localeCompare(String(a.settlement_month)));
-        const summary = summarizeLandlordPayables({ payables: groupRows as unknown as Record<string, unknown>[] });
+        const summary = summarizeLandlordPayables({ currentMonth, payables: groupRows as unknown as Record<string, unknown>[], settlementTiming });
         return {
             landlordId,
             landlordName: sortedRows[0]?.landlord_name ?? "Landlord",
@@ -441,6 +450,9 @@ function groupPayables(rows: LandlordMonthlyPayable[]): LandlordPayableGroup[] {
             totalOutstanding: summary.totalOutstandingPayable,
             oldestUnpaidMonth: unpaidRows.map((row) => row.settlement_month).sort()[0] ?? null,
             lastPaidAt: groupRows.map((row) => row.last_paid_at).filter((value): value is string => Boolean(value)).sort().at(-1) ?? null,
+            currentMonthPendingSettlement: summary.currentMonthPendingSettlement,
+            payablePeriod: summary.payablePeriod,
+            settlementTiming: summary.settlementTiming,
             rows: sortedRows,
         };
     }).sort((a, b) => b.totalOutstanding - a.totalOutstanding || a.landlordName.localeCompare(b.landlordName));
@@ -504,6 +516,7 @@ function emptyData(): LandlordPayablesData {
         landlords: [],
         offices: [],
         summary: {
+            currentMonthPendingSettlement: 0,
             totalUnpaidLandlordMoney: 0,
             totalUnpaidAcrossMonths: 0,
             unpaidLandlords: 0,

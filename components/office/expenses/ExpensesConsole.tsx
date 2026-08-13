@@ -2498,6 +2498,9 @@ function LandlordPaymentAiPreview({
                         Expected {money(preview.currentNetPayable)} · Already paid {money(preview.alreadyPaidAmount)} · Remaining payable {money(preview.outstandingAmount)}
                     </p>
                     <p className="mt-1 text-sm font-bold text-slate-600">
+                        Settlement cycle {String(preview.settlementTiming ?? "previous_month").replace("_", " ")} · Payable period {String(preview.payablePeriod ?? preview.paymentMonth).slice(0, 7)}
+                    </p>
+                    <p className="mt-1 text-sm font-bold text-slate-600">
                         Active advances {money(preview.activeAdvanceBalance)} · Pending approvals {money(preview.pendingRequestAmount)}
                         {preview.duplicatePaymentRisk ? " · Duplicate payment risk detected" : ""}
                     </p>

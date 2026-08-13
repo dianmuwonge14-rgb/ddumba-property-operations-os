@@ -36,6 +36,8 @@ export type LandlordMonthlyPayable = {
     updated_at: string;
 };
 
+export type LandlordSettlementTiming = "current_month" | "previous_month";
+
 export type LandlordAdvance = {
     id: string;
     company_id: string;
@@ -107,6 +109,9 @@ export type LandlordPayableGroup = {
     totalOutstanding: number;
     oldestUnpaidMonth: string | null;
     lastPaidAt: string | null;
+    currentMonthPendingSettlement: number;
+    payablePeriod: string | null;
+    settlementTiming: LandlordSettlementTiming;
     activePaymentDetail?: LandlordPayablePaymentDetail | null;
     approvedPaymentDetails?: LandlordPayablePaymentDetail[];
     rows: LandlordMonthlyPayable[];
@@ -190,6 +195,7 @@ export type LandlordPaymentOption = {
     officeName: string;
     phone?: string | null;
     paymentDueDate?: string | null;
+    settlementTiming?: LandlordSettlementTiming;
     outstandingBalance?: number;
     searchText?: string | null;
     roomNumbersText?: string | null;
@@ -216,6 +222,7 @@ export type LandlordPayablesData = {
     landlords: LandlordPaymentOption[];
     offices: LandlordPaymentOfficeOption[];
     summary: {
+        currentMonthPendingSettlement: number;
         totalUnpaidLandlordMoney: number;
         totalUnpaidAcrossMonths: number;
         unpaidLandlords: number;

@@ -13,7 +13,7 @@ import {
     settleLandlordAdvanceEarly,
 } from "@/app/actions/admin-finance";
 import { createLandlordPaidExpenseRequest, submitLandlordExpenseEdit, submitLandlordPaymentFromTerminal } from "@/app/actions/expenses";
-import { runMonthlyLandlordPayableSnapshot } from "@/app/actions/landlords";
+import { runMonthlyLandlordPayableSnapshot, updateLandlordSettlementTiming } from "@/app/actions/landlords";
 import { EmptyState, PageHero, StatusChip } from "@/components/office/shared/EnterpriseUI";
 import { OverflowSafeText } from "@/components/ui/OverflowSafeText";
 import { currentBusinessDate } from "@/lib/business-date";
@@ -27,12 +27,14 @@ import {
 } from "@/lib/landlord-advances/calculator";
 import {
     buildLandlordPaymentAllocationPlan,
+    eligibleLandlordPayableMonth,
     landlordMonthlyAppliedDeductions,
     landlordMonthlyDue,
     landlordMonthlyFinalNetPayable,
     landlordMonthlyGrossPayable,
     landlordMonthlyPendingDeductions,
     landlordMonthlyUnpaid,
+    normalizeSettlementTiming,
     summarizeLandlordPayables,
 } from "@/lib/landlord-payables/payment-allocation";
 import type { LandlordAdvanceGroup, LandlordMonthlyPayable, LandlordPayableGroup, LandlordPayablesData, LandlordPaymentApprovalRequest, LandlordPaymentOption, LandlordUnpaidMonthGroup, PaidLandlordPayment } from "@/lib/landlord-payables/types";
@@ -107,6 +109,10 @@ function monthLabel(value: string | null | undefined) {
     return new Intl.DateTimeFormat("en-UG", { month: "long", year: "numeric" }).format(date);
 }
 
+function settlementCycleLabel(value: string | null | undefined) {
+    return normalizeSettlementTiming(value) === "current_month" ? "Current Month" : "Previous Month";
+}
+
 function dateLabel(value: string | null | undefined) {
     if (!value) return "Not set";
     const date = new Date(value);
@@ -147,6 +153,7 @@ export default function LandlordPaymentsConsole({ data }: Props) {
     const landlords = data.landlords ?? [];
     const offices = data.offices ?? [];
     const summary = {
+        currentMonthPendingSettlement: data.summary?.currentMonthPendingSettlement ?? 0,
         totalUnpaidLandlordMoney: data.summary?.totalUnpaidLandlordMoney ?? 0,
         totalUnpaidAcrossMonths: data.summary?.totalUnpaidAcrossMonths ?? data.summary?.totalOutstandingToLandlords ?? 0,
         unpaidLandlords: data.summary?.unpaidLandlords ?? 0,
@@ -289,16 +296,18 @@ export default function LandlordPaymentsConsole({ data }: Props) {
                         <span className="w-fit rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-xs font-black uppercase tracking-wide text-emerald-200">Live</span>
                     </div>
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                        <PaymentKpiCard label="Total Landlord Liability" value={money(summary.totalOutstandingToLandlords)} detail="Unpaid landlord net payable" tone="red" icon={<WalletCards size={18} />} status="Live" progress={summary.totalOutstandingToLandlords ? 100 : 0} onClick={() => focusPayables("unpaid")} />
+                        <PaymentKpiCard label="Landlord Outstanding Payable Now" value={money(summary.totalOutstandingToLandlords)} detail="Eligible unpaid landlord net payable only" tone="red" icon={<WalletCards size={18} />} status="Live" progress={summary.totalOutstandingToLandlords ? 100 : 0} onClick={() => focusPayables("unpaid")} />
+                        <PaymentKpiCard label="Current-Month Pending Landlord Settlement" value={money(summary.currentMonthPendingSettlement ?? 0)} detail="Open-month net payable excluded for previous-month landlords" tone="blue" icon={<CalendarDays size={18} />} status="Updated" progress={summary.currentMonthPendingSettlement ? 100 : 0} onClick={() => focusPayables("ledger")} />
                         <PaymentKpiCard label="Unpaid Landlords" value={summary.unpaidLandlords.toLocaleString()} detail="Landlords still demanding payment" tone="amber" icon={<Landmark size={18} />} status="Needs Review" progress={Math.min(100, Math.round((summary.unpaidLandlords / Math.max(summary.unpaidLandlords + summary.paidLandlords, 1)) * 100))} onClick={() => focusPayables("unpaid")} />
                         <PaymentKpiCard label="Paid Landlords" value={summary.paidLandlords.toLocaleString()} detail="Cleared landlord-month records" tone="green" icon={<ShieldCheck size={18} />} status="Cleared" progress={Math.min(100, Math.round((summary.paidLandlords / Math.max(summary.unpaidLandlords + summary.paidLandlords, 1)) * 100))} onClick={focusPaid} />
                         <PaymentKpiCard label="Total Paid To Landlords" value={money(summary.totalMoneyPaidToLandlords)} detail="Money already paid out" tone="emerald" icon={<ReceiptText size={18} />} status="Updated" progress={Math.min(100, Math.round((summary.totalMoneyPaidToLandlords / Math.max(summary.totalMoneyPaidToLandlords + summary.totalOutstandingToLandlords, 1)) * 100))} onClick={focusPaid} />
                         <PaymentKpiCard label="Landlord Advances" value={money(summary.activeLandlordAdvances)} detail="Active advance balances" tone="blue" icon={<BanknoteArrowDown size={18} />} status={summary.activeLandlordAdvances ? "Needs Review" : "Updated"} progress={summary.activeLandlordAdvances ? 100 : 0} onClick={focusAdvances} />
                         <PaymentKpiCard label="Recovery Deductions" value={money(summary.recoveryDeductions)} detail="Recovered from landlord due to tenant debt" tone="purple" icon={<TrendingDown size={18} />} status={summary.recoveryDeductions ? "Live" : "Updated"} progress={summary.recoveryDeductions ? 100 : 0} onClick={focusRecovery} />
                     </div>
-                    <div className="mt-4 grid grid-cols-1 gap-3 rounded-3xl border border-white/10 bg-white/5 p-4 md:grid-cols-5">
+                    <div className="mt-4 grid grid-cols-1 gap-3 rounded-3xl border border-white/10 bg-white/5 p-4 md:grid-cols-6">
                         <SummaryStripItem label="Current Month" value={currentMonth} />
-                        <SummaryStripItem label="Outstanding" value={money(summary.totalOutstandingToLandlords)} tone="text-red-200" />
+                        <SummaryStripItem label="Payable Now" value={money(summary.totalOutstandingToLandlords)} tone="text-red-200" />
+                        <SummaryStripItem label="Pending Current Month" value={money(summary.currentMonthPendingSettlement ?? 0)} tone="text-blue-200" />
                         <SummaryStripItem label="Paid" value={money(summary.totalMoneyPaidToLandlords)} tone="text-emerald-200" />
                         <SummaryStripItem label="Advances" value={money(summary.activeLandlordAdvances)} tone="text-blue-200" />
                         <SummaryStripItem label="Net Position" value={money(netPosition)} tone={netPosition >= 0 ? "text-amber-200" : "text-emerald-200"} />
@@ -495,6 +504,7 @@ function LandlordPaymentEntryPanel({
     const [advanceRecoveryMode, setAdvanceRecoveryMode] = useState<"none" | "full" | "custom">("none");
     const [customAdvanceRecovery, setCustomAdvanceRecovery] = useState("");
     const [landlordEditModal, setLandlordEditModal] = useState<null | { requestType: LandlordExpenseEditRequestType }>(null);
+    const [settlementCycleModal, setSettlementCycleModal] = useState<null | { timing: "current_month" | "previous_month"; reason: string }>(null);
     const [localMessage, setLocalMessage] = useState("");
     const [lastSubmission, setLastSubmission] = useState<{
         advanceAmount: number;
@@ -516,13 +526,16 @@ function LandlordPaymentEntryPanel({
     } | null>(null);
     const [isPending, startTransition] = useTransition();
     const selectedRows = selected?.rows ?? [];
+    const selectedSettlementTiming = normalizeSettlementTiming(selected?.settlementTiming ?? selectedOption?.settlementTiming);
+    const payablePeriod = eligibleLandlordPayableMonth(paymentMonth, selectedSettlementTiming);
     const summary = useMemo(
         () => summarizeLandlordPayables({
             activeAdvanceBalance: selectedAdvanceGroup?.remainingBalance ?? 0,
             currentMonth: paymentMonth,
             payables: selectedRows as unknown as Record<string, unknown>[],
+            settlementTiming: selectedSettlementTiming,
         }),
-        [paymentMonth, selectedAdvanceGroup?.remainingBalance, selectedRows],
+        [paymentMonth, selectedAdvanceGroup?.remainingBalance, selectedRows, selectedSettlementTiming],
     );
     const amountEntered = numeric(amount);
     const activeAdvanceBalance = selectedAdvanceGroup?.remainingBalance ?? 0;
@@ -538,8 +551,9 @@ function LandlordPaymentEntryPanel({
             amount: numeric(amount),
             currentMonth: paymentMonth,
             payables: selectedRows as unknown as Record<string, unknown>[],
+            settlementTiming: selectedSettlementTiming,
         }),
-        [advanceRecoverySelected, amount, paymentMonth, selectedRows],
+        [advanceRecoverySelected, amount, paymentMonth, selectedRows, selectedSettlementTiming],
     );
     const remainingAdvanceBalance = Math.max(0, activeAdvanceBalance - allocation.advanceRecoveryAmount);
     const monthlyRows = useMemo(
@@ -565,11 +579,11 @@ function LandlordPaymentEntryPanel({
         .filter((line) => line.month.slice(0, 7) < paymentMonth.slice(0, 7))
         .reduce((total, line) => total + line.applied, 0);
     const currentMonthAllocation = allocation.lines
-        .filter((line) => line.month.slice(0, 7) === paymentMonth.slice(0, 7))
+        .filter((line) => line.month.slice(0, 7) === payablePeriod.slice(0, 7))
         .reduce((total, line) => total + line.applied, 0);
     const remainingAfterPayment = allocation.remainingAfterPayment;
     const previousMonthsOutstanding = Math.max(0, summary.totalOutstandingPayable - summary.currentMonthUnpaid);
-    const currentRows = selectedRows.filter((row) => String(row.settlement_month).slice(0, 7) === paymentMonth.slice(0, 7));
+    const currentRows = selectedRows.filter((row) => String(row.settlement_month).slice(0, 7) === payablePeriod.slice(0, 7));
     const currentPendingDeductions = summary.currentMonthPendingDeductions;
     const currentRecoveryDeductions = summary.currentMonthAppliedDeductions;
     const currentVacantRoomDeductions = currentPendingDeductions > 0
@@ -687,7 +701,8 @@ function LandlordPaymentEntryPanel({
                         <div className="mt-3 flex flex-wrap gap-2 text-xs font-black">
                             <span className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-3 py-1"><Building2 size={13} /> {selected?.officeName ?? "Office"}</span>
                             <span className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-3 py-1"><Phone size={13} /> {selectedOption?.phone ?? "No phone"}</span>
-                            <span className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-3 py-1"><CalendarDays size={13} /> {monthLabel(paymentMonth)}</span>
+                            <span className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-3 py-1"><CalendarDays size={13} /> Payable Period: {monthLabel(payablePeriod)}</span>
+                            <span className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-3 py-1">{settlementCycleLabel(selectedSettlementTiming)} Cycle</span>
                             <span className="inline-flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-3 py-1"><ReceiptText size={13} /> {currentPaymentStatus}</span>
                         </div>
                     </div>
@@ -700,7 +715,12 @@ function LandlordPaymentEntryPanel({
                 {selected ? (
                     <div className="relative z-10 mt-5 rounded-[1.75rem] border border-white/10 bg-white/10 p-4 shadow-xl shadow-slate-950/10 backdrop-blur">
                         <div className="grid gap-3 lg:grid-cols-[repeat(3,minmax(0,1fr))]">
-                            <PremiumHeaderStat label="Outstanding Balance" value={money(cardOutstandingBalance)} tone="text-white" />
+                            <PremiumHeaderStat label="Outstanding Payable Now" value={money(cardOutstandingBalance)} tone="text-white" />
+                            <PremiumHeaderStat label="Settlement Cycle" value={settlementCycleLabel(selectedSettlementTiming)} tone="text-cyan-100" />
+                            <PremiumHeaderStat label="Payable Period" value={monthLabel(payablePeriod)} tone="text-cyan-100" />
+                            <PremiumHeaderStat label="Current Month Pending" value={money(summary.currentMonthPendingSettlement)} tone="text-blue-100" />
+                            <PremiumHeaderStat label="Previous Unpaid" value={money(previousMonthsOutstanding)} tone="text-amber-100" />
+                            <PremiumHeaderStat label="Net Payable for Payable Period" value={money(summary.currentMonthNetPayable)} tone="text-emerald-100" />
                             <PremiumHeaderStat label="Payment Due Date" value={dateLabel(selectedPaymentDueDate)} tone="text-white" />
                             <div className="min-w-0 rounded-2xl border border-white/15 bg-white/10 px-3 py-2 shadow-lg shadow-slate-950/10">
                                 <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-300">Due Status</p>
@@ -717,6 +737,11 @@ function LandlordPaymentEntryPanel({
                                     <button type="button" onClick={() => setLandlordEditModal({ requestType: "landlord_payment_date_edit" })} className="rounded-xl border border-cyan-200 bg-cyan-100 px-3 py-2 text-xs font-black text-slate-950 shadow-lg shadow-slate-950/10 hover:bg-cyan-50">
                                         {canManage ? (selectedPaymentDueDate ? "Change Due Date" : "Set Due Date") : (selectedPaymentDueDate ? "Request Due Date Change" : "Request Due Date")}
                                     </button>
+                                    {canManage ? (
+                                        <button type="button" onClick={() => setSettlementCycleModal({ timing: selectedSettlementTiming, reason: "" })} className="rounded-xl border border-violet-200 bg-violet-100 px-3 py-2 text-xs font-black text-slate-950 shadow-lg shadow-slate-950/10 hover:bg-violet-50">
+                                            Change Settlement Cycle
+                                        </button>
+                                    ) : null}
                                 </>
                             ) : null}
                             <button type="button" onClick={() => document.getElementById("monthly-ledger")?.scrollIntoView({ behavior: "smooth", block: "start" })} className="rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-black text-white hover:bg-white/15">Payment History</button>
@@ -1031,6 +1056,56 @@ function LandlordPaymentEntryPanel({
                     onDone={onLandlordEditDone}
                     requestType={landlordEditModal.requestType}
                 />
+            ) : null}
+            {selected && settlementCycleModal ? (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4">
+                    <div className="w-full max-w-xl overflow-hidden rounded-[28px] bg-white shadow-2xl shadow-slate-950/30">
+                        <div className="bg-slate-950 p-5 text-white">
+                            <p className="text-xs font-black uppercase tracking-wide text-violet-200">Admin Settlement Cycle</p>
+                            <h3 className="mt-1 text-2xl font-black">Change Landlord Settlement Cycle</h3>
+                            <p className="mt-1 text-sm font-semibold text-slate-300">{selected.landlordName}</p>
+                        </div>
+                        <div className="space-y-4 p-5">
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <StatementMetric label="Current Cycle" value={settlementCycleLabel(selectedSettlementTiming)} />
+                                <StatementMetric label="Current Payable Period" value={monthLabel(payablePeriod)} />
+                            </div>
+                            <label className="block">
+                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Landlord Settlement Cycle</span>
+                                <select value={settlementCycleModal.timing} onChange={(event) => setSettlementCycleModal((current) => current ? { ...current, timing: event.target.value as "current_month" | "previous_month" } : current)} className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-black outline-none focus:border-violet-400">
+                                    <option value="current_month">Current Month - pay active/current month</option>
+                                    <option value="previous_month">Previous Month - pay latest closed month</option>
+                                </select>
+                            </label>
+                            <label className="block">
+                                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Reason</span>
+                                <textarea value={settlementCycleModal.reason} onChange={(event) => setSettlementCycleModal((current) => current ? { ...current, reason: event.target.value } : current)} className="mt-1 min-h-24 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-violet-400" placeholder="Explain why this landlord's settlement cycle is changing." />
+                            </label>
+                            <div className="flex flex-wrap justify-end gap-2">
+                                <button type="button" onClick={() => setSettlementCycleModal(null)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-black text-slate-700">Cancel</button>
+                                <button type="button" disabled={isPending || !settlementCycleModal.reason.trim()} onClick={() => {
+                                    const payload = settlementCycleModal;
+                                    startTransition(async () => {
+                                        try {
+                                            const result = await updateLandlordSettlementTiming({
+                                                landlordId: selected.landlordId,
+                                                reason: payload.reason,
+                                                settlementTiming: payload.timing,
+                                            });
+                                            setLocalMessage(result.message);
+                                            setMessage(result.message);
+                                            setSettlementCycleModal(null);
+                                        } catch (error) {
+                                            setLocalMessage(error instanceof Error ? error.message : "Unable to change settlement cycle.");
+                                        }
+                                    });
+                                }} className="rounded-xl bg-violet-700 px-4 py-2 text-sm font-black text-white disabled:opacity-40">
+                                    Save Settlement Cycle
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             ) : null}
         </section>
     );
@@ -1799,9 +1874,11 @@ function MonthlyLedger({ group }: { group: LandlordPayableGroup | null }) {
     const [paymentReference, setPaymentReference] = useState("");
     const [paymentMessage, setPaymentMessage] = useState("");
     const [isPending, startTransition] = useTransition();
+    const settlementTiming = normalizeSettlementTiming(group?.settlementTiming);
+    const payablePeriod = group?.payablePeriod ?? null;
     const payableSummary = useMemo(
-        () => summarizeLandlordPayables({ payables: (group?.rows ?? []) as unknown as Record<string, unknown>[] }),
-        [group?.rows],
+        () => summarizeLandlordPayables({ currentMonth: payablePeriod, payables: (group?.rows ?? []) as unknown as Record<string, unknown>[], settlementTiming }),
+        [group?.rows, payablePeriod, settlementTiming],
     );
 
     function openPayment(row: LandlordMonthlyPayable) {
@@ -1816,9 +1893,10 @@ function MonthlyLedger({ group }: { group: LandlordPayableGroup | null }) {
     const selectedPaymentDetail = (group?.approvedPaymentDetails ?? []).find((detail) => detail.id === paymentDetailId) ?? null;
     const paymentPreview = useMemo(() => buildLandlordPaymentAllocationPlan({
         amount: numeric(paymentAmount),
-        currentMonth: paymentTarget?.settlement_month,
+        currentMonth: payablePeriod ?? paymentTarget?.settlement_month,
         payables: (group?.rows ?? []) as unknown as Record<string, unknown>[],
-    }), [group?.rows, paymentAmount, paymentTarget?.settlement_month]);
+        settlementTiming,
+    }), [group?.rows, payablePeriod, paymentAmount, paymentTarget?.settlement_month, settlementTiming]);
 
     function recordPayment() {
         if (!paymentTarget || !group) return;
@@ -1839,7 +1917,7 @@ function MonthlyLedger({ group }: { group: LandlordPayableGroup | null }) {
                     expenseDate: new Date().toISOString().slice(0, 10),
                     landlordId: group.landlordId,
                     paymentMethod,
-                    paymentMonth: paymentTarget.settlement_month,
+                    paymentMonth: payablePeriod ?? paymentTarget.settlement_month,
                     notes: [
                         paymentReference ? `Reference: ${paymentReference}` : "",
                         paymentDetailId ? `Payment detail ID: ${paymentDetailId}` : "",
@@ -1897,6 +1975,7 @@ function MonthlyLedger({ group }: { group: LandlordPayableGroup | null }) {
                     <tbody>
                         {group.rows.map((row) => {
                             const balance = monthlyUnpaid(row);
+                            const isEligibleForPayment = !payablePeriod || String(row.settlement_month).slice(0, 10) <= payablePeriod;
                             const deductions =
                                 Number(row.vacant_room_deductions ?? 0) +
                                 Number(row.vacated_tenant_debt_deductions ?? 0) +
@@ -1921,8 +2000,8 @@ function MonthlyLedger({ group }: { group: LandlordPayableGroup | null }) {
                                         {Number(row.overpaid_amount ?? 0) > 0 ? <p className="text-xs font-black text-blue-700">Advance: {money(row.overpaid_amount)}</p> : null}
                                     </td>
                                     <td>
-                                        <button onClick={() => openPayment(row)} className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-black text-white">
-                                            Record Payment
+                                        <button disabled={!isEligibleForPayment} title={isEligibleForPayment ? "Record Payment" : "This month is pending and not payable under this landlord settlement cycle."} onClick={() => openPayment(row)} className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-black text-white disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600">
+                                            {isEligibleForPayment ? "Record Payment" : "Pending"}
                                         </button>
                                     </td>
                                 </tr>
@@ -1951,9 +2030,9 @@ function MonthlyLedger({ group }: { group: LandlordPayableGroup | null }) {
                     <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                         <div>
                             <p className="text-xs font-black uppercase tracking-wide text-emerald-700">Record Payment</p>
-                            <h3 className="text-lg font-black text-slate-950">{group.landlordName} · {monthLabel(paymentTarget.settlement_month)}</h3>
+                            <h3 className="text-lg font-black text-slate-950">{group.landlordName} · Payable Period {monthLabel(payablePeriod ?? paymentTarget.settlement_month)}</h3>
                             <p className="text-sm font-bold text-slate-600">
-                                Total payable: {money(payableSummary.totalOutstandingPayable)} · Already paid this month: {money(payableSummary.alreadyPaidAmount)} · Current month balance: {money(monthlyUnpaid(paymentTarget))}
+                                Total payable now: {money(payableSummary.totalOutstandingPayable)} · Settlement cycle: {settlementCycleLabel(settlementTiming)} · Selected row balance: {money(monthlyUnpaid(paymentTarget))}
                             </p>
                             <p className="text-xs font-bold text-slate-500">Payment clears oldest unpaid month first. Advance is created only after the full {money(payableSummary.totalOutstandingPayable)} genuine payable is cleared.</p>
                         </div>

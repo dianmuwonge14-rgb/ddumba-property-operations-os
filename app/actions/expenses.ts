@@ -12,7 +12,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getExpenseInActiveOffice } from "@/lib/expenses/data";
 import { calculateLandlordAdvancePlan } from "@/lib/landlord-advances/calculator";
 import { assertLandlordPayableIntegrity } from "@/lib/landlord-payables/integrity";
-import { buildLandlordPaymentAllocationPlan, landlordMonthlyDue, landlordMonthlyPaid, summarizeLandlordPayables } from "@/lib/landlord-payables/payment-allocation";
+import { buildLandlordPaymentAllocationPlan, eligibleLandlordPayableMonth, landlordMonthlyDue, landlordMonthlyPaid, normalizeSettlementTiming, summarizeLandlordPayables } from "@/lib/landlord-payables/payment-allocation";
 import { salaryDueDateForMonth } from "@/lib/salary-centre/data";
 import type {
     CreateExpenseCategoryInput,
@@ -640,6 +640,15 @@ async function getLandlordPaymentPreview(input: {
     paymentMonth: string;
 }) {
     const paymentMonth = monthStart(input.paymentMonth);
+    const landlordTimingResult = await input.db
+        .from("landlords")
+        .select("settlement_timing")
+        .eq("company_id", input.companyId)
+        .eq("id", input.landlordId)
+        .single();
+    if (landlordTimingResult.error) throw new Error(landlordTimingResult.error.message);
+    const settlementTiming = normalizeSettlementTiming((landlordTimingResult.data as Record<string, unknown> | null)?.settlement_timing);
+    const payablePeriod = eligibleLandlordPayableMonth(paymentMonth, settlementTiming);
     const [payablesResult, advancesResult, pendingResult] = await Promise.all([
         input.db
             .from("landlord_monthly_payables")
@@ -680,6 +689,7 @@ async function getLandlordPaymentPreview(input: {
         activeAdvanceBalance,
         currentMonth: paymentMonth,
         payables,
+        settlementTiming,
     });
     const selectedAdvanceRecovery = Math.min(
         Math.max(0, Number(input.advanceRecoveryAmount ?? 0)),
@@ -691,6 +701,7 @@ async function getLandlordPaymentPreview(input: {
         amount: input.amount,
         currentMonth: paymentMonth,
         payables,
+        settlementTiming,
     });
     const currentNetPayable = payableSummary.currentMonthNetPayable || landlordMonthlyDue(currentPayable ?? {});
     const alreadyPaidAmount = payableSummary.alreadyPaidAmount || landlordMonthlyPaid(currentPayable ?? {});
@@ -724,7 +735,9 @@ async function getLandlordPaymentPreview(input: {
         outstandingAmount,
         payableAfterAdvanceRecovery: allocationPlan.payableAfterAdvanceRecovery,
         paymentMonth,
+        payablePeriod,
         pendingRequestAmount,
+        settlementTiming,
         remainingAdvanceBalance: Math.max(0, activeAdvanceBalance - allocationPlan.advanceRecoveryAmount),
         remainingAfterPayment: allocationPlan.remainingAfterPayment,
     };
@@ -1469,10 +1482,12 @@ export async function previewLandlordPaymentExpense(input: {
             openingArrears: 0,
             outstandingAmount: 0,
             payableAfterAdvanceRecovery: 0,
+            payablePeriod: paymentMonth,
             paymentMonth,
             pendingRequestAmount: 0,
             remainingAdvanceBalance: 0,
             remainingAfterPayment: 0,
+            settlementTiming: "previous_month",
         };
     }
 
@@ -2460,6 +2475,14 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
     const storedAdvanceRecoveryAmount = Math.max(0, Number(request.advance_recovery_amount ?? 0));
     const requestedAmount = Math.max(0, Number(request.requested_amount ?? storedNormalPaymentAmount + storedAdvanceAmount));
     const paymentMonth = monthStart(String(request.payment_month ?? request.payment_date ?? reviewedAt));
+    const landlordTimingResult = await db
+        .from("landlords")
+        .select("settlement_timing")
+        .eq("company_id", companyId)
+        .eq("id", request.landlord_id)
+        .single();
+    if (landlordTimingResult.error) throw new Error(landlordTimingResult.error.message);
+    const settlementTiming = normalizeSettlementTiming((landlordTimingResult.data as Record<string, unknown> | null)?.settlement_timing);
     const payablesResult = await db
         .from("landlord_monthly_payables")
         .select("*")
@@ -2485,6 +2508,7 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
         activeAdvanceBalance,
         currentMonth: paymentMonth,
         payables: approvalPayables,
+        settlementTiming,
     });
     const approvedAdvanceRecoveryAmount = Math.min(
         storedAdvanceRecoveryAmount,
@@ -2496,6 +2520,7 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
         amount: requestedAmount,
         currentMonth: paymentMonth,
         payables: approvalPayables,
+        settlementTiming,
     });
     const normalPaymentAmount = approvalPlan.normalPaymentAmount;
     const advanceAmount = approvalPlan.advanceAmount;
@@ -3132,6 +3157,14 @@ async function applyApprovedLandlordPaymentToLedger(input: {
     notes: string | null;
 }) {
     if (input.amount <= 0) return null;
+    const landlordTimingResult = await input.db
+        .from("landlords")
+        .select("settlement_timing")
+        .eq("company_id", input.companyId)
+        .eq("id", input.landlordId)
+        .single();
+    if (landlordTimingResult.error) throw new Error(landlordTimingResult.error.message);
+    const settlementTiming = normalizeSettlementTiming((landlordTimingResult.data as Record<string, unknown> | null)?.settlement_timing);
     const rowsResult = await input.db
         .from("landlord_monthly_payables")
         .select("*")
@@ -3148,6 +3181,7 @@ async function applyApprovedLandlordPaymentToLedger(input: {
         amount: input.amount,
         currentMonth: input.paymentMonth,
         payables: (rowsResult.data ?? []) as Record<string, unknown>[],
+        settlementTiming,
     });
     if ((plan.normalPaymentAmount <= 0 && plan.advanceRecoveryAmount <= 0) || plan.lines.length === 0) {
         throw new Error("No genuine unpaid landlord payable was found for this payment.");
