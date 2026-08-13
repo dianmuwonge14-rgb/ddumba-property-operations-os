@@ -3,6 +3,9 @@ import { getExpensesPageData } from "@/lib/expenses/data";
 import type { ExpenseBalanceFilters, ExpensePeriodMode } from "@/lib/expenses/types";
 import ExpensesConsole from "@/components/office/expenses/ExpensesConsole";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 type Props = {
     searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
