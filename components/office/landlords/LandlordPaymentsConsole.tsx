@@ -15,6 +15,7 @@ import {
 import { createLandlordPaidExpenseRequest, submitLandlordExpenseEdit, submitLandlordPaymentFromTerminal } from "@/app/actions/expenses";
 import { runMonthlyLandlordPayableSnapshot } from "@/app/actions/landlords";
 import { EmptyState, PageHero, StatusChip } from "@/components/office/shared/EnterpriseUI";
+import { OverflowSafeText } from "@/components/ui/OverflowSafeText";
 import { currentBusinessDate } from "@/lib/business-date";
 import {
     calculateLandlordAdvancePlan,
@@ -750,14 +751,14 @@ function LandlordPaymentEntryPanel({
                                     >
                                         <div className="flex min-w-0 items-start justify-between gap-3">
                                             <div className="min-w-0">
-                                                <p className="truncate text-sm font-black text-slate-950">{group.landlordName}</p>
-                                                <p className="mt-1 truncate text-xs font-bold text-slate-500">{option?.phone ?? "No phone"} · {group.officeName}</p>
+                                                <OverflowSafeText mode="truncate" className="text-sm font-black text-slate-950">{group.landlordName}</OverflowSafeText>
+                                                <OverflowSafeText mode="truncate" className="mt-1 text-xs font-bold text-slate-500">{option?.phone ?? "No phone"} · {group.officeName}</OverflowSafeText>
                                             </div>
                                             <span className="shrink-0 rounded-full bg-slate-950 px-2.5 py-1 text-[10px] font-black text-white">{money(group.totalOutstanding)}</span>
                                         </div>
-                                        <p className="mt-2 line-clamp-2 text-xs font-semibold text-slate-500">
+                                        <OverflowSafeText className="mt-2 text-xs font-semibold leading-snug text-slate-500">
                                             Rooms: {option?.roomNumbersText || "Not indexed"} {option?.locationText ? `· ${option.locationText}` : ""}
-                                        </p>
+                                        </OverflowSafeText>
                                     </button>
                                 );
                             })}
@@ -1193,7 +1194,7 @@ function PremiumField({
             <span className="mb-2 flex items-center justify-between gap-3">
                 <span className="inline-flex min-w-0 items-center gap-2 text-xs font-black uppercase tracking-wide text-slate-500">
                     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white">{icon}</span>
-                    <span className="truncate">{label}</span>
+                    <OverflowSafeText mode="truncate">{label}</OverflowSafeText>
                 </span>
                 {helper ? <span className="hidden shrink-0 text-[11px] font-black text-emerald-700 sm:inline">{helper}</span> : null}
             </span>
@@ -1303,7 +1304,7 @@ function AiLine({ label, value, warning = false }: { label: string; value: strin
         <div className="flex min-w-0 items-center justify-between gap-3 rounded-2xl border border-white/80 bg-white/75 px-3 py-2 shadow-sm">
             <span className="inline-flex min-w-0 items-center gap-2 text-xs font-black text-slate-600">
                 {warning ? <AlertTriangle className="shrink-0 text-amber-600" size={14} /> : <CheckCircle2 className="shrink-0 text-emerald-600" size={14} />}
-                <span className="truncate">{label}</span>
+                <OverflowSafeText mode="truncate">{label}</OverflowSafeText>
             </span>
             <span className="shrink-0 text-right text-xs font-black text-slate-950">{value}</span>
         </div>
@@ -1725,14 +1726,16 @@ function PaymentKpiCard({
         <button type="button" onClick={onClick} className={`min-w-0 overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br ${palette.card} p-5 text-left shadow-xl shadow-slate-950/20 transition hover:-translate-y-0.5 hover:border-white/20 hover:shadow-2xl`}>
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                    <p className="text-xs font-black uppercase tracking-wide text-slate-300">{label}</p>
-                    <p className="mt-2 break-words text-[clamp(1.35rem,2.4vw,2.15rem)] font-black leading-tight text-white">{value}</p>
+                    <OverflowSafeText mode="truncate" className="text-xs font-black uppercase tracking-wide text-slate-300">{label}</OverflowSafeText>
+                    <OverflowSafeText className="mt-2 text-[clamp(1.35rem,2.4vw,2.15rem)] font-black leading-tight text-white">{value}</OverflowSafeText>
                 </div>
                 <span className={`shrink-0 rounded-2xl border p-3 ${palette.icon}`}>{icon}</span>
             </div>
-            <p className="mt-3 min-h-10 text-sm font-bold leading-snug text-slate-300">{detail}</p>
+            <OverflowSafeText className="mt-3 min-h-10 text-sm font-bold leading-snug text-slate-300">{detail}</OverflowSafeText>
             <div className="mt-4 flex items-center justify-between gap-3">
-                <span className={`rounded-full border px-2.5 py-1 text-[11px] font-black uppercase tracking-wide ${palette.badge}`}>{status}</span>
+                <span className={`min-w-0 rounded-full border px-2.5 py-1 text-[11px] font-black uppercase tracking-wide ${palette.badge}`}>
+                    <OverflowSafeText mode="truncate">{status}</OverflowSafeText>
+                </span>
                 <span className="text-[11px] font-black uppercase tracking-wide text-slate-400">Open</span>
             </div>
             <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
@@ -1745,8 +1748,8 @@ function PaymentKpiCard({
 function SummaryStripItem({ label, value, tone = "text-white" }: { label: string; value: string; tone?: string }) {
     return (
         <div className="min-w-0">
-            <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">{label}</p>
-            <p className={`mt-1 break-words text-sm font-black md:text-base ${tone}`}>{value}</p>
+            <OverflowSafeText mode="truncate" className="text-[11px] font-black uppercase tracking-wide text-slate-400">{label}</OverflowSafeText>
+            <OverflowSafeText className={`mt-1 text-sm font-black md:text-base ${tone}`}>{value}</OverflowSafeText>
         </div>
     );
 }

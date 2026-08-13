@@ -59,6 +59,95 @@ body {
   }
 }
 
+.overflow-safe-text {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.overflow-safe-text__content {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.overflow-safe-text--wrap,
+.overflow-safe-text--wrap .overflow-safe-text__content {
+  white-space: normal;
+}
+
+.overflow-safe-text--truncate .overflow-safe-text__content {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overflow-safe-text--marquee,
+.overflow-safe-text--marquee .overflow-safe-text__content {
+  white-space: nowrap;
+}
+
+.overflow-safe-text--marquee-active .overflow-safe-text__content {
+  max-width: none;
+  min-width: max-content;
+  padding-right: 1.25rem;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .overflow-safe-text--marquee-active .overflow-safe-text__content {
+    animation: ddumba-overflow-safe-marquee 8.5s ease-in-out infinite;
+  }
+
+  button:hover .overflow-safe-text--marquee-active .overflow-safe-text__content,
+  a:hover .overflow-safe-text--marquee-active .overflow-safe-text__content,
+  .group:hover .overflow-safe-text--marquee-active .overflow-safe-text__content {
+    animation-play-state: paused;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overflow-safe-text--marquee .overflow-safe-text__content {
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    padding-right: 0;
+    text-overflow: ellipsis;
+  }
+}
+
+@keyframes ddumba-overflow-safe-marquee {
+  0%,
+  18% {
+    transform: translateX(0);
+  }
+
+  55%,
+  72% {
+    transform: translateX(calc(-1 * var(--overflow-safe-distance, 2rem)));
+  }
+
+  100% {
+    transform: translateX(0);
+  }
+}
+
+.ddumba-safe-copy {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.ddumba-safe-cell {
+  max-width: 18rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tenant-receipt-slip {
   width: min(100%, 80mm);
   max-width: 80mm;

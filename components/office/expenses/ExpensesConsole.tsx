@@ -8,6 +8,7 @@ import { decideTreasuryCashRequest, submitTreasuryCashRequest } from "@/app/acti
 import { adminEditExpenseDirect, adminSafeDeleteExpense, approveExpense, createEmployeeExpenseFromExpenses, createExpense, createLandlordPaidExpenseRequest, createSalaryPaymentFromExpenses, decideBulkLandlordPaidExpenseRequests, decideEmployeeExpenseRequest, decideExpenseChangeRequest, decideLandlordExpenseEditRequest, decideLandlordPaidExpenseRequest, decideSalaryPaymentRequest, previewEmployeeExpense, previewLandlordPaymentExpense, rejectExpense, submitExpenseChangeRequest, submitLandlordExpenseEdit } from "@/app/actions/expenses";
 import { currentBusinessDate, formatBusinessDate } from "@/lib/business-date";
 import type { EmployeeExpensePreview, ExpenseBalanceFilters, ExpenseBalanceReport, ExpenseChangePayload, ExpenseItem, ExpensePeriodMode, ExpensesPageData, LandlordExpenseEditRequestType } from "@/lib/expenses/types";
+import { OverflowSafeText } from "@/components/ui/OverflowSafeText";
 
 type Props = {
     canManage: boolean;
@@ -1388,7 +1389,6 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                 {expenseEntryModes.map(([mode, label]) => {
                                     const meta = workflowCardMeta(mode);
                                     const active = entryMode === mode;
-                                    const isLongLabel = label.length > 15;
                                     return (
                                         <button
                                             key={`expense-entry-mode:${mode}`}
@@ -1408,9 +1408,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                             </div>
                                             <div className="mt-3 min-w-0">
                                                 <span className="text-[10px] font-black uppercase tracking-wide text-white/55">{meta.eyebrow}</span>
-                                                <span className="workflow-card-label-window mt-1 block" aria-label={label}>
-                                                    <span className={`workflow-card-label ${isLongLabel ? "workflow-card-label-marquee" : ""}`}>{label}</span>
-                                                </span>
+                                                <OverflowSafeText mode="marquee" className="mt-1" contentClassName="workflow-card-label">{label}</OverflowSafeText>
                                             </div>
                                         </button>
                                     );
@@ -2439,26 +2437,28 @@ function PrintPreview({ companyName, onClose, report }: { companyName: string; o
 
 function ExpenseFinanceAssistant({ insights }: { insights: Array<{ id: string; title: string; message: string; tone: "blue" | "amber" | "red" | "green" }> }) {
     return (
-        <section className="mx-auto mt-5 max-w-6xl rounded-[28px] border border-cyan-300/20 bg-slate-950 p-5 text-white shadow-2xl shadow-black/25">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
+        <section className="mx-auto mt-5 max-w-6xl overflow-hidden rounded-[28px] border border-cyan-300/20 bg-slate-950 p-5 text-white shadow-2xl shadow-black/25">
+            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
                     <div className="inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-400/10 px-3 py-1 text-xs font-black uppercase text-cyan-100">
                         <Bot size={14} />
                         AI Finance Assistant
                     </div>
-                    <h2 className="mt-3 text-2xl font-black">Live expense and landlord-payment intelligence</h2>
-                    <p className="mt-1 text-sm font-semibold text-slate-300">Flags approval queues, high spend, duplicate-risk patterns, and cash pressure from live Supabase data.</p>
+                    <h2 className="mt-3 text-2xl font-black leading-tight">Live expense and landlord-payment intelligence</h2>
+                    <OverflowSafeText className="mt-1 text-sm font-semibold text-slate-300">
+                        Flags approval queues, high spend, duplicate-risk patterns, and cash pressure from live Supabase data.
+                    </OverflowSafeText>
                 </div>
                 <span className="rounded-full bg-white/10 px-3 py-2 text-xs font-black uppercase text-cyan-100">Live</span>
             </div>
-            <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <div className="mt-4 grid min-w-0 gap-3 md:grid-cols-3">
                 {insights.map((insight) => (
-                    <div key={`expense-ai:${insight.id}`} className={`rounded-2xl border p-4 ${insight.tone === "red" ? "border-rose-300/25 bg-rose-400/10" : insight.tone === "amber" ? "border-amber-300/25 bg-amber-400/10" : insight.tone === "green" ? "border-emerald-300/25 bg-emerald-400/10" : "border-cyan-300/25 bg-cyan-400/10"}`}>
-                        <div className="flex items-center gap-2">
+                    <div key={`expense-ai:${insight.id}`} className={`min-w-0 rounded-2xl border p-4 ${insight.tone === "red" ? "border-rose-300/25 bg-rose-400/10" : insight.tone === "amber" ? "border-amber-300/25 bg-amber-400/10" : insight.tone === "green" ? "border-emerald-300/25 bg-emerald-400/10" : "border-cyan-300/25 bg-cyan-400/10"}`}>
+                        <div className="flex min-w-0 items-start gap-2">
                             <AlertTriangle size={15} className={insight.tone === "red" ? "text-rose-200" : insight.tone === "amber" ? "text-amber-200" : insight.tone === "green" ? "text-emerald-200" : "text-cyan-200"} />
-                            <p className="text-sm font-black">{insight.title}</p>
+                            <OverflowSafeText className="text-sm font-black leading-snug">{insight.title}</OverflowSafeText>
                         </div>
-                        <p className="mt-2 text-sm font-semibold text-slate-300">{insight.message}</p>
+                        <OverflowSafeText className="mt-2 text-sm font-semibold leading-relaxed text-slate-300">{insight.message}</OverflowSafeText>
                     </div>
                 ))}
             </div>
@@ -3094,8 +3094,8 @@ function LandlordPaymentRequestLedger({
                                         </td>
                                     ) : null}
                                     <td className="px-4 py-3 font-bold text-slate-500">{request.paymentDate}</td>
-                                    <td className="px-4 py-3 font-black text-slate-950">{request.landlordName}</td>
-                                    <td className="px-4 py-3 font-bold text-slate-500">{request.officeName}</td>
+                                    <td className="px-4 py-3 font-black text-slate-950"><OverflowSafeText mode="truncate" className="max-w-[220px]">{request.landlordName}</OverflowSafeText></td>
+                                    <td className="px-4 py-3 font-bold text-slate-500"><OverflowSafeText mode="truncate" className="max-w-[220px]">{request.officeName}</OverflowSafeText></td>
                                     <td className="px-4 py-3 text-right font-black text-slate-950">{money(request.amount)}</td>
                                     <td className="px-4 py-3 text-right font-black text-emerald-700">{money(request.cashPaymentAmount)}</td>
                                     <td className="px-4 py-3 text-right font-black text-indigo-700">{money(request.advanceRecoveryAmount)}</td>
@@ -3106,9 +3106,9 @@ function LandlordPaymentRequestLedger({
                                         <p className="font-black text-slate-950">{request.landlordPaymentDueDate ?? "No due date"}</p>
                                         <span className={`mt-1 inline-flex rounded-full border px-2 py-1 text-[10px] font-black uppercase ${dueStatusClass(dueStatus.tone)}`}>{dueStatus.label}</span>
                                     </td>
-                                    <td className="px-4 py-3 font-bold text-slate-500">{request.adminComment ?? request.notes ?? "No comment"}</td>
+                                    <td className="px-4 py-3 font-bold text-slate-500"><OverflowSafeText mode="truncate" className="max-w-[260px]">{request.adminComment ?? request.notes ?? "No comment"}</OverflowSafeText></td>
                                     <td className="px-4 py-3">
-                                        <div className="flex flex-wrap gap-2">
+                                        <div className="flex max-w-[460px] flex-wrap gap-2">
                                             <button type="button" onClick={(event) => { event.stopPropagation(); setSelected(request); }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-amber-100">
                                                 View
                                             </button>
@@ -3117,11 +3117,11 @@ function LandlordPaymentRequestLedger({
                                             </button>
                                             {!isManager ? (
                                                 <>
-                                                    <button type="button" disabled={hasPendingBalanceRequest} onClick={(event) => { event.stopPropagation(); openLandlordManageEdit(request, "landlord_outstanding_balance_edit"); }} className="rounded-xl bg-blue-700 px-3 py-2 text-xs font-black text-white shadow-lg shadow-blue-900/15 hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-45 focus:outline-none focus:ring-4 focus:ring-blue-100">
-                                                        {isAdmin ? "Edit Outstanding Balance" : "Request Outstanding Balance Change"}
+                                                    <button type="button" title={isAdmin ? "Edit Outstanding Balance" : "Request Outstanding Balance Change"} disabled={hasPendingBalanceRequest} onClick={(event) => { event.stopPropagation(); openLandlordManageEdit(request, "landlord_outstanding_balance_edit"); }} className="min-w-0 max-w-[180px] overflow-hidden rounded-xl bg-blue-700 px-3 py-2 text-xs font-black text-white shadow-lg shadow-blue-900/15 hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-45 focus:outline-none focus:ring-4 focus:ring-blue-100">
+                                                        <OverflowSafeText mode="marquee">{isAdmin ? "Edit Outstanding Balance" : "Request Outstanding Balance Change"}</OverflowSafeText>
                                                     </button>
-                                                    <button type="button" disabled={hasPendingDueDateRequest} onClick={(event) => { event.stopPropagation(); openLandlordManageEdit(request, "landlord_payment_date_edit"); }} className="rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs font-black text-blue-800 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-45 focus:outline-none focus:ring-4 focus:ring-blue-100">
-                                                        {isAdmin ? "Set / Change Landlord Payment Due Date" : "Request Payment Due Date Change"}
+                                                    <button type="button" title={isAdmin ? "Set / Change Landlord Payment Due Date" : "Request Payment Due Date Change"} disabled={hasPendingDueDateRequest} onClick={(event) => { event.stopPropagation(); openLandlordManageEdit(request, "landlord_payment_date_edit"); }} className="min-w-0 max-w-[190px] overflow-hidden rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs font-black text-blue-800 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-45 focus:outline-none focus:ring-4 focus:ring-blue-100">
+                                                        <OverflowSafeText mode="marquee">{isAdmin ? "Set / Change Landlord Payment Due Date" : "Request Payment Due Date Change"}</OverflowSafeText>
                                                     </button>
                                                 </>
                                             ) : (
@@ -4390,9 +4390,9 @@ function ExpenseChangeRequestLedger({ activeOfficeName, isAdmin, offices, onRevi
 
 function IconAction({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
     return (
-        <button type="button" onClick={onClick} className="inline-flex h-8 items-center gap-1 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-black text-slate-700 hover:bg-slate-50">
+        <button type="button" title={label} onClick={onClick} className="inline-flex h-8 min-w-0 max-w-[160px] items-center gap-1 overflow-hidden rounded-lg border border-slate-200 bg-white px-2 text-[11px] font-black text-slate-700 hover:bg-slate-50">
             {icon}
-            {label}
+            <OverflowSafeText mode="marquee">{label}</OverflowSafeText>
         </button>
     );
 }
