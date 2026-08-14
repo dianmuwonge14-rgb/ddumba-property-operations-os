@@ -17,7 +17,7 @@ export async function getDataIntegrityCentreData(context: AuthContext): Promise<
         supabase.from("offices").select("id, office_name, name").eq("company_id", companyId).limit(1000),
         supabase.from("rooms").select("id, company_id, office_id, property_id, landlord_id, room_number, status, monthly_rent, outstanding_balance, workbook_comment, workbook_raw_data, created_at, updated_at").eq("company_id", companyId).limit(5000),
         supabase.from("landlords").select("id, company_id, full_name, phone, status, created_at").eq("company_id", companyId).limit(5000),
-        supabase.from("tenants").select("id, company_id, office_id, room_id, full_name, name, phone, phone_number, status, outstanding_balance, created_at").eq("company_id", companyId).limit(5000),
+        supabase.from("tenants").select("id, company_id, office_id, room_id, full_name, phone, status, outstanding_balance:balance, created_at").eq("company_id", companyId).limit(5000),
         supabase.from("collections").select("id, company_id, office_id, room_id, tenant_id, payment_date, amount, amount_paid, status, created_at").eq("company_id", companyId).limit(10000),
     ]);
 
