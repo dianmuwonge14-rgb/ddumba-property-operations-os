@@ -53,6 +53,7 @@ test("tenant balance reconciliation never leaves both advance and outstanding po
 test("database migration preserves advance allocations and records consumed amount", () => {
   const originalMigration = fs.readFileSync("supabase/upgrade_migrations/0217_tenant_balance_net_reconciliation.sql", "utf8");
   const repairMigration = fs.readFileSync("supabase/upgrade_migrations/0266_true_tenant_outstanding_balance.sql", "utf8");
+  const paymentReductionMigration = fs.readFileSync("supabase/upgrade_migrations/0275_tenant_payment_outstanding_reduction.sql", "utf8");
   assert.match(originalMigration, /consumed_by_balance_reconciliation/);
   assert.match(originalMigration, /create table if not exists public\.tenant_balance_reconciliations/);
   assert.match(repairMigration, /create or replace function public\.reconcile_tenant_balance/);
@@ -60,6 +61,10 @@ test("database migration preserves advance allocations and records consumed amou
   assert.match(repairMigration, /payment_amount <= due_before/);
   assert.match(repairMigration, /B912/);
   assert.match(repairMigration, /C8019/);
+  assert.match(paymentReductionMigration, /'collection_payment'/);
+  assert.match(paymentReductionMigration, /v_outstanding_after := v_requested_outstanding;/);
+  assert.match(paymentReductionMigration, /create or replace view public\.tenant_payment_balance_snapshot_mismatches/);
+  assert.match(paymentReductionMigration, /create or replace function public\.repair_tenant_payment_balance_snapshots/);
 });
 
 test("payment, adjustment and promise paths use canonical tenant balance reconciliation", () => {
