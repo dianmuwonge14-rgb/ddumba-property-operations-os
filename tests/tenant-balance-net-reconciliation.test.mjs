@@ -91,6 +91,15 @@ test("live search and billing functions subtract consumed advance only once", ()
   assert.match(dataSource, /displayTenantNetBalance/);
 });
 
+test("collection details do not display stale consumed next-month allocations", () => {
+  const dataSource = fs.readFileSync("lib/collections/data.ts", "utf8");
+  assert.match(dataSource, /savedAllocatedToNextMonth/);
+  assert.match(dataSource, /liveNextMonthAllocation/);
+  assert.match(dataSource, /liveAllocatedToNextMonth/);
+  assert.match(dataSource, /Math\.min\(Math\.max\(savedAllocatedToNextMonth, liveNextMonthAllocation\), advanceRentBalance\)/);
+  assert.match(dataSource, /Math\.min\(Math\.max\(savedAllocatedToNextMonth, liveAllocatedToNextMonth\), advanceRentBalance\)/);
+});
+
 test("tenant payment allocation creates advance only from true overpayment", () => {
   const allocationSource = fs.readFileSync("lib/collections/move-in-allocation.ts", "utf8");
   assert.match(allocationSource, /genuineAdvanceCredit = Math\.max\(0, amount - totalDueBeforePayment\)/);

@@ -2030,8 +2030,9 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
         const nextMonthCoveredAmount = sortedAllocationMonths.find(([month]) => month.slice(0, 7) === upcomingMonth.slice(0, 7))?.[1]?.advance ?? 0;
         const latestArrearsMonth = sortedAllocationMonths.filter(([, values]) => values.arrears > 0).map(([month]) => month).at(-1);
         const firstRentOrAdvanceAfterOutstanding = sortedAllocationMonths.find(([month, values]) => latestArrearsMonth ? month > latestArrearsMonth && (values.rent > 0 || values.advance > 0) : month > monthStart && (values.rent > 0 || values.advance > 0));
-        const amountAllocatedToNextMonth = Number((lastCollection as CollectionRow & { allocated_to_next_month?: number | null })?.allocated_to_next_month ?? 0) ||
-            (firstRentOrAdvanceAfterOutstanding ? firstRentOrAdvanceAfterOutstanding[1].rent + firstRentOrAdvanceAfterOutstanding[1].advance : 0);
+        const savedAllocatedToNextMonth = Number((lastCollection as CollectionRow & { allocated_to_next_month?: number | null })?.allocated_to_next_month ?? 0);
+        const liveNextMonthAllocation = firstRentOrAdvanceAfterOutstanding ? firstRentOrAdvanceAfterOutstanding[1].rent + firstRentOrAdvanceAfterOutstanding[1].advance : 0;
+        const amountAllocatedToNextMonth = Math.min(Math.max(savedAllocatedToNextMonth, liveNextMonthAllocation), advanceRentBalance);
         const amountUsedToClearOutstanding = Number((lastCollection as CollectionRow & { used_to_clear_outstanding?: number | null })?.used_to_clear_outstanding ?? 0) ||
             Math.min(previousOutstandingBeforeLastPayment, lastAmountPaid);
         const propertyId = tenant.property_id ?? room?.property_id ?? null;
@@ -2409,9 +2410,10 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
             return month > monthStart && (values.rent > 0 || values.advance > 0);
         });
         const savedAllocatedToNextMonth = Number((lastCollection as CollectionRow & { allocated_to_next_month?: number | null })?.allocated_to_next_month ?? 0);
-        const amountAllocatedToNextMonth = savedAllocatedToNextMonth || (firstRentOrAdvanceAfterOutstanding
+        const liveAllocatedToNextMonth = firstRentOrAdvanceAfterOutstanding
             ? firstRentOrAdvanceAfterOutstanding[1].rent + firstRentOrAdvanceAfterOutstanding[1].advance
-            : 0);
+            : 0;
+        const amountAllocatedToNextMonth = Math.min(Math.max(savedAllocatedToNextMonth, liveAllocatedToNextMonth), advanceRentBalance);
         const rentMonthAllocations = sortedAllocationMonths
             .map(([month, values]) => {
                 const isFuture = month > monthStart;
