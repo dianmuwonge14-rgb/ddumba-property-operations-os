@@ -1875,6 +1875,9 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
             if (outstandingBalance <= 0.004 && dueRentOutstanding <= 0.004) {
                 continue;
             }
+            if (advanceRentBalance <= 0.004 && Math.abs(outstandingBalance - dueRentOutstanding) <= 0.004) {
+                continue;
+            }
             const missingAmount = unresolvedOverpayments.reduce((total, item) => total + item.missing, 0);
             items.push({
                 id: `missing-allocation-${tenantId}`,
