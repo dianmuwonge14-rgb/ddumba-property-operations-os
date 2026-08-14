@@ -264,49 +264,54 @@ export async function GET(request: NextRequest) {
         if (type === "landlord") {
             const admin = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
             const landlordOfficeFilterId = canSeeAll ? null : activeOfficeId;
-            const [searchIndexResult, landlordResult, payableResult, advanceResult] = await Promise.all([
+            const indexSearchFilter = [
+                `landlord_name.ilike.${like}`,
+                `phone.ilike.${like}`,
+                `office_name.ilike.${like}`,
+                `location_text.ilike.${like}`,
+                `room_numbers_text.ilike.${like}`,
+                `tenant_names_text.ilike.${like}`,
+                `searchable_text.ilike.${like}`,
+                `normalized_name.ilike.${like}`,
+            ].join(",");
+            const landlordSearchFilter = [
+                `full_name.ilike.${like}`,
+                `phone.ilike.${like}`,
+                `location.ilike.${like}`,
+                `address.ilike.${like}`,
+            ].join(",");
+            const [searchIndexResult, fallbackLandlordResult] = await Promise.all([
                 (() => {
                     let query = admin
                         .from("landlord_search_index")
                         .select("landlord_id, office_id, landlord_name, phone, office_name, location_text, room_numbers_text, tenant_names_text, searchable_text, room_count, rent_roll")
                         .eq("company_id", companyId)
-                        .limit(1000);
+                        .or(indexSearchFilter)
+                        .order("landlord_name", { ascending: true, nullsFirst: false })
+                        .limit(40);
                     if (landlordOfficeFilterId) query = query.eq("office_id", landlordOfficeFilterId);
                     return query;
                 })(),
-                admin
-                    .from("landlords")
-                    .select("id, full_name, phone, status, location, address, payment_date, settlement_timing")
-                    .eq("company_id", companyId)
-                    .neq("status", "archived")
-                    .order("full_name", { ascending: true, nullsFirst: false })
-                    .limit(1000),
-                admin.from("landlord_monthly_payables").select("*").eq("company_id", companyId).neq("status", "archived").limit(2500),
-                admin.from("landlord_advances").select("*").eq("company_id", companyId).limit(1500),
+                canSeeAll && !landlordOfficeFilterId
+                    ? admin
+                        .from("landlords")
+                        .select("id, full_name, phone, status, location, address, payment_date, settlement_timing")
+                        .eq("company_id", companyId)
+                        .neq("status", "archived")
+                        .or(landlordSearchFilter)
+                        .order("full_name", { ascending: true, nullsFirst: false })
+                        .limit(40)
+                    : Promise.resolve({ data: [], error: null }),
             ]);
-            for (const result of [searchIndexResult, landlordResult, payableResult, advanceResult]) {
+            for (const result of [searchIndexResult, fallbackLandlordResult]) {
                 if (result.error && !/does not exist|schema cache/i.test(result.error.message ?? "")) throw new Error(result.error.message);
-            }
-            const landlordRows = (landlordResult.data ?? []) as Array<Record<string, unknown>>;
-            const landlordById = new Map(landlordRows.map((landlord) => [String(landlord.id), landlord]));
-            const payablesByLandlord = new Map<string, Array<Record<string, unknown>>>();
-            for (const payable of (payableResult.data ?? []) as Array<Record<string, unknown>>) {
-                const landlordId = String(payable.landlord_id ?? "");
-                if (!landlordId) continue;
-                payablesByLandlord.set(landlordId, [...(payablesByLandlord.get(landlordId) ?? []), payable]);
-            }
-            const advancesByLandlord = new Map<string, Array<Record<string, unknown>>>();
-            for (const advance of (advanceResult.data ?? []) as Array<Record<string, unknown>>) {
-                const landlordId = String(advance.landlord_id ?? "");
-                if (!landlordId) continue;
-                advancesByLandlord.set(landlordId, [...(advancesByLandlord.get(landlordId) ?? []), advance]);
             }
             const needle = q.toLowerCase();
             const compactNeedle = compactSearch(q);
             const currentMonth = currentSettlementMonth();
             const indexRows = (searchIndexResult.data ?? []) as Array<Record<string, unknown>>;
             const fallbackRows = canSeeAll
-                ? landlordRows.map((landlord) => ({
+                ? ((fallbackLandlordResult.data ?? []) as Array<Record<string, unknown>>).map((landlord) => ({
                     landlord_id: landlord.id,
                     office_id: null,
                     landlord_name: landlord.full_name,
@@ -324,6 +329,35 @@ export async function GET(request: NextRequest) {
             for (const row of [...indexRows, ...fallbackRows]) {
                 const landlordId = String(row.landlord_id ?? "");
                 if (landlordId && !rowsByLandlord.has(landlordId)) rowsByLandlord.set(landlordId, row);
+            }
+            const candidateLandlordIds = [...rowsByLandlord.keys()].slice(0, 40);
+            if (!candidateLandlordIds.length) return NextResponse.json({ results: [] }, { headers: { "Cache-Control": "no-store" } });
+            const [landlordResult, payableResult, advanceResult] = await Promise.all([
+                admin
+                    .from("landlords")
+                    .select("id, full_name, phone, status, location, address, payment_date, settlement_timing")
+                    .eq("company_id", companyId)
+                    .neq("status", "archived")
+                    .in("id", candidateLandlordIds),
+                admin.from("landlord_monthly_payables").select("*").eq("company_id", companyId).neq("status", "archived").in("landlord_id", candidateLandlordIds),
+                admin.from("landlord_advances").select("*").eq("company_id", companyId).in("landlord_id", candidateLandlordIds),
+            ]);
+            for (const result of [landlordResult, payableResult, advanceResult]) {
+                if (result.error && !/does not exist|schema cache/i.test(result.error.message ?? "")) throw new Error(result.error.message);
+            }
+            const landlordRows = (landlordResult.data ?? []) as Array<Record<string, unknown>>;
+            const landlordById = new Map(landlordRows.map((landlord) => [String(landlord.id), landlord]));
+            const payablesByLandlord = new Map<string, Array<Record<string, unknown>>>();
+            for (const payable of (payableResult.data ?? []) as Array<Record<string, unknown>>) {
+                const landlordId = String(payable.landlord_id ?? "");
+                if (!landlordId) continue;
+                payablesByLandlord.set(landlordId, [...(payablesByLandlord.get(landlordId) ?? []), payable]);
+            }
+            const advancesByLandlord = new Map<string, Array<Record<string, unknown>>>();
+            for (const advance of (advanceResult.data ?? []) as Array<Record<string, unknown>>) {
+                const landlordId = String(advance.landlord_id ?? "");
+                if (!landlordId) continue;
+                advancesByLandlord.set(landlordId, [...(advancesByLandlord.get(landlordId) ?? []), advance]);
             }
             const results = [...rowsByLandlord.values()]
                 .map((row) => {
