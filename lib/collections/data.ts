@@ -2026,7 +2026,7 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
             leaseStartDate: lease?.start_date ?? tenant.created_at?.slice(0, 10) ?? null,
         });
         const currentMonthValues = sortedAllocationMonths.find(([month]) => month.slice(0, 7) === monthStart.slice(0, 7))?.[1];
-        const currentMonthPaid = Math.min(monthlyRent, (currentMonthValues?.historical ?? 0) + (currentMonthValues?.rent ?? 0) + (currentMonthValues?.arrears ?? 0));
+        const currentMonthPaid = Math.min(monthlyRent, (currentMonthValues?.historical ?? 0) + (currentMonthValues?.rent ?? 0) + (currentMonthValues?.arrears ?? 0) + (currentMonthValues?.advance ?? 0));
         const nextMonthCoveredAmount = sortedAllocationMonths.find(([month]) => month.slice(0, 7) === upcomingMonth.slice(0, 7))?.[1]?.advance ?? 0;
         const latestArrearsMonth = sortedAllocationMonths.filter(([, values]) => values.arrears > 0).map(([month]) => month).at(-1);
         const firstRentOrAdvanceAfterOutstanding = sortedAllocationMonths.find(([month, values]) => latestArrearsMonth ? month > latestArrearsMonth && (values.rent > 0 || values.advance > 0) : month > monthStart && (values.rent > 0 || values.advance > 0));
@@ -2359,8 +2359,12 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
         const monthStart = selectedMonthStart(paymentDate);
         const upcomingMonth = addMonthsToMonthStart(monthStart, 1);
         const allocatedCurrentMonthPaid = tenantAllocations
-            .filter((allocation) => String(allocation.allocation_type) === "current_month" && String(allocation.allocation_month ?? "").slice(0, 7) === monthStart.slice(0, 7))
-            .reduce((total, allocation) => total + Number(allocation.amount_allocated ?? 0), 0);
+            .filter((allocation) => {
+                const allocationMonth = String(allocation.allocation_month ?? "").slice(0, 7);
+                const allocationType = String(allocation.allocation_type);
+                return allocationMonth === monthStart.slice(0, 7) && (allocationType === "current_month" || allocationType === "advance_month");
+            })
+            .reduce((total, allocation) => total + (String(allocation.allocation_type) === "advance_month" ? availableAdvanceAllocation(allocation) : Number(allocation.amount_allocated ?? 0)), 0);
         const rawCurrentMonthPaid = tenantCollections
             .filter((collection) => collectionPaymentDate(collection).slice(0, 7) === monthStart.slice(0, 7))
             .reduce((total, collection) => total + collectionAmount(collection), 0);

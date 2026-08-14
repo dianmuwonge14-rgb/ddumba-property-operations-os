@@ -98,6 +98,8 @@ test("collection details do not display stale consumed next-month allocations", 
   assert.match(dataSource, /liveAllocatedToNextMonth/);
   assert.match(dataSource, /Math\.min\(Math\.max\(savedAllocatedToNextMonth, liveNextMonthAllocation\), advanceRentBalance\)/);
   assert.match(dataSource, /Math\.min\(Math\.max\(savedAllocatedToNextMonth, liveAllocatedToNextMonth\), advanceRentBalance\)/);
+  assert.match(dataSource, /allocationType === "current_month" \|\| allocationType === "advance_month"/);
+  assert.match(dataSource, /currentMonthValues\?\.advance/);
 });
 
 test("tenant payment allocation creates advance only from true overpayment", () => {
