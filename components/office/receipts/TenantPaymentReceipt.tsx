@@ -1238,6 +1238,26 @@ function buildEscPosReceipt(receipt: TenantReceiptViewModel, settings: ReceiptPr
         escPosPair("Advance bal", money(snapshot.advanceBalance), width),
         escPosLine("-".repeat(width), width),
     ];
+    if (snapshot.coveragePeriods?.length) {
+        lines.push(
+            escPosBold(true),
+            escPosLine("RENT COVERAGE", width),
+            escPosBold(false),
+            ...snapshot.coveragePeriods.flatMap((period) => [
+                escPosPair(period.type.replace(/\b\w/g, (char) => char.toUpperCase()), money(period.amount), width),
+                escPosLine(period.label, width),
+            ]),
+            escPosLine("-".repeat(width), width),
+        );
+    } else if (snapshot.coveragePeriod) {
+        lines.push(
+            escPosBold(true),
+            escPosLine("RENT COVERAGE", width),
+            escPosBold(false),
+            escPosLine(snapshot.coveragePeriod, width),
+            escPosLine("-".repeat(width), width),
+        );
+    }
     lines.push(
         escPosBold(true),
         escPosLine("PREPARED BY", width),
@@ -1821,6 +1841,25 @@ export function TenantPaymentReceiptSlip({ receipt }: { receipt: TenantReceiptVi
                 <ReceiptMoneyRow label="Remaining balance" value={snapshot.remainingOutstandingBalance} highlight />
                 <ReceiptMoneyRow label="Advance balance" value={snapshot.advanceBalance} />
             </section>
+
+            {snapshot.coveragePeriods?.length ? (
+                <section className="receipt-section">
+                    <p className="receipt-section-title font-black">Rent Coverage</p>
+                    {snapshot.coveragePeriods.map((period, index) => (
+                        <ReceiptRow
+                            key={`${period.label}-${period.type}-${index}`}
+                            label={period.type.replace(/\b\w/g, (char) => char.toUpperCase())}
+                            value={`${period.label} · ${money(period.amount)}`}
+                            stacked
+                        />
+                    ))}
+                </section>
+            ) : snapshot.coveragePeriod ? (
+                <section className="receipt-section">
+                    <p className="receipt-section-title font-black">Rent Coverage</p>
+                    <ReceiptRow label="Coverage" value={snapshot.coveragePeriod} stacked />
+                </section>
+            ) : null}
 
             <section className="receipt-section">
                 <p className="receipt-section-title font-black">Prepared By</p>

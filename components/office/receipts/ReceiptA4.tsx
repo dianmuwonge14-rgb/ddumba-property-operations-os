@@ -79,6 +79,26 @@ export function ReceiptA4({ receipt }: { receipt: TenantReceiptViewModel }) {
                 </div>
             </section>
 
+            {snapshot.coveragePeriods?.length ? (
+                <section className="receipt-a4-section">
+                    <h2>Rent Coverage</h2>
+                    <div className="receipt-a4-grid receipt-a4-meta">
+                        {snapshot.coveragePeriods.map((period, index) => (
+                            <Info
+                                key={`${period.label}-${period.type}-${index}`}
+                                label={period.type.replace(/\b\w/g, (char) => char.toUpperCase())}
+                                value={`${period.label} · ${money(period.amount)}`}
+                            />
+                        ))}
+                    </div>
+                </section>
+            ) : snapshot.coveragePeriod ? (
+                <section className="receipt-a4-section">
+                    <h2>Rent Coverage</h2>
+                    <Info label="Coverage" value={snapshot.coveragePeriod} />
+                </section>
+            ) : null}
+
             <section className="receipt-a4-section">
                 <h2>Prepared By</h2>
                 <div className="receipt-a4-grid receipt-a4-meta">
