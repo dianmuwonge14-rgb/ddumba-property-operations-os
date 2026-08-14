@@ -1672,7 +1672,14 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
     const roomIds = uniqueIds(tenantRows.map((tenant) => tenant.room_id));
     const officeIds = uniqueIds(tenantRows.map((tenant) => tenant.office_id));
 
-    const [roomsResult, officesResult, collectionRows, allocationRows, legacyArrearsRows] = await Promise.all([
+    const businessDate = new Intl.DateTimeFormat("en-CA", {
+        day: "2-digit",
+        month: "2-digit",
+        timeZone: "Africa/Kampala",
+        year: "numeric",
+    }).format(new Date());
+
+    const [roomsResult, officesResult, collectionRows, allocationRows, rentMonthRows, legacyArrearsRows] = await Promise.all([
         roomIds.length
             ? supabase.from("rooms").select("id, room_number, monthly_rent, outstanding_balance, office_id").eq("company_id", companyId).in("id", roomIds)
             : { data: [] as Array<Record<string, unknown>>, error: null },
@@ -1690,6 +1697,13 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
             ? optionalRows((supabase as unknown as DynamicDb)
                 .from("tenant_rent_allocations")
                 .select("tenant_id, payment_id, allocation_month, allocation_type, amount_allocated, consumed_by_balance_reconciliation, allocation_source, is_historical_credit, coverage_start, coverage_end, coverage_index")
+                .eq("company_id", companyId)
+                .in("tenant_id", tenantIds))
+            : [],
+        tenantIds.length
+            ? optionalRows((supabase as unknown as DynamicDb)
+                .from("tenant_rent_months")
+                .select("tenant_id, rent_month, due_date, coverage_start, outstanding_amount, status")
                 .eq("company_id", companyId)
                 .in("tenant_id", tenantIds))
             : [],
@@ -1725,6 +1739,17 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
         if (!tenantId) continue;
         legacyArrearsByTenant.set(tenantId, [...(legacyArrearsByTenant.get(tenantId) ?? []), legacyRow]);
     }
+    const dueRentOutstandingByTenant = new Map<string, number>();
+    for (const rentMonth of rentMonthRows as Array<Record<string, unknown>>) {
+        const tenantId = String(rentMonth.tenant_id ?? "");
+        if (!tenantId) continue;
+        const status = String(rentMonth.status ?? "unpaid").toLowerCase();
+        if (["cancelled", "canceled", "voided", "deleted", "reversed"].includes(status)) continue;
+        const dueDate = String(rentMonth.coverage_start ?? rentMonth.due_date ?? rentMonth.rent_month ?? "").slice(0, 10);
+        if (dueDate && dueDate > businessDate) continue;
+        const amount = Math.max(0, Number(rentMonth.outstanding_amount ?? 0));
+        dueRentOutstandingByTenant.set(tenantId, (dueRentOutstandingByTenant.get(tenantId) ?? 0) + amount);
+    }
 
     const items: AdvanceRentAssistantItem[] = [];
     for (const tenant of tenantRows) {
@@ -1740,6 +1765,7 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
         const tenantAllocations = allocationsByTenant.get(tenantId) ?? [];
         const tenantCollections = collectionsByTenant.get(tenantId) ?? [];
         const tenantLegacyArrears = legacyArrearsByTenant.get(tenantId) ?? [];
+        const dueRentOutstanding = dueRentOutstandingByTenant.get(tenantId) ?? 0;
         const activeLegacyArrearsBalance = tenantLegacyArrears.reduce((total, row) => total + Number(row.remaining_amount ?? 0), 0);
         const legacyArrearsMonths = [...new Set(tenantLegacyArrears
             .sort((left, right) => String(left.allocation_month ?? "").localeCompare(String(right.allocation_month ?? "")))
@@ -1846,6 +1872,9 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
         }
 
         if (hasOverpaymentWithoutAllocation) {
+            if (outstandingBalance <= 0.004 && dueRentOutstanding <= 0.004) {
+                continue;
+            }
             const missingAmount = unresolvedOverpayments.reduce((total, item) => total + item.missing, 0);
             items.push({
                 id: `missing-allocation-${tenantId}`,
