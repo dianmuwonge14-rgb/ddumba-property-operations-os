@@ -458,6 +458,99 @@ async function reconcileTenantBalanceAfterWrite(input: {
     };
 }
 
+async function syncTenantRentMonthRowsAfterPayment(input: {
+    allocations: Array<{
+        allocationMonth: string;
+        allocationType: "arrears" | "current_month" | "advance_month";
+        amount: number;
+        coverageEnd?: string | null;
+        coverageIndex?: number | null;
+        coverageStart?: string | null;
+    }>;
+    companyId: string;
+    db: DynamicDb;
+    leaseId?: string | null;
+    monthlyRent: number;
+    officeId?: string | null;
+    roomId?: string | null;
+    tenantId: string;
+}) {
+    const payableAllocations = input.allocations.filter((allocation) => allocation.allocationType !== "advance_month" && moneyAmount(allocation.amount) > 0);
+    if (!payableAllocations.length) return;
+
+    const byMonth = new Map<string, {
+        amount: number;
+        coverageEnd?: string | null;
+        coverageIndex?: number | null;
+        coverageStart?: string | null;
+    }>();
+    for (const allocation of payableAllocations) {
+        const month = String(allocation.allocationMonth ?? "").slice(0, 10);
+        if (!month) continue;
+        const existing = byMonth.get(month);
+        byMonth.set(month, {
+            amount: (existing?.amount ?? 0) + moneyAmount(allocation.amount),
+            coverageEnd: existing?.coverageEnd ?? allocation.coverageEnd ?? null,
+            coverageIndex: existing?.coverageIndex ?? allocation.coverageIndex ?? null,
+            coverageStart: existing?.coverageStart ?? allocation.coverageStart ?? null,
+        });
+    }
+    const months = [...byMonth.keys()];
+    if (!months.length) return;
+
+    const existingRows = await input.db
+        .from("tenant_rent_months")
+        .select("*")
+        .eq("company_id", input.companyId)
+        .eq("tenant_id", input.tenantId)
+        .in("rent_month", months);
+    if (existingRows.error) {
+        if (/does not exist|schema cache|Could not find/i.test(existingRows.error.message ?? "")) return;
+        throw new Error(existingRows.error.message ?? "Tenant rent month rows could not be loaded.");
+    }
+
+    const rowsByMonth = new Map<string, Record<string, unknown>>((existingRows.data ?? []).map((row: Record<string, unknown>) => [String(row.rent_month ?? "").slice(0, 10), row]));
+    const dueDay = Math.min(31, Math.max(1, Number(payableAllocations[0]?.coverageStart?.slice(8, 10) ?? 1) || 1));
+    const now = new Date().toISOString();
+    const payloads = months.map((month) => {
+        const allocation = byMonth.get(month)!;
+        const existing = rowsByMonth.get(month);
+        const rentAmount = moneyAmount(existing?.rent_amount ?? input.monthlyRent);
+        const amountPaid = Math.min(rentAmount, moneyAmount(existing?.amount_paid) + allocation.amount);
+        const outstandingAmount = Math.max(0, rentAmount - amountPaid);
+        const coverageStart = allocation.coverageStart ?? (typeof existing?.coverage_start === "string" ? existing.coverage_start : null) ?? month;
+        const coverageEnd = allocation.coverageEnd ?? (typeof existing?.coverage_end === "string" ? existing.coverage_end : null);
+        return {
+            amount_paid: amountPaid,
+            company_id: input.companyId,
+            coverage_end: coverageEnd,
+            coverage_index: allocation.coverageIndex ?? existing?.coverage_index ?? null,
+            coverage_start: coverageStart,
+            due_date: existing?.due_date ?? coverageStart,
+            due_day: existing?.due_day ?? dueDay,
+            landlord_id: existing?.landlord_id ?? null,
+            lease_id: existing?.lease_id ?? input.leaseId ?? null,
+            office_id: existing?.office_id ?? input.officeId ?? null,
+            outstanding_amount: outstandingAmount,
+            rent_amount: rentAmount,
+            rent_month: month,
+            room_id: existing?.room_id ?? input.roomId ?? null,
+            source: existing?.source ?? "collection_payment_allocation",
+            status: outstandingAmount <= 0 ? "paid" : amountPaid > 0 ? "partial" : "unpaid",
+            tenant_id: input.tenantId,
+            updated_at: now,
+        };
+    });
+
+    const upsert = await input.db
+        .from("tenant_rent_months")
+        .upsert(payloads, { onConflict: "company_id,tenant_id,rent_month" });
+    if (upsert.error) {
+        if (/does not exist|schema cache|Could not find/i.test(upsert.error.message ?? "")) return;
+        throw new Error(upsert.error.message ?? "Tenant rent month rows could not be updated.");
+    }
+}
+
 async function applyTenantBalanceAdjustment(input: {
     adjustmentId: string;
     companyId: string;
@@ -1242,6 +1335,16 @@ export async function recordCollection(input: RecordCollectionInput) {
     if (criticalError && !/does not exist|schema cache|Could not find/i.test(criticalError.message ?? "")) {
         throw new Error(criticalError.message ?? "Payment balance update failed.");
     }
+    await syncTenantRentMonthRowsAfterPayment({
+        allocations: allocationRows,
+        companyId: context.activeCompany.id,
+        db: supabase as unknown as DynamicDb,
+        leaseId: tenantContext.lease?.id ?? null,
+        monthlyRent: tenantContext.monthlyRent,
+        officeId: resolvedOfficeId,
+        roomId: resolvedRoomId,
+        tenantId: tenantContext.tenant.id,
+    });
     mark("critical_writes");
 
     const reconciliation = await reconcileTenantBalanceAfterWrite({
