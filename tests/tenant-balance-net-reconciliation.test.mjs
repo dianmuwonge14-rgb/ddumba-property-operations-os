@@ -74,6 +74,8 @@ test("payment, adjustment and promise paths use canonical tenant balance reconci
   assert.match(collections, /rpc\("reconcile_tenant_balance"/);
   assert.match(collections, /"collection_payment"/);
   assert.match(collections, /shouldUseDirectSnapshotUpdate/);
+  assert.match(collections, /syncTenantRentMonthRowsAfterPayment/);
+  assert.match(collections, /\.from\("tenant_rent_months"\)/);
   assert.match(collections, /sourceType: "collection_payment"/);
   assert.match(collections, /sourceType: "tenant_balance_adjustment"/);
   assert.match(promises, /rpc\("reconcile_tenant_balance"/);
