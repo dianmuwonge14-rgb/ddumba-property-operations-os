@@ -165,6 +165,7 @@ type EntrySearchResult = {
     phone?: string | null;
     role?: string | null;
     employeeCode?: string | null;
+    fullRentRoll?: number;
     monthlySalary?: number;
     baseSalary?: number;
     alreadyPaid?: number;
@@ -175,7 +176,10 @@ type EntrySearchResult = {
     salaryDueDate?: string | null;
     paymentStatus?: string;
     pendingSalaryRequestId?: string | null;
+    portfolioGross?: number;
+    portfolioValue?: number;
     settlementTiming?: string | null;
+    totalRooms?: number;
 };
 type EmployeeLunchDetail = EntrySearchResult & {
     position: string;
@@ -584,7 +588,11 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                 numberOfRooms: option.numberOfRooms,
                 outstandingBalance: 0,
                 phone: typeof landlord?.phone === "string" ? landlord.phone : null,
+                fullRentRoll: option.portfolioValue ?? 0,
+                portfolioGross: option.portfolioValue ?? 0,
+                portfolioValue: option.portfolioValue ?? 0,
                 settlementTiming: typeof landlord?.settlement_timing === "string" ? landlord.settlement_timing : null,
+                totalRooms: option.numberOfRooms ?? 0,
                 searchText: [
                     option.name,
                     option.officeName,
