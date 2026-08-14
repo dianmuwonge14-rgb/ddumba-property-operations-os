@@ -46,6 +46,10 @@ function revalidateRolloverSurfaces() {
     }
 }
 
+function isMissingMaturedAdvanceRpc(message: string | undefined) {
+    return /repair_company_matured_tenant_advances|schema cache|function .* does not exist|Could not find/i.test(message ?? "");
+}
+
 export async function runMonthlyRentRollover(input: RolloverInput = {}) {
     const context = await requirePermission("collections.manage");
     if (!context.isCompanyAdmin || context.isOfficeMode) {
@@ -73,6 +77,17 @@ export async function runMonthlyRentRollover(input: RolloverInput = {}) {
         }
         throw new Error(error.message ?? "Monthly rent rollover failed.");
     }
+    const { data: maturedAdvanceRepair, error: maturedAdvanceError } = await db.rpc("repair_company_matured_tenant_advances", {
+        p_actor_id: context.profile?.id ?? null,
+        p_business_date: businessDate,
+        p_company_id: context.activeCompany.id,
+        p_note: "Manual monthly rollover consumed matured advance rent after activating rent periods.",
+        p_office_id: input.officeId ?? null,
+    });
+
+    if (maturedAdvanceError && !isMissingMaturedAdvanceRpc(maturedAdvanceError.message)) {
+        throw new Error(maturedAdvanceError.message ?? "Matured advance rent repair failed.");
+    }
 
     await logUserAction({
         action: "monthly_rent_rollover_run",
@@ -81,11 +96,12 @@ export async function runMonthlyRentRollover(input: RolloverInput = {}) {
         officeId: input.officeId ?? null,
         afterData: {
             businessDate,
+            maturedAdvanceRepair: JSON.parse(JSON.stringify(maturedAdvanceRepair ?? { pendingMigration: Boolean(maturedAdvanceError) })),
             rentMonth,
             result: JSON.parse(JSON.stringify(data ?? null)),
         },
     });
 
     revalidateRolloverSurfaces();
-    return data;
+    return { maturedAdvanceRepair, rollover: data };
 }

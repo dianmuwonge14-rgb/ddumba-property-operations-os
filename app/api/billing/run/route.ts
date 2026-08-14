@@ -24,6 +24,10 @@ function isAuthorized(request: NextRequest) {
     return process.env.NODE_ENV !== "production";
 }
 
+function isMissingMaturedAdvanceRpc(message: string | undefined) {
+    return /repair_company_matured_tenant_advances|schema cache|function .* does not exist|Could not find/i.test(message ?? "");
+}
+
 export async function GET(request: NextRequest) {
     if (!isAuthorized(request)) {
         return NextResponse.json({ error: "Unauthorized billing scheduler request." }, { status: 401 });
@@ -45,10 +49,23 @@ export async function GET(request: NextRequest) {
             p_run_type: "scheduled_hourly",
             p_triggered_by: null,
         });
+        const maturedAdvanceRepair = result.error
+            ? { data: null, error: null }
+            : await db.rpc("repair_company_matured_tenant_advances", {
+                p_actor_id: null,
+                p_business_date: date,
+                p_company_id: companyId,
+                p_note: "Scheduled billing consumed matured advance rent after monthly rollover.",
+                p_office_id: null,
+            });
+        const maturedAdvanceError = isMissingMaturedAdvanceRpc(maturedAdvanceRepair.error?.message)
+            ? null
+            : maturedAdvanceRepair.error;
         results.push({
             companyId,
             companyName: company.name ?? null,
-            error: result.error?.message ?? null,
+            error: result.error?.message ?? maturedAdvanceError?.message ?? null,
+            maturedAdvanceRepair: maturedAdvanceRepair.data ?? null,
             result: result.data ?? null,
         });
     }

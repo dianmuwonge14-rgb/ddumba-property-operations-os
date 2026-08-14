@@ -10,6 +10,7 @@ const tenantSnapshot = readFileSync(new URL("../components/office/collections/Te
 const dueRoute = readFileSync(new URL("../app/api/billing/due-intelligence/route.ts", import.meta.url), "utf8");
 const scheduledRoute = readFileSync(new URL("../app/api/billing/run/route.ts", import.meta.url), "utf8");
 const pgCronMigration = readFileSync(new URL("../supabase/upgrade_migrations/0210_tenant_billing_hourly_pg_cron.sql", import.meta.url), "utf8");
+const maturedAdvanceMigration = readFileSync(new URL("../supabase/upgrade_migrations/0276_matured_advance_rent_consumption.sql", import.meta.url), "utf8");
 const fastLookupBillingMigration = readFileSync(new URL("../supabase/upgrade_migrations/0211_fast_payment_lookup_billing_fields.sql", import.meta.url), "utf8");
 const fastPaymentSearchMigration = readFileSync(new URL("../supabase/upgrade_migrations/0214_fast_payments_entry_tenant_search.sql", import.meta.url), "utf8");
 const fastPaymentAdminSearchIndexMigration = readFileSync(new URL("../supabase/upgrade_migrations/0215_fast_payment_admin_search_indexes.sql", import.meta.url), "utf8");
@@ -20,6 +21,7 @@ const collectionsAction = readFileSync(new URL("../app/actions/collections.ts", 
 const moveInAllocation = readFileSync(new URL("../lib/collections/move-in-allocation.ts", import.meta.url), "utf8");
 const propertiesData = readFileSync(new URL("../lib/properties/data.ts", import.meta.url), "utf8");
 const propertyCommandPanel = readFileSync(new URL("../components/office/properties/PropertyCommandPanel.tsx", import.meta.url), "utf8");
+const tenantLedgerAction = readFileSync(new URL("../app/actions/tenant-ledger.ts", import.meta.url), "utf8");
 
 function clampDay(year, monthIndex, day) {
   return Math.min(day, new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate());
@@ -82,12 +84,15 @@ test("payments and tenant detail screens expose the Set Billing Date control", (
 });
 
 test("scheduled billing automation runs hourly and does not depend on page loads", () => {
-  assert.match(scheduledRoute, /run_monthly_rent_rollover/);
-  assert.match(scheduledRoute, /scheduled_hourly/);
-  assert.match(scheduledRoute, /x-vercel-cron|CRON_SECRET/);
-  assert.match(pgCronMigration, /pg_cron/);
-  assert.match(pgCronMigration, /ddumba_tenant_billing_hourly/);
-  assert.match(pgCronMigration, /'0 \* \* \* \*'/);
+    assert.match(scheduledRoute, /run_monthly_rent_rollover/);
+    assert.match(scheduledRoute, /repair_company_matured_tenant_advances/);
+    assert.match(scheduledRoute, /scheduled_hourly/);
+    assert.match(scheduledRoute, /x-vercel-cron|CRON_SECRET/);
+    assert.match(pgCronMigration, /pg_cron/);
+    assert.match(pgCronMigration, /ddumba_tenant_billing_hourly/);
+    assert.match(pgCronMigration, /'0 \* \* \* \*'/);
+    assert.match(maturedAdvanceMigration, /repair_company_matured_tenant_advances/);
+    assert.match(maturedAdvanceMigration, /Scheduled billing consumed matured advance rent after monthly rollover/);
 });
 
 test("overdue rent intelligence uses a small indexed live sample", () => {
@@ -162,4 +167,18 @@ test("properties landlord dropdown loads and searches the full company landlord 
   assert.doesNotMatch(propertyCommandPanel, /landlords\.slice\(0,\s*60\)/);
   assert.doesNotMatch(propertyCommandPanel, /\.slice\(0,\s*40\)/);
   assert.match(propertyCommandPanel, /landlords\.filter/);
+});
+
+test("matured advance rent is consumed into due rent periods instead of staying as future credit", () => {
+  assert.match(maturedAdvanceMigration, /create or replace function public\.consume_matured_tenant_advance/);
+  assert.match(maturedAdvanceMigration, /a\.allocation_type = 'advance_month'/);
+  assert.match(maturedAdvanceMigration, /coalesce\(a\.coverage_start, a\.allocation_month\) <= p_business_date/);
+  assert.match(maturedAdvanceMigration, /set consumed_by_balance_reconciliation = coalesce\(consumed_by_balance_reconciliation, 0\) \+ v_slice/);
+  assert.match(maturedAdvanceMigration, /update public\.tenant_rent_months/);
+  assert.match(maturedAdvanceMigration, /outstanding_amount = greatest\(0, coalesce\(outstanding_amount, 0\) - v_period_consumed\)/);
+  assert.match(maturedAdvanceMigration, /status = case[\s\S]*then 'paid'[\s\S]*else 'partial'/);
+  assert.match(maturedAdvanceMigration, /v_future_advance_after/);
+  assert.match(maturedAdvanceMigration, /tenant_matured_advance_mismatches/);
+  assert.match(billingAction, /repair_company_matured_tenant_advances/);
+  assert.match(tenantLedgerAction, /repair_company_matured_tenant_advances/);
 });
