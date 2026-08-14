@@ -5,6 +5,7 @@ import { logUserAction } from "@/lib/auth/audit";
 import { canAccessOffice, hasPermission, requireAuth } from "@/lib/auth/permissions";
 import { recordCollectionLedgerAndCash } from "@/lib/collections/payment-ledger";
 import { billingAnchorDay, coveragePeriodForMoveIn, monthStart, summarizeMoveInPaymentCoverage } from "@/lib/collections/move-in-allocation";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { recalculateTenantScore } from "@/lib/tenants/scoring";
 import { refreshAffectedLandlordPayable } from "@/app/actions/room-rent";
@@ -634,7 +635,7 @@ async function replaceTenantFromPaymentsEntryUnsafe(input: ReplaceTenantFromPaym
     assertAmount(monthlyRent, "Monthly rent", false);
     assertAmount(paymentMade, "Payment made");
 
-    const supabase = await createSupabaseServerClient();
+    const supabase = createSupabaseAdminClient();
     const companyId = context.activeCompany.id;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
     const employeeId = await resolveActorEmployeeId(supabase, actorId, context.profile);
@@ -908,7 +909,7 @@ async function markRoomOccupiedUnsafe(input: MarkRoomOccupiedInput) {
         throw new Error("Balance demanded plus money collected must cover at least the first full monthly rent.");
     }
 
-    const supabase = await createSupabaseServerClient();
+    const supabase = createSupabaseAdminClient();
     const companyId = context.activeCompany.id;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
     const employeeId = await resolveActorEmployeeId(supabase, actorId, context.profile);
