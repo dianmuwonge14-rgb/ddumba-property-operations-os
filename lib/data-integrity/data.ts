@@ -18,7 +18,7 @@ export async function getDataIntegrityCentreData(context: AuthContext): Promise<
         supabase.from("rooms").select("id, company_id, office_id, property_id, landlord_id, room_number, status, monthly_rent, outstanding_balance, workbook_comment, workbook_raw_data, created_at, updated_at").eq("company_id", companyId).limit(5000),
         supabase.from("landlords").select("id, company_id, full_name, phone, status, created_at").eq("company_id", companyId).limit(5000),
         supabase.from("tenants").select("id, company_id, office_id, room_id, full_name, phone, status, outstanding_balance:balance, created_at").eq("company_id", companyId).limit(5000),
-        supabase.from("collections").select("id, company_id, office_id, room_id, tenant_id, payment_date, amount, amount_paid, status, created_at").eq("company_id", companyId).limit(10000),
+        supabase.from("collections").select("id, company_id, office_id, room_id, tenant_id, payment_date, amount, amount_paid, status, created_at, financial_effective, reversed_at, voided_at, deleted_at, superseded_at, superseded_by_payment_id, corrected_by_payment_id, correction_of_payment_id").eq("company_id", companyId).limit(10000),
     ]);
 
     for (const result of [officesResult, roomsResult, landlordsResult, tenantsResult, collectionsResult]) {
@@ -130,7 +130,7 @@ function duplicateTenantPhones(tenants: LooseRow[], officeById: Map<string, stri
 
 function duplicatePayments(collections: LooseRow[], officeById: Map<string, string>): IntegrityDuplicateRecord[] {
     return duplicateBy(
-        collections.filter(isFinanciallyEffectiveCollection),
+        collections.filter((collection) => isFinanciallyEffectiveCollection(collection) && stringValue(collection.room_id) && stringValue(collection.tenant_id)),
         (collection) => [collection.company_id, collection.office_id, collection.room_id, collection.tenant_id, dateOnly(collection.payment_date), numberValue(collection.amount_paid ?? collection.amount)].join("|"),
         (key, records) => ({
             id: `payment-${key}`,

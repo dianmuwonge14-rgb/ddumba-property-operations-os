@@ -34,6 +34,7 @@ export function isFinanciallyEffectiveCollection(row: CollectionValidityRow | nu
     if (!row) return false;
     const status = String(row.status ?? "posted").toLowerCase();
     if (INVALID_COLLECTION_STATUSES.has(status)) return false;
+    if (status.includes("duplicate") || status.includes("reversed")) return false;
     if (row.financial_effective === false) return false;
     if (row.reversed_at || row.voided_at || row.deleted_at || row.superseded_at) return false;
     if (row.superseded_by_payment_id || row.corrected_by_payment_id) return false;
