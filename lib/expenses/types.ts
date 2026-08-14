@@ -133,6 +133,8 @@ export type ExpensesPageData = {
         portfolioValue?: number;
         numberOfRooms?: number;
         occupiedRooms?: number;
+        roomNumbers?: string[];
+        searchText?: string;
         vacantRooms?: number;
         vacatedWithDebt?: number;
     }>;

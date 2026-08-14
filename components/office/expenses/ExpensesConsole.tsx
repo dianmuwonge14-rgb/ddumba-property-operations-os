@@ -47,6 +47,10 @@ function money(value: number | string | null | undefined) {
     return `UGX ${Math.round(Number(value ?? 0)).toLocaleString()}`;
 }
 
+function compactSearch(value: unknown) {
+    return String(value ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
 function methodLabel(value: string | null | undefined) {
     const normalized = String(value ?? "cash").toLowerCase();
     if (normalized.includes("mobile")) return "Mobile Money";
@@ -567,6 +571,33 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
     const activeAuthorisedExpense = AUTHORISED_EXPENSES.find((item) => item.value === authorisedType) ?? AUTHORISED_EXPENSES[0];
     const selectedLandlordOption = selectedLandlordDetail;
     const selectedEmployeeOption = selectedEmployeeDetail;
+    const landlordSearchFallbackOptions = useMemo(() => {
+        const landlordById = new Map(data.landlords.map((landlord) => [landlord.id, landlord as Record<string, unknown>]));
+        return data.landlordOptions.map((option) => {
+            const landlord = landlordById.get(option.id);
+            return {
+                id: option.id,
+                name: option.name,
+                officeId: option.officeId,
+                officeName: option.officeName,
+                location: option.location,
+                numberOfRooms: option.numberOfRooms,
+                outstandingBalance: 0,
+                phone: typeof landlord?.phone === "string" ? landlord.phone : null,
+                settlementTiming: typeof landlord?.settlement_timing === "string" ? landlord.settlement_timing : null,
+                searchText: [
+                    option.name,
+                    option.officeName,
+                    option.location,
+                    option.searchText,
+                    ...(option.roomNumbers ?? []),
+                    landlord?.phone,
+                    landlord?.location,
+                    landlord?.address,
+                ].filter(Boolean).join(" "),
+            };
+        });
+    }, [data.landlordOptions, data.landlords]);
     const currentMonthExpenses = useMemo(() => {
         const month = expenseDate.slice(0, 7) || thisMonth();
         return data.expenses.filter((expense) => {
@@ -712,6 +743,8 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
 
     useEffect(() => {
         const query = landlordSearch.trim();
+        const needle = query.toLowerCase();
+        const compactNeedle = compactSearch(query);
         if (!isLandlordPaidMode || !query || query === selectedLandlordDetail?.name) {
             landlordSearchRequestSeqRef.current += 1;
             landlordSearchAbortRef.current?.abort();
@@ -744,7 +777,16 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                     const payload = await response.json();
                     if (landlordSearchRequestSeqRef.current !== requestId) return;
                     if (!response.ok) throw new Error(payload.error ?? "Landlord search failed.");
-                    setLandlordSearchResults(payload.results ?? []);
+                    const apiResults = (payload.results ?? []) as EntrySearchResult[];
+                    const fallbackResults = apiResults.length ? apiResults : landlordSearchFallbackOptions
+                        .filter((landlord) => !effectiveLandlordSearchOfficeId || landlord.officeId === effectiveLandlordSearchOfficeId)
+                        .filter((landlord) => {
+                            const haystack = landlord.searchText;
+                            return haystack.toLowerCase().includes(needle) || compactSearch(haystack).includes(compactNeedle);
+                        })
+                        .slice(0, 16)
+                        .map(({ searchText: _searchText, ...landlord }) => landlord);
+                    setLandlordSearchResults(fallbackResults);
                     setLandlordSearchError(null);
                 } catch (error) {
                     if (landlordSearchRequestSeqRef.current !== requestId) return;
@@ -766,7 +808,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
             clearTimeout(timer);
             controller.abort();
         };
-    }, [effectiveLandlordSearchOfficeId, isLandlordPaidMode, landlordSearch, selectedLandlordDetail?.name]);
+    }, [effectiveLandlordSearchOfficeId, isLandlordPaidMode, landlordSearch, landlordSearchFallbackOptions, selectedLandlordDetail?.name]);
 
     function loadEntryDetail(type: "employee" | "salary_employee" | "landlord", id: string) {
         detailAbortRef.current?.abort();

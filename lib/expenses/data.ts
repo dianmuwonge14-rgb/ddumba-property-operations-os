@@ -206,7 +206,7 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
         supabase.from("users").select("*").eq("company_id", companyId).eq("status", "active"),
         supabase.from("offices").select("id, office_name, name").eq("company_id", companyId).ilike("status", "active").is("merged_into_office_id", null).order("office_name", { ascending: true, nullsFirst: false }),
         (() => {
-            let query = supabase.from("rooms").select("id, landlord_id, office_id, status, monthly_rent").eq("company_id", companyId).not("landlord_id", "is", null).not("status", "in", "(archived,inactive,deleted,removed)");
+            let query = supabase.from("rooms").select("id, landlord_id, office_id, property_id, room_number, status, monthly_rent").eq("company_id", companyId).not("landlord_id", "is", null).not("status", "in", "(archived,inactive,deleted,removed)");
             if (selectedOfficeId) query = query.eq("office_id", selectedOfficeId);
             return query;
         })(),
@@ -245,11 +245,16 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
     }));
     const employees = (employeesResult.data ?? []) as EmployeeRow[];
     const officeById = new Map(offices.map((office) => [office.id, office.name]));
+    const propertyById = new Map((propertiesResult.data ?? []).map((property) => {
+        const rawProperty = property as PropertyRow & Record<string, unknown>;
+        return [property.id, property.property_name ?? String(rawProperty.name ?? "Property")];
+    }));
     const employeeById = new Map(employees.map((employee) => [employee.id, employee.full_name ?? "Employee"]));
     const userById = new Map(users.map((user) => [user.id, user.full_name ?? user.email ?? "User"]));
     const landlordOfficeById = new Map<string, string | null>();
-    type LandlordRoomRow = { landlord_id: string | null; office_id: string | null; status?: string | null; monthly_rent?: number | string | null };
+    type LandlordRoomRow = { landlord_id: string | null; office_id: string | null; property_id?: string | null; room_number?: string | null; status?: string | null; monthly_rent?: number | string | null };
     const landlordPortfolioById = new Map<string, { portfolioValue: number; numberOfRooms: number; occupiedRooms: number; vacantRooms: number; vacatedWithDebt: number }>();
+    const landlordRoomSearchById = new Map<string, { roomNumbers: string[]; propertyNames: string[] }>();
     for (const room of (roomsResult.data ?? []) as LandlordRoomRow[]) {
         if (room.landlord_id && !landlordOfficeById.has(room.landlord_id)) landlordOfficeById.set(room.landlord_id, room.office_id);
         if (!room.landlord_id) continue;
@@ -261,22 +266,38 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
         else if (status.includes("vacated") || status.includes("debt")) current.vacatedWithDebt += 1;
         else current.occupiedRooms += 1;
         landlordPortfolioById.set(room.landlord_id, current);
+        const search = landlordRoomSearchById.get(room.landlord_id) ?? { roomNumbers: [], propertyNames: [] };
+        if (room.room_number && !search.roomNumbers.includes(room.room_number)) search.roomNumbers.push(room.room_number);
+        const propertyName = room.property_id ? propertyById.get(room.property_id) : null;
+        if (propertyName && !search.propertyNames.includes(propertyName)) search.propertyNames.push(propertyName);
+        landlordRoomSearchById.set(room.landlord_id, search);
     }
     const visibleLandlordIds = new Set((roomsResult.data ?? []).map((room: { landlord_id: string | null }) => room.landlord_id).filter(Boolean));
     const landlordOptions = landlords
         .filter((landlord) => isAdmin || visibleLandlordIds.has(landlord.id))
         .map((landlord) => {
             const landlordOfficeId = landlordOfficeById.get(landlord.id) ?? selectedOfficeId ?? null;
+            const officeName = landlordOfficeId ? officeById.get(landlordOfficeId) ?? "Office" : null;
             const rawLandlord = landlord as LandlordRow & Record<string, unknown>;
             const portfolio = landlordPortfolioById.get(landlord.id) ?? { portfolioValue: 0, numberOfRooms: 0, occupiedRooms: 0, vacantRooms: 0, vacatedWithDebt: 0 };
             return {
                 id: landlord.id,
                 name: landlord.full_name ?? "Landlord",
                 officeId: landlordOfficeId,
-                officeName: landlordOfficeId ? officeById.get(landlordOfficeId) ?? "Office" : null,
+                officeName,
                 location: typeof rawLandlord.location === "string" ? rawLandlord.location : typeof rawLandlord.address === "string" ? rawLandlord.address : null,
                 commissionType: typeof rawLandlord.commission_calculation_mode === "string" ? rawLandlord.commission_calculation_mode : typeof rawLandlord.commission_input_mode === "string" ? rawLandlord.commission_input_mode : null,
                 commissionRate: Number.isFinite(Number(rawLandlord.commission_rate)) ? Number(rawLandlord.commission_rate) : null,
+                roomNumbers: landlordRoomSearchById.get(landlord.id)?.roomNumbers ?? [],
+                searchText: [
+                    landlord.full_name,
+                    landlord.phone,
+                    rawLandlord.location,
+                    rawLandlord.address,
+                    officeName,
+                    ...(landlordRoomSearchById.get(landlord.id)?.roomNumbers ?? []),
+                    ...(landlordRoomSearchById.get(landlord.id)?.propertyNames ?? []),
+                ].filter(Boolean).join(" "),
                 ...portfolio,
             };
         });
