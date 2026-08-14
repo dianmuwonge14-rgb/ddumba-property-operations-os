@@ -2421,7 +2421,7 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
         const rawCurrentMonthPaid = tenantCollections
             .filter((collection) => collectionPaymentDate(collection).slice(0, 7) === monthStart.slice(0, 7))
             .reduce((total, collection) => total + collectionAmount(collection), 0);
-        const currentMonthPaid = allocatedCurrentMonthPaid > 0 ? allocatedCurrentMonthPaid : Math.min(rawCurrentMonthPaid, monthlyRent);
+        let currentMonthPaid = allocatedCurrentMonthPaid > 0 ? allocatedCurrentMonthPaid : Math.min(rawCurrentMonthPaid, monthlyRent);
         const futureAdvanceAllocations = tenantAllocations
             .filter((allocation) => String(allocation.allocation_type) === "advance_month" && String(allocation.allocation_month ?? "").slice(0, 10) >= upcomingMonth);
         const advanceRentBalance = futureAdvanceAllocations.reduce((total, allocation) => total + availableAdvanceAllocation(allocation), 0);
@@ -2471,6 +2471,10 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
             allocationByMonth.set(month, current);
         }
         const sortedAllocationMonths = [...allocationByMonth.entries()].sort(([left], [right]) => left.localeCompare(right));
+        const currentMonthValuesForDisplay = sortedAllocationMonths.find(([month]) => month.slice(0, 7) === monthStart.slice(0, 7))?.[1];
+        if (currentMonthValuesForDisplay) {
+            currentMonthPaid = Math.min(monthlyRent, currentMonthValuesForDisplay.implicitPriorPaid + currentMonthValuesForDisplay.arrears + currentMonthValuesForDisplay.rent + currentMonthValuesForDisplay.advance);
+        }
         const amountUsedToClearOutstanding = Number((lastCollection as CollectionRow & { used_to_clear_outstanding?: number | null })?.used_to_clear_outstanding ?? 0) ||
             Math.min(previousOutstandingBeforeLastPayment, lastAmountPaid);
         const latestArrearsMonth = sortedAllocationMonths
