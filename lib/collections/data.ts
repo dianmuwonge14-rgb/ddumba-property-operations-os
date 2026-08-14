@@ -1950,7 +1950,7 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
         tenantIds.length
             ? optionalRows((supabase as unknown as DynamicDb)
                 .from("tenant_rent_months")
-                .select("tenant_id, due_date, coverage_start, created_at, source")
+                .select("tenant_id, rent_month, due_date, coverage_start, coverage_end, rent_amount, amount_paid, outstanding_amount, status, created_at, source")
                 .eq("company_id", companyId)
                 .in("tenant_id", tenantIds)
                 .order("due_date", { ascending: false }))
@@ -2001,11 +2001,15 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
         legacyArrearsByTenant.set(tenantId, [...(legacyArrearsByTenant.get(tenantId) ?? []), legacyRow]);
     }
     const lastRentChargeByTenant = new Map<string, string>();
+    const rentMonthsByTenant = new Map<string, Array<Record<string, unknown>>>();
     for (const row of rentMonthRows as Array<Record<string, unknown>>) {
         const tenantId = String(row.tenant_id ?? "");
         const chargeDate = String(row.due_date ?? row.coverage_start ?? row.created_at ?? "").slice(0, 10);
         if (tenantId && chargeDate && !lastRentChargeByTenant.has(tenantId)) {
             lastRentChargeByTenant.set(tenantId, chargeDate);
+        }
+        if (tenantId) {
+            rentMonthsByTenant.set(tenantId, [...(rentMonthsByTenant.get(tenantId) ?? []), row]);
         }
     }
 
@@ -2308,7 +2312,7 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
         tenantIds.length
             ? optionalRows((supabase as unknown as DynamicDb)
                 .from("tenant_rent_months")
-                .select("tenant_id, due_date, coverage_start, created_at, source")
+                .select("tenant_id, rent_month, due_date, coverage_start, coverage_end, rent_amount, amount_paid, outstanding_amount, status, created_at, source")
                 .eq("company_id", companyId)
                 .in("tenant_id", tenantIds)
                 .order("due_date", { ascending: false })
@@ -2334,11 +2338,15 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
         allocationsByTenant.set(tenantId, [...(allocationsByTenant.get(tenantId) ?? []), allocation]);
     }
     const lastRentChargeByTenant = new Map<string, string>();
+    const rentMonthsByTenant = new Map<string, Array<Record<string, unknown>>>();
     for (const row of rentMonthRows as Array<Record<string, unknown>>) {
         const tenantId = String(row.tenant_id ?? "");
         const chargeDate = String(row.due_date ?? row.coverage_start ?? row.created_at ?? "").slice(0, 10);
         if (tenantId && chargeDate && !lastRentChargeByTenant.has(tenantId)) {
             lastRentChargeByTenant.set(tenantId, chargeDate);
+        }
+        if (tenantId) {
+            rentMonthsByTenant.set(tenantId, [...(rentMonthsByTenant.get(tenantId) ?? []), row]);
         }
     }
 
@@ -2447,6 +2455,19 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
             if (type === "arrears") current.arrears += amount;
             if (type === "current_month") current.rent += amount;
             if (type === "advance_month") current.advance += amount;
+            allocationByMonth.set(month, current);
+        }
+        for (const rentMonth of rentMonthsByTenant.get(tenant.id) ?? []) {
+            const month = String(rentMonth.rent_month ?? rentMonth.due_date ?? rentMonth.coverage_start ?? "").slice(0, 10);
+            if (!month) continue;
+            const current = allocationByMonth.get(month) ?? { arrears: 0, rent: 0, advance: 0, implicitPriorPaid: 0, coverageStart: null, coverageEnd: null };
+            const recordedPaid = Math.max(0, Number(rentMonth.amount_paid ?? 0));
+            const currentlyDisplayedPaid = current.implicitPriorPaid + current.arrears + current.rent + current.advance;
+            if (recordedPaid > currentlyDisplayedPaid) {
+                current.implicitPriorPaid += recordedPaid - currentlyDisplayedPaid;
+            }
+            current.coverageStart ||= String(rentMonth.coverage_start ?? "") || null;
+            current.coverageEnd ||= String(rentMonth.coverage_end ?? "") || null;
             allocationByMonth.set(month, current);
         }
         const sortedAllocationMonths = [...allocationByMonth.entries()].sort(([left], [right]) => left.localeCompare(right));
