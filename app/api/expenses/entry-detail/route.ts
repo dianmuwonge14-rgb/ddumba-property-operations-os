@@ -111,6 +111,7 @@ export async function GET(request: NextRequest) {
         const selectedOfficeId = canSeeAll && requestedOfficeId && context.offices.some((office) => office.id === requestedOfficeId)
             ? requestedOfficeId
             : activeOfficeId;
+        const landlordOfficeFilterId = canSeeAll ? null : selectedOfficeId;
         if (!id) throw new Error("Select a record.");
 
         if (type === "employee") {
@@ -294,7 +295,8 @@ export async function GET(request: NextRequest) {
         }
 
         if (type === "landlord") {
-            const [landlordResult, roomsResult, payablesResult, advancesResult, paymentsResult, adjustmentResult, propertyResult] = await Promise.all([
+            const admin = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
+            const [landlordResult, roomsResult, propertyLinkResult, payablesResult, advancesResult, paymentsResult, adjustmentResult, propertyResult, searchIndexResult] = await Promise.all([
                 db
                     .from("landlords")
                     .select("*")
@@ -304,13 +306,17 @@ export async function GET(request: NextRequest) {
                 (() => {
                     let query = db
                         .from("rooms")
-                        .select("id, office_id, property_id, room_number, status, monthly_rent, outstanding_balance, updated_at, offices:office_id(id, office_name, name)")
+                        .select("id, office_id, property_id, landlord_id, room_number, status, monthly_rent, outstanding_balance, updated_at, offices:office_id(id, office_name, name), properties:property_id(id, landlord_id, property_name, name, location)")
                         .eq("company_id", companyId)
-                        .eq("landlord_id", id)
                         .not("status", "in", "(archived,inactive,deleted,removed)");
-                    if (selectedOfficeId) query = query.eq("office_id", selectedOfficeId);
+                    if (landlordOfficeFilterId) query = query.eq("office_id", landlordOfficeFilterId);
                     return query;
                 })(),
+                admin
+                    .from("property_landlords")
+                    .select("property_id, landlord_id")
+                    .eq("company_id", companyId)
+                    .eq("landlord_id", id),
                 db
                     .from("landlord_monthly_payables")
                     .select("*")
@@ -344,20 +350,43 @@ export async function GET(request: NextRequest) {
                     .limit(1),
                 db
                     .from("properties")
-                    .select("id, property_name, name, location")
+                    .select("id, landlord_id, property_name, name, location")
                     .eq("company_id", companyId),
+                admin
+                    .from("landlord_search_index")
+                    .select("office_id, office_name, room_count, rent_roll, room_numbers_text, location_text")
+                    .eq("company_id", companyId)
+                    .eq("landlord_id", id)
+                    .maybeSingle(),
             ]);
             if (landlordResult.error) throw new Error(landlordResult.error.message);
             if (roomsResult.error) throw new Error(roomsResult.error.message);
+            if (propertyLinkResult.error && !/does not exist|schema cache/i.test(propertyLinkResult.error.message ?? "")) throw new Error(propertyLinkResult.error.message);
             if (payablesResult.error && !/does not exist|schema cache/i.test(payablesResult.error.message ?? "")) throw new Error(payablesResult.error.message);
             if (advancesResult.error && !/does not exist|schema cache/i.test(advancesResult.error.message ?? "")) throw new Error(advancesResult.error.message);
             if (paymentsResult.error && !/does not exist|schema cache/i.test(paymentsResult.error.message ?? "")) throw new Error(paymentsResult.error.message);
             if (adjustmentResult.error && !/does not exist|schema cache/i.test(adjustmentResult.error.message ?? "")) throw new Error(adjustmentResult.error.message);
             if (propertyResult.error && !/does not exist|schema cache/i.test(propertyResult.error.message ?? "")) throw new Error(propertyResult.error.message);
+            if (searchIndexResult.error && !/does not exist|schema cache/i.test(searchIndexResult.error.message ?? "")) throw new Error(searchIndexResult.error.message);
             const landlord = landlordResult.data as Record<string, unknown> | null;
             if (!landlord) throw new Error("Landlord not found.");
-            const rooms = (roomsResult.data ?? []) as Array<Record<string, unknown>>;
+            const propertiesById = new Map(((propertyResult.data ?? []) as Array<Record<string, unknown>>).map((property) => [String(property.id), property]));
+            const linkedPropertyIds = new Set(
+                ((propertyLinkResult.data ?? []) as Array<Record<string, unknown>>)
+                    .map((row) => String(row.property_id ?? ""))
+                    .filter(Boolean),
+            );
+            for (const property of propertiesById.values()) {
+                if (String(property.landlord_id ?? "") === id) linkedPropertyIds.add(String(property.id));
+            }
+            const rooms = ((roomsResult.data ?? []) as Array<Record<string, unknown>>).filter((room) => {
+                if (String(room.landlord_id ?? "") === id) return true;
+                const propertyId = String(room.property_id ?? "");
+                const property = room.properties as Record<string, unknown> | null;
+                return linkedPropertyIds.has(propertyId) || String(property?.landlord_id ?? "") === id;
+            });
             if (!canSeeAll && !rooms.length) throw new Error("This landlord is not attached to the active office.");
+            const searchIndex = searchIndexResult.data as Record<string, unknown> | null;
             const firstRoom = rooms[0];
             const office = firstRoom?.offices as Record<string, unknown> | null;
             const payables = ((payablesResult.data ?? []) as Array<Record<string, unknown>>).filter(activeStatus);
@@ -376,11 +405,10 @@ export async function GET(request: NextRequest) {
             const outstandingBalance = latestAdjustment ? amount(latestAdjustment.new_balance) : ledgerOutstandingBalance;
             const currentPayable = payables.find((row) => String(row.settlement_month ?? "").slice(0, 10) === summary.payablePeriod) ?? payables[0] ?? {};
             const lastPayment = ((paymentsResult.data ?? []) as Array<Record<string, unknown>>)[0] ?? null;
-            const fullRentRoll = rooms.reduce((total, room) => total + amount(room.monthly_rent), 0);
+            const fullRentRoll = rooms.reduce((total, room) => total + amount(room.monthly_rent), 0) || amount(searchIndex?.rent_roll);
             const occupiedRooms = rooms.filter((room) => !String(room.status ?? "").toLowerCase().includes("vacant") && !String(room.status ?? "").toLowerCase().includes("vacated")).length;
             const vacantRooms = rooms.filter((room) => String(room.status ?? "").toLowerCase().includes("vacant")).length;
             const vacatedWithDebt = rooms.filter((room) => String(room.status ?? "").toLowerCase().includes("vacated") || amount(room.outstanding_balance) > 0 && String(room.status ?? "").toLowerCase().includes("debt")).length;
-            const propertiesById = new Map(((propertyResult.data ?? []) as Array<Record<string, unknown>>).map((property) => [String(property.id), property]));
             const vacantRoomDetails = rooms
                 .filter((room) => String(room.status ?? "").toLowerCase().includes("vacant"))
                 .map((room) => {
@@ -407,9 +435,9 @@ export async function GET(request: NextRequest) {
                 detail: {
                     id: String(landlord.id),
                     name: String(landlord.full_name ?? "Landlord"),
-                    officeId: typeof firstRoom?.office_id === "string" ? firstRoom.office_id : null,
-                    officeName: String(office?.office_name ?? office?.name ?? "Office"),
-                    location: String(landlord.location ?? landlord.address ?? ""),
+                    officeId: typeof firstRoom?.office_id === "string" ? firstRoom.office_id : typeof searchIndex?.office_id === "string" ? searchIndex.office_id : null,
+                    officeName: String(office?.office_name ?? office?.name ?? searchIndex?.office_name ?? "Office"),
+                    location: String(landlord.location ?? landlord.address ?? searchIndex?.location_text ?? ""),
                     outstandingBalance,
                     lastPaymentAmount: amount(lastPayment?.amount),
                     lastPaymentDate: lastPayment?.paid_at ? String(lastPayment.paid_at).slice(0, 10) : null,
@@ -421,7 +449,7 @@ export async function GET(request: NextRequest) {
                     fullRentRoll: amount(currentPayable.full_rent_roll ?? currentPayable.gross_rent ?? fullRentRoll),
                     netPayable: summary.currentMonthNetPayable || amount(currentPayable.net_payable ?? currentPayable.amount_due ?? outstandingBalance),
                     portfolioValue: fullRentRoll,
-                    totalRooms: rooms.length,
+                    totalRooms: rooms.length || amount(searchIndex?.room_count),
                     occupiedRooms,
                     vacantRooms,
                     vacatedWithDebt,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isCompanyOperationalManager, requirePermission } from "@/lib/auth/permissions";
-import { summarizeLandlordPayables } from "@/lib/landlord-payables/payment-allocation";
+import { normalizeSettlementTiming, summarizeLandlordPayables } from "@/lib/landlord-payables/payment-allocation";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -8,6 +8,10 @@ export const dynamic = "force-dynamic";
 
 function normalizeSearch(value: string) {
     return value.trim().replaceAll("%", "").replaceAll("_", "").slice(0, 80);
+}
+
+function compactSearch(value: unknown) {
+    return String(value ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
 function isRealEmployee(row: Record<string, unknown>) {
@@ -259,41 +263,32 @@ export async function GET(request: NextRequest) {
 
         if (type === "landlord") {
             const admin = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
-            const [landlordResult, roomResult, propertyResult, officeResult, payableResult, advanceResult] = await Promise.all([
+            const landlordOfficeFilterId = canSeeAll ? null : activeOfficeId;
+            const [searchIndexResult, landlordResult, payableResult, advanceResult] = await Promise.all([
+                (() => {
+                    let query = admin
+                        .from("landlord_search_index")
+                        .select("landlord_id, office_id, landlord_name, phone, office_name, location_text, room_numbers_text, tenant_names_text, searchable_text, room_count, rent_roll")
+                        .eq("company_id", companyId)
+                        .limit(1000);
+                    if (landlordOfficeFilterId) query = query.eq("office_id", landlordOfficeFilterId);
+                    return query;
+                })(),
                 admin
                     .from("landlords")
                     .select("id, full_name, phone, status, location, address, payment_date, settlement_timing")
                     .eq("company_id", companyId)
                     .neq("status", "archived")
                     .order("full_name", { ascending: true, nullsFirst: false })
-                    .limit(500),
-                (() => {
-                    let roomQuery = admin
-                        .from("rooms")
-                        .select("id, landlord_id, office_id, property_id, room_number, status, monthly_rent, offices:office_id(id, office_name, name)")
-                        .eq("company_id", companyId)
-                        .not("landlord_id", "is", null)
-                        .not("status", "in", "(archived,inactive,deleted,removed)")
-                        .limit(2500);
-                    if (activeOfficeId) roomQuery = roomQuery.eq("office_id", activeOfficeId);
-                    return roomQuery;
-                })(),
-                admin.from("properties").select("id, property_name, name, location").eq("company_id", companyId).limit(1000),
-                admin.from("offices").select("id, office_name, name").eq("company_id", companyId),
+                    .limit(1000),
                 admin.from("landlord_monthly_payables").select("*").eq("company_id", companyId).neq("status", "archived").limit(2500),
                 admin.from("landlord_advances").select("*").eq("company_id", companyId).limit(1500),
             ]);
-            for (const result of [landlordResult, roomResult, propertyResult, officeResult, payableResult, advanceResult]) {
+            for (const result of [searchIndexResult, landlordResult, payableResult, advanceResult]) {
                 if (result.error && !/does not exist|schema cache/i.test(result.error.message ?? "")) throw new Error(result.error.message);
             }
-            const propertiesById = new Map(((propertyResult.data ?? []) as Array<Record<string, unknown>>).map((property) => [String(property.id), property]));
-            const officesById = new Map(((officeResult.data ?? []) as Array<Record<string, unknown>>).map((office) => [String(office.id), office]));
-            const roomsByLandlord = new Map<string, Array<Record<string, unknown>>>();
-            for (const room of (roomResult.data ?? []) as Array<Record<string, unknown>>) {
-                const landlordId = String(room.landlord_id ?? "");
-                if (!landlordId) continue;
-                roomsByLandlord.set(landlordId, [...(roomsByLandlord.get(landlordId) ?? []), room]);
-            }
+            const landlordRows = (landlordResult.data ?? []) as Array<Record<string, unknown>>;
+            const landlordById = new Map(landlordRows.map((landlord) => [String(landlord.id), landlord]));
             const payablesByLandlord = new Map<string, Array<Record<string, unknown>>>();
             for (const payable of (payableResult.data ?? []) as Array<Record<string, unknown>>) {
                 const landlordId = String(payable.landlord_id ?? "");
@@ -307,20 +302,34 @@ export async function GET(request: NextRequest) {
                 advancesByLandlord.set(landlordId, [...(advancesByLandlord.get(landlordId) ?? []), advance]);
             }
             const needle = q.toLowerCase();
+            const compactNeedle = compactSearch(q);
             const currentMonth = currentSettlementMonth();
-            const results = ((landlordResult.data ?? []) as Array<Record<string, unknown>>)
-                .map((landlord) => {
-                    const landlordId = String(landlord.id ?? "");
-                    const rooms = roomsByLandlord.get(landlordId) ?? [];
-                    if (!canSeeAll && !rooms.length) return null;
-                    const firstRoom = rooms[0] ?? null;
-                    const officeId = typeof firstRoom?.office_id === "string" ? firstRoom.office_id : null;
-                    const office = officeId ? officesById.get(officeId) ?? firstRoom?.offices as Record<string, unknown> | undefined : undefined;
-                    const roomNumbers = rooms.map((room) => room.room_number).filter(Boolean).join(" ");
-                    const propertyNames = rooms.map((room) => {
-                        const property = typeof room.property_id === "string" ? propertiesById.get(room.property_id) : null;
-                        return [property?.property_name, property?.name, property?.location].filter(Boolean).join(" ");
-                    }).join(" ");
+            const indexRows = (searchIndexResult.data ?? []) as Array<Record<string, unknown>>;
+            const fallbackRows = canSeeAll
+                ? landlordRows.map((landlord) => ({
+                    landlord_id: landlord.id,
+                    office_id: null,
+                    landlord_name: landlord.full_name,
+                    phone: landlord.phone,
+                    office_name: null,
+                    location_text: [landlord.location, landlord.address].filter(Boolean).join(" "),
+                    room_numbers_text: "",
+                    tenant_names_text: "",
+                    searchable_text: [landlord.full_name, landlord.phone, landlord.location, landlord.address].filter(Boolean).join(" "),
+                    room_count: 0,
+                    rent_roll: 0,
+                }))
+                : [];
+            const rowsByLandlord = new Map<string, Record<string, unknown>>();
+            for (const row of [...indexRows, ...fallbackRows]) {
+                const landlordId = String(row.landlord_id ?? "");
+                if (landlordId && !rowsByLandlord.has(landlordId)) rowsByLandlord.set(landlordId, row);
+            }
+            const results = [...rowsByLandlord.values()]
+                .map((row) => {
+                    const landlordId = String(row.landlord_id ?? "");
+                    const landlord = landlordById.get(landlordId);
+                    if (!landlord) return null;
                     const activeAdvanceBalance = (advancesByLandlord.get(landlordId) ?? []).filter(activeLandlordAdvance).reduce((total, advance) => total + landlordAdvanceRemaining(advance), 0);
                     const summary = summarizeLandlordPayables({
                         activeAdvanceBalance,
@@ -333,23 +342,27 @@ export async function GET(request: NextRequest) {
                         landlord.phone,
                         landlord.location,
                         landlord.address,
-                        roomNumbers,
-                        propertyNames,
-                        office?.office_name,
-                        office?.name,
+                        row.landlord_name,
+                        row.phone,
+                        row.office_name,
+                        row.location_text,
+                        row.room_numbers_text,
+                        row.tenant_names_text,
+                        row.searchable_text,
                         summary.settlementTiming === "current_month" ? "current month" : "previous month",
                     ].map((value) => String(value ?? "").toLowerCase()).join(" ");
-                    if (!haystack.includes(needle)) return null;
+                    if (!haystack.includes(needle) && !compactSearch(haystack).includes(compactNeedle)) return null;
                     return {
                         id: landlordId,
                         name: String(landlord.full_name ?? "Landlord"),
-                        officeId,
-                        officeName: String(office?.office_name ?? office?.name ?? "Office"),
-                        phone: typeof landlord.phone === "string" ? landlord.phone : null,
+                        officeId: typeof row.office_id === "string" ? row.office_id : null,
+                        officeName: String(row.office_name ?? "Office"),
+                        phone: typeof landlord.phone === "string" ? landlord.phone : typeof row.phone === "string" ? row.phone : null,
                         location: String(landlord.location ?? landlord.address ?? ""),
-                        numberOfRooms: rooms.length,
+                        numberOfRooms: amount(row.room_count),
                         outstandingBalance: summary.totalOutstandingPayable,
-                        settlementTiming: summary.settlementTiming,
+                        currentMonthPendingSettlement: summary.currentMonthPendingSettlement,
+                        settlementTiming: normalizeSettlementTiming(landlord.settlement_timing),
                     };
                 })
                 .filter(Boolean)
