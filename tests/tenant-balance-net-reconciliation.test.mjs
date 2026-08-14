@@ -72,6 +72,8 @@ test("payment, adjustment and promise paths use canonical tenant balance reconci
   const promises = fs.readFileSync("app/actions/promises.ts", "utf8");
   assert.match(collections, /reconcileTenantBalanceAfterWrite/);
   assert.match(collections, /rpc\("reconcile_tenant_balance"/);
+  assert.match(collections, /"collection_payment"/);
+  assert.match(collections, /shouldUseDirectSnapshotUpdate/);
   assert.match(collections, /sourceType: "collection_payment"/);
   assert.match(collections, /sourceType: "tenant_balance_adjustment"/);
   assert.match(promises, /rpc\("reconcile_tenant_balance"/);

@@ -395,6 +395,11 @@ async function reconcileTenantBalanceAfterWrite(input: {
     tenantId?: string | null;
 }) {
     const requestedOutstanding = moneyAmount(input.requestedOutstanding);
+    const shouldUseDirectSnapshotUpdate = [
+        "collection_payment",
+        "payment_correction_approved",
+        "tenant_payment_snapshot_repair",
+    ].includes(input.sourceType);
     if (!input.tenantId) {
         return {
             advanceAfter: 0,
@@ -404,7 +409,7 @@ async function reconcileTenantBalanceAfterWrite(input: {
         };
     }
 
-    if (typeof input.db.rpc === "function") {
+    if (!shouldUseDirectSnapshotUpdate && typeof input.db.rpc === "function") {
         const { data, error } = await input.db.rpc("reconcile_tenant_balance", {
             p_actor_id: input.actorId ?? null,
             p_company_id: input.companyId,
