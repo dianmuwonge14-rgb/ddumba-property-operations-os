@@ -64,6 +64,7 @@ function formatDateTime(value: string | null | undefined) {
 }
 
 const EXPENSE_PROOF_ACCEPT = "image/jpeg,image/jpg,image/png,image/heic,image/heif,application/pdf";
+const LANDLORD_SEARCH_TIMEOUT_MS = 12000;
 
 type ProofPayload = {
     base64: string;
@@ -459,6 +460,8 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
     const [landlordSearchResults, setLandlordSearchResults] = useState<EntrySearchResult[]>([]);
     const [selectedLandlordDetail, setSelectedLandlordDetail] = useState<LandlordEntryDetail | null>(null);
     const [loadingLandlordSearch, setLoadingLandlordSearch] = useState(false);
+    const [landlordSearchError, setLandlordSearchError] = useState<string | null>(null);
+    const [landlordSearchOfficeId, setLandlordSearchOfficeId] = useState("");
     const [loadingLandlordDetail, setLoadingLandlordDetail] = useState(false);
     const [paymentMonth, setPaymentMonth] = useState(thisMonth());
     const [paymentMethod, setPaymentMethod] = useState("cash");
@@ -520,6 +523,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
     const abortRef = useRef<AbortController | null>(null);
     const employeeSearchAbortRef = useRef<AbortController | null>(null);
     const landlordSearchAbortRef = useRef<AbortController | null>(null);
+    const landlordSearchRequestSeqRef = useRef(0);
     const detailAbortRef = useRef<AbortController | null>(null);
 
     const allExpenseRows = useMemo(() => report?.expenses ?? [], [report]);
@@ -552,6 +556,11 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
     const isSalaryPaymentMode = entryMode === "salary_payment";
     const isEmployeeExpenseMode = isAuthorisedMode && authorisedType === "employee_lunch";
     const showSalaryEmployeeSearchPanel = isSalaryPaymentMode && employeeSearch.trim().length > 0 && employeeSearch.trim() !== selectedEmployeeDetail?.name;
+    const effectiveLandlordSearchOfficeId = isAdmin ? landlordSearchOfficeId : selectedEntryOfficeId;
+    const landlordSearchScopeName = isAdmin
+        ? (landlordSearchOfficeId ? data.offices.find((office) => office.id === landlordSearchOfficeId)?.name ?? "Selected office" : "All Offices")
+        : selectedEntryOfficeName;
+    const showLandlordSearchPanel = isLandlordPaidMode && landlordSearch.trim().length > 0 && landlordSearch.trim() !== selectedLandlordDetail?.name;
     const currentKampalaDate = today();
     const adminBackdatedExpense = isAdmin && expenseDate < currentKampalaDate;
     const trimmedBackdatingReason = backdatingReason.trim();
@@ -704,32 +713,52 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
     useEffect(() => {
         const query = landlordSearch.trim();
         if (!isLandlordPaidMode || !query || query === selectedLandlordDetail?.name) {
+            landlordSearchRequestSeqRef.current += 1;
             landlordSearchAbortRef.current?.abort();
             setLandlordSearchResults([]);
             setLoadingLandlordSearch(false);
+            setLandlordSearchError(null);
             return;
         }
         const controller = new AbortController();
+        const requestId = landlordSearchRequestSeqRef.current + 1;
+        landlordSearchRequestSeqRef.current = requestId;
         landlordSearchAbortRef.current?.abort();
         landlordSearchAbortRef.current = controller;
         setLoadingLandlordSearch(true);
+        setLandlordSearchError(null);
         const timer = setTimeout(() => {
             void (async () => {
+                let timedOut = false;
+                const timeout = setTimeout(() => {
+                    timedOut = true;
+                    controller.abort();
+                }, LANDLORD_SEARCH_TIMEOUT_MS);
                 try {
                     const params = new URLSearchParams({ type: "landlord", q: query });
-                    if (selectedEntryOfficeId) params.set("officeId", selectedEntryOfficeId);
-                    const response = await fetch(`/api/expenses/entry-search?type=landlord&${params.toString().replace(/^type=landlord&?/, "")}`, {
+                    if (effectiveLandlordSearchOfficeId) params.set("officeId", effectiveLandlordSearchOfficeId);
+                    const response = await fetch(`/api/expenses/entry-search?${params.toString()}`, {
                         cache: "no-store",
                         signal: controller.signal,
                     });
                     const payload = await response.json();
-                    if (controller.signal.aborted) return;
+                    if (landlordSearchRequestSeqRef.current !== requestId) return;
                     if (!response.ok) throw new Error(payload.error ?? "Landlord search failed.");
                     setLandlordSearchResults(payload.results ?? []);
+                    setLandlordSearchError(null);
                 } catch (error) {
-                    if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "Landlord search failed.");
+                    if (landlordSearchRequestSeqRef.current !== requestId) return;
+                    const errorMessage = timedOut
+                        ? "Landlord search could not be completed. Please retry."
+                        : error instanceof Error && error.name !== "AbortError"
+                            ? error.message
+                            : "Landlord search could not be completed. Please retry.";
+                    setLandlordSearchError(errorMessage);
+                    setLandlordSearchResults([]);
+                    setMessage(errorMessage);
                 } finally {
-                    if (!controller.signal.aborted) setLoadingLandlordSearch(false);
+                    clearTimeout(timeout);
+                    if (landlordSearchRequestSeqRef.current === requestId) setLoadingLandlordSearch(false);
                 }
             })();
         }, 150);
@@ -737,7 +766,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
             clearTimeout(timer);
             controller.abort();
         };
-    }, [isLandlordPaidMode, landlordSearch, selectedEntryOfficeId, selectedLandlordDetail?.name]);
+    }, [effectiveLandlordSearchOfficeId, isLandlordPaidMode, landlordSearch, selectedLandlordDetail?.name]);
 
     function loadEntryDetail(type: "employee" | "salary_employee" | "landlord", id: string) {
         detailAbortRef.current?.abort();
@@ -1527,7 +1556,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                         ) : null}
                         {isLandlordPaidMode ? (
                             <div className="space-y-4">
-                                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_180px_190px]">
+                                <div className={`grid gap-4 ${isAdmin ? "lg:grid-cols-[minmax(0,1fr)_220px_180px_190px]" : "lg:grid-cols-[minmax(0,1fr)_180px_190px]"}`}>
                                     <label className="relative block">
                                         <span className="text-xs font-black uppercase tracking-wide text-slate-500">Search landlord</span>
                                         <div className="mt-1 flex h-16 items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 focus-within:border-blue-400 focus-within:bg-white focus-within:ring-4 focus-within:ring-blue-100">
@@ -1538,21 +1567,26 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                                     setLandlordSearch(event.target.value);
                                                     setLandlordId("");
                                                     setSelectedLandlordDetail(null);
+                                                    setLandlordSearchError(null);
                                                 }}
                                                 placeholder="Search name, phone, room, property or office..."
                                                 className="h-full min-w-0 flex-1 bg-transparent text-lg font-black text-slate-950 outline-none"
                                             />
-                                            {landlordSearch ? <button type="button" onClick={() => { setLandlordSearch(""); setLandlordId(""); setSelectedLandlordDetail(null); setLandlordSearchResults([]); }} className="rounded-full p-1 text-slate-400 hover:bg-white hover:text-slate-700"><X size={16} /></button> : null}
+                                            {landlordSearch ? <button type="button" onClick={() => { setLandlordSearch(""); setLandlordId(""); setSelectedLandlordDetail(null); setLandlordSearchResults([]); setLandlordSearchError(null); }} className="rounded-full p-1 text-slate-400 hover:bg-white hover:text-slate-700"><X size={16} /></button> : null}
                                         </div>
-                                        {landlordSearchResults.length || loadingLandlordSearch ? (
+                                        {showLandlordSearchPanel ? (
                                             <div className="absolute z-30 mt-2 max-h-96 w-full overflow-auto rounded-3xl border border-slate-200 bg-white p-3 shadow-2xl shadow-slate-950/20">
                                                 {loadingLandlordSearch ? <div className="px-3 py-2 text-sm font-bold text-slate-500">Searching landlords...</div> : null}
+                                                {!loadingLandlordSearch && landlordSearchError ? (
+                                                    <div className="rounded-2xl border border-rose-100 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-800">{landlordSearchError}</div>
+                                                ) : null}
                                                 {landlordSearchResults.map((landlord) => (
                                                     <button key={`landlord-search:${landlord.id}:${landlord.officeId ?? "company"}`} type="button" onClick={() => {
                                                         setLandlordId(landlord.id);
                                                         setLandlordSearch(landlord.name);
                                                         setSelectedLandlordDetail(landlord as LandlordEntryDetail);
                                                         setLandlordSearchResults([]);
+                                                        setLandlordSearchError(null);
                                                         loadEntryDetail("landlord", landlord.id);
                                                     }} className="mb-2 block w-full rounded-2xl border border-slate-100 bg-gradient-to-br from-white via-slate-50 to-emerald-50/60 p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-lg">
                                                         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -1569,10 +1603,33 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                                         </div>
                                                     </button>
                                                 ))}
-                                                {!loadingLandlordSearch && !landlordSearchResults.length ? <div className="px-3 py-2 text-sm font-bold text-slate-500">No landlord matches found.</div> : null}
+                                                {!loadingLandlordSearch && !landlordSearchError && !landlordSearchResults.length ? <div className="px-3 py-2 text-sm font-bold text-slate-500">No landlord found matching “{landlordSearch.trim()}”.</div> : null}
                                             </div>
                                         ) : null}
                                     </label>
+                                    {isAdmin ? (
+                                        <label className="block">
+                                            <span className="text-xs font-black uppercase tracking-wide text-slate-500">Landlord search office</span>
+                                            <select
+                                                value={landlordSearchOfficeId}
+                                                onChange={(event) => {
+                                                    setLandlordSearchOfficeId(event.target.value);
+                                                    setLandlordId("");
+                                                    setSelectedLandlordDetail(null);
+                                                    setLandlordSearchResults([]);
+                                                    setLandlordSearchError(null);
+                                                    setMessage(null);
+                                                }}
+                                                className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                                            >
+                                                <option value="">All Offices</option>
+                                                {data.offices.map((office) => (
+                                                    <option key={`landlord-search-office:${office.id}`} value={office.id}>{office.name}</option>
+                                                ))}
+                                            </select>
+                                            <span className="mt-1 block text-[11px] font-bold text-slate-500">Searching: {landlordSearchScopeName}</span>
+                                        </label>
+                                    ) : null}
                                     <label className="block">
                                         <span className="text-xs font-black uppercase tracking-wide text-slate-500">Payment month</span>
                                         <input type="month" value={paymentMonth} onChange={(event) => setPaymentMonth(event.target.value)} className="mt-1 h-16 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-lg font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100" />
