@@ -105,7 +105,7 @@ export async function GET(request: NextRequest) {
         const q = normalizeSearch(request.nextUrl.searchParams.get("q") ?? "");
         if (!q) return NextResponse.json({ results: [] }, { headers: { "Cache-Control": "no-store" } });
         const like = `%${q}%`;
-        const canSeeAll = (context.isCompanyAdmin && !context.isOfficeMode) || isCompanyOperationalManager(context);
+        const canSeeAll = context.isCompanyAdmin || isCompanyOperationalManager(context);
         const requestedOfficeId = request.nextUrl.searchParams.get("officeId")?.trim() || null;
         const activeOfficeId = canSeeAll && requestedOfficeId && context.offices.some((office) => office.id === requestedOfficeId)
             ? requestedOfficeId

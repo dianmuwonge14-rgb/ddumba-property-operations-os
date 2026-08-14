@@ -106,7 +106,7 @@ export async function GET(request: NextRequest) {
         const type = request.nextUrl.searchParams.get("type");
         const id = request.nextUrl.searchParams.get("id") ?? "";
         const expenseDate = request.nextUrl.searchParams.get("expenseDate") ?? new Date().toISOString().slice(0, 10);
-        const canSeeAll = (context.isCompanyAdmin && !context.isOfficeMode) || isCompanyOperationalManager(context);
+        const canSeeAll = context.isCompanyAdmin || isCompanyOperationalManager(context);
         const requestedOfficeId = request.nextUrl.searchParams.get("officeId")?.trim() || null;
         const selectedOfficeId = canSeeAll && requestedOfficeId && context.offices.some((office) => office.id === requestedOfficeId)
             ? requestedOfficeId
