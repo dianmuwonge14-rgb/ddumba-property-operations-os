@@ -1,3 +1,5 @@
+import { addMonthsToBillingDate, dateForBillingDay, previousDay as previousBillingDay } from "@/lib/tenants/billing-cycle";
+
 export type MoveInCoverageAllocation = {
     allocationMonth: string;
     allocationType: "current_month" | "advance_month";
@@ -69,6 +71,25 @@ export function coveragePeriodForMoveIn(moveInDate: string, coverageIndex: numbe
     };
 }
 
+export function coveragePeriodForBillingCycle(input: {
+    billingDay?: number | null;
+    coverageIndex: number;
+    moveInDate: string;
+}) {
+    assertDateOnly(input.moveInDate);
+    if (!Number.isFinite(Number(input.billingDay))) {
+        return coveragePeriodForMoveIn(input.moveInDate, input.coverageIndex);
+    }
+    const [year, month] = input.moveInDate.split("-").map(Number);
+    const anchorStart = dateForBillingDay(year, month - 1, Number(input.billingDay));
+    const coverageStart = addMonthsToBillingDate(anchorStart, input.coverageIndex, Number(input.billingDay));
+    const nextCoverageStart = addMonthsToBillingDate(coverageStart, 1, Number(input.billingDay));
+    return {
+        coverageEnd: previousBillingDay(nextCoverageStart),
+        coverageStart,
+    };
+}
+
 export function coverageIndexForDate(moveInDate: string, businessDate: string) {
     assertDateOnly(moveInDate);
     assertDateOnly(businessDate);
@@ -95,6 +116,7 @@ export function nextRentChargeDate(moveInDate: string, businessDate: string) {
 export function buildTenantPaymentCoverageAllocations(input: {
     amount: number;
     balanceBefore: number;
+    billingDay?: number | null;
     monthlyRent: number;
     paymentDate: string;
     moveInDate?: string | null;
@@ -108,7 +130,9 @@ export function buildTenantPaymentCoverageAllocations(input: {
 
     const allocations: TenantCoverageAllocation[] = [];
     let remaining = amount;
-    const currentIndex = coverageIndexForDate(moveInDate, input.paymentDate);
+    const currentIndex = input.billingDay
+        ? coverageIndexForDate(coveragePeriodForBillingCycle({ billingDay: input.billingDay, coverageIndex: 0, moveInDate }).coverageStart, input.paymentDate)
+        : coverageIndexForDate(moveInDate, input.paymentDate);
     const totalDueBeforePayment = Math.max(0, Number(input.balanceBefore));
     const currentOutstandingDue = Math.min(monthlyRent || totalDueBeforePayment, totalDueBeforePayment);
     const arrearsDue = Math.max(0, totalDueBeforePayment - currentOutstandingDue);
@@ -121,7 +145,7 @@ export function buildTenantPaymentCoverageAllocations(input: {
             const monthDue = Math.min(monthlyRent, arrearsRemaining);
             const arrearsPaid = Math.min(remaining, monthDue);
             if (arrearsPaid > 0) {
-                const period = coveragePeriodForMoveIn(moveInDate, index);
+                const period = coveragePeriodForBillingCycle({ billingDay: input.billingDay, coverageIndex: index, moveInDate });
                 allocations.push({
                     allocationMonth: monthStart(period.coverageStart),
                     allocationType: "arrears",
@@ -138,7 +162,7 @@ export function buildTenantPaymentCoverageAllocations(input: {
 
     const currentPaid = Math.min(remaining, currentOutstandingDue);
     if (currentPaid > 0) {
-        const period = coveragePeriodForMoveIn(moveInDate, currentIndex);
+        const period = coveragePeriodForBillingCycle({ billingDay: input.billingDay, coverageIndex: currentIndex, moveInDate });
         allocations.push({
             allocationMonth: monthStart(period.coverageStart),
             allocationType: "current_month",
@@ -156,7 +180,7 @@ export function buildTenantPaymentCoverageAllocations(input: {
     let advanceIndex = currentIndex + 1;
     while (remaining > 0.004 && advanceIndex < currentIndex + 121) {
         const allocationAmount = Math.min(remaining, monthlyRent);
-        const period = coveragePeriodForMoveIn(moveInDate, advanceIndex);
+        const period = coveragePeriodForBillingCycle({ billingDay: input.billingDay, coverageIndex: advanceIndex, moveInDate });
         allocations.push({
             allocationMonth: monthStart(period.coverageStart),
             allocationType: "advance_month",

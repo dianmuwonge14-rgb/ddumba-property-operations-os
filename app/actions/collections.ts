@@ -127,7 +127,7 @@ async function getFastTenantPaymentContext(input: {
     const { supabase, companyId, tenantId } = input;
     const { data: tenant, error: tenantError } = await supabase
         .from("tenants")
-        .select("id, company_id, office_id, property_id, room_id, full_name, monthly_rent, balance, status, created_at")
+        .select("id, company_id, office_id, property_id, room_id, full_name, monthly_rent, balance, status, created_at, billing_day")
         .eq("id", tenantId)
         .eq("company_id", companyId)
         .maybeSingle();
@@ -145,7 +145,7 @@ async function getFastTenantPaymentContext(input: {
             : Promise.resolve({ data: null, error: null }),
         supabase
             .from("leases")
-            .select("id, company_id, office_id, property_id, room_id, tenant_id, start_date, monthly_rent, status")
+            .select("id, company_id, office_id, property_id, room_id, tenant_id, start_date, billing_day, monthly_rent, status")
             .eq("tenant_id", tenantId)
             .eq("company_id", companyId)
             .eq("status", "active")
@@ -1241,6 +1241,7 @@ export async function recordCollection(input: RecordCollectionInput) {
     const rentAllocations = buildTenantPaymentCoverageAllocations({
         amount,
         balanceBefore,
+        billingDay: Number(tenantContext.lease?.billing_day ?? tenantContext.tenant.billing_day ?? 1),
         monthlyRent: tenantContext.monthlyRent,
         moveInDate: tenantContext.lease?.start_date ?? tenantContext.tenant.created_at?.slice(0, 10) ?? paymentDate,
         paymentDate,

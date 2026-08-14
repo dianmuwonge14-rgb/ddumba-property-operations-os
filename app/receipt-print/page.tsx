@@ -3,7 +3,7 @@ import { ReceiptA4 } from "@/components/office/receipts/ReceiptA4";
 import { ReceiptThermal58 } from "@/components/office/receipts/ReceiptThermal58";
 import type { TenantReceiptViewModel } from "@/components/office/receipts/TenantPaymentReceipt";
 import { hasPermission, requireAuth } from "@/lib/auth/permissions";
-import type { PaymentReceiptSnapshot } from "@/lib/receipts/payment-receipts";
+import { projectTenantReceiptCoverage, type PaymentReceiptSnapshot } from "@/lib/receipts/payment-receipts";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +18,8 @@ type ReceiptRow = {
     company_id: string;
     id: string;
     office_id: string | null;
+    payment_id: string;
+    payment_type: string;
     receipt_number: string;
     receipt_snapshot: PaymentReceiptSnapshot;
     status: string;
@@ -54,7 +56,7 @@ export async function loadPrintableReceipt(receiptId: string) {
     const db = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
     const { data, error } = await db
         .from("payment_receipts")
-        .select("id,company_id,office_id,receipt_number,receipt_snapshot,status,verification_code")
+        .select("id,company_id,office_id,payment_id,payment_type,receipt_number,receipt_snapshot,status,verification_code")
         .eq("company_id", context.activeCompany.id)
         .eq("id", receiptId)
         .maybeSingle();
@@ -66,12 +68,16 @@ export async function loadPrintableReceipt(receiptId: string) {
         redirect("/office/receipts");
     }
 
+    const snapshot = row.payment_type === "tenant_collection"
+        ? await projectTenantReceiptCoverage(db, row.company_id, row.payment_id, row.receipt_snapshot)
+        : row.receipt_snapshot;
+
     return {
         id: row.id,
         receiptNumber: row.receipt_number,
-        snapshot: row.receipt_snapshot,
+        snapshot,
         status: row.status,
-        verificationCode: row.verification_code || row.receipt_snapshot?.verificationCode,
+        verificationCode: row.verification_code || snapshot?.verificationCode,
     } satisfies TenantReceiptViewModel;
 }
 

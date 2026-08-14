@@ -16,6 +16,8 @@ const fastPaymentAdminSearchIndexMigration = readFileSync(new URL("../supabase/u
 const roomRankPriorityMigration = readFileSync(new URL("../supabase/upgrade_migrations/0216_payment_search_room_rank_priority.sql", import.meta.url), "utf8");
 const paymentSearchRoute = readFileSync(new URL("../app/api/collections/payment-search/route.ts", import.meta.url), "utf8");
 const collectionsData = readFileSync(new URL("../lib/collections/data.ts", import.meta.url), "utf8");
+const collectionsAction = readFileSync(new URL("../app/actions/collections.ts", import.meta.url), "utf8");
+const moveInAllocation = readFileSync(new URL("../lib/collections/move-in-allocation.ts", import.meta.url), "utf8");
 const propertiesData = readFileSync(new URL("../lib/properties/data.ts", import.meta.url), "utf8");
 const propertyCommandPanel = readFileSync(new URL("../components/office/properties/PropertyCommandPanel.tsx", import.meta.url), "utf8");
 
@@ -112,6 +114,15 @@ test("fast payment lookup returns saved billing day and lease start for immediat
   assert.match(fastLookupBillingMigration, /lease_start_date date/);
   assert.match(fastLookupBillingMigration, /coalesce\(l\.billing_day, t\.billing_day, 1\) as lease_billing_day/);
   assert.match(fastLookupBillingMigration, /coalesce\(t\.billing_day, l\.billing_day, 1\) as tenant_billing_day/);
+});
+
+test("normal tenant payments allocate coverage from the saved billing day", () => {
+  assert.match(collectionsAction, /full_name, monthly_rent, balance, status, created_at, billing_day/);
+  assert.match(collectionsAction, /start_date, billing_day, monthly_rent, status/);
+  assert.match(collectionsAction, /billingDay: Number\(tenantContext\.lease\?\.billing_day \?\? tenantContext\.tenant\.billing_day \?\? 1\)/);
+  assert.match(moveInAllocation, /coveragePeriodForBillingCycle/);
+  assert.match(moveInAllocation, /dateForBillingDay/);
+  assert.match(moveInAllocation, /addMonthsToBillingDate/);
 });
 
 test("payments entry tenant search is compact, debounced, abortable and role-scoped", () => {

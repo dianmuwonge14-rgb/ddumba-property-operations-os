@@ -1,5 +1,6 @@
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { addMonthsToBillingDate, clampBillingDay, dateForBillingDay, previousDay } from "@/lib/tenants/billing-cycle";
 
 type Db = {
     from: (table: string) => any;
@@ -214,8 +215,61 @@ function allocationLabel(row: LooseRow) {
     return monthLabel(text(row.allocation_month ?? row.rent_month ?? row.payment_month)) ?? "Rent coverage";
 }
 
+function allocationLabelForBillingDay(row: LooseRow, billingDay: number) {
+    const month = text(row.allocation_month ?? row.rent_month ?? row.payment_month);
+    if (!month || !/^\d{4}-\d{2}-\d{2}/.test(month)) return allocationLabel(row);
+    const [year, monthNumber] = month.slice(0, 7).split("-").map(Number);
+    const coverageStart = dateForBillingDay(year, monthNumber - 1, billingDay);
+    const coverageEnd = previousDay(addMonthsToBillingDate(coverageStart, 1, billingDay));
+    return `${dateLabel(coverageStart)} - ${dateLabel(coverageEnd)}`;
+}
+
 function allocationType(row: LooseRow) {
     return String(row.allocation_type ?? "current_month").replaceAll("_", " ");
+}
+
+export async function projectTenantReceiptCoverage(
+    db: Db,
+    companyId: string,
+    paymentId: string,
+    snapshot: PaymentReceiptSnapshot,
+) {
+    if (!paymentId || snapshot.status === "cancelled") return snapshot;
+    const { data: payment, error: paymentError } = await db
+        .from("collections")
+        .select("id,tenant_id")
+        .eq("company_id", companyId)
+        .eq("id", paymentId)
+        .maybeSingle();
+    if (paymentError || !payment?.tenant_id) return snapshot;
+
+    const tenantId = String(payment.tenant_id);
+    const [tenantResult, leaseResult, allocationRows] = await Promise.all([
+        db.from("tenants").select("id,billing_day").eq("company_id", companyId).eq("id", tenantId).maybeSingle(),
+        db.from("leases").select("id,tenant_id,billing_day,status,created_at").eq("company_id", companyId).eq("tenant_id", tenantId).eq("status", "active").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+        db.from("tenant_rent_allocations").select("*").eq("company_id", companyId).eq("payment_id", paymentId),
+    ]);
+    if (tenantResult.error || leaseResult.error || allocationRows.error) return snapshot;
+
+    const billingDay = clampBillingDay(Number(leaseResult.data?.billing_day ?? tenantResult.data?.billing_day ?? 1));
+    const coveragePeriods = ((allocationRows.data ?? []) as LooseRow[])
+        .map((row) => ({
+            amount: amount(row.amount_allocated),
+            label: allocationLabelForBillingDay(row, billingDay),
+            type: allocationType(row),
+        }))
+        .filter((row) => row.amount > 0);
+    if (!coveragePeriods.length) return snapshot;
+
+    const firstCoverage = coveragePeriods[0]?.label ?? null;
+    const lastCoverage = coveragePeriods.at(-1)?.label ?? null;
+    return {
+        ...snapshot,
+        coveragePeriod: firstCoverage && lastCoverage
+            ? firstCoverage === lastCoverage ? firstCoverage : `${firstCoverage}; ${lastCoverage}`
+            : null,
+        coveragePeriods,
+    };
 }
 
 function receiptBrandingForOffice(office: LooseRow | null | undefined, fallback: { contact: string | null; name: string | null }) {
@@ -431,9 +485,10 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
         .eq("payment_id", payment.id);
     if (allocationRows.error && !isMissingSchemaError(allocationRows.error)) throw new Error(allocationRows.error.message);
     const allocations = (allocationRows.data ?? []) as LooseRow[];
+    const billingDay = clampBillingDay(Number(lease?.billing_day ?? tenant?.billing_day ?? 1));
     const coveragePeriods = allocations.map((row) => ({
         amount: amount(row.amount_allocated),
-        label: allocationLabel(row),
+        label: allocationLabelForBillingDay(row, billingDay),
         type: allocationType(row),
     })).filter((row) => row.amount > 0);
     const firstCoverage = coveragePeriods[0]?.label ?? null;
@@ -900,7 +955,13 @@ export async function getPaymentReceipt(receiptId: string) {
     const { data, error } = await db.from("payment_receipts").select("*").eq("id", receiptId).maybeSingle();
     if (error) throw new Error(error.message);
     if (!data) throw new Error("Receipt not found.");
-    return receiptSummary(data);
+    const summary = receiptSummary(data);
+    return {
+        ...summary,
+        snapshot: summary.paymentType === "tenant_collection"
+            ? await projectTenantReceiptCoverage(db, summary.companyId, summary.paymentId, summary.snapshot)
+            : summary.snapshot,
+    };
 }
 
 export async function logReceiptDelivery(input: {

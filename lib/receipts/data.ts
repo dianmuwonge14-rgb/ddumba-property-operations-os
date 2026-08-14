@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { hasPermission, requireAuth } from "@/lib/auth/permissions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { addMonthsToBillingDate, clampBillingDay, dateForBillingDay, previousDay } from "@/lib/tenants/billing-cycle";
 import type { PaymentReceiptAmendmentSnapshot, PaymentReceiptSnapshot } from "@/lib/receipts/payment-receipts";
 
 type ReceiptRow = {
@@ -62,6 +63,87 @@ function leaseCoversPaymentDate(lease: LooseRow, paymentDate: string | null) {
     const start = text(lease.start_date)?.slice(0, 10) ?? "";
     const end = text(lease.end_date)?.slice(0, 10) ?? "";
     return (!start || start <= paymentDate) && (!end || end >= paymentDate);
+}
+
+function receiptCoverageDateLabel(value: string | null) {
+    if (!value) return null;
+    const parsed = new Date(`${value.slice(0, 10)}T00:00:00+03:00`);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return new Intl.DateTimeFormat("en-UG", { day: "2-digit", month: "short", timeZone: "Africa/Kampala", year: "numeric" }).format(parsed);
+}
+
+function coverageForReceiptAllocation(month: string, billingDay: number) {
+    const dateOnly = String(month ?? "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) return null;
+    const [year, monthNumber] = dateOnly.slice(0, 7).split("-").map(Number);
+    const coverageStart = dateForBillingDay(year, monthNumber - 1, billingDay);
+    const coverageEnd = previousDay(addMonthsToBillingDate(coverageStart, 1, billingDay));
+    const startLabel = receiptCoverageDateLabel(coverageStart);
+    const endLabel = receiptCoverageDateLabel(coverageEnd);
+    return startLabel && endLabel ? `${startLabel} - ${endLabel}` : null;
+}
+
+async function fetchReceiptCoverageProjection(db: { from: (table: string) => any }, companyId: string, rows: ReceiptRow[]) {
+    const tenantReceiptRows = rows.filter((row) => row.payment_type === "tenant_collection" && row.payment_id);
+    const empty = new Map<string, Pick<PaymentReceiptSnapshot, "coveragePeriod" | "coveragePeriods">>();
+    if (!tenantReceiptRows.length) return empty;
+
+    const paymentIds = tenantReceiptRows.map((row) => row.payment_id);
+    const { data: paymentRows, error: paymentError } = await db
+        .from("collections")
+        .select("id,tenant_id")
+        .eq("company_id", companyId)
+        .in("id", paymentIds);
+    if (paymentError) return empty;
+
+    const payments = (paymentRows ?? []) as LooseRow[];
+    const tenantIds = Array.from(new Set(payments.map((payment) => text(payment.tenant_id)).filter(Boolean) as string[]));
+    if (!tenantIds.length) return empty;
+
+    const [tenantsResult, leasesResult, allocationsResult] = await Promise.all([
+        db.from("tenants").select("id,billing_day").eq("company_id", companyId).in("id", tenantIds),
+        db.from("leases").select("id,tenant_id,billing_day,status,created_at").eq("company_id", companyId).in("tenant_id", tenantIds).order("created_at", { ascending: false }),
+        db.from("tenant_rent_allocations").select("payment_id,allocation_month,allocation_type,amount_allocated").eq("company_id", companyId).in("payment_id", paymentIds),
+    ]);
+    if (tenantsResult.error || leasesResult.error || allocationsResult.error) return empty;
+
+    const tenantById = new Map(((tenantsResult.data ?? []) as LooseRow[]).map((tenant) => [String(tenant.id), tenant]));
+    const leaseByTenant = new Map<string, LooseRow>();
+    for (const lease of ((leasesResult.data ?? []) as LooseRow[])) {
+        if (String(lease.status ?? "").toLowerCase() !== "active") continue;
+        const tenantId = String(lease.tenant_id ?? "");
+        if (tenantId && !leaseByTenant.has(tenantId)) leaseByTenant.set(tenantId, lease);
+    }
+    const paymentTenant = new Map(payments.map((payment) => [String(payment.id), String(payment.tenant_id ?? "")]));
+    const allocationsByPayment = new Map<string, LooseRow[]>();
+    for (const allocation of ((allocationsResult.data ?? []) as LooseRow[])) {
+        const paymentId = String(allocation.payment_id ?? "");
+        if (!paymentId) continue;
+        allocationsByPayment.set(paymentId, [...(allocationsByPayment.get(paymentId) ?? []), allocation]);
+    }
+
+    const projectionByPayment = new Map<string, Pick<PaymentReceiptSnapshot, "coveragePeriod" | "coveragePeriods">>();
+    for (const [paymentId, allocations] of allocationsByPayment.entries()) {
+        const tenantId = paymentTenant.get(paymentId);
+        const tenant = tenantId ? tenantById.get(tenantId) : null;
+        const lease = tenantId ? leaseByTenant.get(tenantId) : null;
+        const billingDay = clampBillingDay(Number(lease?.billing_day ?? tenant?.billing_day ?? 1));
+        const coveragePeriods = allocations
+            .filter((allocation) => Number(allocation.amount_allocated ?? 0) > 0)
+            .sort((left, right) => String(left.allocation_month ?? "").localeCompare(String(right.allocation_month ?? "")))
+            .map((allocation) => ({
+                amount: Number(allocation.amount_allocated ?? 0),
+                label: coverageForReceiptAllocation(String(allocation.allocation_month ?? ""), billingDay) ?? "Rent coverage",
+                type: String(allocation.allocation_type ?? "current_month").replaceAll("_", " "),
+            }));
+        const firstCoverage = coveragePeriods[0]?.label ?? null;
+        const lastCoverage = coveragePeriods.at(-1)?.label ?? null;
+        projectionByPayment.set(paymentId, {
+            coveragePeriod: firstCoverage && lastCoverage ? firstCoverage === lastCoverage ? firstCoverage : `${firstCoverage}; ${lastCoverage}` : null,
+            coveragePeriods,
+        });
+    }
+    return projectionByPayment;
 }
 
 async function fetchFallbackReceiptRooms(db: { from: (table: string) => any }, companyId: string, rows: ReceiptRow[]) {
@@ -360,7 +442,10 @@ export const getReceiptHistoryData = cache(async function getReceiptHistoryData(
             }
         }
     }
-    const fallbackRooms = await fetchFallbackReceiptRooms(db, context.activeCompany.id, rows);
+    const [fallbackRooms, coverageProjection] = await Promise.all([
+        fetchFallbackReceiptRooms(db, context.activeCompany.id, rows),
+        fetchReceiptCoverageProjection(db, context.activeCompany.id, rows),
+    ]);
 
     return {
         error: null,
@@ -371,16 +456,20 @@ export const getReceiptHistoryData = cache(async function getReceiptHistoryData(
             const snapshot = fallbackRoom
                 ? { ...row.receipt_snapshot, roomId: row.receipt_snapshot?.roomId ?? fallbackRoom.roomId, roomNumber: row.receipt_snapshot?.roomNumber ?? fallbackRoom.roomNumber }
                 : row.receipt_snapshot;
+            const projectedCoverage = coverageProjection.get(row.payment_id);
+            const displaySnapshot = projectedCoverage
+                ? { ...snapshot, coveragePeriod: projectedCoverage.coveragePeriod, coveragePeriods: projectedCoverage.coveragePeriods }
+                : snapshot;
             return ({
-            amountPaid: Number(snapshot?.amountPaid ?? 0),
-            amendmentSummary: snapshot?.amendmentSummary ?? (
+            amountPaid: Number(displaySnapshot?.amountPaid ?? 0),
+            amendmentSummary: displaySnapshot?.amendmentSummary ?? (
                 latestAmendment
                     ? `${latestAmendment.fieldLabel} ${latestAmendment.status === "rejected" ? "change rejected" : "changed"}`
                     : null
             ),
             amendments,
-            approvedByName: snapshot?.changeApprovedByName ?? latestAmendment?.approvedByName ?? null,
-            changedByName: snapshot?.changedByName ?? latestAmendment?.changedByName ?? null,
+            approvedByName: displaySnapshot?.changeApprovedByName ?? latestAmendment?.approvedByName ?? null,
+            changedByName: displaySnapshot?.changedByName ?? latestAmendment?.changedByName ?? null,
             deliveryStatus: deliveryByReceipt.get(row.id) ?? {
                 email: null,
                 emailAt: null,
@@ -394,18 +483,18 @@ export const getReceiptHistoryData = cache(async function getReceiptHistoryData(
             id: row.id,
             issuedAt: row.issued_at,
             lastUpdatedAt: latestAmendment?.approvalDate ?? latestAmendment?.changeDate ?? row.issued_at,
-            officeName: snapshot?.officeName ?? null,
+            officeName: displaySnapshot?.officeName ?? null,
             paymentId: row.payment_id,
             paymentType: row.payment_type,
-            preparedByName: snapshot?.preparedByName ?? snapshot?.recordedByName ?? null,
+            preparedByName: displaySnapshot?.preparedByName ?? displaySnapshot?.recordedByName ?? null,
             receiptNumber: row.receipt_number,
-            recordedByName: snapshot?.recordedByName ?? null,
-            remainingOutstandingBalance: Number(snapshot?.remainingOutstandingBalance ?? 0),
-            roomNumber: snapshot?.roomNumber ?? null,
-            snapshot,
+            recordedByName: displaySnapshot?.recordedByName ?? null,
+            remainingOutstandingBalance: Number(displaySnapshot?.remainingOutstandingBalance ?? 0),
+            roomNumber: displaySnapshot?.roomNumber ?? null,
+            snapshot: displaySnapshot,
             status: row.status,
-            tenantName: snapshot?.tenantName ?? null,
-            tenantPhone: snapshot?.tenantPhone ?? null,
+            tenantName: displaySnapshot?.tenantName ?? null,
+            tenantPhone: displaySnapshot?.tenantPhone ?? null,
             verificationCode: row.verification_code,
             });
         }),
