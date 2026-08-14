@@ -253,6 +253,7 @@ async function createMoveInRentCharge(input: {
 async function recordMoveInEntryPayment(input: {
     actorId: string | null;
     companyId: string;
+    employeeId?: string | null;
     leaseId: string;
     landlordId: string | null;
     monthlyRent: number;
@@ -304,6 +305,9 @@ async function recordMoveInEntryPayment(input: {
             payment_source: "tenant",
             payer_name: input.tenantName,
             property_id: input.propertyId,
+            collected_by_employee_id: input.employeeId ?? null,
+            prepared_by_employee_id: input.employeeId ?? null,
+            recorded_by_employee_id: input.employeeId ?? null,
             recorded_by: input.actorId,
             reference_number: input.referenceNumber ?? null,
             room_id: input.roomId,
@@ -315,6 +319,19 @@ async function recordMoveInEntryPayment(input: {
         .select("*")
         .single();
     if (collectionError) throw new Error(collectionError.message);
+
+    const { data: verifiedCollection, error: verifyCollectionError } = await db
+        .from("collections")
+        .select("id, amount_paid, tenant_id, room_id, status")
+        .eq("company_id", input.companyId)
+        .eq("id", collection.id)
+        .eq("tenant_id", input.tenantId)
+        .eq("room_id", input.roomId)
+        .maybeSingle();
+    if (verifyCollectionError) throw new Error(verifyCollectionError.message);
+    if (!verifiedCollection || Math.round(Number(verifiedCollection.amount_paid ?? 0)) !== Math.round(input.paymentAmount)) {
+        throw new Error("Move-in payment could not be verified. The room occupancy was not completed.");
+    }
 
     if (coverage.allocations.length) {
         const allocationRows = coverage.allocations.map((allocation) => ({
@@ -493,6 +510,24 @@ async function getLandlordPaymentState(supabase: Awaited<ReturnType<typeof creat
     };
 }
 
+async function resolveActorEmployeeId(supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>, actorId: string | null, profile: unknown) {
+    const profileEmployeeId = typeof profile === "object" && profile && "employee_id" in profile
+        ? String((profile as { employee_id?: unknown }).employee_id ?? "")
+        : "";
+    if (profileEmployeeId) return profileEmployeeId;
+    if (!actorId) return null;
+    const { data, error } = await supabase
+        .from("users")
+        .select("employee_id")
+        .eq("id", actorId)
+        .maybeSingle();
+    if (error && !/employee_id|schema cache|Could not find|does not exist/i.test(error.message ?? "")) {
+        throw new Error(error.message);
+    }
+    const employeeId = String((data as { employee_id?: unknown } | null)?.employee_id ?? "");
+    return employeeId || null;
+}
+
 function settlementMonthFromDate(value: string) {
     return `${value.slice(0, 7)}-01`;
 }
@@ -602,6 +637,7 @@ async function replaceTenantFromPaymentsEntryUnsafe(input: ReplaceTenantFromPaym
     const supabase = await createSupabaseServerClient();
     const companyId = context.activeCompany.id;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    const employeeId = await resolveActorEmployeeId(supabase, actorId, context.profile);
     const now = new Date().toISOString();
 
     const { data: roomBefore, error: roomBeforeError } = await supabase
@@ -758,6 +794,7 @@ async function replaceTenantFromPaymentsEntryUnsafe(input: ReplaceTenantFromPaym
         entryPayment = await recordMoveInEntryPayment({
             actorId,
             companyId,
+            employeeId,
             leaseId: newLease.id,
             landlordId: roomBefore.landlord_id ?? null,
             monthlyRent,
@@ -874,6 +911,7 @@ async function markRoomOccupiedUnsafe(input: MarkRoomOccupiedInput) {
     const supabase = await createSupabaseServerClient();
     const companyId = context.activeCompany.id;
     const actorId = context.profile?.id ?? context.authUser?.id ?? null;
+    const employeeId = await resolveActorEmployeeId(supabase, actorId, context.profile);
     const now = new Date().toISOString();
 
     const { data: room, error: roomError } = await supabase
@@ -920,6 +958,7 @@ async function markRoomOccupiedUnsafe(input: MarkRoomOccupiedInput) {
                     retryCollection = await recordMoveInEntryPayment({
                         actorId,
                         companyId,
+                        employeeId,
                         leaseId: existingOccupancy.lease.id,
                         landlordId: room.landlord_id ?? null,
                         monthlyRent,
@@ -1043,6 +1082,7 @@ async function markRoomOccupiedUnsafe(input: MarkRoomOccupiedInput) {
         collection = await recordMoveInEntryPayment({
             actorId,
             companyId,
+            employeeId,
             leaseId: lease.id,
             landlordId: room.landlord_id ?? null,
             monthlyRent,

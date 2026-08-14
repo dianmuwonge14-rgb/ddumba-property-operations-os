@@ -243,6 +243,20 @@ test("move-in payment may exceed first month rent when final balance is zero", (
   assert.match(paymentsEntry, /balanceDemanded: Math\.max\(0, monthlyRent - paymentMade\)/);
 });
 
+test("move-in payment creates a verified canonical collection with employee attribution", () => {
+  assert.match(roomOccupancyAction, /async function recordMoveInEntryPayment/);
+  assert.match(roomOccupancyAction, /\.from\("collections"\)[\s\S]*\.insert\(\{/);
+  assert.match(roomOccupancyAction, /amount_paid: input\.paymentAmount/);
+  assert.match(roomOccupancyAction, /payment_method: input\.paymentMethod/);
+  assert.match(roomOccupancyAction, /collected_by_employee_id: input\.employeeId/);
+  assert.match(roomOccupancyAction, /prepared_by_employee_id: input\.employeeId/);
+  assert.match(roomOccupancyAction, /recorded_by_employee_id: input\.employeeId/);
+  assert.match(roomOccupancyAction, /verifyCollectionError/);
+  assert.match(roomOccupancyAction, /Move-in payment could not be verified/);
+  assert.match(roomOccupancyAction, /recordCollectionLedgerAndCash/);
+  assert.match(roomOccupancyAction, /createTenantPaymentReceipt\(collection\.id/);
+});
+
 test("vacant rooms Mark Occupied routes to the canonical Payments Entry New Tenant workflow", () => {
   assert.doesNotMatch(vacantRoomsConsole, /RoomActionPanel/);
   assert.match(vacantRoomsConsole, /openNewTenantWorkflow/);
