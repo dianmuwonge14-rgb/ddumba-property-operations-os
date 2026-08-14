@@ -121,7 +121,9 @@ export async function GET(request: NextRequest) {
         const selectedOfficeId = canSeeAll && requestedOfficeId && context.offices.some((office) => office.id === requestedOfficeId)
             ? requestedOfficeId
             : activeOfficeId;
-        const landlordOfficeFilterId = canSeeAll ? null : selectedOfficeId;
+        const landlordOfficeFilterId = canSeeAll
+            ? (requestedOfficeId && context.offices.some((office) => office.id === requestedOfficeId) ? requestedOfficeId : null)
+            : selectedOfficeId;
         if (!id) throw new Error("Select a record.");
 
         if (type === "employee") {

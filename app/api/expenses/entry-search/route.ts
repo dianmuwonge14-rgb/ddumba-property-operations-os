@@ -263,7 +263,9 @@ export async function GET(request: NextRequest) {
 
         if (type === "landlord") {
             const admin = createSupabaseAdminClient() as unknown as { from: (table: string) => any };
-            const landlordOfficeFilterId = canSeeAll ? null : activeOfficeId;
+            const landlordOfficeFilterId = canSeeAll
+                ? (requestedOfficeId && context.offices.some((office) => office.id === requestedOfficeId) ? requestedOfficeId : null)
+                : activeOfficeId;
             const indexSearchFilter = [
                 `landlord_name.ilike.${like}`,
                 `phone.ilike.${like}`,

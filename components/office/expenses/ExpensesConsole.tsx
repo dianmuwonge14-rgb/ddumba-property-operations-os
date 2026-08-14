@@ -818,7 +818,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
         };
     }, [effectiveLandlordSearchOfficeId, isLandlordPaidMode, landlordSearch, landlordSearchFallbackOptions, selectedLandlordDetail?.name]);
 
-    function loadEntryDetail(type: "employee" | "salary_employee" | "landlord", id: string) {
+    function loadEntryDetail(type: "employee" | "salary_employee" | "landlord", id: string, officeIdOverride?: string | null) {
         detailAbortRef.current?.abort();
         const controller = new AbortController();
         detailAbortRef.current = controller;
@@ -828,7 +828,10 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
             try {
                 const params = new URLSearchParams({ id, expenseDate });
                 if (type === "salary_employee") params.set("salaryMonth", paymentMonth);
-                if (selectedEntryOfficeId) params.set("officeId", selectedEntryOfficeId);
+                const detailOfficeId = type === "landlord"
+                    ? (officeIdOverride ?? selectedLandlordDetail?.officeId ?? effectiveLandlordSearchOfficeId)
+                    : selectedEntryOfficeId;
+                if (detailOfficeId) params.set("officeId", detailOfficeId);
                 const response = await fetch(`/api/expenses/entry-detail?type=${type}&${params.toString()}`, {
                     cache: "no-store",
                     signal: controller.signal,
@@ -852,7 +855,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
     useEffect(() => {
         if (employeeId && isEmployeeExpenseMode) loadEntryDetail("employee", employeeId);
         if (employeeId && isSalaryPaymentMode) loadEntryDetail("salary_employee", employeeId);
-        if (landlordId && isLandlordPaidMode) loadEntryDetail("landlord", landlordId);
+        if (landlordId && isLandlordPaidMode) loadEntryDetail("landlord", landlordId, selectedLandlordDetail?.officeId ?? effectiveLandlordSearchOfficeId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [expenseDate, paymentMonth, refreshToken]);
 
@@ -1637,7 +1640,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                                         setSelectedLandlordDetail(landlord as LandlordEntryDetail);
                                                         setLandlordSearchResults([]);
                                                         setLandlordSearchError(null);
-                                                        loadEntryDetail("landlord", landlord.id);
+                                                        loadEntryDetail("landlord", landlord.id, landlord.officeId ?? effectiveLandlordSearchOfficeId);
                                                     }} className="mb-2 block w-full rounded-2xl border border-slate-100 bg-gradient-to-br from-white via-slate-50 to-emerald-50/60 p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-lg">
                                                         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                                                             <div className="min-w-0">
