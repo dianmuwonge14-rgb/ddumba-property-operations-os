@@ -316,7 +316,7 @@ export async function GET(request: NextRequest) {
                 (() => {
                     let query = admin
                         .from("rooms")
-                        .select("id, office_id, property_id, landlord_id, room_number, status, monthly_rent, outstanding_balance, updated_at, offices:office_id(id, office_name, name), properties:property_id(id, landlord_id, property_name, name, location)")
+                        .select("id, office_id, property_id, landlord_id, room_number, status, monthly_rent, outstanding_balance, updated_at, offices:office_id(id, office_name, name), properties:property_id(id, landlord_id, property_name, name)")
                         .eq("company_id", companyId)
                         .not("status", "in", "(archived,inactive,deleted,removed)");
                     if (landlordOfficeFilterId) query = query.eq("office_id", landlordOfficeFilterId);
@@ -359,7 +359,7 @@ export async function GET(request: NextRequest) {
                     .limit(1),
                 admin
                     .from("properties")
-                    .select("id, landlord_id, property_name, name, location")
+                    .select("id, landlord_id, property_name, name")
                     .eq("company_id", companyId),
                 admin
                     .from("landlord_search_index")
