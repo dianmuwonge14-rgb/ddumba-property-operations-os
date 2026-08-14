@@ -2785,108 +2785,170 @@ function PrintPreview({ companyName, onClose, report }: { companyName: string; o
     );
 }
 
-function LandlordDeductionsModal({ landlord, onClose }: { landlord: LandlordEntryDetail; onClose: () => void }) {
-    const rows = landlord.deductionBreakdown ?? [];
+function LandlordDetailModal({
+    children,
+    headerTone = "slate",
+    landlordName,
+    maxWidth = "max-w-4xl",
+    onClose,
+    title,
+}: {
+    children: ReactNode;
+    headerTone?: "slate" | "rose" | "violet" | "blue";
+    landlordName?: string | null;
+    maxWidth?: string;
+    onClose: () => void;
+    title: string;
+}) {
+    const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+    const previousFocusRef = useRef<HTMLElement | null>(null);
+    const titleId = useRef(`landlord-detail-modal-${Math.random().toString(36).slice(2)}`).current;
+    const headerClasses = {
+        blue: "from-blue-950 via-slate-950 to-cyan-950 text-cyan-100",
+        rose: "from-rose-800 via-rose-700 to-orange-700 text-rose-100",
+        slate: "from-slate-950 via-blue-950 to-slate-900 text-cyan-100",
+        violet: "from-violet-800 via-purple-800 to-fuchsia-800 text-violet-100",
+    }[headerTone];
+
+    useEffect(() => {
+        previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        const focusTimer = window.setTimeout(() => closeButtonRef.current?.focus(), 0);
+        const handleKey = (event: KeyboardEvent) => {
+            if (event.key === "Escape") onClose();
+        };
+        window.addEventListener("keydown", handleKey);
+        return () => {
+            window.clearTimeout(focusTimer);
+            window.removeEventListener("keydown", handleKey);
+            document.body.style.overflow = previousOverflow;
+            previousFocusRef.current?.focus?.();
+        };
+    }, [onClose]);
+
     return (
-        <div className="fixed inset-0 z-[150] overflow-auto bg-slate-950/75 p-4 backdrop-blur-sm">
-            <div className="mx-auto my-8 max-w-4xl overflow-hidden rounded-[28px] bg-white shadow-2xl">
-                <div className="flex flex-wrap items-start justify-between gap-3 bg-rose-700 p-5 text-white">
-                    <div className="min-w-0">
-                        <p className="text-xs font-black uppercase tracking-wide text-rose-100">Landlord deductions</p>
-                        <OverflowSafeText mode="marquee" className="mt-1 text-2xl font-black">{landlord.name}</OverflowSafeText>
+        <div
+            className="fixed inset-0 z-[170] overflow-y-auto bg-slate-950/75 p-3 backdrop-blur-sm transition-opacity duration-150 sm:p-4 print:hidden"
+            data-testid="landlord-detail-modal-backdrop"
+            onClick={onClose}
+        >
+            <div className="flex min-h-full items-start justify-center py-4 sm:py-8">
+                <div
+                    aria-labelledby={titleId}
+                    aria-modal="true"
+                    className={`relative w-full ${maxWidth} max-h-[calc(100vh-2rem)] overflow-hidden rounded-[28px] bg-white shadow-2xl shadow-slate-950/35 ring-1 ring-white/20 transition duration-150 ease-out`}
+                    data-testid="landlord-detail-modal"
+                    onClick={(event) => event.stopPropagation()}
+                    role="dialog"
+                >
+                    <div className={`bg-gradient-to-br ${headerClasses} p-5 pr-20 text-white`}>
+                        <h2 id={titleId} className="sr-only">{title}: {landlordName ?? "Selected landlord"}</h2>
+                        <p className="text-xs font-black uppercase tracking-[0.18em] opacity-80">{title}</p>
+                        <OverflowSafeText mode="marquee" className="mt-2 text-2xl font-black leading-tight">
+                            {landlordName ?? "Selected landlord"}
+                        </OverflowSafeText>
                     </div>
-                    <button type="button" onClick={onClose} className="rounded-xl bg-white/15 px-4 py-2 text-sm font-black text-white">Close</button>
-                </div>
-                <div className="p-5">
-                    {!rows.length ? <p className="rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-500">No deductions are recorded for the current payable period.</p> : null}
-                    {rows.length ? (
-                        <div className="overflow-auto rounded-2xl border border-slate-200">
-                            <table className="w-full min-w-[760px] text-left text-sm">
-                                <thead className="bg-slate-950 text-xs uppercase text-white">
-                                    <tr>
-                                        <th className="px-4 py-3">Type</th>
-                                        <th className="px-4 py-3">Amount</th>
-                                        <th className="px-4 py-3">Period</th>
-                                        <th className="px-4 py-3">Reason</th>
-                                        <th className="px-4 py-3">Date</th>
-                                        <th className="px-4 py-3">Reference</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {rows.map((row, index) => (
-                                        <tr key={`landlord-deduction:${row.type}:${index}`} className="border-b border-slate-100">
-                                            <td className="px-4 py-3 font-black text-slate-950">{row.type}</td>
-                                            <td className="px-4 py-3 font-black text-rose-700">{money(row.amount)}</td>
-                                            <td className="px-4 py-3 font-bold text-slate-600">{row.period ?? "--"}</td>
-                                            <td className="max-w-xs px-4 py-3 font-semibold text-slate-600"><OverflowSafeText mode="truncate">{row.reason}</OverflowSafeText></td>
-                                            <td className="px-4 py-3 font-bold text-slate-600">{row.date || "--"}</td>
-                                            <td className="px-4 py-3 font-mono text-xs font-bold text-slate-500">{row.reference || "--"}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    ) : null}
-                    <p className="mt-4 rounded-2xl bg-rose-50 px-4 py-3 text-right text-lg font-black text-rose-800">Total Deductions: {money(landlord.totalDeductions ?? 0)}</p>
+                    <button
+                        ref={closeButtonRef}
+                        type="button"
+                        onClick={onClose}
+                        className="absolute right-4 top-4 z-10 inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-full border border-white/20 bg-white/15 px-3 text-sm font-black text-white shadow-lg backdrop-blur transition hover:bg-white hover:text-slate-950 focus:outline-none focus:ring-4 focus:ring-cyan-200"
+                        aria-label={`Close ${title}`}
+                    >
+                        <X size={18} />
+                        <span className="hidden sm:inline">Close</span>
+                    </button>
+                    <div className="max-h-[calc(100vh-9rem)] overflow-y-auto">
+                        {children}
+                    </div>
                 </div>
             </div>
         </div>
+    );
+}
+
+function LandlordDeductionsModal({ landlord, onClose }: { landlord: LandlordEntryDetail; onClose: () => void }) {
+    const rows = landlord.deductionBreakdown ?? [];
+    return (
+        <LandlordDetailModal headerTone="rose" landlordName={landlord.name} onClose={onClose} title="Total Deductions">
+            <div className="p-5">
+                {!rows.length ? <p className="rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-500">No deductions are recorded for the current payable period.</p> : null}
+                {rows.length ? (
+                    <div className="overflow-auto rounded-2xl border border-slate-200">
+                        <table className="w-full min-w-[760px] text-left text-sm">
+                            <thead className="bg-slate-950 text-xs uppercase text-white">
+                                <tr>
+                                    <th className="px-4 py-3">Type</th>
+                                    <th className="px-4 py-3">Amount</th>
+                                    <th className="px-4 py-3">Period</th>
+                                    <th className="px-4 py-3">Reason</th>
+                                    <th className="px-4 py-3">Date</th>
+                                    <th className="px-4 py-3">Reference</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((row, index) => (
+                                    <tr key={`landlord-deduction:${row.type}:${index}`} className="border-b border-slate-100">
+                                        <td className="px-4 py-3 font-black text-slate-950">{row.type}</td>
+                                        <td className="px-4 py-3 font-black text-rose-700">{money(row.amount)}</td>
+                                        <td className="px-4 py-3 font-bold text-slate-600">{row.period ?? "--"}</td>
+                                        <td className="max-w-xs px-4 py-3 font-semibold text-slate-600"><OverflowSafeText mode="truncate">{row.reason}</OverflowSafeText></td>
+                                        <td className="px-4 py-3 font-bold text-slate-600">{row.date || "--"}</td>
+                                        <td className="px-4 py-3 font-mono text-xs font-bold text-slate-500">{row.reference || "--"}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                ) : null}
+                <p className="mt-4 rounded-2xl bg-rose-50 px-4 py-3 text-right text-lg font-black text-rose-800">Total Deductions: {money(landlord.totalDeductions ?? 0)}</p>
+            </div>
+        </LandlordDetailModal>
     );
 }
 
 function LandlordVacantRoomsModal({ landlord, onClose }: { landlord: LandlordEntryDetail; onClose: () => void }) {
     const rows = landlord.vacantRoomDetails ?? [];
     return (
-        <div className="fixed inset-0 z-[150] overflow-auto bg-slate-950/75 p-4 backdrop-blur-sm">
-            <div className="mx-auto my-8 max-w-4xl overflow-hidden rounded-[28px] bg-white shadow-2xl">
-                <div className="flex flex-wrap items-start justify-between gap-3 bg-violet-700 p-5 text-white">
-                    <div className="min-w-0">
-                        <p className="text-xs font-black uppercase tracking-wide text-violet-100">Vacant rooms</p>
-                        <OverflowSafeText mode="marquee" className="mt-1 text-2xl font-black">{landlord.name}</OverflowSafeText>
-                    </div>
-                    <button type="button" onClick={onClose} className="rounded-xl bg-white/15 px-4 py-2 text-sm font-black text-white">Close</button>
-                </div>
-                <div className="grid gap-3 p-5 md:grid-cols-2">
-                    {!rows.length ? <p className="rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-500 md:col-span-2">No vacant rooms are currently recorded for this landlord.</p> : null}
-                    {rows.map((room) => (
-                        <article key={room.id} className="rounded-3xl border border-violet-100 bg-violet-50/70 p-4">
-                            <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                    <OverflowSafeText mode="marquee" className="text-xl font-black text-slate-950">{room.roomNumber}</OverflowSafeText>
-                                    <OverflowSafeText mode="truncate" className="mt-1 text-sm font-bold text-slate-600">{room.property}</OverflowSafeText>
-                                </div>
-                                <span className="rounded-full bg-violet-700 px-3 py-1 text-xs font-black text-white">{money(room.monthlyRent)}</span>
+        <LandlordDetailModal headerTone="violet" landlordName={landlord.name} onClose={onClose} title="Vacant Rooms">
+            <div className="grid gap-3 p-5 md:grid-cols-2">
+                {!rows.length ? <p className="rounded-2xl bg-slate-50 p-4 text-sm font-bold text-slate-500 md:col-span-2">No vacant rooms are currently recorded for this landlord.</p> : null}
+                {rows.map((room) => (
+                    <article key={room.id} className="rounded-3xl border border-violet-100 bg-violet-50/70 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                                <OverflowSafeText mode="marquee" className="text-xl font-black text-slate-950">{room.roomNumber}</OverflowSafeText>
+                                <OverflowSafeText mode="truncate" className="mt-1 text-sm font-bold text-slate-600">{room.property}</OverflowSafeText>
                             </div>
-                            <div className="mt-3 grid gap-2 text-xs font-bold text-slate-600">
-                                <span>Vacant Since: {room.vacantSince ?? "--"}</span>
-                                <span>Previous Tenant: {room.previousTenant || "--"}</span>
-                                <span>Outstanding Tenant Debt: {money(room.outstandingTenantDebt)}</span>
-                            </div>
-                        </article>
-                    ))}
-                </div>
+                            <span className="rounded-full bg-violet-700 px-3 py-1 text-xs font-black text-white">{money(room.monthlyRent)}</span>
+                        </div>
+                        <div className="mt-3 grid gap-2 text-xs font-bold text-slate-600">
+                            <span>Vacant Since: {room.vacantSince ?? "--"}</span>
+                            <span>Previous Tenant: {room.previousTenant || "--"}</span>
+                            <span>Outstanding Tenant Debt: {money(room.outstandingTenantDebt)}</span>
+                        </div>
+                    </article>
+                ))}
             </div>
-        </div>
+        </LandlordDetailModal>
     );
 }
 
 function LandlordReportModal({ amount, companyName, landlord, onClose, paymentMethod, preparedBy, status }: { amount: number; companyName: string; landlord: LandlordEntryDetail; onClose: () => void; paymentMethod: string; preparedBy: string; status: string }) {
     return (
-        <div className="fixed inset-0 z-[150] overflow-auto bg-slate-950/80 p-4 backdrop-blur-sm">
-            <div className="mx-auto max-w-5xl rounded-3xl bg-white p-5 shadow-2xl">
+        <LandlordDetailModal headerTone="blue" landlordName={landlord.name} maxWidth="max-w-5xl" onClose={onClose} title="Landlord Payment Report">
+            <div className="p-5">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3 print:hidden">
                     <div>
-                        <p className="text-xs font-black uppercase text-blue-700">Landlord report</p>
-                        <h2 className="text-xl font-black text-slate-950">A4 Payment Report</h2>
+                        <p className="text-xs font-black uppercase text-blue-700">A4 Payment Report</p>
+                        <h2 className="text-xl font-black text-slate-950">Ready to print or save as PDF</h2>
                     </div>
-                    <div className="flex gap-2">
-                        <button type="button" onClick={() => window.print()} className="rounded-2xl bg-slate-950 px-4 py-2 text-sm font-black text-white">Print / Save PDF</button>
-                        <button type="button" onClick={onClose} className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700">Close</button>
-                    </div>
+                    <button type="button" onClick={() => window.print()} className="rounded-2xl bg-slate-950 px-4 py-2 text-sm font-black text-white">Print / Save PDF</button>
                 </div>
                 <LandlordReportPaper amount={amount} companyName={companyName} landlord={landlord} paymentMethod={paymentMethod} preparedBy={preparedBy} status={status} />
             </div>
-        </div>
+        </LandlordDetailModal>
     );
 }
 
@@ -3758,76 +3820,69 @@ function LandlordPaymentManageModal({
     const pendingDueDateRequest = editRequests.find((editRequest) => editRequest.requestType === "landlord_payment_date_edit" && editRequest.status === "pending");
     const dueStatus = landlordPaymentDueStatus(request.landlordPaymentDueDate, request.outstandingAmount, request.status);
     return (
-        <div className="fixed inset-0 z-[130] overflow-auto bg-slate-950/70 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-            <div className="mx-auto my-8 max-w-3xl overflow-hidden rounded-[28px] bg-white shadow-2xl shadow-slate-950/30">
-                <div className="flex items-start justify-between gap-4 bg-slate-950 p-5 text-white">
-                    <div>
-                        <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200">Landlord payment management</p>
-                        <h2 className="mt-2 text-2xl font-black">{request.landlordName}</h2>
-                        <p className="mt-1 text-sm font-bold text-slate-300">{request.officeName} · {money(request.amount)} payment request</p>
-                    </div>
-                    <button type="button" onClick={onClose} className="inline-flex min-h-10 items-center justify-center rounded-xl bg-white/10 px-4 text-sm font-black text-white hover:bg-white/15">Close</button>
+        <LandlordDetailModal landlordName={request.landlordName} maxWidth="max-w-3xl" onClose={onClose} title="Landlord Payment Management">
+            <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
+                <p className="text-sm font-bold text-slate-600">{request.officeName} · {money(request.amount)} payment request</p>
+            </div>
+            <div className="grid gap-3 p-5 md:grid-cols-2">
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs font-black uppercase tracking-wide text-slate-500">Outstanding Balance</p>
+                    <p className="mt-2 text-2xl font-black text-slate-950">{money(request.outstandingAmount)}</p>
+                    {pendingBalanceRequest ? <p className="mt-2 rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-900">Pending request awaiting Admin approval</p> : null}
                 </div>
-                <div className="grid gap-3 p-5 md:grid-cols-2">
-                    <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                        <p className="text-xs font-black uppercase tracking-wide text-slate-500">Outstanding Balance</p>
-                        <p className="mt-2 text-2xl font-black text-slate-950">{money(request.outstandingAmount)}</p>
-                        {pendingBalanceRequest ? <p className="mt-2 rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-900">Pending request awaiting Admin approval</p> : null}
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs font-black uppercase tracking-wide text-slate-500">Landlord Payment Due Date</p>
+                    <p className="mt-2 text-2xl font-black text-slate-950">{request.landlordPaymentDueDate ?? "Not set"}</p>
+                    <span className={`mt-2 inline-flex rounded-full border px-3 py-1 text-xs font-black uppercase ${dueStatusClass(dueStatus.tone)}`}>{dueStatus.label}</span>
+                    {pendingDueDateRequest ? <p className="mt-2 rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-900">Pending request awaiting Admin approval</p> : null}
+                </div>
+                <div className="md:col-span-2 rounded-3xl border border-blue-100 bg-blue-50 p-4">
+                    <p className="text-xs font-black uppercase tracking-wide text-blue-700">Manage</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                        {!isManager ? (
+                            <>
+                                <button type="button" disabled={Boolean(pendingBalanceRequest)} onClick={() => onEdit("landlord_outstanding_balance_edit")} className="rounded-xl bg-blue-700 px-4 py-2 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-45">
+                                    {isAdmin ? "Edit Outstanding Balance" : "Request Outstanding Balance Change"}
+                                </button>
+                                <button type="button" disabled={Boolean(pendingDueDateRequest)} onClick={() => onEdit("landlord_payment_date_edit")} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-45">
+                                    {isAdmin ? "Set / Change Landlord Payment Due Date" : "Request Payment Due Date Change"}
+                                </button>
+                            </>
+                        ) : null}
+                        <button type="button" className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700">
+                            {isManager ? "View Audit / Changes" : isAdmin ? "View Audit / Changes" : "View Pending Request / Status"}
+                        </button>
                     </div>
-                    <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                        <p className="text-xs font-black uppercase tracking-wide text-slate-500">Landlord Payment Due Date</p>
-                        <p className="mt-2 text-2xl font-black text-slate-950">{request.landlordPaymentDueDate ?? "Not set"}</p>
-                        <span className={`mt-2 inline-flex rounded-full border px-3 py-1 text-xs font-black uppercase ${dueStatusClass(dueStatus.tone)}`}>{dueStatus.label}</span>
-                        {pendingDueDateRequest ? <p className="mt-2 rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-900">Pending request awaiting Admin approval</p> : null}
-                    </div>
-                    <div className="md:col-span-2 rounded-3xl border border-blue-100 bg-blue-50 p-4">
-                        <p className="text-xs font-black uppercase tracking-wide text-blue-700">Manage</p>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                            {!isManager ? (
-                                <>
-                                    <button type="button" disabled={Boolean(pendingBalanceRequest)} onClick={() => onEdit("landlord_outstanding_balance_edit")} className="rounded-xl bg-blue-700 px-4 py-2 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-45">
-                                        {isAdmin ? "Edit Outstanding Balance" : "Request Outstanding Balance Change"}
-                                    </button>
-                                    <button type="button" disabled={Boolean(pendingDueDateRequest)} onClick={() => onEdit("landlord_payment_date_edit")} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-45">
-                                        {isAdmin ? "Set / Change Landlord Payment Due Date" : "Request Payment Due Date Change"}
-                                    </button>
-                                </>
-                            ) : null}
-                            <button type="button" className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700">
-                                {isManager ? "View Audit / Changes" : isAdmin ? "View Audit / Changes" : "View Pending Request / Status"}
-                            </button>
-                        </div>
-                        {isManager ? <p className="mt-3 text-xs font-bold text-slate-600">Manager access is read-only for landlord balance and due-date changes.</p> : null}
-                        {pendingBalanceRequest ? <p className="mt-3 text-xs font-bold text-amber-800">An outstanding balance change request is already awaiting Admin approval.</p> : null}
-                        {pendingDueDateRequest ? <p className="mt-1 text-xs font-bold text-amber-800">A Landlord Payment Due Date change request is already awaiting Admin approval.</p> : null}
-                    </div>
-                    <div className="md:col-span-2 rounded-3xl border border-slate-200 bg-white p-4">
-                        <p className="text-xs font-black uppercase tracking-wide text-slate-500">Change history</p>
-                        {editRequests.length ? (
-                            <div className="mt-3 space-y-2">
-                                {editRequests.slice(0, 8).map((editRequest) => (
-                                    <div key={`landlord-payment-manage-edit:${editRequest.id}`} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
-                                        <div className="flex flex-wrap items-center justify-between gap-2">
-                                            <p className="text-sm font-black text-slate-950">{landlordEditRequestLabel(editRequest.requestType)}</p>
-                                            <StatusBadge status={editRequest.status} />
-                                        </div>
-                                        <p className="mt-1 text-xs font-bold text-slate-600">
-                                            {formatRequestValue(editRequest.oldValue.value)} → {formatRequestValue(editRequest.requestedValue.value)}
-                                        </p>
-                                        <p className="mt-1 text-xs font-semibold text-slate-500">
-                                            Requested by {editRequest.requestedByName} {editRequest.createdAt ? `on ${formatDateTime(editRequest.createdAt)}` : ""}. Reason: {editRequest.reason || "--"}
-                                        </p>
-                                        {editRequest.adminComment ? <p className="mt-1 text-xs font-bold text-slate-600">Admin: {editRequest.adminComment}</p> : null}
+                    {isManager ? <p className="mt-3 text-xs font-bold text-slate-600">Manager access is read-only for landlord balance and due-date changes.</p> : null}
+                    {pendingBalanceRequest ? <p className="mt-3 text-xs font-bold text-amber-800">An outstanding balance change request is already awaiting Admin approval.</p> : null}
+                    {pendingDueDateRequest ? <p className="mt-1 text-xs font-bold text-amber-800">A Landlord Payment Due Date change request is already awaiting Admin approval.</p> : null}
+                </div>
+                <div className="md:col-span-2 rounded-3xl border border-slate-200 bg-white p-4">
+                    <p className="text-xs font-black uppercase tracking-wide text-slate-500">Change history</p>
+                    {editRequests.length ? (
+                        <div className="mt-3 space-y-2">
+                            {editRequests.slice(0, 8).map((editRequest) => (
+                                <div key={`landlord-payment-manage-edit:${editRequest.id}`} className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <p className="text-sm font-black text-slate-950">{landlordEditRequestLabel(editRequest.requestType)}</p>
+                                        <StatusBadge status={editRequest.status} />
                                     </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <p className="mt-2 text-sm font-bold text-slate-500">No landlord balance or due-date changes recorded yet.</p>
-                        )}
-                    </div>
+                                    <p className="mt-1 text-xs font-bold text-slate-600">
+                                        {formatRequestValue(editRequest.oldValue.value)} → {formatRequestValue(editRequest.requestedValue.value)}
+                                    </p>
+                                    <p className="mt-1 text-xs font-semibold text-slate-500">
+                                        Requested by {editRequest.requestedByName} {editRequest.createdAt ? `on ${formatDateTime(editRequest.createdAt)}` : ""}. Reason: {editRequest.reason || "--"}
+                                    </p>
+                                    {editRequest.adminComment ? <p className="mt-1 text-xs font-bold text-slate-600">Admin: {editRequest.adminComment}</p> : null}
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <p className="mt-2 text-sm font-bold text-slate-500">No landlord balance or due-date changes recorded yet.</p>
+                    )}
                 </div>
             </div>
-        </div>
+        </LandlordDetailModal>
     );
 }
 
@@ -4316,18 +4371,10 @@ function LandlordEditModal({
     }
 
     return (
-        <div className="fixed inset-0 z-[140] overflow-auto bg-slate-950/70 p-4 backdrop-blur-sm">
-            <div className="mx-auto my-8 max-w-3xl overflow-hidden rounded-[28px] bg-white shadow-2xl shadow-slate-950/30">
-                <div className="bg-slate-950 p-5 text-white">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div>
-                            <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-200">{isAdmin ? "Admin direct landlord edit" : "Landlord edit approval request"}</p>
-                            <h2 className="mt-2 text-2xl font-black">{title}</h2>
-                            <p className="mt-1 text-sm font-bold text-slate-300">{modal.landlord.name} · {modal.landlord.officeName ?? "Office"}</p>
-                        </div>
-                        <button type="button" disabled={isPending} onClick={onClose} className="inline-flex min-h-10 items-center justify-center rounded-xl bg-white/10 px-4 text-sm font-black text-white hover:bg-white/15 disabled:opacity-40">Close</button>
-                    </div>
-                </div>
+        <LandlordDetailModal landlordName={`${modal.landlord.name} · ${modal.landlord.officeName ?? "Office"}`} maxWidth="max-w-3xl" onClose={onClose} title={isAdmin ? "Admin Direct Landlord Edit" : "Landlord Edit Approval Request"}>
+            <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
+                <h2 className="text-2xl font-black text-slate-950">{title}</h2>
+            </div>
                 <div className="grid gap-3 p-5 md:grid-cols-2">
                     <ModalField label="Landlord name">
                         <input readOnly value={modal.landlord.name} className="modal-input" />
@@ -4383,8 +4430,7 @@ function LandlordEditModal({
                         {isPending ? "Saving..." : isAdmin ? confirmingDirectChange ? "Confirm Change" : "Save Change" : "Request Admin Approval"}
                     </button>
                 </div>
-            </div>
-        </div>
+        </LandlordDetailModal>
     );
 }
 
