@@ -261,7 +261,12 @@ function emptyPaymentTotals(): FastPaymentRecentTotals {
 
 function liveOutstandingBalance(tenant: CollectionTenantResult | null) {
     if (!tenant) return 0;
-    return Math.max(0, Number(tenant.monthlyFinancialPosition?.outstanding ?? tenant.outstandingBalance ?? tenant.tenant.balance ?? tenant.room?.outstanding_balance ?? 0));
+    return ledgerNumber(tenant.monthlyFinancialPosition?.outstanding);
+}
+
+function liveAdvanceBalance(tenant: CollectionTenantResult | null) {
+    if (!tenant) return 0;
+    return ledgerNumber(tenant.monthlyFinancialPosition?.advance);
 }
 
 function ledgerNumber(value: unknown) {
@@ -2154,7 +2159,7 @@ function VacateRoomModal({
 }) {
     if (!open || !tenant) return null;
     const outstanding = liveOutstandingBalance(tenant);
-    const advance = Math.max(0, Number(tenant.advanceRentBalance ?? 0));
+    const advance = liveAdvanceBalance(tenant);
     const finalPayment = Math.max(0, Number(form.finalPaymentAmount || 0));
     const remainingAfterPayment = Math.max(0, outstanding - finalPayment);
     const clearsBalance = remainingAfterPayment <= 0;
@@ -2461,9 +2466,9 @@ function TenantBalance({
     }
     const liveValue = (value: string) => loadingDetails ? "Loading..." : value;
     const position = tenant.monthlyFinancialPosition;
-    const arrears = ledgerNumber(position?.arrears ?? tenant.legacyArrearsBalance);
+    const arrears = ledgerNumber(position?.arrears);
     const currentMonthRent = ledgerNumber(position?.currentMonthRent ?? tenant.monthlyRent);
-    const paymentsThisMonth = ledgerNumber(position?.paymentsThisMonth ?? tenant.currentMonthPaid);
+    const paymentsThisMonth = ledgerNumber(position?.paymentsThisMonth);
     const rawTenantBalance = arrears + currentMonthRent - paymentsThisMonth;
     const calculatedOutstanding = Math.max(rawTenantBalance, 0);
     const calculatedAdvance = Math.max(-rawTenantBalance, 0);
@@ -2510,18 +2515,9 @@ function TenantBalance({
             <div className="rounded-2xl border border-violet-100 bg-violet-50 p-4">
                 <p className="text-xs font-black uppercase text-violet-500">Advance</p>
                 <p className="mt-1 text-2xl font-black text-violet-700">{liveValue(money(calculatedAdvance))}</p>
-                {!loadingDetails && tenant.advanceRentMonths.length ? (
-                    <div className="mt-2 space-y-1">
-                        <p className="text-xs font-black uppercase text-violet-500">Advance Month Paid</p>
-                        {tenant.advanceRentMonths.map((advanceMonth) => (
-                            <p key={`${advanceMonth.month}-${advanceMonth.amount}`} className="text-xs font-black text-violet-700">
-                                {advanceMonth.label}: {money(advanceMonth.amount)}
-                            </p>
-                        ))}
-                    </div>
-                ) : !loadingDetails ? (
-                    <p className="mt-1 text-xs font-black text-violet-500">Advance Month Paid: None</p>
-                ) : null}
+                <p className="mt-1 text-[11px] font-bold text-violet-500">
+                    {loadingDetails ? "Calculating formula advance..." : "Calculated only from negative raw balance."}
+                </p>
             </div>
             {!loadingDetails && tenant.legacyArrearsMonths?.length ? (
                 <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4 xl:col-span-2">
@@ -2550,14 +2546,7 @@ function TenantBalance({
                 </p>
                 {!loadingDetails ? <p className="mt-1 text-[11px] font-black text-sky-500">Next charge: {compactDate(tenant.nextRentChargeDate)}</p> : null}
             </div>
-            {!loadingDetails && tenant.nextMonthCoveredAmount > 0 ? (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 xl:col-span-4">
-                    <p className="text-sm font-black text-emerald-800">
-                        Tenant has {money(tenant.nextMonthCoveredAmount)} already paid toward next month.
-                        {tenant.nextAdvanceRentMonth ? ` Advance month: ${tenant.nextAdvanceRentMonth}.` : ""}
-                    </p>
-                </div>
-            ) : !loadingDetails && calculatedAdvance > 0 ? (
+            {!loadingDetails && calculatedAdvance > 0 ? (
                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 xl:col-span-4">
                     <p className="text-sm font-black text-emerald-800">
                         Tenant has {money(calculatedAdvance)} remaining as advance after clearing this billing month's obligation.

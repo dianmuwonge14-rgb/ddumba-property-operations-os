@@ -3,7 +3,7 @@ import { requirePermission } from "@/lib/auth/permissions";
 import { collectionAmount, isFinanciallyEffectiveCollection, uniqueFinanciallyEffectiveCollections } from "@/lib/collections/validity";
 import { calculateTenantMonthlyLedgerPosition } from "@/lib/financial/monthly-ledger";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { availableAdvanceAllocation, displayTenantNetBalance } from "@/lib/tenants/balance-reconciliation";
+import { availableAdvanceAllocation } from "@/lib/tenants/balance-reconciliation";
 import { addMonthsToBillingDate, billingPeriodForDate, clampBillingDay, dateForBillingDay, nextBillingDate, previousDay } from "@/lib/tenants/billing-cycle";
 import type {
     CollectionActionItem,
@@ -1454,20 +1454,10 @@ function compactPaymentSearchRowToTenantResult(row: Record<string, unknown>, pay
 
 function fastPaymentRpcRowToTenantResult(row: Record<string, unknown>, paymentMonth: string): CollectionTenantResult {
     const monthlyRent = Number(row.lease_monthly_rent ?? row.tenant_monthly_rent ?? row.room_monthly_rent ?? 0);
-    const rawOutstandingBalance = Number(row.tenant_balance ?? row.room_outstanding_balance ?? 0);
-    const currentMonthPaid = Number(row.current_month_paid ?? 0);
-    const rawAdvanceRentBalance = Number(row.advance_rent_balance ?? 0);
-    const displayedBalance = displayTenantNetBalance({
-        advanceBalance: rawAdvanceRentBalance,
-        outstandingBalance: rawOutstandingBalance,
-    });
-    const outstandingBalance = displayedBalance.outstandingBalance;
-    const advanceRentBalance = displayedBalance.advanceBalance;
-    const rawAdvanceMonths = Array.isArray(row.advance_months) ? row.advance_months as Array<Record<string, unknown>> : [];
-    const advanceRentMonths = rawAdvanceMonths.map((item) => {
-        const month = String(item.month ?? "").slice(0, 10);
-        return { month, label: monthLabelFromDate(month) ?? month, amount: Number(item.amount ?? 0) };
-    }).filter((item) => item.month);
+    const outstandingBalance = 0;
+    const currentMonthPaid = 0;
+    const advanceRentBalance = 0;
+    const advanceRentMonths: CollectionTenantResult["advanceRentMonths"] = [];
     const tenant = {
         id: String(row.tenant_id),
         company_id: null,
@@ -1479,7 +1469,7 @@ function fastPaymentRpcRowToTenantResult(row: Record<string, unknown>, paymentMo
         billing_day: Number(row.tenant_billing_day ?? row.lease_billing_day ?? 1),
         created_at: row.tenant_created_at as string | null,
         monthly_rent: Number(row.tenant_monthly_rent ?? row.room_monthly_rent ?? 0),
-        balance: outstandingBalance,
+        balance: 0,
         status: "active",
     } as unknown as TenantRow;
     const room = {
@@ -1490,7 +1480,7 @@ function fastPaymentRpcRowToTenantResult(row: Record<string, unknown>, paymentMo
         landlord_id: row.room_landlord_id as string | null,
         room_number: row.room_number as string | null,
         monthly_rent: Number(row.room_monthly_rent ?? 0),
-        outstanding_balance: outstandingBalance,
+        outstanding_balance: 0,
         status: "occupied",
     } as unknown as RoomRow;
     const lease = row.lease_id ? {
@@ -1507,18 +1497,9 @@ function fastPaymentRpcRowToTenantResult(row: Record<string, unknown>, paymentMo
     } as unknown as LeaseRow : null;
     const previousOutstandingBeforeLastPayment = Number(row.balance_before_last_payment ?? 0);
     const lastAmountPaid = Number(row.last_amount_paid ?? 0);
-    const amountUsedToClearOutstanding = Number(row.used_to_clear_outstanding ?? Math.min(previousOutstandingBeforeLastPayment, lastAmountPaid));
-    const amountAllocatedToNextMonth = Number(row.allocated_to_next_month ?? 0);
-    const rentMonthAllocations = currentMonthPaid > 0 ? [{
-        allocationType: "rent_month" as const,
-        amountDue: monthlyRent,
-        amountPaid: Math.min(monthlyRent, currentMonthPaid),
-        label: monthLabelFromDate(paymentMonth) ?? paymentMonth,
-        lastPaymentAmount: lastAmountPaid,
-        month: paymentMonth,
-        previouslyPaidAmount: Math.max(0, currentMonthPaid - lastAmountPaid),
-        status: currentMonthPaid >= monthlyRent ? "paid" as const : "partial" as const,
-    }] : [];
+    const amountUsedToClearOutstanding = 0;
+    const amountAllocatedToNextMonth = 0;
+    const rentMonthAllocations: CollectionTenantResult["rentMonthAllocations"] = [];
     const businessDate = new Date().toISOString().slice(0, 10);
     const billingDay = Number(row.lease_billing_day ?? row.tenant_billing_day ?? 1) || 1;
     const leaseStartDate = typeof row.lease_start_date === "string"

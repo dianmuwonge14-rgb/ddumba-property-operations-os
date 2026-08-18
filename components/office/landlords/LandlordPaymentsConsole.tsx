@@ -731,9 +731,6 @@ function LandlordPaymentEntryPanel({
                             <a href={`/office/landlords?landlord=${selected.landlordId}`} className="rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-black text-white hover:bg-white/15">View Details</a>
                             {!isReadOnlyManager ? (
                                 <>
-                                    <button type="button" onClick={() => setLandlordEditModal({ requestType: "landlord_outstanding_balance_edit" })} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-950 shadow-lg shadow-slate-950/10 hover:bg-slate-100">
-                                        {canManage ? "Edit Outstanding Balance" : "Request Balance Change"}
-                                    </button>
                                     <button type="button" onClick={() => setLandlordEditModal({ requestType: "landlord_payment_date_edit" })} className="rounded-xl border border-cyan-200 bg-cyan-100 px-3 py-2 text-xs font-black text-slate-950 shadow-lg shadow-slate-950/10 hover:bg-cyan-50">
                                         {canManage ? (selectedPaymentDueDate ? "Change Due Date" : "Set Due Date") : (selectedPaymentDueDate ? "Request Due Date Change" : "Request Due Date")}
                                     </button>

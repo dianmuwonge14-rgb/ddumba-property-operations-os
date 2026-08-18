@@ -72,10 +72,8 @@ export type CollectionTenantResult = {
     nextRentChargeDate?: string | null;
     monthlyFinancialPosition?: {
         advance: number;
-        advanceAppliedToCurrentMonth: number;
         arrears: number;
         currentMonthRent: number;
-        futureAdvanceBalance: number;
         lastPaymentAmount: number;
         lastPaymentDate: string | null;
         lastPaymentId: string | null;
@@ -83,6 +81,7 @@ export type CollectionTenantResult = {
         paymentsThisMonth: number;
         rawBalance: number;
         selectedMonth: string;
+        totalDue: number;
     };
     currentMonthPaid: number;
     advanceRentBalance: number;

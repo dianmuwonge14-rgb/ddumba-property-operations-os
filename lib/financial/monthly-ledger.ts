@@ -1,5 +1,5 @@
 import { collectionAmount, isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
-import { availableAdvanceAllocation, moneyAmount } from "@/lib/tenants/balance-reconciliation";
+import { moneyAmount } from "@/lib/tenants/balance-reconciliation";
 
 export type MonthlyLedgerCollection = Record<string, unknown> & {
     amount?: number | string | null;
@@ -10,10 +10,8 @@ export type MonthlyLedgerCollection = Record<string, unknown> & {
 
 export type TenantMonthlyLedgerPosition = {
     advance: number;
-    advanceAppliedToCurrentMonth: number;
     arrears: number;
     currentMonthRent: number;
-    futureAdvanceBalance: number;
     lastPaymentAmount: number;
     lastPaymentDate: string | null;
     lastPaymentId: string | null;
@@ -21,7 +19,33 @@ export type TenantMonthlyLedgerPosition = {
     paymentsThisMonth: number;
     rawBalance: number;
     selectedMonth: string;
+    totalDue: number;
 };
+
+export function calculateTenantMonthlyPosition({
+    arrears,
+    currentMonthRent,
+    paymentsThisMonth,
+}: {
+    arrears: number;
+    currentMonthRent: number;
+    paymentsThisMonth: number;
+}) {
+    const safeArrears = moneyAmount(arrears);
+    const safeRent = moneyAmount(currentMonthRent);
+    const safePayments = moneyAmount(paymentsThisMonth);
+    const totalDue = safeArrears + safeRent;
+    const rawBalance = totalDue - safePayments;
+    return {
+        advance: Math.max(-rawBalance, 0),
+        arrears: safeArrears,
+        currentMonthRent: safeRent,
+        outstanding: Math.max(rawBalance, 0),
+        paymentsThisMonth: safePayments,
+        rawBalance,
+        totalDue,
+    };
+}
 
 export function monthStart(value?: string | null) {
     if (value && /^\d{4}-\d{2}/.test(value)) return `${value.slice(0, 7)}-01`;
@@ -52,7 +76,6 @@ export function calculateTenantMonthlyLedgerPosition({
     const selected = monthStart(selectedMonth);
     const selectedKey = selected.slice(0, 7);
     const effectivePayments = collections.filter(isFinanciallyEffectiveCollection);
-    const paymentById = new Map(effectivePayments.map((collection) => [String(collection.id ?? ""), collection]));
     const paymentsThisMonth = effectivePayments
         .filter((collection) => collectionDateOnly(collection).slice(0, 7) === selectedKey)
         .reduce((total, collection) => total + collectionAmount(collection), 0);
@@ -83,44 +106,30 @@ export function calculateTenantMonthlyLedgerPosition({
         }
     }
 
-    const advanceAppliedToCurrentMonth = advanceAllocations
-        .filter((row) => String(row.allocation_type ?? "") === "advance_month")
-        .filter((row) => String(row.allocation_month ?? "").slice(0, 7) <= selectedKey)
-        .filter((row) => {
-            const payment = paymentById.get(String(row.payment_id ?? ""));
-            return !payment || collectionDateOnly(payment).slice(0, 7) < selectedKey;
-        })
-        .reduce((total, row) => {
-            const consumed = moneyAmount(row.consumed_by_balance_reconciliation);
-            return total + (consumed > 0 ? consumed : availableAdvanceAllocation(row));
-        }, 0);
-    const futureAdvanceBalance = advanceAllocations
-        .filter((row) => String(row.allocation_type ?? "") === "advance_month")
-        .filter((row) => String(row.allocation_month ?? "").slice(0, 7) > selectedKey)
-        .reduce((total, row) => total + availableAdvanceAllocation(row), 0);
-
-    const rawBalance = arrears + currentMonthRent - paymentsThisMonth;
-    const outstanding = Math.max(rawBalance, 0);
-    const advance = Math.max(-rawBalance, 0);
-
-    return {
-        advance,
-        advanceAppliedToCurrentMonth,
+    const position = calculateTenantMonthlyPosition({
         arrears,
         currentMonthRent,
-        futureAdvanceBalance,
+        paymentsThisMonth,
+    });
+
+    return {
+        advance: position.advance,
+        arrears: position.arrears,
+        currentMonthRent: position.currentMonthRent,
         lastPaymentAmount: lastPayment ? collectionAmount(lastPayment) : 0,
         lastPaymentDate: lastPayment ? collectionDateOnly(lastPayment) || null : null,
         lastPaymentId: lastPayment?.id ? String(lastPayment.id) : null,
-        outstanding,
-        paymentsThisMonth,
-        rawBalance,
+        outstanding: position.outstanding,
+        paymentsThisMonth: position.paymentsThisMonth,
+        rawBalance: position.rawBalance,
         selectedMonth: selected,
+        totalDue: position.totalDue,
     };
 }
 
 export type LandlordMonthlyLedgerPosition = {
     arrears: number;
+    credit: number;
     deductionsThisMonth: number;
     lastPaymentAmount: number;
     lastPaymentDate: string | null;
@@ -131,6 +140,33 @@ export type LandlordMonthlyLedgerPosition = {
     rawBalance: number;
     settlementMonth: string;
 };
+
+export function calculateLandlordMonthlyPosition({
+    arrears,
+    deductions,
+    netPayable,
+    payments,
+}: {
+    arrears: number;
+    deductions: number;
+    netPayable: number;
+    payments: number;
+}) {
+    const safeArrears = moneyAmount(arrears);
+    const safeNetPayable = moneyAmount(netPayable);
+    const safeDeductions = moneyAmount(deductions);
+    const safePayments = moneyAmount(payments);
+    const rawBalance = safeArrears + safeNetPayable - safeDeductions - safePayments;
+    return {
+        arrears: safeArrears,
+        credit: Math.max(-rawBalance, 0),
+        deductionsThisMonth: safeDeductions,
+        netPayable: safeNetPayable,
+        outstanding: Math.max(rawBalance, 0),
+        paymentsThisMonth: safePayments,
+        rawBalance,
+    };
+}
 
 export function calculateLandlordMonthlyLedgerPosition({
     arrears,
@@ -157,18 +193,24 @@ export function calculateLandlordMonthlyLedgerPosition({
         return rightDate.localeCompare(leftDate);
     });
     const lastPayment = sortedPayments[0] ?? null;
-    const rawBalance = moneyAmount(arrears) + moneyAmount(netPayable) - moneyAmount(deductionsThisMonth) - paymentsThisMonth;
+    const position = calculateLandlordMonthlyPosition({
+        arrears,
+        deductions: deductionsThisMonth,
+        netPayable,
+        payments: paymentsThisMonth,
+    });
 
     return {
-        arrears: moneyAmount(arrears),
-        deductionsThisMonth: moneyAmount(deductionsThisMonth),
+        arrears: position.arrears,
+        credit: position.credit,
+        deductionsThisMonth: position.deductionsThisMonth,
         lastPaymentAmount: lastPayment ? collectionAmount(lastPayment) : 0,
         lastPaymentDate: lastPayment ? collectionDateOnly(lastPayment) || null : null,
         lastPaymentId: lastPayment?.id ? String(lastPayment.id) : null,
-        netPayable: moneyAmount(netPayable),
-        outstanding: Math.max(rawBalance, 0),
-        paymentsThisMonth,
-        rawBalance,
+        netPayable: position.netPayable,
+        outstanding: position.outstanding,
+        paymentsThisMonth: position.paymentsThisMonth,
+        rawBalance: position.rawBalance,
         settlementMonth: selected,
     };
 }

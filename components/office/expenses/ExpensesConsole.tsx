@@ -1720,7 +1720,6 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                                         loading={loadingLandlordDetail}
                                         onEditAdvance={() => openLandlordEdit("landlord_advance_balance_edit")}
                                         onEditDueDate={() => openLandlordEdit("landlord_payment_date_edit")}
-                                        onEditOutstanding={() => openLandlordEdit("landlord_outstanding_balance_edit")}
                                         onOpenDeductions={() => setLandlordWorkspaceModal("deductions")}
                                         onOpenPortfolio={openSelectedLandlordPortfolio}
                                         onOpenReport={openLandlordReport}
@@ -2591,7 +2590,6 @@ type LandlordFinancialWorkspaceProps = {
     loading: boolean;
     onEditAdvance: () => void;
     onEditDueDate: () => void;
-    onEditOutstanding: () => void;
     onOpenDeductions: () => void;
     onOpenPortfolio: () => void;
     onOpenReport: () => void;
@@ -2612,7 +2610,6 @@ function LandlordFinancialWorkspace({
     loading,
     onEditAdvance,
     onEditDueDate,
-    onEditOutstanding,
     onOpenDeductions,
     onOpenPortfolio,
     onOpenReport,
@@ -3678,7 +3675,6 @@ function LandlordPaymentRequestLedger({
                             const isPendingRequest = String(request.status).toLowerCase() === "pending";
                             const dueStatus = landlordPaymentDueStatus(request.landlordPaymentDueDate, request.outstandingAmount, request.status);
                             const rowEditRequests = editRequests.filter((editRequest) => editRequest.landlordId === request.landlordId);
-                            const hasPendingBalanceRequest = rowEditRequests.some((editRequest) => editRequest.requestType === "landlord_outstanding_balance_edit" && editRequest.status === "pending");
                             const hasPendingDueDateRequest = rowEditRequests.some((editRequest) => editRequest.requestType === "landlord_payment_date_edit" && editRequest.status === "pending");
                             return (
                                 <tr key={`landlord-payment-expense-request:${request.id}`} onClick={() => setSelected(request)} className="cursor-pointer border-b border-slate-100 hover:bg-amber-50/70">
@@ -3720,9 +3716,6 @@ function LandlordPaymentRequestLedger({
                                             </button>
                                             {!isManager ? (
                                                 <>
-                                                    <button type="button" title={isAdmin ? "Edit Outstanding Balance" : "Request Outstanding Balance Change"} disabled={hasPendingBalanceRequest} onClick={(event) => { event.stopPropagation(); openLandlordManageEdit(request, "landlord_outstanding_balance_edit"); }} className="min-w-0 max-w-[180px] overflow-hidden rounded-xl bg-blue-700 px-3 py-2 text-xs font-black text-white shadow-lg shadow-blue-900/15 hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-45 focus:outline-none focus:ring-4 focus:ring-blue-100">
-                                                        <OverflowSafeText mode="marquee">{isAdmin ? "Edit Outstanding Balance" : "Request Outstanding Balance Change"}</OverflowSafeText>
-                                                    </button>
                                                     <button type="button" title={isAdmin ? "Set / Change Landlord Payment Due Date" : "Request Payment Due Date Change"} disabled={hasPendingDueDateRequest} onClick={(event) => { event.stopPropagation(); openLandlordManageEdit(request, "landlord_payment_date_edit"); }} className="min-w-0 max-w-[190px] overflow-hidden rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs font-black text-blue-800 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-45 focus:outline-none focus:ring-4 focus:ring-blue-100">
                                                         <OverflowSafeText mode="marquee">{isAdmin ? "Set / Change Landlord Payment Due Date" : "Request Payment Due Date Change"}</OverflowSafeText>
                                                     </button>
@@ -3836,7 +3829,6 @@ function LandlordPaymentManageModal({
     onEdit: (requestType: LandlordExpenseEditRequestType) => void;
     request: ExpensesPageData["landlordPaymentRequests"][number];
 }) {
-    const pendingBalanceRequest = editRequests.find((editRequest) => editRequest.requestType === "landlord_outstanding_balance_edit" && editRequest.status === "pending");
     const pendingDueDateRequest = editRequests.find((editRequest) => editRequest.requestType === "landlord_payment_date_edit" && editRequest.status === "pending");
     const dueStatus = landlordPaymentDueStatus(request.landlordPaymentDueDate, request.outstandingAmount, request.status);
     return (
@@ -3848,7 +3840,7 @@ function LandlordPaymentManageModal({
                 <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
                     <p className="text-xs font-black uppercase tracking-wide text-slate-500">Outstanding Balance</p>
                     <p className="mt-2 text-2xl font-black text-slate-950">{money(request.outstandingAmount)}</p>
-                    {pendingBalanceRequest ? <p className="mt-2 rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-900">Pending request awaiting Admin approval</p> : null}
+                    <p className="mt-2 text-xs font-bold text-slate-500">Calculated from landlord arrears, payable, deductions and payments.</p>
                 </div>
                 <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
                     <p className="text-xs font-black uppercase tracking-wide text-slate-500">Landlord Payment Due Date</p>
@@ -3861,9 +3853,6 @@ function LandlordPaymentManageModal({
                     <div className="mt-3 flex flex-wrap gap-2">
                         {!isManager ? (
                             <>
-                                <button type="button" disabled={Boolean(pendingBalanceRequest)} onClick={() => onEdit("landlord_outstanding_balance_edit")} className="rounded-xl bg-blue-700 px-4 py-2 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-45">
-                                    {isAdmin ? "Edit Outstanding Balance" : "Request Outstanding Balance Change"}
-                                </button>
                                 <button type="button" disabled={Boolean(pendingDueDateRequest)} onClick={() => onEdit("landlord_payment_date_edit")} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-45">
                                     {isAdmin ? "Set / Change Landlord Payment Due Date" : "Request Payment Due Date Change"}
                                 </button>
@@ -3874,7 +3863,6 @@ function LandlordPaymentManageModal({
                         </button>
                     </div>
                     {isManager ? <p className="mt-3 text-xs font-bold text-slate-600">Manager access is read-only for landlord balance and due-date changes.</p> : null}
-                    {pendingBalanceRequest ? <p className="mt-3 text-xs font-bold text-amber-800">An outstanding balance change request is already awaiting Admin approval.</p> : null}
                     {pendingDueDateRequest ? <p className="mt-1 text-xs font-bold text-amber-800">A Landlord Payment Due Date change request is already awaiting Admin approval.</p> : null}
                 </div>
                 <div className="md:col-span-2 rounded-3xl border border-slate-200 bg-white p-4">
