@@ -1,6 +1,11 @@
 import { collectionAmount, isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
 import { moneyAmount } from "@/lib/tenants/balance-reconciliation";
 
+function signedMoneyAmount(value: unknown) {
+    const numeric = Number(value ?? 0);
+    return Number.isFinite(numeric) ? numeric : 0;
+}
+
 export type MonthlyLedgerCollection = Record<string, unknown> & {
     amount?: number | string | null;
     amount_paid?: number | string | null;
@@ -15,6 +20,7 @@ export type TenantMonthlyLedgerPosition = {
     lastPaymentAmount: number;
     lastPaymentDate: string | null;
     lastPaymentId: string | null;
+    manualBalanceAdjustment: number;
     outstanding: number;
     paymentsThisMonth: number;
     rawBalance: number;
@@ -25,21 +31,25 @@ export type TenantMonthlyLedgerPosition = {
 export function calculateTenantMonthlyPosition({
     arrears,
     currentMonthRent,
+    manualBalanceAdjustment = 0,
     paymentsThisMonth,
 }: {
     arrears: number;
     currentMonthRent: number;
+    manualBalanceAdjustment?: number;
     paymentsThisMonth: number;
 }) {
     const safeArrears = moneyAmount(arrears);
     const safeRent = moneyAmount(currentMonthRent);
+    const safeManualAdjustment = signedMoneyAmount(manualBalanceAdjustment);
     const safePayments = moneyAmount(paymentsThisMonth);
-    const totalDue = safeArrears + safeRent;
+    const totalDue = safeArrears + safeRent + safeManualAdjustment;
     const rawBalance = totalDue - safePayments;
     return {
         advance: Math.max(-rawBalance, 0),
         arrears: safeArrears,
         currentMonthRent: safeRent,
+        manualBalanceAdjustment: safeManualAdjustment,
         outstanding: Math.max(rawBalance, 0),
         paymentsThisMonth: safePayments,
         rawBalance,
@@ -62,6 +72,7 @@ export function calculateTenantMonthlyLedgerPosition({
     advanceAllocations = [],
     collections = [],
     legacyArrears = [],
+    manualAdjustments = [],
     monthlyRent,
     rentMonths = [],
     selectedMonth,
@@ -69,6 +80,7 @@ export function calculateTenantMonthlyLedgerPosition({
     advanceAllocations?: Array<Record<string, unknown>>;
     collections?: MonthlyLedgerCollection[];
     legacyArrears?: Array<Record<string, unknown>>;
+    manualAdjustments?: Array<Record<string, unknown>>;
     monthlyRent: number;
     rentMonths?: Array<Record<string, unknown>>;
     selectedMonth?: string | null;
@@ -106,9 +118,21 @@ export function calculateTenantMonthlyLedgerPosition({
         }
     }
 
+    const manualBalanceAdjustment = manualAdjustments
+        .filter((row) => {
+            const status = String(row.status ?? "").toLowerCase();
+            if (status !== "approved" && status !== "direct_admin_change") return false;
+            if (row.financial_effective === false) return false;
+            if (row.reversed_at) return false;
+            const month = String(row.billing_month ?? row.effective_date ?? "").slice(0, 7);
+            return month === selectedKey;
+        })
+        .reduce((total, row) => total + signedMoneyAmount(row.amount ?? row.signed_amount ?? row.adjustment_amount), 0);
+
     const position = calculateTenantMonthlyPosition({
         arrears,
         currentMonthRent,
+        manualBalanceAdjustment,
         paymentsThisMonth,
     });
 
@@ -119,6 +143,7 @@ export function calculateTenantMonthlyLedgerPosition({
         lastPaymentAmount: lastPayment ? collectionAmount(lastPayment) : 0,
         lastPaymentDate: lastPayment ? collectionDateOnly(lastPayment) || null : null,
         lastPaymentId: lastPayment?.id ? String(lastPayment.id) : null,
+        manualBalanceAdjustment: position.manualBalanceAdjustment,
         outstanding: position.outstanding,
         paymentsThisMonth: position.paymentsThisMonth,
         rawBalance: position.rawBalance,

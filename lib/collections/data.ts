@@ -1915,7 +1915,7 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
     const { supabase } = await getScopedSupabase();
     const tenantIds = tenants.map((tenant) => tenant.id);
     const roomIds = uniqueIds(tenants.map((tenant) => tenant.room_id));
-    const [leases, rooms, collections, allocationRows, rentMonthRows, legacyArrearsRows] = await Promise.all([
+    const [leases, rooms, collections, allocationRows, rentMonthRows, legacyArrearsRows, manualAdjustmentRows] = await Promise.all([
         tenantIds.length ? supabase.from("leases").select("*").eq("company_id", companyId).in("tenant_id", tenantIds).eq("status", "active") : { data: [] as LeaseRow[] },
         roomIds.length ? supabase.from("rooms").select("*").eq("company_id", companyId).in("id", roomIds) : { data: [] as RoomRow[] },
         tenantIds.length
@@ -1951,6 +1951,15 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
                 .eq("company_id", companyId)
                 .in("tenant_id", tenantIds)
                 .order("allocation_month", { ascending: true }))
+            : [],
+        tenantIds.length
+            ? optionalRows((supabase as unknown as DynamicDb)
+                .from("tenant_balance_adjustments")
+                .select("id,tenant_id,room_id,effective_date,adjustment_amount,reason,notes,status,requested_by,approved_by,approved_at,created_at")
+                .eq("company_id", companyId)
+                .in("tenant_id", tenantIds)
+                .in("status", ["approved", "direct_admin_change"])
+                .order("created_at", { ascending: false }))
             : [],
     ]);
     const leaseRows = leases.data ?? [];
@@ -1989,6 +1998,12 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
         if (!tenantId) continue;
         legacyArrearsByTenant.set(tenantId, [...(legacyArrearsByTenant.get(tenantId) ?? []), legacyRow]);
     }
+    const manualAdjustmentsByTenant = new Map<string, Array<Record<string, unknown>>>();
+    for (const adjustment of manualAdjustmentRows as Array<Record<string, unknown>>) {
+        const tenantId = String(adjustment.tenant_id ?? "");
+        if (!tenantId) continue;
+        manualAdjustmentsByTenant.set(tenantId, [...(manualAdjustmentsByTenant.get(tenantId) ?? []), adjustment]);
+    }
     const lastRentChargeByTenant = new Map<string, string>();
     const rentMonthsByTenant = new Map<string, Array<Record<string, unknown>>>();
     for (const row of rentMonthRows as Array<Record<string, unknown>>) {
@@ -2013,6 +2028,7 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
         const lastAmountPaid = Number(lastCollection?.amount_paid ?? lastCollection?.amount ?? 0);
         const tenantAllocations = allocationsByTenant.get(tenant.id) ?? [];
         const tenantLegacyArrears = legacyArrearsByTenant.get(tenant.id) ?? [];
+        const tenantManualAdjustments = manualAdjustmentsByTenant.get(tenant.id) ?? [];
         const effectiveBillingDay = tenantBillingDay(tenant, lease);
         const legacyArrearsMonths = tenantLegacyArrears.map((row) => ({
             amount: Number(row.legacy_arrears_amount ?? 0),
@@ -2081,6 +2097,7 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
             advanceAllocations: tenantAllocations,
             collections: tenantCollections,
             legacyArrears: tenantLegacyArrears,
+            manualAdjustments: tenantManualAdjustments,
             monthlyRent,
             rentMonths: rentMonthsByTenant.get(tenant.id) ?? [],
             selectedMonth: monthStart,
@@ -2103,6 +2120,19 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
             amountAllocatedToNextMonth,
             monthlyRent: monthlyFinancialPosition.currentMonthRent || monthlyRent,
             monthlyFinancialPosition,
+            manualBalanceAdjustments: tenantManualAdjustments.map((row) => ({
+                amount: Number(row.adjustment_amount ?? 0),
+                approvedAt: String(row.approved_at ?? "") || null,
+                approvedBy: String(row.approved_by ?? "") || null,
+                billingMonth: String(row.billing_month ?? row.effective_date ?? monthStart).slice(0, 10),
+                createdAt: String(row.created_at ?? "") || null,
+                effectiveDate: String(row.effective_date ?? "") || null,
+                id: String(row.id),
+                notes: String(row.notes ?? "") || null,
+                reason: String(row.reason ?? "") || null,
+                requestedBy: String(row.requested_by ?? "") || null,
+                status: String(row.status ?? "") || null,
+            })),
             billingAnniversaryDay,
             currentRentPeriod,
             lastRentChargeDate: lastRentChargeByTenant.get(tenant.id) ?? null,
@@ -2239,7 +2269,7 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
     const tenantIds = tenants.map((tenant) => tenant.id);
     const roomIds = [...new Set(tenants.map((tenant) => tenant.room_id).filter((id): id is string => Boolean(id)))];
 
-    const [leases, rooms, properties, office, collections, promises, ledgerEntries, actionHistory, sponsors, allocationRows, rentMonthRows] = await Promise.all([
+    const [leases, rooms, properties, office, collections, promises, ledgerEntries, actionHistory, sponsors, allocationRows, rentMonthRows, legacyArrearsRows, manualAdjustmentRows] = await Promise.all([
         tenantIds.length
             ? supabase
                 .from("leases")
@@ -2314,6 +2344,23 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
                 .order("due_date", { ascending: false })
                 .limit(12))
             : [],
+        tenantIds.length
+            ? optionalRows((supabase as unknown as DynamicDb)
+                .from("tenant_pre_system_arrears_periods")
+                .select("tenant_id, allocation_month, legacy_arrears_amount, payments_applied, remaining_amount, status")
+                .eq("company_id", companyId)
+                .in("tenant_id", tenantIds)
+                .order("allocation_month", { ascending: true }))
+            : [],
+        tenantIds.length
+            ? optionalRows((supabase as unknown as DynamicDb)
+                .from("tenant_balance_adjustments")
+                .select("id,tenant_id,room_id,effective_date,adjustment_amount,reason,notes,status,requested_by,approved_by,approved_at,created_at")
+                .eq("company_id", companyId)
+                .in("tenant_id", tenantIds)
+                .in("status", ["approved", "direct_admin_change"])
+                .order("created_at", { ascending: false }))
+            : [],
     ]);
 
     const leaseByTenant = new Map((leases.data ?? []).map((lease) => [lease.tenant_id, lease]));
@@ -2332,6 +2379,18 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
         const tenantId = String(allocation.tenant_id ?? "");
         if (!tenantId) continue;
         allocationsByTenant.set(tenantId, [...(allocationsByTenant.get(tenantId) ?? []), allocation]);
+    }
+    const legacyArrearsByTenant = new Map<string, Array<Record<string, unknown>>>();
+    for (const legacyRow of legacyArrearsRows as Array<Record<string, unknown>>) {
+        const tenantId = String(legacyRow.tenant_id ?? "");
+        if (!tenantId) continue;
+        legacyArrearsByTenant.set(tenantId, [...(legacyArrearsByTenant.get(tenantId) ?? []), legacyRow]);
+    }
+    const manualAdjustmentsByTenant = new Map<string, Array<Record<string, unknown>>>();
+    for (const adjustment of manualAdjustmentRows as Array<Record<string, unknown>>) {
+        const tenantId = String(adjustment.tenant_id ?? "");
+        if (!tenantId) continue;
+        manualAdjustmentsByTenant.set(tenantId, [...(manualAdjustmentsByTenant.get(tenantId) ?? []), adjustment]);
     }
     const lastRentChargeByTenant = new Map<string, string>();
     const rentMonthsByTenant = new Map<string, Array<Record<string, unknown>>>();
@@ -2405,6 +2464,8 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
         const previousOutstandingBeforeLastPayment = totalDueBeforeLastPayment;
         const sponsor = sponsorByTenant.get(tenant.id) ?? null;
         const tenantAllocations = allocationsByTenant.get(tenant.id) ?? [];
+        const tenantLegacyArrears = legacyArrearsByTenant.get(tenant.id) ?? [];
+        const tenantManualAdjustments = manualAdjustmentsByTenant.get(tenant.id) ?? [];
         const monthStart = selectedMonthStart(paymentDate);
         const upcomingMonth = addMonthsToMonthStart(monthStart, 1);
         const allocatedCurrentMonthPaid = tenantAllocations
@@ -2541,7 +2602,8 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
         const monthlyFinancialPosition = calculateTenantMonthlyLedgerPosition({
             advanceAllocations: tenantAllocations,
             collections: tenantCollections,
-            legacyArrears: [],
+            legacyArrears: tenantLegacyArrears,
+            manualAdjustments: tenantManualAdjustments,
             monthlyRent,
             rentMonths: rentMonthsByTenant.get(tenant.id) ?? [],
             selectedMonth: monthStart,
@@ -2564,6 +2626,19 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
             amountAllocatedToNextMonth,
             monthlyRent: monthlyFinancialPosition.currentMonthRent || monthlyRent,
             monthlyFinancialPosition,
+            manualBalanceAdjustments: tenantManualAdjustments.map((row) => ({
+                amount: Number(row.adjustment_amount ?? 0),
+                approvedAt: String(row.approved_at ?? "") || null,
+                approvedBy: String(row.approved_by ?? "") || null,
+                billingMonth: String(row.billing_month ?? row.effective_date ?? monthStart).slice(0, 10),
+                createdAt: String(row.created_at ?? "") || null,
+                effectiveDate: String(row.effective_date ?? "") || null,
+                id: String(row.id),
+                notes: String(row.notes ?? "") || null,
+                reason: String(row.reason ?? "") || null,
+                requestedBy: String(row.requested_by ?? "") || null,
+                status: String(row.status ?? "") || null,
+            })),
             billingAnniversaryDay,
             currentRentPeriod,
             lastRentChargeDate: lastRentChargeByTenant.get(tenant.id) ?? null,

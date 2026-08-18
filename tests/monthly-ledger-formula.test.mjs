@@ -153,13 +153,57 @@ test("tenant monthly ledger handles arrears plus overpayment", () => {
   assert.equal(position.advance, 30_000);
 });
 
+test("tenant monthly ledger includes positive manual balance adjustment once", () => {
+  const { calculateTenantMonthlyLedgerPosition } = loadMonthlyLedgerModule();
+  const position = calculateTenantMonthlyLedgerPosition({
+    collections: [],
+    manualAdjustments: [{ effective_date: "2026-08-01", adjustment_amount: 30_000, status: "approved" }],
+    monthlyRent: 70_000,
+    selectedMonth: "2026-08-01",
+  });
+
+  assert.equal(position.manualBalanceAdjustment, 30_000);
+  assert.equal(position.rawBalance, 100_000);
+  assert.equal(position.outstanding, 100_000);
+  assert.equal(position.advance, 0);
+});
+
+test("tenant monthly ledger includes negative manual balance adjustment once", () => {
+  const { calculateTenantMonthlyLedgerPosition } = loadMonthlyLedgerModule();
+  const position = calculateTenantMonthlyLedgerPosition({
+    collections: [],
+    manualAdjustments: [{ effective_date: "2026-08-01", adjustment_amount: -100_000, status: "direct_admin_change" }],
+    monthlyRent: 70_000,
+    selectedMonth: "2026-08-01",
+  });
+
+  assert.equal(position.manualBalanceAdjustment, -100_000);
+  assert.equal(position.rawBalance, -30_000);
+  assert.equal(position.outstanding, 0);
+  assert.equal(position.advance, 30_000);
+});
+
+test("tenant monthly ledger excludes rejected manual balance adjustments", () => {
+  const { calculateTenantMonthlyLedgerPosition } = loadMonthlyLedgerModule();
+  const position = calculateTenantMonthlyLedgerPosition({
+    collections: [],
+    manualAdjustments: [{ effective_date: "2026-08-01", adjustment_amount: 50_000, status: "rejected" }],
+    monthlyRent: 70_000,
+    selectedMonth: "2026-08-01",
+  });
+
+  assert.equal(position.manualBalanceAdjustment, 0);
+  assert.equal(position.rawBalance, 70_000);
+});
+
 test("tenant balance card no longer exposes direct outstanding edits", () => {
   const source = fs.readFileSync("components/office/payments/FastPaymentsEntry.tsx", "utf8");
   const tenantBalanceSection = source.slice(source.indexOf("function TenantBalance"), source.indexOf("function AdvanceRentAssistant"));
   assert.match(tenantBalanceSection, /Arrears/);
   assert.match(tenantBalanceSection, /Payments This Month/);
-  assert.match(tenantBalanceSection, /Calculated only: arrears \+ rent - payments/);
-  assert.match(tenantBalanceSection, /rawTenantBalance = arrears \+ currentMonthRent - paymentsThisMonth/);
+  assert.match(tenantBalanceSection, /Manual Balance Adjustment/);
+  assert.match(tenantBalanceSection, /Calculated only: arrears \+ rent \+ adjustment - payments/);
+  assert.match(tenantBalanceSection, /rawTenantBalance = arrears \+ currentMonthRent \+ manualBalanceAdjustment - paymentsThisMonth/);
   assert.match(tenantBalanceSection, /calculatedAdvance = Math\.max\(-rawTenantBalance, 0\)/);
   assert.doesNotMatch(tenantBalanceSection, /tenant\\.balance/);
   assert.doesNotMatch(tenantBalanceSection, /room\\?\\.outstanding_balance/);

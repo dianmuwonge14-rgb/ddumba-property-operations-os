@@ -488,14 +488,16 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
     const allocations = (allocationRows.data ?? []) as LooseRow[];
     const tenantId = text(payment.tenant_id);
     const selectedMonth = `${String(payment.payment_date ?? payment.paid_at ?? new Date().toISOString()).slice(0, 7)}-01`;
-    const [tenantCollectionsResult, tenantRentMonthsResult, tenantLegacyArrearsResult, tenantAllocationsResult] = tenantId
+    const [tenantCollectionsResult, tenantRentMonthsResult, tenantLegacyArrearsResult, tenantAllocationsResult, tenantManualAdjustmentsResult] = tenantId
         ? await Promise.all([
             db.from("collections").select("*").eq("company_id", companyId).eq("tenant_id", tenantId),
             db.from("tenant_rent_months").select("tenant_id, rent_month, due_date, coverage_start, coverage_end, rent_amount, amount_paid, outstanding_amount, status, created_at, source").eq("company_id", companyId).eq("tenant_id", tenantId),
             db.from("tenant_pre_system_arrears_periods").select("tenant_id, allocation_month, legacy_arrears_amount, payments_applied, remaining_amount, status").eq("company_id", companyId).eq("tenant_id", tenantId),
             db.from("tenant_rent_allocations").select("tenant_id, payment_id, allocation_month, allocation_type, amount_allocated, consumed_by_balance_reconciliation, allocation_source, is_historical_credit, coverage_start, coverage_end, coverage_index").eq("company_id", companyId).eq("tenant_id", tenantId),
+            db.from("tenant_balance_adjustments").select("tenant_id, effective_date, adjustment_amount, status, financial_effective, reversed_at").eq("company_id", companyId).eq("tenant_id", tenantId),
         ])
         : [
+            { data: [], error: null },
             { data: [], error: null },
             { data: [], error: null },
             { data: [], error: null },
@@ -505,6 +507,7 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
     if (tenantRentMonthsResult.error && !isMissingSchemaError(tenantRentMonthsResult.error)) throw new Error(tenantRentMonthsResult.error.message);
     if (tenantLegacyArrearsResult.error && !isMissingSchemaError(tenantLegacyArrearsResult.error)) throw new Error(tenantLegacyArrearsResult.error.message);
     if (tenantAllocationsResult.error && !isMissingSchemaError(tenantAllocationsResult.error)) throw new Error(tenantAllocationsResult.error.message);
+    if (tenantManualAdjustmentsResult.error && !isMissingSchemaError(tenantManualAdjustmentsResult.error)) throw new Error(tenantManualAdjustmentsResult.error.message);
     const billingDay = clampBillingDay(Number(lease?.billing_day ?? tenant?.billing_day ?? 1));
     const coveragePeriods = allocations.map((row) => ({
         amount: amount(row.amount_allocated),
@@ -521,6 +524,7 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
         advanceAllocations: (tenantAllocationsResult.data ?? []) as LooseRow[],
         collections: (tenantCollectionsResult.data ?? []) as LooseRow[],
         legacyArrears: (tenantLegacyArrearsResult.data ?? []) as LooseRow[],
+        manualAdjustments: (tenantManualAdjustmentsResult.data ?? []) as LooseRow[],
         monthlyRent,
         rentMonths: (tenantRentMonthsResult.data ?? []) as LooseRow[],
         selectedMonth,

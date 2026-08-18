@@ -77,12 +77,26 @@ export type CollectionTenantResult = {
         lastPaymentAmount: number;
         lastPaymentDate: string | null;
         lastPaymentId: string | null;
+        manualBalanceAdjustment: number;
         outstanding: number;
         paymentsThisMonth: number;
         rawBalance: number;
         selectedMonth: string;
         totalDue: number;
     };
+    manualBalanceAdjustments?: Array<{
+        id: string;
+        amount: number;
+        billingMonth: string;
+        effectiveDate: string | null;
+        reason: string | null;
+        notes: string | null;
+        status: string | null;
+        requestedBy: string | null;
+        approvedBy: string | null;
+        approvedAt: string | null;
+        createdAt: string | null;
+    }>;
     currentMonthPaid: number;
     advanceRentBalance: number;
     advanceRentMonths: Array<{ month: string; label: string; amount: number; coverageStart?: string | null; coverageEnd?: string | null }>;

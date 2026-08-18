@@ -137,7 +137,7 @@ async function getFastTenantPaymentContext(input: {
     if (tenantError) throw new Error(tenantError.message);
     if (!tenant) throw new Error("Tenant not found.");
 
-    const [roomResult, leaseResult, sponsorResult, allocationResult, collectionResult, rentMonthResult, legacyArrearsResult] = await Promise.all([
+    const [roomResult, leaseResult, sponsorResult, allocationResult, collectionResult, rentMonthResult, legacyArrearsResult, manualAdjustmentResult] = await Promise.all([
         tenant.room_id
             ? supabase
                 .from("rooms")
@@ -181,6 +181,11 @@ async function getFastTenantPaymentContext(input: {
             .select("tenant_id, allocation_month, legacy_arrears_amount, payments_applied, remaining_amount, status")
             .eq("company_id", companyId)
             .eq("tenant_id", tenantId),
+        (supabase as unknown as DynamicDb)
+            .from("tenant_balance_adjustments")
+            .select("tenant_id, effective_date, adjustment_amount, status, financial_effective, reversed_at")
+            .eq("company_id", companyId)
+            .eq("tenant_id", tenantId),
     ]);
     if (roomResult.error) throw new Error(roomResult.error.message);
     if (leaseResult.error) throw new Error(leaseResult.error.message);
@@ -196,6 +201,9 @@ async function getFastTenantPaymentContext(input: {
     }
     if (legacyArrearsResult.error && !/does not exist|schema cache|Could not find/i.test(legacyArrearsResult.error.message ?? "")) {
         throw new Error(legacyArrearsResult.error.message);
+    }
+    if (manualAdjustmentResult.error && !/does not exist|schema cache|Could not find|financial_effective|reversed_at/i.test(manualAdjustmentResult.error.message ?? "")) {
+        throw new Error(manualAdjustmentResult.error.message);
     }
 
     const lease = leaseResult.data;
@@ -215,6 +223,7 @@ async function getFastTenantPaymentContext(input: {
         advanceAllocations: allocationResult.data ?? [],
         collections: collectionResult.data ?? [],
         legacyArrears: legacyArrearsResult.data ?? [],
+        manualAdjustments: manualAdjustmentResult.data ?? [],
         monthlyRent,
         rentMonths: rentMonthResult.data ?? [],
         selectedMonth: monthStartDate(input.paymentDate ?? new Date().toISOString().slice(0, 10)),
@@ -583,31 +592,18 @@ async function applyTenantBalanceAdjustment(input: {
     adjustmentId: string;
     companyId: string;
     db: DynamicDb;
-    newBalance: number;
+    adjustmentAmount: number;
     officeId: string | null;
-    oldBalance: number;
     reason: string;
     roomId: string | null;
     tenantId: string | null;
 }) {
-    const balance = Math.max(0, input.newBalance);
-    const reconciled = await reconcileTenantBalanceAfterWrite({
-        companyId: input.companyId,
-        db: input.db,
-        note: `Outstanding balance adjusted from UGX ${Math.round(input.oldBalance).toLocaleString()} to UGX ${Math.round(balance).toLocaleString()}. Reason: ${input.reason}`,
-        requestedOutstanding: balance,
-        roomId: input.roomId,
-        sourceId: input.adjustmentId,
-        sourceType: "tenant_balance_adjustment",
-        tenantId: input.tenantId,
-    });
-    const finalBalance = reconciled.outstandingAfter;
     const ledgerInsert = await input.db.from("tenant_ledger_entries").insert({
-        amount: Math.abs(balance - input.oldBalance),
-        balance_after: finalBalance,
+        amount: Math.abs(input.adjustmentAmount),
+        balance_after: null,
         company_id: input.companyId,
-        description: `Outstanding balance adjusted from UGX ${Math.round(input.oldBalance).toLocaleString()} to UGX ${Math.round(balance).toLocaleString()}. Final net outstanding UGX ${Math.round(finalBalance).toLocaleString()}. Reason: ${input.reason}`,
-        entry_type: balance > input.oldBalance ? "debit" : "credit",
+        description: `Manual balance adjustment ${input.adjustmentAmount >= 0 ? "increased" : "reduced"} tenant obligation by UGX ${Math.round(Math.abs(input.adjustmentAmount)).toLocaleString()}. Reason: ${input.reason}`,
+        entry_type: input.adjustmentAmount >= 0 ? "debit" : "credit",
         office_id: input.officeId,
         source_id: input.adjustmentId,
         source_type: "tenant_balance_adjustment",
@@ -618,6 +614,8 @@ async function applyTenantBalanceAdjustment(input: {
 
 export async function requestTenantOutstandingBalanceAdjustment(input: {
     effectiveDate: string;
+    adjustmentAmount?: number;
+    adjustmentDirection?: "increase" | "reduce";
     newBalance: number;
     notes?: string | null;
     reason: string;
@@ -627,12 +625,14 @@ export async function requestTenantOutstandingBalanceAdjustment(input: {
     const context = await requireAuth();
     const isCollector = isFieldCollectorContext(context);
     if (!isCollector && !hasPermission(context, "collections.payment.post")) {
-        throw new Error("You do not have permission to request outstanding balance changes.");
+        throw new Error("You do not have permission to request manual balance adjustments.");
     }
     if (!context.activeCompany?.id || (!isCollector && !context.activeOffice?.id)) throw new Error("Active company and office are required.");
     const db = (context.isCompanyAdmin && !context.isOfficeMode ? createSupabaseAdminClient() : isCollector ? createSupabaseAdminClient() : await createSupabaseServerClient()) as unknown as DynamicDb;
+    const requestedAdjustmentAmount = Number(input.adjustmentAmount ?? 0);
+    const usesManualAdjustment = Number.isFinite(requestedAdjustmentAmount) && requestedAdjustmentAmount > 0 && (input.adjustmentDirection === "increase" || input.adjustmentDirection === "reduce");
     const newBalance = Number(input.newBalance);
-    if (!Number.isFinite(newBalance) || newBalance < 0) throw new Error("New outstanding balance must be zero or greater.");
+    if (!usesManualAdjustment && (!Number.isFinite(newBalance) || newBalance < 0)) throw new Error("New outstanding balance must be zero or greater.");
     const reason = input.reason.trim();
     if (!reason) throw new Error("Reason for balance change is required.");
     assertDate(input.effectiveDate, "Effective date");
@@ -658,43 +658,55 @@ export async function requestTenantOutstandingBalanceAdjustment(input: {
     if (tenantError) throw new Error(tenantError.message);
     if (!tenant) throw new Error("Tenant not found.");
 
-    const oldBalance = Math.max(0, Number(tenant.balance ?? room.outstanding_balance ?? 0));
+    const existingContext = await getTenantCollectionContext(tenant.id, input.effectiveDate);
+    const oldBalance = existingContext.monthlyFinancialPosition?.outstanding ?? existingContext.outstandingBalance ?? 0;
+    const signedAdjustment = usesManualAdjustment
+        ? (input.adjustmentDirection === "reduce" ? -requestedAdjustmentAmount : requestedAdjustmentAmount)
+        : newBalance - oldBalance;
+    if (!Number.isFinite(signedAdjustment) || signedAdjustment === 0) {
+        throw new Error("Manual balance adjustment amount must change the tenant's formula balance.");
+    }
+    const projectedRaw = Number(existingContext.monthlyFinancialPosition?.rawBalance ?? oldBalance) + signedAdjustment;
+    const projectedOutstanding = Math.max(projectedRaw, 0);
     const status = context.isCompanyAdmin && !context.isOfficeMode ? "direct_admin_change" : "pending";
+    const insertPayload: Record<string, unknown> = {
+        adjustment_amount: signedAdjustment,
+        adjustment_type: "manual_balance_adjustment",
+        billing_month: `${input.effectiveDate.slice(0, 7)}-01`,
+        company_id: context.activeCompany.id,
+        effective_date: input.effectiveDate,
+        financial_effective: status === "direct_admin_change",
+        new_balance: projectedOutstanding,
+        notes: input.notes || null,
+        office_id: room.office_id ?? context.activeOffice?.id ?? null,
+        old_balance: oldBalance,
+        reason,
+        requested_by: context.profile?.id ?? null,
+        room_id: room.id,
+        status,
+        tenant_id: tenant.id,
+        ...(status === "direct_admin_change" ? {
+            approved_at: new Date().toISOString(),
+            approved_by: context.profile?.id ?? null,
+        } : {}),
+    };
     const { data, error } = await db
         .from("tenant_balance_adjustments")
-        .insert({
-            adjustment_amount: newBalance - oldBalance,
-            company_id: context.activeCompany.id,
-            effective_date: input.effectiveDate,
-            new_balance: newBalance,
-            notes: input.notes || null,
-            office_id: room.office_id ?? context.activeOffice?.id ?? null,
-            old_balance: oldBalance,
-            reason,
-            requested_by: context.profile?.id ?? null,
-            room_id: room.id,
-            status,
-            tenant_id: tenant.id,
-            ...(status === "direct_admin_change" ? {
-                approved_at: new Date().toISOString(),
-                approved_by: context.profile?.id ?? null,
-            } : {}),
-        })
+        .insert(insertPayload)
         .select("*")
         .single();
     if (error) {
-        if (isMissingSchemaError(error)) throw new Error("Tenant balance adjustment table is missing. Apply migration 0186_tenant_balance_adjustments.sql to live Supabase first.");
+        if (isMissingSchemaError(error)) throw new Error("Tenant manual balance adjustment ledger is missing. Apply the tenant adjustment migration to live Supabase first.");
         throw new Error(error.message);
     }
 
     if (status === "direct_admin_change") {
         await applyTenantBalanceAdjustment({
             adjustmentId: data.id,
+            adjustmentAmount: signedAdjustment,
             companyId: context.activeCompany.id,
             db,
-            newBalance,
             officeId: room.office_id ?? context.activeOffice?.id,
-            oldBalance,
             reason,
             roomId: room.id,
             tenantId: tenant.id,
@@ -704,11 +716,11 @@ export async function requestTenantOutstandingBalanceAdjustment(input: {
             companyId: context.activeCompany.id,
             entityId: data.id,
             entityType: "tenant_balance_adjustment",
-            message: `Outstanding balance change requested for room ${room.room_number ?? "Unknown"} from UGX ${Math.round(oldBalance).toLocaleString()} to UGX ${Math.round(newBalance).toLocaleString()}.`,
+            message: `Manual balance adjustment requested for room ${room.room_number ?? "Unknown"}: ${signedAdjustment >= 0 ? "+" : "-"}UGX ${Math.round(Math.abs(signedAdjustment)).toLocaleString()}.`,
             officeId: room.office_id ?? context.activeOffice?.id,
             recipientType: "admin",
             severity: "warning",
-            title: "Pending outstanding balance adjustment",
+            title: "Pending manual balance adjustment",
         });
     }
 
@@ -718,7 +730,7 @@ export async function requestTenantOutstandingBalanceAdjustment(input: {
         entityId: data.id,
         companyId: context.activeCompany.id,
         officeId: room.office_id ?? context.activeOffice?.id,
-        beforeData: { room, tenant, oldBalance },
+        beforeData: { room, tenant, oldBalance, rawBalance: existingContext.monthlyFinancialPosition?.rawBalance ?? oldBalance },
         afterData: data,
     });
     revalidateOperationsPages();
@@ -742,20 +754,19 @@ export async function decideTenantOutstandingBalanceAdjustment(input: {
         .eq("id", input.adjustmentId)
         .maybeSingle();
     if (error) {
-        if (isMissingSchemaError(error)) throw new Error("Tenant balance adjustment table is missing. Apply migration 0186_tenant_balance_adjustments.sql to live Supabase first.");
+        if (isMissingSchemaError(error)) throw new Error("Tenant manual balance adjustment ledger is missing. Apply the tenant adjustment migration to live Supabase first.");
         throw new Error(error.message);
     }
-    if (!request) throw new Error("Outstanding balance adjustment request not found.");
+    if (!request) throw new Error("Manual balance adjustment request not found.");
     if (request.status !== "pending") throw new Error("This adjustment has already been reviewed.");
 
     if (input.decision === "approved") {
         await applyTenantBalanceAdjustment({
             adjustmentId: request.id,
+            adjustmentAmount: Number(request.adjustment_amount ?? 0),
             companyId: context.activeCompany.id,
             db,
-            newBalance: Number(request.new_balance ?? 0),
             officeId: request.office_id ?? null,
-            oldBalance: Number(request.old_balance ?? 0),
             reason: String(request.reason ?? ""),
             roomId: request.room_id ?? null,
             tenantId: request.tenant_id ?? null,
@@ -768,6 +779,7 @@ export async function decideTenantOutstandingBalanceAdjustment(input: {
             admin_comment: input.comment ?? null,
             approved_at: new Date().toISOString(),
             approved_by: context.profile?.id ?? null,
+            ...(input.decision === "approved" ? { financial_effective: true } : {}),
             status: input.decision,
         })
         .eq("id", request.id)
@@ -780,12 +792,12 @@ export async function decideTenantOutstandingBalanceAdjustment(input: {
         entityId: request.id,
         entityType: "tenant_balance_adjustment",
         message: input.decision === "approved"
-            ? `Outstanding balance adjustment approved. New balance is UGX ${Math.round(Number(request.new_balance ?? 0)).toLocaleString()}.`
-            : `Outstanding balance adjustment rejected. ${input.comment ?? ""}`.trim(),
+            ? `Manual balance adjustment approved: ${Number(request.adjustment_amount ?? 0) >= 0 ? "+" : "-"}UGX ${Math.round(Math.abs(Number(request.adjustment_amount ?? 0))).toLocaleString()}.`
+            : `Manual balance adjustment rejected. ${input.comment ?? ""}`.trim(),
         officeId: request.office_id ?? null,
         recipientType: "office",
         severity: input.decision === "approved" ? "success" : "warning",
-        title: input.decision === "approved" ? "Outstanding balance adjustment approved" : "Outstanding balance adjustment rejected",
+        title: input.decision === "approved" ? "Manual balance adjustment approved" : "Manual balance adjustment rejected",
     });
 
     await logUserAction({

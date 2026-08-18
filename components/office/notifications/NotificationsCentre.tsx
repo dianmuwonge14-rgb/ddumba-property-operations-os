@@ -735,16 +735,16 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
                     </section> : null}
                     {hasBalanceQueue ? <section className="enterprise-panel mt-6 overflow-hidden">
                         <div className="border-b border-slate-200 p-5">
-                            <h2 className="text-xl font-black text-slate-950">Outstanding Balance Adjustment Requests</h2>
-                            <p className="text-sm font-semibold text-slate-500">Approve office-requested tenant outstanding balance changes without deleting payment history.</p>
+                            <h2 className="text-xl font-black text-slate-950">Manual Balance Adjustment Requests</h2>
+                            <p className="text-sm font-semibold text-slate-500">Approve signed tenant formula inputs without editing calculated outstanding directly.</p>
                         </div>
                         <BulkApprovalControls
                             disabled={isPending}
-                            label="Outstanding balance requests"
+                            label="Manual balance requests"
                             pendingIds={pendingBalanceAdjustmentRequests.map((request) => request.id)}
                             selectedIds={selectedBalanceRequestIds}
                             onChangeSelected={setSelectedBalanceRequestIds}
-                            onBulk={(decision, ids) => openBulkDecision("balance", "Outstanding balance requests", decision, ids)}
+                            onBulk={(decision, ids) => openBulkDecision("balance", "Manual balance requests", decision, ids)}
                         />
                         <BalanceAdjustmentApprovalTable
                             data={safeData}
@@ -1450,9 +1450,9 @@ function BalanceAdjustmentApprovalTable({
                         <th className="text-left">Room</th>
                         <th className="text-left">Tenant</th>
                         <th className="text-left">Office</th>
-                        <th className="text-right">Old Balance</th>
-                        <th className="text-right">New Balance</th>
-                        <th className="text-right">Change</th>
+                        <th className="text-right">Current Calculated</th>
+                        <th className="text-right">Projected Calculated</th>
+                        <th className="text-right">Manual Input</th>
                         <th className="text-left">Effective</th>
                         <th className="text-left">Reason</th>
                         <th className="text-left">Requested By</th>
@@ -1462,7 +1462,7 @@ function BalanceAdjustmentApprovalTable({
                 </thead>
                 <tbody>
                     {requests.length === 0 ? (
-                        <tr><td colSpan={12} className="p-6 text-sm font-bold text-slate-500">No outstanding balance adjustment requests in this state.</td></tr>
+                        <tr><td colSpan={12} className="p-6 text-sm font-bold text-slate-500">No manual balance adjustment requests in this state.</td></tr>
                     ) : requests.map((request) => (
                         <tr key={`tenant-balance-adjustment:${request.id}`}>
                             <td>
@@ -1475,7 +1475,9 @@ function BalanceAdjustmentApprovalTable({
                             <td>{lookup(data.lookups.offices, request.office_id, "Needs review")}</td>
                             <td className="text-right font-black text-rose-700">{money(request.old_balance)}</td>
                             <td className="text-right font-black text-emerald-700">{money(request.new_balance)}</td>
-                            <td className="text-right font-black text-slate-900">{money(request.adjustment_amount)}</td>
+                            <td className={`text-right font-black ${Number(request.adjustment_amount ?? 0) < 0 ? "text-emerald-700" : "text-fuchsia-700"}`}>
+                                {Number(request.adjustment_amount ?? 0) > 0 ? "+" : Number(request.adjustment_amount ?? 0) < 0 ? "-" : ""}{money(Math.abs(Number(request.adjustment_amount ?? 0)))}
+                            </td>
                             <td>{formatDate(request.effective_date)}</td>
                             <td>
                                 <div className="max-w-72">
@@ -2496,17 +2498,17 @@ function BalanceAdjustmentRequestModal({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
             <div className="w-full max-w-xl rounded-[28px] border border-slate-200 bg-white shadow-2xl">
                 <div className="border-b border-slate-200 p-5">
-                    <p className="text-xs font-black uppercase tracking-wide text-blue-700">Outstanding balance adjustment</p>
-                    <h2 className="mt-2 text-2xl font-black text-slate-950">{isReject ? "Reject balance adjustment" : "Balance adjustment details"}</h2>
+                    <p className="text-xs font-black uppercase tracking-wide text-blue-700">Manual balance adjustment</p>
+                    <h2 className="mt-2 text-2xl font-black text-slate-950">{isReject ? "Reject manual adjustment" : "Manual adjustment details"}</h2>
                 </div>
                 <div className="grid gap-3 p-5 sm:grid-cols-2">
                     <Detail label="Room" value={lookup(data.lookups.rooms, request.room_id, "Unknown room")} />
                     <Detail label="Tenant" value={lookup(data.lookups.tenants, request.tenant_id, "Unknown tenant")} />
                     <Detail label="Office" value={lookup(data.lookups.offices, request.office_id, "Needs review")} />
                     <Detail label="Effective date" value={formatDate(request.effective_date)} />
-                    <Detail label="Old balance" value={money(request.old_balance)} />
-                    <Detail label="New balance" value={money(request.new_balance)} />
-                    <Detail label="Adjustment" value={money(request.adjustment_amount)} />
+                    <Detail label="Current calculated" value={money(request.old_balance)} />
+                    <Detail label="Projected calculated" value={money(request.new_balance)} />
+                    <Detail label="Manual input" value={`${Number(request.adjustment_amount ?? 0) > 0 ? "+" : Number(request.adjustment_amount ?? 0) < 0 ? "-" : ""}${money(Math.abs(Number(request.adjustment_amount ?? 0)))}`} />
                     <Detail label="Requested by" value={lookup(data.lookups.users, request.requested_by, "Unknown user")} />
                     <div className="sm:col-span-2 rounded-2xl bg-slate-50 p-4">
                         <p className="text-xs font-black uppercase text-slate-500">Reason</p>

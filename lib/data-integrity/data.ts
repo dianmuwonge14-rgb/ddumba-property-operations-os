@@ -15,7 +15,7 @@ export async function getDataIntegrityCentreData(context: AuthContext): Promise<
     if (!companyId) return emptyData();
 
     const supabase = createSupabaseAdminClient() as unknown as SupabaseClient;
-    const [officesResult, roomsResult, landlordsResult, tenantsResult, collections, rentMonths, allocations, leases] = await Promise.all([
+    const [officesResult, roomsResult, landlordsResult, tenantsResult, collections, rentMonths, allocations, leases, manualAdjustments] = await Promise.all([
         supabase.from("offices").select("id, office_name, name").eq("company_id", companyId).limit(1000),
         supabase.from("rooms").select("id, company_id, office_id, property_id, landlord_id, room_number, status, monthly_rent, outstanding_balance, workbook_comment, workbook_raw_data, created_at, updated_at").eq("company_id", companyId).limit(5000),
         supabase.from("landlords").select("id, company_id, full_name, phone, status, created_at").eq("company_id", companyId).limit(5000),
@@ -24,6 +24,7 @@ export async function getDataIntegrityCentreData(context: AuthContext): Promise<
         fetchAllRows((from, to) => supabase.from("tenant_rent_months").select("id, company_id, room_id, tenant_id, rent_month, due_date, coverage_start, coverage_end, rent_amount, amount_paid, outstanding_amount, status").eq("company_id", companyId).range(from, to)),
         fetchAllRows((from, to) => supabase.from("tenant_rent_allocations").select("id, company_id, room_id, tenant_id, payment_id, allocation_month, allocation_type, amount_allocated, consumed_by_balance_reconciliation, allocation_source, is_historical_credit, coverage_start, coverage_end").eq("company_id", companyId).range(from, to)),
         fetchAllRows((from, to) => supabase.from("leases").select("id, company_id, room_id, tenant_id, billing_day, start_date, monthly_rent, status").eq("company_id", companyId).eq("status", "active").range(from, to)),
+        fetchAllRows((from, to) => supabase.from("tenant_balance_adjustments").select("id, company_id, room_id, tenant_id, effective_date, adjustment_amount, status, financial_effective, reversed_at, reason").eq("company_id", companyId).range(from, to)),
     ]);
 
     for (const result of [officesResult, roomsResult, landlordsResult, tenantsResult]) {
@@ -48,6 +49,7 @@ export async function getDataIntegrityCentreData(context: AuthContext): Promise<
         allocations,
         collections,
         leases,
+        manualAdjustments,
         officeById,
         rentMonths,
         rooms,
@@ -74,6 +76,7 @@ function monthlyLedgerFormulaIssues({
     allocations,
     collections,
     leases,
+    manualAdjustments,
     officeById,
     rentMonths,
     rooms,
@@ -82,6 +85,7 @@ function monthlyLedgerFormulaIssues({
     allocations: LooseRow[];
     collections: LooseRow[];
     leases: LooseRow[];
+    manualAdjustments: LooseRow[];
     officeById: Map<string, string>;
     rentMonths: LooseRow[];
     rooms: LooseRow[];
@@ -94,6 +98,7 @@ function monthlyLedgerFormulaIssues({
     const collectionsByTenant = groupBy(collections.filter(isFinanciallyEffectiveCollection), (row) => stringValue(row.tenant_id));
     const rentMonthsByTenant = groupBy(rentMonths, (row) => stringValue(row.tenant_id));
     const allocationsByTenant = groupBy(allocations, (row) => stringValue(row.tenant_id));
+    const manualAdjustmentsByTenant = groupBy(manualAdjustments, (row) => stringValue(row.tenant_id));
     const leaseByTenant = new Map(leases.map((lease) => [stringValue(lease.tenant_id), lease]));
     const issues: MonthlyLedgerIssue[] = [];
 
@@ -105,6 +110,7 @@ function monthlyLedgerFormulaIssues({
         const position = calculateTenantMonthlyLedgerPosition({
             advanceAllocations: allocationsByTenant.get(tenantId) ?? [],
             collections: collectionsByTenant.get(tenantId) ?? [],
+            manualAdjustments: manualAdjustmentsByTenant.get(tenantId) ?? [],
             monthlyRent,
             rentMonths: rentMonthsByTenant.get(tenantId) ?? [],
             selectedMonth,
@@ -123,6 +129,7 @@ function monthlyLedgerFormulaIssues({
                 details: [
                     `Opening arrears: UGX ${position.arrears.toLocaleString("en-UG")}`,
                     `Current month rent: UGX ${position.currentMonthRent.toLocaleString("en-UG")}`,
+                    `Manual adjustment: UGX ${position.manualBalanceAdjustment.toLocaleString("en-UG")}`,
                     `Payments this month: UGX ${position.paymentsThisMonth.toLocaleString("en-UG")}`,
                     `Formula outstanding: UGX ${position.outstanding.toLocaleString("en-UG")}`,
                     `Stored/display snapshot: UGX ${storedOutstanding.toLocaleString("en-UG")}`,

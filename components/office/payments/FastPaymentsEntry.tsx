@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Banknote, BrainCircuit, CalendarDays, CheckCircle2, CreditCard, DoorOpen, Eye, History, Home, Loader2, Pencil, ReceiptText, Search, ShieldCheck, Smartphone, Trash2, UserPlus, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { adminCorrectPayment, recordCollection, requestPaymentCorrection } from "@/app/actions/collections";
+import { adminCorrectPayment, recordCollection, requestPaymentCorrection, requestTenantOutstandingBalanceAdjustment } from "@/app/actions/collections";
 import { recordCollectorPayment } from "@/app/actions/collectors";
 import { logReceiptPrintOrDownload, logReceiptShareLink, sendReceiptByEmail } from "@/app/actions/receipts";
 import { markRoomOccupied, replaceTenantFromPaymentsEntry } from "@/app/actions/room-occupancy";
@@ -95,6 +95,13 @@ type TenantPaymentListModalState = {
     title: string;
     total: number;
 } | null;
+type ManualAdjustmentForm = {
+    amount: string;
+    effectiveDate: string;
+    notes: string;
+    reason: string;
+    type: "increase" | "reduce";
+};
 
 function today() {
     return currentBusinessDate();
@@ -337,6 +344,15 @@ export default function FastPaymentsEntry({
     const [loadingHistory, setLoadingHistory] = useState(false);
     const [tenantPaymentListModal, setTenantPaymentListModal] = useState<TenantPaymentListModalState>(null);
     const [tenantPaymentDetail, setTenantPaymentDetail] = useState<CollectionTenantResult["collections"][number] | null>(null);
+    const [manualAdjustmentOpen, setManualAdjustmentOpen] = useState(false);
+    const [manualAdjustmentError, setManualAdjustmentError] = useState<string | null>(null);
+    const [manualAdjustmentForm, setManualAdjustmentForm] = useState<ManualAdjustmentForm>({
+        amount: "",
+        effectiveDate: today(),
+        notes: "",
+        reason: "",
+        type: "increase",
+    });
     const [newTenantOpen, setNewTenantOpen] = useState(false);
     const [newTenantReturnTo, setNewTenantReturnTo] = useState<string | null>(null);
     const [newTenantError, setNewTenantError] = useState<string | null>(null);
@@ -567,6 +583,55 @@ export default function FastPaymentsEntry({
                 .filter(isFinanciallyEffectiveCollection)
                 .sort((left, right) => String((right as Record<string, unknown>).payment_date ?? (right as Record<string, unknown>).paid_at ?? (right as Record<string, unknown>).created_at ?? "").localeCompare(String((left as Record<string, unknown>).payment_date ?? (left as Record<string, unknown>).paid_at ?? (left as Record<string, unknown>).created_at ?? "")))[0];
         if (latest) setTenantPaymentDetail(latest);
+    }
+
+    function openManualAdjustment() {
+        if (!selectedTenant) return;
+        setManualAdjustmentError(null);
+        setManualAdjustmentForm((current) => ({
+            ...current,
+            amount: "",
+            effectiveDate: selectedTenant.monthlyFinancialPosition?.selectedMonth?.slice(0, 10) ?? paymentDate,
+            notes: "",
+            reason: "",
+            type: "increase",
+        }));
+        setManualAdjustmentOpen(true);
+    }
+
+    function submitManualAdjustment() {
+        if (!selectedTenant?.room?.id || !selectedTenant.tenant.id) return;
+        const adjustmentAmount = Number(manualAdjustmentForm.amount);
+        const reason = manualAdjustmentForm.reason.trim();
+        if (!Number.isFinite(adjustmentAmount) || adjustmentAmount <= 0) {
+            setManualAdjustmentError("Adjustment amount must be greater than zero.");
+            return;
+        }
+        if (!reason) {
+            setManualAdjustmentError("Reason is required.");
+            return;
+        }
+        startTransition(async () => {
+            try {
+                setManualAdjustmentError(null);
+                await requestTenantOutstandingBalanceAdjustment({
+                    adjustmentAmount,
+                    adjustmentDirection: manualAdjustmentForm.type,
+                    effectiveDate: manualAdjustmentForm.effectiveDate,
+                    newBalance: liveOutstandingBalance(selectedTenant),
+                    notes: manualAdjustmentForm.notes,
+                    reason,
+                    roomId: selectedTenant.room!.id,
+                    tenantId: selectedTenant.tenant.id,
+                });
+                setManualAdjustmentOpen(false);
+                setMessage(isAdmin && entryMode === "admin" ? "Manual balance adjustment applied." : "Manual balance adjustment request sent to Admin.");
+                await selectRoomMatch(selectedTenant as FastPaymentTenantSearchResult, requestSeqRef.current + 1);
+                router.refresh();
+            } catch (error) {
+                setManualAdjustmentError(error instanceof Error ? error.message : "Manual balance adjustment could not be saved.");
+            }
+        });
     }
 
     async function selectRoomMatch(result: FastPaymentTenantSearchResult, requestSeq = requestSeqRef.current) {
@@ -1564,6 +1629,7 @@ export default function FastPaymentsEntry({
 
                     <TenantBalance
                         loadingDetails={loadingTenantDetails || isSearchPreviewTenant(selectedTenant)}
+                        onOpenManualAdjustment={openManualAdjustment}
                         onOpenLastPayment={openLastPaymentDetail}
                         onOpenPaymentsThisMonth={openPaymentsThisMonth}
                         tenant={selectedTenant}
@@ -1836,6 +1902,19 @@ export default function FastPaymentsEntry({
                 }}
                 onSubmit={submitVacateRoom}
                 open={vacateRoomOpen}
+                tenant={selectedTenant}
+            />
+            <ManualBalanceAdjustmentModal
+                error={manualAdjustmentError}
+                form={manualAdjustmentForm}
+                isAdmin={isAdmin && entryMode === "admin"}
+                isPending={isPending}
+                onChange={(patch) => setManualAdjustmentForm((current) => ({ ...current, ...patch }))}
+                onClose={() => {
+                    if (!isPending) setManualAdjustmentOpen(false);
+                }}
+                onSubmit={submitManualAdjustment}
+                open={manualAdjustmentOpen}
                 tenant={selectedTenant}
             />
             <TenantPaymentListModal modal={tenantPaymentListModal} onClose={() => setTenantPaymentListModal(null)} />
@@ -2446,13 +2525,141 @@ function MiniStat({ label, tone = "text-slate-950", value }: { label: string; to
     );
 }
 
+function ManualBalanceAdjustmentModal({
+    error,
+    form,
+    isAdmin,
+    isPending,
+    onChange,
+    onClose,
+    onSubmit,
+    open,
+    tenant,
+}: {
+    error: string | null;
+    form: ManualAdjustmentForm;
+    isAdmin: boolean;
+    isPending: boolean;
+    onChange: (patch: Partial<ManualAdjustmentForm>) => void;
+    onClose: () => void;
+    onSubmit: () => void;
+    open: boolean;
+    tenant: CollectionTenantResult | null;
+}) {
+    if (!open || !tenant) return null;
+    const position = tenant.monthlyFinancialPosition;
+    const currentOutstanding = Number(position?.outstanding ?? tenant.outstandingBalance ?? 0);
+    const currentAdvance = Number(position?.advance ?? tenant.advanceRentBalance ?? 0);
+    const currentManualAdjustment = Number(position?.manualBalanceAdjustment ?? 0);
+    const enteredAmount = Math.max(0, Number(form.amount || 0));
+    const signedAdjustment = form.type === "reduce" ? -enteredAmount : enteredAmount;
+    const projectedRaw = Number(position?.rawBalance ?? currentOutstanding) + signedAdjustment;
+    const projectedOutstanding = Math.max(projectedRaw, 0);
+    const projectedAdvance = Math.max(-projectedRaw, 0);
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/70 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-2xl rounded-[28px] border border-slate-200 bg-white shadow-2xl">
+                <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
+                    <div>
+                        <p className="text-xs font-black uppercase tracking-wide text-fuchsia-700">Manual balance adjustment</p>
+                        <h2 className="mt-1 text-2xl font-black text-slate-950">Room {tenant.room?.room_number ?? "Unknown"}</h2>
+                        <p className="mt-1 text-sm font-bold text-slate-500">{tenant.tenant.full_name ?? "Tenant"} · Formula input, not an outstanding override</p>
+                    </div>
+                    <button type="button" disabled={isPending} onClick={onClose} className="rounded-full border border-slate-200 bg-white p-2 text-slate-600 shadow-sm hover:bg-slate-50 disabled:opacity-40" aria-label="Close manual balance adjustment">
+                        <X size={18} />
+                    </button>
+                </div>
+                <div className="grid gap-4 p-5">
+                    <div className="grid gap-3 sm:grid-cols-4">
+                        <MiniStat label="Current Outstanding" value={money(currentOutstanding)} tone="text-rose-700" />
+                        <MiniStat label="Current Advance" value={money(currentAdvance)} tone="text-violet-700" />
+                        <MiniStat label="Current Adjustment" value={`${currentManualAdjustment > 0 ? "+" : currentManualAdjustment < 0 ? "-" : ""}${money(Math.abs(currentManualAdjustment))}`} tone="text-fuchsia-700" />
+                        <MiniStat label="Projected Outstanding" value={money(projectedOutstanding)} tone="text-emerald-700" />
+                    </div>
+                    <fieldset>
+                        <legend className="text-xs font-black uppercase tracking-wide text-slate-500">Adjustment type</legend>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                            {[
+                                { label: "Increase balance", value: "increase" as const },
+                                { label: "Reduce balance", value: "reduce" as const },
+                            ].map((option) => (
+                                <button
+                                    key={option.value}
+                                    type="button"
+                                    onClick={() => onChange({ type: option.value })}
+                                    className={`rounded-2xl border px-4 py-3 text-left text-sm font-black transition ${form.type === option.value ? "border-fuchsia-500 bg-fuchsia-50 text-fuchsia-900 shadow" : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-white"}`}
+                                >
+                                    {option.label}
+                                </button>
+                            ))}
+                        </div>
+                    </fieldset>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                        <TextField label="Amount" type="number" value={form.amount} onChange={(amount) => onChange({ amount })} placeholder="UGX" />
+                        <TextField label="Effective billing month" type="date" value={form.effectiveDate} onChange={(effectiveDate) => onChange({ effectiveDate })} />
+                    </div>
+                    <label className="block">
+                        <span className="text-xs font-black uppercase text-slate-500">Reason - required</span>
+                        <textarea
+                            value={form.reason}
+                            onChange={(event) => onChange({ reason: event.target.value })}
+                            className="mt-1 min-h-24 w-full rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm font-bold text-slate-950 outline-none focus:border-fuchsia-400 focus:bg-white focus:ring-4 focus:ring-fuchsia-100"
+                            placeholder="Explain why this manual adjustment belongs in the formula..."
+                        />
+                    </label>
+                    <label className="block">
+                        <span className="text-xs font-black uppercase text-slate-500">Supporting note - optional</span>
+                        <textarea
+                            value={form.notes}
+                            onChange={(event) => onChange({ notes: event.target.value })}
+                            className="mt-1 min-h-20 w-full rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm font-bold text-slate-950 outline-none focus:border-fuchsia-400 focus:bg-white focus:ring-4 focus:ring-fuchsia-100"
+                            placeholder="Optional proof/reference note"
+                        />
+                    </label>
+                    {tenant.manualBalanceAdjustments?.length ? (
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                            <p className="text-xs font-black uppercase text-slate-500">Adjustment history</p>
+                            <div className="mt-2 grid gap-2">
+                                {tenant.manualBalanceAdjustments.slice(0, 5).map((adjustment) => (
+                                    <div key={adjustment.id} className="flex items-start justify-between gap-3 rounded-2xl bg-white px-3 py-2">
+                                        <div>
+                                            <p className="text-sm font-black text-slate-950">{adjustment.reason ?? "Manual balance adjustment"}</p>
+                                            <p className="text-xs font-bold text-slate-500">{compactDate(adjustment.effectiveDate)} · {adjustment.status ?? "approved"}</p>
+                                        </div>
+                                        <span className={`shrink-0 text-sm font-black ${adjustment.amount < 0 ? "text-emerald-700" : "text-fuchsia-700"}`}>
+                                            {adjustment.amount > 0 ? "+" : adjustment.amount < 0 ? "-" : ""}{money(Math.abs(adjustment.amount))}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ) : null}
+                    {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-black text-rose-700">{error}</div> : null}
+                </div>
+                <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 p-5">
+                    <button type="button" disabled={isPending} onClick={onClose} className="rounded-2xl bg-white px-5 py-3 text-sm font-black text-slate-700 shadow disabled:opacity-40">
+                        Cancel
+                    </button>
+                    <button type="button" disabled={isPending} onClick={onSubmit} className="inline-flex items-center gap-2 rounded-2xl bg-fuchsia-700 px-5 py-3 text-sm font-black text-white shadow-lg disabled:opacity-40">
+                        {isPending ? <Loader2 className="animate-spin" size={16} /> : <Pencil size={16} />}
+                        {isPending ? "Saving..." : isAdmin ? "Apply Manual Adjustment" : "Request Admin Approval"}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function TenantBalance({
     loadingDetails,
+    onOpenManualAdjustment,
     onOpenLastPayment,
     onOpenPaymentsThisMonth,
     tenant,
 }: {
     loadingDetails: boolean;
+    onOpenManualAdjustment: () => void;
     onOpenLastPayment: () => void;
     onOpenPaymentsThisMonth: () => void;
     tenant: CollectionTenantResult | null;
@@ -2468,8 +2675,9 @@ function TenantBalance({
     const position = tenant.monthlyFinancialPosition;
     const arrears = ledgerNumber(position?.arrears);
     const currentMonthRent = ledgerNumber(position?.currentMonthRent ?? tenant.monthlyRent);
+    const manualBalanceAdjustment = Number(position?.manualBalanceAdjustment ?? 0);
     const paymentsThisMonth = ledgerNumber(position?.paymentsThisMonth);
-    const rawTenantBalance = arrears + currentMonthRent - paymentsThisMonth;
+    const rawTenantBalance = arrears + currentMonthRent + manualBalanceAdjustment - paymentsThisMonth;
     const calculatedOutstanding = Math.max(rawTenantBalance, 0);
     const calculatedAdvance = Math.max(-rawTenantBalance, 0);
 
@@ -2482,6 +2690,13 @@ function TenantBalance({
                     {loadingDetails ? "Calculating opening balance..." : "Previous unpaid balance before this billing month."}
                 </p>
             </div>
+            <button type="button" disabled={loadingDetails} onClick={onOpenManualAdjustment} className="rounded-2xl border border-fuchsia-100 bg-fuchsia-50 p-4 text-left transition hover:-translate-y-0.5 hover:shadow-lg disabled:cursor-wait disabled:opacity-70">
+                <p className="text-xs font-black uppercase text-fuchsia-500">Manual Balance Adjustment</p>
+                <p className={`mt-1 text-2xl font-black ${manualBalanceAdjustment < 0 ? "text-emerald-700" : manualBalanceAdjustment > 0 ? "text-fuchsia-700" : "text-slate-700"}`}>
+                    {loadingDetails ? "Loading..." : `${manualBalanceAdjustment > 0 ? "+" : manualBalanceAdjustment < 0 ? "-" : ""}${money(Math.abs(manualBalanceAdjustment))}`}
+                </p>
+                <p className="mt-1 text-[11px] font-bold text-fuchsia-600">Click to adjust with audit trail.</p>
+            </button>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <p className="text-xs font-black uppercase text-slate-400">Room number</p>
                 <p className="mt-1 text-2xl font-black text-slate-950">{tenant.room?.room_number ?? "Unknown"}</p>
@@ -2504,7 +2719,7 @@ function TenantBalance({
                 <p className="text-xs font-black uppercase text-rose-400">Outstanding Balance</p>
                 <p className="mt-1 text-2xl font-black text-rose-700">{liveValue(money(calculatedOutstanding))}</p>
                 <p className="mt-1 text-[11px] font-bold text-rose-500">
-                    {loadingDetails ? "Fetching live balance..." : "Calculated only: arrears + rent - payments."}
+                    {loadingDetails ? "Fetching live balance..." : "Calculated only: arrears + rent + adjustment - payments."}
                 </p>
             </div>
             <button type="button" disabled={loadingDetails || !tenant.lastAmountPaid} onClick={onOpenLastPayment} className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:-translate-y-0.5 hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-70">
