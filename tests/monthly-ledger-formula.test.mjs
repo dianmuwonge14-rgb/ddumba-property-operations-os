@@ -179,3 +179,12 @@ test("tenant balance card no longer exposes direct outstanding edits", () => {
   assert.match(tenantBalanceSection, /calculatedAdvance = Math\.max\(-rawTenantBalance, 0\)/);
   assert.doesNotMatch(tenantBalanceSection, /onEditOutstanding/);
 });
+
+test("payments this month drill-down filters out financially ineffective payments", () => {
+  const source = fs.readFileSync("components/office/payments/FastPaymentsEntry.tsx", "utf8");
+  const paymentsListFunction = source.slice(source.indexOf("function currentMonthPaymentsForTenant"), source.indexOf("function openPaymentsThisMonth"));
+  const lastPaymentFunction = source.slice(source.indexOf("function openLastPaymentDetail"), source.indexOf("async function selectRoomMatch"));
+  assert.match(source, /isFinanciallyEffectiveCollection/);
+  assert.match(paymentsListFunction, /filter\(isFinanciallyEffectiveCollection\)/);
+  assert.match(lastPaymentFunction, /filter\(isFinanciallyEffectiveCollection\)/);
+});

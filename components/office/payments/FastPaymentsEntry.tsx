@@ -15,6 +15,7 @@ import TenantContactCard from "@/components/office/shared/TenantContactCard";
 import TenantBillingDateControl from "@/components/office/shared/TenantBillingDateControl";
 import RentDueIntelligencePanel from "@/components/office/payments/RentDueIntelligencePanel";
 import { currentBusinessDate, formatBusinessDate } from "@/lib/business-date";
+import { isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
 import type { AdvanceRentAssistantItem, CollectionTenantResult, FastPaymentRecentItem, FastPaymentRecentTotals, FastPaymentTenantSearchResult } from "@/lib/collections/types";
 import type { Company, Office, UserProfile } from "@/lib/auth/types";
 import type { PaymentReceiptSummary } from "@/lib/receipts/payment-receipts";
@@ -537,7 +538,9 @@ export default function FastPaymentsEntry({
     function currentMonthPaymentsForTenant(tenant: CollectionTenantResult | null) {
         if (!tenant) return [];
         const selectedMonth = tenant.monthlyFinancialPosition?.selectedMonth?.slice(0, 7) ?? paymentDate.slice(0, 7);
-        return tenant.collections.filter((collection) => collectionDateOnly(collection).slice(0, 7) === selectedMonth);
+        return tenant.collections
+            .filter(isFinanciallyEffectiveCollection)
+            .filter((collection) => collectionDateOnly(collection).slice(0, 7) === selectedMonth);
     }
 
     function openPaymentsThisMonth() {
@@ -555,7 +558,9 @@ export default function FastPaymentsEntry({
         const latestId = selectedTenant.monthlyFinancialPosition?.lastPaymentId;
         const latest = latestId
             ? selectedTenant.collections.find((collection) => collection.id === latestId)
-            : [...selectedTenant.collections].sort((left, right) => String((right as Record<string, unknown>).payment_date ?? (right as Record<string, unknown>).paid_at ?? (right as Record<string, unknown>).created_at ?? "").localeCompare(String((left as Record<string, unknown>).payment_date ?? (left as Record<string, unknown>).paid_at ?? (left as Record<string, unknown>).created_at ?? "")))[0];
+            : selectedTenant.collections
+                .filter(isFinanciallyEffectiveCollection)
+                .sort((left, right) => String((right as Record<string, unknown>).payment_date ?? (right as Record<string, unknown>).paid_at ?? (right as Record<string, unknown>).created_at ?? "").localeCompare(String((left as Record<string, unknown>).payment_date ?? (left as Record<string, unknown>).paid_at ?? (left as Record<string, unknown>).created_at ?? "")))[0];
         if (latest) setTenantPaymentDetail(latest);
     }
 
