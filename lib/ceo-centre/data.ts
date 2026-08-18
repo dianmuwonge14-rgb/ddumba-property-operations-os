@@ -1,6 +1,7 @@
 import { requirePermission } from "@/lib/auth/permissions";
 import { getScopedSupabase } from "@/lib/auth/query";
 import { collectionAmount, isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
+import { calculateTenantMonthlyLedgerPosition } from "@/lib/financial/monthly-ledger";
 import type {
     AiInsightRow,
     AttendanceEventRow,
@@ -41,6 +42,7 @@ import type {
 } from "./types";
 
 const TIME_ZONE = "Africa/Kampala";
+type LooseRow = Record<string, any> & { office_id: string | null };
 
 export async function getCeoCommandData(): Promise<CeoCommandData> {
     const context = await requirePermission("reports.read");
@@ -55,6 +57,7 @@ export async function getCeoCommandData(): Promise<CeoCommandData> {
     const tomorrow = dateOffset(1);
     const weekStartDate = dateOffset(-6);
     const accessibleOfficeIds = new Set(context.offices.map((office) => office.id));
+    const dynamicSupabase = supabase as unknown as { from: (table: string) => any };
 
     const [
         officesResult,
@@ -78,6 +81,9 @@ export async function getCeoCommandData(): Promise<CeoCommandData> {
         landlordSettlementsResult,
         dailyReportsResult,
         usersResult,
+        tenantRentMonthsResult,
+        tenantLegacyArrearsResult,
+        tenantAllocationsResult,
     ] = await Promise.all([
         supabase.from("offices").select("*").eq("company_id", companyId).neq("status", "archived").order("office_name"),
         supabase.from("collections").select("*").eq("company_id", companyId).gte("paid_at", isoStart(previousStart30)).lte("paid_at", isoEnd(today)),
@@ -98,8 +104,11 @@ export async function getCeoCommandData(): Promise<CeoCommandData> {
         supabase.from("performance_targets").select("*").eq("company_id", companyId).lte("period_start", today).gte("period_end", today).order("created_at", { ascending: false }),
         supabase.from("landlord_payments").select("*").eq("company_id", companyId).gte("paid_at", isoStart(previousStart30)).lte("paid_at", isoEnd(today)),
         supabase.from("landlord_settlements").select("*").eq("company_id", companyId).order("created_at", { ascending: false }),
-        (supabase as unknown as { from: (table: string) => ReturnType<typeof supabase.from> }).from("office_daily_reports").select("*").eq("company_id", companyId).gte("report_date", monthStartDate).lte("report_date", today),
+        dynamicSupabase.from("office_daily_reports").select("*").eq("company_id", companyId).gte("report_date", monthStartDate).lte("report_date", today),
         supabase.from("users").select("*").eq("company_id", companyId),
+        dynamicSupabase.from("tenant_rent_months").select("tenant_id,office_id,rent_month,due_date,coverage_start,coverage_end,rent_amount,amount_paid,outstanding_amount,status,created_at,source").eq("company_id", companyId),
+        dynamicSupabase.from("tenant_pre_system_arrears_periods").select("tenant_id,office_id,allocation_month,legacy_arrears_amount,payments_applied,remaining_amount,status").eq("company_id", companyId),
+        dynamicSupabase.from("tenant_rent_allocations").select("tenant_id,office_id,payment_id,allocation_month,allocation_type,amount_allocated,consumed_by_balance_reconciliation,allocation_source,is_historical_credit,coverage_start,coverage_end,coverage_index").eq("company_id", companyId),
     ]);
 
     for (const result of [
@@ -124,6 +133,9 @@ export async function getCeoCommandData(): Promise<CeoCommandData> {
         landlordSettlementsResult,
         dailyReportsResult,
         usersResult,
+        tenantRentMonthsResult,
+        tenantLegacyArrearsResult,
+        tenantAllocationsResult,
     ]) {
         if (result.error) throw new Error(result.error.message);
     }
@@ -149,6 +161,15 @@ export async function getCeoCommandData(): Promise<CeoCommandData> {
     const landlordSettlements = landlordSettlementsResult.data ?? [];
     const dailyReports = filterByOffice((dailyReportsResult.data ?? []) as Array<{ office_id: string | null; report_date: string | null; status: string | null }>, officeIds);
     const users = usersResult.data ?? [];
+    const tenantPositions = buildTenantPositionMap({
+        collections,
+        rooms,
+        selectedMonth: monthStartDate,
+        tenantAllocations: filterByOffice((tenantAllocationsResult.data ?? []) as LooseRow[], officeIds),
+        tenantLegacyArrears: filterByOffice((tenantLegacyArrearsResult.data ?? []) as LooseRow[], officeIds),
+        tenantRentMonths: filterByOffice((tenantRentMonthsResult.data ?? []) as LooseRow[], officeIds),
+        tenants,
+    });
     const targetSets = buildTargetSets(offices, targets, monthStartDate, today);
 
     const currentCollections = collections.filter((row) => dateOnly(row.paid_at) >= start30);
@@ -164,7 +185,7 @@ export async function getCeoCommandData(): Promise<CeoCommandData> {
     const officeWarRoom = buildOfficeWarRoom({ offices, collections: currentCollections, promises, properties, rooms, tenants, expenses: currentExpenses, attendance, employees, targets: targetSets, dailyReports, monthStartDate, today });
     const cash = buildCash({ collections, expenses, landlordPayments, today, weekStartDate, monthStartDate });
     const growth = buildGrowth({ offices, collections: currentCollections, previousCollections, rooms, tenants, expenses: currentExpenses, previousExpenses });
-    const risks = buildRisks({ offices: officeWarRoom, properties, tenants, landlords, employees, rooms });
+    const risks = buildRisks({ offices: officeWarRoom, properties, tenants, landlords, employees, rooms, tenantPositions });
     const overview = buildOverview({ offices: officeWarRoom, cash, growth, risks, audits, security });
     const promiseRecovery = buildPromiseRecovery(promises, collections, today, tomorrow);
     const landlordSettlementCentre = buildLandlordSettlements({ landlords, properties, collections: currentCollections, expenses: currentExpenses, payments: landlordPayments, settlements: landlordSettlements, offices });
@@ -172,7 +193,7 @@ export async function getCeoCommandData(): Promise<CeoCommandData> {
     const auditTimeline = buildAuditTimeline(audits, users, offices);
     const intelligence = buildIntelligence({ ai, automation, audits, security, risks, alerts });
     const forecast = buildForecast({ collections: currentCollections, expenses: currentExpenses, rooms, tenants, risks });
-    const aiPredictions = buildAiPredictions({ offices: officeWarRoom, tenants, collections: currentCollections, cash, forecast });
+    const aiPredictions = buildAiPredictions({ offices: officeWarRoom, tenants, collections: currentCollections, cash, forecast, tenantPositions });
     const actions = buildActions({ promises, attendance, employees, cash, risks, offices: officeWarRoom });
     const league = buildLeague(officeWarRoom);
     const briefing = buildBriefing({ cash, growth, risks, intelligence, actions, league });
@@ -328,6 +349,7 @@ function buildRisks(input: {
     landlords: LandlordRow[];
     employees: EmployeeRow[];
     rooms: RoomRow[];
+    tenantPositions: TenantPositionMap;
 }): RiskHeatMapItem[] {
     const propertyRoomCount = new Map<string, RoomRow[]>();
     for (const room of input.rooms) {
@@ -343,7 +365,8 @@ function buildRisks(input: {
         }).filter((item) => item.riskScore >= 35),
         ...input.tenants.map((tenant) => {
             const reliabilityRisk = tenant.tenant_reliability_score == null ? 0 : Math.max(0, 100 - amount(tenant.tenant_reliability_score));
-            const balanceRisk = amount(tenant.balance) > 0 ? Math.min(100, amount(tenant.balance) / Math.max(1, amount(tenant.monthly_rent)) * 25) : 0;
+            const outstanding = input.tenantPositions.get(tenant.id)?.outstanding ?? 0;
+            const balanceRisk = outstanding > 0 ? Math.min(100, outstanding / Math.max(1, amount(tenant.monthly_rent)) * 25) : 0;
             return risk(`tenant-${tenant.id}`, tenant.full_name ?? "Tenant", "tenant", Math.max(amount(tenant.risk_score), reliabilityRisk, balanceRisk), tenant.tenant_score_reason ?? "Tenant balance, reliability, or default risk requires attention.");
         }).filter((item) => item.riskScore >= 30),
         ...input.landlords.map((landlord) => risk(`landlord-${landlord.id}`, landlord.full_name, "landlord", Math.max(0, 100 - amount(landlord.trust_index || 75)) + (amount(landlord.balance_remaining) > 0 ? 15 : 0), "Settlement, trust, or landlord performance signal requires review.")).filter((item) => item.riskScore >= 30),
@@ -578,9 +601,9 @@ function buildAuditTimeline(audits: AuditLogRow[], users: UserRow[], offices: Of
     });
 }
 
-function buildAiPredictions(input: { offices: OfficeWarRoomRow[]; tenants: TenantRow[]; collections: CollectionRow[]; cash: CashPosition; forecast: ForecastEngine }): AiPrediction[] {
+function buildAiPredictions(input: { offices: OfficeWarRoomRow[]; tenants: TenantRow[]; collections: CollectionRow[]; cash: CashPosition; forecast: ForecastEngine; tenantPositions: TenantPositionMap }): AiPrediction[] {
     const weakestOffice = input.offices.slice().sort((a, b) => a.collectionPerformance - b.collectionPerformance)[0];
-    const highRiskTenants = input.tenants.filter((tenant) => amount(tenant.balance) > 0 || amount(tenant.tenant_reliability_score) < 60).length;
+    const highRiskTenants = input.tenants.filter((tenant) => (input.tenantPositions.get(tenant.id)?.outstanding ?? 0) > 0 || amount(tenant.tenant_reliability_score) < 60).length;
     const expectedCollections = input.forecast.collections.at(-1)?.value ?? sumCollections(input.collections);
     return [
         {
@@ -620,6 +643,47 @@ function filterByOffice<T extends { office_id: string | null }>(rows: T[], offic
 
 function filterNullableOffice<T extends { office_id: string | null }>(rows: T[], officeIds: Set<string>) {
     return rows.filter((row) => !row.office_id || officeIds.has(row.office_id));
+}
+
+function groupRowsByKey<T extends Record<string, unknown>>(rows: T[], key: string) {
+    const grouped = new Map<string, T[]>();
+    for (const row of rows) {
+        const value = String(row[key] ?? "");
+        if (!value) continue;
+        grouped.set(value, [...(grouped.get(value) ?? []), row]);
+    }
+    return grouped;
+}
+
+type TenantPositionMap = Map<string, ReturnType<typeof calculateTenantMonthlyLedgerPosition>>;
+
+function buildTenantPositionMap(input: {
+    collections: CollectionRow[];
+    rooms: RoomRow[];
+    selectedMonth: string;
+    tenantAllocations: LooseRow[];
+    tenantLegacyArrears: LooseRow[];
+    tenantRentMonths: LooseRow[];
+    tenants: TenantRow[];
+}): TenantPositionMap {
+    const roomById = new Map(input.rooms.map((room) => [room.id, room]));
+    const collectionsByTenant = groupRowsByKey(input.collections as unknown as LooseRow[], "tenant_id");
+    const allocationsByTenant = groupRowsByKey(input.tenantAllocations, "tenant_id");
+    const arrearsByTenant = groupRowsByKey(input.tenantLegacyArrears, "tenant_id");
+    const rentMonthsByTenant = groupRowsByKey(input.tenantRentMonths, "tenant_id");
+    const positions: TenantPositionMap = new Map();
+    for (const tenant of input.tenants) {
+        const room = tenant.room_id ? roomById.get(tenant.room_id) ?? null : null;
+        positions.set(tenant.id, calculateTenantMonthlyLedgerPosition({
+            advanceAllocations: allocationsByTenant.get(tenant.id) ?? [],
+            collections: (collectionsByTenant.get(tenant.id) ?? []) as CollectionRow[],
+            legacyArrears: arrearsByTenant.get(tenant.id) ?? [],
+            monthlyRent: amount(tenant.monthly_rent ?? room?.monthly_rent),
+            rentMonths: rentMonthsByTenant.get(tenant.id) ?? [],
+            selectedMonth: input.selectedMonth,
+        }));
+    }
+    return positions;
 }
 
 function todayDate() {

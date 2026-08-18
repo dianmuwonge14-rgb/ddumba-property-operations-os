@@ -1721,9 +1721,11 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
         legacyArrearsByTenant.set(tenantId, [...(legacyArrearsByTenant.get(tenantId) ?? []), legacyRow]);
     }
     const dueRentOutstandingByTenant = new Map<string, number>();
+    const rentMonthsByTenant = new Map<string, Array<Record<string, unknown>>>();
     for (const rentMonth of rentMonthRows as Array<Record<string, unknown>>) {
         const tenantId = String(rentMonth.tenant_id ?? "");
         if (!tenantId) continue;
+        rentMonthsByTenant.set(tenantId, [...(rentMonthsByTenant.get(tenantId) ?? []), rentMonth]);
         const status = String(rentMonth.status ?? "unpaid").toLowerCase();
         if (["cancelled", "canceled", "voided", "deleted", "reversed"].includes(status)) continue;
         const dueDate = String(rentMonth.coverage_start ?? rentMonth.due_date ?? rentMonth.rent_month ?? "").slice(0, 10);
@@ -1742,23 +1744,29 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
         const tenantName = String(tenant.full_name ?? "Unnamed tenant");
         const officeName = String(office?.office_name ?? office?.name ?? "Office");
         const monthlyRent = Number(tenant.monthly_rent ?? room.monthly_rent ?? 0);
-        const outstandingBalance = Math.max(0, Number(tenant.balance ?? room.outstanding_balance ?? 0));
         const tenantAllocations = allocationsByTenant.get(tenantId) ?? [];
         const tenantCollections = collectionsByTenant.get(tenantId) ?? [];
         const tenantLegacyArrears = legacyArrearsByTenant.get(tenantId) ?? [];
+        const monthlyPosition = calculateTenantMonthlyLedgerPosition({
+            advanceAllocations: tenantAllocations,
+            collections: tenantCollections,
+            legacyArrears: tenantLegacyArrears,
+            monthlyRent,
+            rentMonths: rentMonthsByTenant.get(tenantId) ?? [],
+            selectedMonth: monthStart,
+        });
+        const outstandingBalance = monthlyPosition.outstanding;
         const dueRentOutstanding = dueRentOutstandingByTenant.get(tenantId) ?? 0;
         const activeLegacyArrearsBalance = tenantLegacyArrears.reduce((total, row) => total + Number(row.remaining_amount ?? 0), 0);
         const legacyArrearsMonths = [...new Set(tenantLegacyArrears
             .sort((left, right) => String(left.allocation_month ?? "").localeCompare(String(right.allocation_month ?? "")))
             .map((row) => monthLabelFromDate(String(row.allocation_month ?? "")))
             .filter((value): value is string => Boolean(value)))];
-        const currentMonthPaid = tenantAllocations
-            .filter((allocation) => String(allocation.allocation_month ?? "").slice(0, 7) === monthStart.slice(0, 7))
-            .reduce((total, allocation) => total + Number(allocation.amount_allocated ?? 0), 0);
+        const currentMonthPaid = monthlyPosition.paymentsThisMonth;
         const futureAllocations = tenantAllocations
             .filter((allocation) => String(allocation.allocation_type) === "advance_month" && String(allocation.allocation_month ?? "").slice(0, 10) >= nextMonth)
             .sort((left, right) => String(left.allocation_month ?? "").localeCompare(String(right.allocation_month ?? "")));
-        const advanceRentBalance = futureAllocations.reduce((total, allocation) => total + availableAdvanceAllocation(allocation), 0);
+        const advanceRentBalance = monthlyPosition.advance;
         const monthsCovered = [...new Set(futureAllocations.map((allocation) => monthLabelFromDate(String(allocation.allocation_month ?? ""))).filter((value): value is string => Boolean(value)))];
         const rawCurrentMonthPaid = tenantCollections
             .filter((collection) => collectionPaymentDate(collection as CollectionRow).slice(0, 7) === monthStart.slice(0, 7))
@@ -1868,7 +1876,7 @@ export async function getAdvanceRentAssistant(month?: string | null): Promise<Ad
                 tenantName,
                 officeName,
                 monthlyRent,
-                currentMonthPaid: Math.min(rawCurrentMonthPaid, monthlyRent),
+                currentMonthPaid,
                 outstandingBalance,
                 advanceRentBalance,
                 monthsCovered: [],
@@ -2099,7 +2107,7 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
             currentRentPeriod,
             lastRentChargeDate: lastRentChargeByTenant.get(tenant.id) ?? null,
             nextRentChargeDate: nextCharge,
-            currentMonthPaid,
+            currentMonthPaid: monthlyFinancialPosition.paymentsThisMonth,
             advanceRentBalance: formulaAdvanceBalance,
             advanceRentMonths,
             legacyArrearsBalance,

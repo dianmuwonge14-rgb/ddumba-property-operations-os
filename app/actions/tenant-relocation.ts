@@ -437,7 +437,7 @@ async function applyRelocation({
 
     const [oldRoomUpdate, newRoomUpdate, oldHistory, newHistory, promisesUpdate, actionInsert] = await Promise.all([
         db.from("rooms").update({ outstanding_balance: 0, status: "vacant", updated_at: now }).eq("id", snapshot.oldRoom.id),
-        db.from("rooms").update({ outstanding_balance: amount(snapshot.tenant.balance), status: "occupied", updated_at: now }).eq("id", snapshot.newRoom.id),
+        db.from("rooms").update({ outstanding_balance: 0, status: "occupied", updated_at: now }).eq("id", snapshot.newRoom.id),
         db.from("room_status_history").insert({
             changed_by: userId,
             company_id: companyId,

@@ -1,5 +1,6 @@
 import { requirePermission } from "@/lib/auth/permissions";
 import { collectionAmount, isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
+import { calculateTenantMonthlyLedgerPosition } from "@/lib/financial/monthly-ledger";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type {
     AttendanceEventRow,
@@ -40,11 +41,11 @@ type LooseRow = Record<string, any> & { office_id: string | null };
 
 const TIME_ZONE = "Africa/Kampala";
 const SUPABASE_PAGE_SIZE = 1000;
-const COLLECTION_COLUMNS = "id,office_id,amount,amount_paid,expected_amount,payment_source,status,paid_at,payment_date,created_at,financial_effective,reversed_at,voided_at,deleted_at,superseded_at,superseded_by_payment_id,corrected_by_payment_id,correction_of_payment_id";
+const COLLECTION_COLUMNS = "id,office_id,tenant_id,room_id,amount,amount_paid,expected_amount,payment_source,status,paid_at,payment_date,created_at,financial_effective,reversed_at,voided_at,deleted_at,superseded_at,superseded_by_payment_id,corrected_by_payment_id,correction_of_payment_id";
 const PROMISE_COLUMNS = "id,office_id,status,fulfilled_at,promised_date,promise_date";
 const PROPERTY_COLUMNS = "id,office_id,status";
 const ROOM_COLUMNS = "id,office_id,property_id,landlord_id,monthly_rent,status";
-const TENANT_COLUMNS = "id,office_id,room_id,status,balance";
+const TENANT_COLUMNS = "id,office_id,room_id,status,monthly_rent,billing_day";
 const EXPENSE_COLUMNS = "id,office_id,amount,approved_at,expense_date,created_at";
 const ATTENDANCE_COLUMNS = "id,office_id,employee_id,event_type,event_time";
 const EMPLOYEE_COLUMNS = "id,office_id,status";
@@ -153,6 +154,8 @@ export async function getDashboardLiveData(input: DashboardQueryInput = {}): Pro
         officeCashMovementsResult,
         adminCashMovementsResult,
         tenantRentMonthsResult,
+        tenantLegacyArrearsResult,
+        tenantAllocationsResult,
         rolloverRunsResult,
         securityDepositsResult,
     ] = await Promise.all([
@@ -180,7 +183,9 @@ export async function getDashboardLiveData(input: DashboardQueryInput = {}): Pro
         fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("bank_deposits").select("office_id,amount").eq("company_id", companyId).gte("deposit_date", startOfMonth).lte("deposit_date", endOfPeriod), shouldScopeOfficeQueries, officeScopeIds)),
         fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("office_cash_movements").select("office_id,amount,movement_type,source_type").eq("company_id", companyId).gte("movement_date", startOfMonth).lte("movement_date", endOfPeriod), shouldScopeOfficeQueries, officeScopeIds)),
         fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("admin_cash_movements").select("office_id,amount,movement_type,source").eq("company_id", companyId).gte("movement_date", startOfMonth).lte("movement_date", endOfPeriod), shouldScopeOfficeQueries, officeScopeIds)),
-        fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("tenant_rent_months").select("office_id,rent_month").eq("company_id", companyId).eq("rent_month", monthStart()), shouldScopeOfficeQueries, officeScopeIds)),
+        fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("tenant_rent_months").select("tenant_id,office_id,rent_month,due_date,coverage_start,coverage_end,rent_amount,amount_paid,outstanding_amount,status,created_at,source").eq("company_id", companyId), shouldScopeOfficeQueries, officeScopeIds)),
+        fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("tenant_pre_system_arrears_periods").select("tenant_id,office_id,allocation_month,legacy_arrears_amount,payments_applied,remaining_amount,status").eq("company_id", companyId), shouldScopeOfficeQueries, officeScopeIds)),
+        fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("tenant_rent_allocations").select("tenant_id,office_id,payment_id,allocation_month,allocation_type,amount_allocated,consumed_by_balance_reconciliation,allocation_source,is_historical_credit,coverage_start,coverage_end,coverage_index").eq("company_id", companyId), shouldScopeOfficeQueries, officeScopeIds)),
         fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("monthly_rollover_runs").select("office_id,rent_month,completed_at,created_at,status,failed_records").eq("company_id", companyId), shouldScopeOfficeQueries, officeScopeIds).order("created_at", { ascending: false }).limit(25)),
         fetchPagedRows(() => applyOfficeScope((supabase as unknown as DynamicDb).from("security_deposit_register").select(SECURITY_DEPOSIT_COLUMNS).eq("company_id", companyId), shouldScopeOfficeQueries, officeScopeIds)),
     ]);
@@ -208,6 +213,8 @@ export async function getDashboardLiveData(input: DashboardQueryInput = {}): Pro
         ["office cash movements", officeCashMovementsResult],
         ["admin cash movements", adminCashMovementsResult],
         ["tenant rent months", tenantRentMonthsResult],
+        ["tenant legacy arrears", tenantLegacyArrearsResult],
+        ["tenant rent allocations", tenantAllocationsResult],
         ["monthly rollover runs", rolloverRunsResult],
         ["security deposits", securityDepositsResult],
     ] as const) {
@@ -248,6 +255,8 @@ export async function getDashboardLiveData(input: DashboardQueryInput = {}): Pro
     const officeCashMovements = filterByOffice((officeCashMovementsResult.data ?? []) as LooseRow[], officeIds);
     const adminCashMovements = filterByOffice((adminCashMovementsResult.data ?? []) as LooseRow[], officeIds);
     const tenantRentMonths = filterByOffice((tenantRentMonthsResult.data ?? []) as LooseRow[], officeIds);
+    const tenantLegacyArrears = filterByOffice((tenantLegacyArrearsResult.data ?? []) as LooseRow[], officeIds);
+    const tenantAllocations = filterByOffice((tenantAllocationsResult.data ?? []) as LooseRow[], officeIds);
     const rolloverRuns = filterRolloverRuns((rolloverRunsResult.data ?? []) as LooseRow[], officeIds, context.canAccessAllOffices || context.isCompanyAdmin);
     const securityDeposits = filterNullableOffice((securityDepositsResult.data ?? []) as LooseRow[], officeIds);
 
@@ -295,7 +304,7 @@ export async function getDashboardLiveData(input: DashboardQueryInput = {}): Pro
         actions: buildActions(promises, expenses, league),
         rentCalendar: buildRentCalendar({
             canRunRollover: context.isCompanyAdmin && !context.isOfficeMode,
-            rentMonths: tenantRentMonths,
+            rentMonths: tenantRentMonths.filter((row) => String(row.rent_month ?? "").slice(0, 10) === monthStart()),
             runs: rolloverRuns,
             today,
         }),
@@ -313,6 +322,10 @@ export async function getDashboardLiveData(input: DashboardQueryInput = {}): Pro
             rentSponsors,
             landlordPayables,
             securityDeposits,
+            tenantAllocations,
+            tenantLegacyArrears,
+            tenantRentMonths,
+            selectedMonth: startOfMonth,
             defaultCommissionRate: parseCommissionSetting(companySettingsResult.data?.[0]?.value, 10),
         }),
         snapshots: {
@@ -357,6 +370,16 @@ function filterByOffice<T extends { office_id: string | null }>(rows: T[], offic
 
 function filterNullableOffice<T extends { office_id: string | null }>(rows: T[], officeIds: Set<string>) {
     return rows.filter((row) => row.office_id && officeIds.has(row.office_id));
+}
+
+function groupRowsByKey<T extends Record<string, unknown>>(rows: T[], key: string) {
+    const grouped = new Map<string, T[]>();
+    for (const row of rows) {
+        const value = String(row[key] ?? "");
+        if (!value) continue;
+        grouped.set(value, [...(grouped.get(value) ?? []), row]);
+    }
+    return grouped;
 }
 
 function filterRolloverRuns<T extends { office_id: string | null }>(rows: T[], officeIds: Set<string>, isAdmin: boolean) {
@@ -583,6 +606,10 @@ function buildFinanceSummary(input: {
     adminCashMovements: LooseRow[];
     rentSponsors: TenantRentSponsorRow[];
     landlordPayables: Array<{ landlord_id: string; unpaid_balance: number | string; net_payable: number | string }>;
+    tenantAllocations: LooseRow[];
+    tenantLegacyArrears: LooseRow[];
+    tenantRentMonths: LooseRow[];
+    selectedMonth: string;
     defaultCommissionRate: number;
 }): DashboardLiveData["finance"] {
     const landlordById = new Map(input.landlords.map((landlord) => [landlord.id, landlord]));
@@ -613,11 +640,25 @@ function buildFinanceSummary(input: {
         .filter((collection) => collection.payment_source !== "employer")
         .reduce((total, collection) => total + collectionAmount(collection), 0);
     const pendingLandlordPayments = Math.max(0, expectedLandlordPayable - landlordPaymentsMade);
-    const activeTenantRoomIds = new Set(input.tenants.map((tenant) => tenant.room_id).filter(Boolean));
-    const outstandingTenantBalances = input.tenants.reduce((total, tenant) => total + amount(tenant.balance), 0) +
-        input.rooms
-            .filter((room) => !activeTenantRoomIds.has(room.id))
-            .reduce((total, room) => total + amount(room.outstanding_balance), 0);
+    const roomById = new Map(input.rooms.map((room) => [room.id, room]));
+    const collectionsByTenant = groupRowsByKey(input.collections as unknown as LooseRow[], "tenant_id");
+    const rentMonthsByTenant = groupRowsByKey(input.tenantRentMonths, "tenant_id");
+    const arrearsByTenant = groupRowsByKey(input.tenantLegacyArrears, "tenant_id");
+    const allocationsByTenant = groupRowsByKey(input.tenantAllocations, "tenant_id");
+    const outstandingTenantBalances = input.tenants
+        .filter((tenant) => String(tenant.status ?? "").toLowerCase() === "active")
+        .reduce((total, tenant) => {
+            const room = tenant.room_id ? roomById.get(tenant.room_id) ?? null : null;
+            const position = calculateTenantMonthlyLedgerPosition({
+                advanceAllocations: allocationsByTenant.get(tenant.id) ?? [],
+                collections: (collectionsByTenant.get(tenant.id) ?? []) as CollectionRow[],
+                legacyArrears: arrearsByTenant.get(tenant.id) ?? [],
+                monthlyRent: amount(tenant.monthly_rent ?? room?.monthly_rent),
+                rentMonths: rentMonthsByTenant.get(tenant.id) ?? [],
+                selectedMonth: input.selectedMonth,
+            });
+            return total + position.outstanding;
+        }, 0);
     const todayCollections = sumCollections(activeCollections.filter((collection) => sameDay(collectionBusinessDate(collection), todayDate())));
     const todayExpenses = sumExpenses(approvedExpenses.filter((expense) => sameDay(expense.expense_date ?? expense.created_at, todayDate())));
     const todayLandlordPayments = activeLandlordPayments

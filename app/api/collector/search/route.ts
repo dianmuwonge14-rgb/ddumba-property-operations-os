@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/permissions";
+import { calculateTenantMonthlyLedgerPosition } from "@/lib/financial/monthly-ledger";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isCollectorContext } from "@/lib/collectors/data";
 
@@ -10,6 +11,21 @@ type Row = Record<string, unknown>;
 
 function like(value: string) {
     return `%${value.replace(/[%_]/g, "\\$&")}%`;
+}
+
+function monthStart() {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
+function groupRowsByKey(rows: Row[], key: string) {
+    const grouped = new Map<string, Row[]>();
+    for (const row of rows) {
+        const value = String(row[key] ?? "");
+        if (!value) continue;
+        grouped.set(value, [...(grouped.get(value) ?? []), row]);
+    }
+    return grouped;
 }
 
 export async function GET(request: Request) {
@@ -24,8 +40,8 @@ export async function GET(request: Request) {
     const db = createSupabaseAdminClient() as unknown as DynamicDb;
     const pattern = like(q);
     const [tenantResult, roomResult, landlordResult] = await Promise.all([
-        db.from("tenants").select("id, full_name, phone, room_id, office_id, balance").eq("company_id", context.activeCompany.id).or(`full_name.ilike.${pattern},phone.ilike.${pattern}`).limit(20),
-        db.from("rooms").select("id, room_number, tenant_id, office_id, landlord_id, outstanding_balance").eq("company_id", context.activeCompany.id).ilike("room_number", pattern).limit(20),
+        db.from("tenants").select("id, full_name, phone, room_id, office_id, monthly_rent").eq("company_id", context.activeCompany.id).or(`full_name.ilike.${pattern},phone.ilike.${pattern}`).limit(20),
+        db.from("rooms").select("id, room_number, tenant_id, office_id, landlord_id, monthly_rent").eq("company_id", context.activeCompany.id).ilike("room_number", pattern).limit(20),
         db.from("landlords").select("id, full_name").eq("company_id", context.activeCompany.id).ilike("full_name", pattern).limit(20),
     ]);
     const tenantIds = new Set<string>();
@@ -52,8 +68,8 @@ export async function GET(request: Request) {
     }
 
     const [tenants, rooms] = await Promise.all([
-        tenantIds.size ? db.from("tenants").select("id, full_name, phone, room_id, office_id, balance").in("id", [...tenantIds]) : Promise.resolve({ data: [] }),
-        roomIds.size ? db.from("rooms").select("id, room_number, tenant_id, office_id, landlord_id, outstanding_balance").in("id", [...roomIds]) : Promise.resolve({ data: [] }),
+        tenantIds.size ? db.from("tenants").select("id, full_name, phone, room_id, office_id, monthly_rent").in("id", [...tenantIds]) : Promise.resolve({ data: [] }),
+        roomIds.size ? db.from("rooms").select("id, room_number, tenant_id, office_id, landlord_id, monthly_rent").in("id", [...roomIds]) : Promise.resolve({ data: [] }),
     ]);
     const officeIds = [...new Set([...(tenants.data ?? []).map((row: Record<string, unknown>) => row.office_id), ...(rooms.data ?? []).map((row: Record<string, unknown>) => row.office_id)].filter(Boolean).map(String))];
     const landlordIds = [...new Set((rooms.data ?? []).map((row: Record<string, unknown>) => row.landlord_id).filter(Boolean).map(String))];
@@ -69,13 +85,32 @@ export async function GET(request: Request) {
     const roomById = new Map(roomRows.map((row) => [String(row.id), row]));
     const officeById = new Map(officeList.map((row) => [String(row.id), row]));
     const landlordById = new Map(landlordList.map((row) => [String(row.id), row]));
+    const selectedMonth = monthStart();
+    const [collectionRows, rentMonthRows, legacyArrearsRows, allocationRows] = await Promise.all([
+        tenantIds.size ? db.from("collections").select("*").eq("company_id", context.activeCompany.id).in("tenant_id", [...tenantIds]) : Promise.resolve({ data: [] }),
+        tenantIds.size ? db.from("tenant_rent_months").select("tenant_id,rent_month,due_date,coverage_start,coverage_end,rent_amount,amount_paid,outstanding_amount,status,created_at,source").eq("company_id", context.activeCompany.id).in("tenant_id", [...tenantIds]) : Promise.resolve({ data: [] }),
+        tenantIds.size ? db.from("tenant_pre_system_arrears_periods").select("tenant_id,allocation_month,legacy_arrears_amount,payments_applied,remaining_amount,status").eq("company_id", context.activeCompany.id).in("tenant_id", [...tenantIds]) : Promise.resolve({ data: [] }),
+        tenantIds.size ? db.from("tenant_rent_allocations").select("tenant_id,payment_id,allocation_month,allocation_type,amount_allocated,consumed_by_balance_reconciliation,allocation_source,is_historical_credit,coverage_start,coverage_end,coverage_index").eq("company_id", context.activeCompany.id).in("tenant_id", [...tenantIds]) : Promise.resolve({ data: [] }),
+    ]);
+    const collectionsByTenant = groupRowsByKey((collectionRows.data ?? []) as Row[], "tenant_id");
+    const rentMonthsByTenant = groupRowsByKey((rentMonthRows.data ?? []) as Row[], "tenant_id");
+    const arrearsByTenant = groupRowsByKey((legacyArrearsRows.data ?? []) as Row[], "tenant_id");
+    const allocationsByTenant = groupRowsByKey((allocationRows.data ?? []) as Row[], "tenant_id");
 
     const results = [...tenantById.values()].map((tenant) => {
         const room = tenant.room_id ? roomById.get(String(tenant.room_id)) ?? null : null;
         const office = officeById.get(String(tenant.office_id ?? room?.office_id ?? ""));
         const landlord = room?.landlord_id ? landlordById.get(String(room.landlord_id)) : null;
+        const position = calculateTenantMonthlyLedgerPosition({
+            advanceAllocations: allocationsByTenant.get(String(tenant.id)) ?? [],
+            collections: collectionsByTenant.get(String(tenant.id)) ?? [],
+            legacyArrears: arrearsByTenant.get(String(tenant.id)) ?? [],
+            monthlyRent: Number(tenant.monthly_rent ?? room?.monthly_rent ?? 0),
+            rentMonths: rentMonthsByTenant.get(String(tenant.id)) ?? [],
+            selectedMonth,
+        });
         return {
-            balance: Number(tenant.balance ?? room?.outstanding_balance ?? 0),
+            balance: position.outstanding,
             landlordName: String(landlord?.full_name ?? "No landlord"),
             officeId: String(tenant.office_id ?? room?.office_id ?? ""),
             officeName: String(office?.office_name ?? office?.name ?? "Office"),

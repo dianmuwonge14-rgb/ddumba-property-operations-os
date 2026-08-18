@@ -1,8 +1,8 @@
 import { requireAuth } from "@/lib/auth/permissions";
 import { getScopedSupabase } from "@/lib/auth/query";
 import { collectionAmount, uniqueFinanciallyEffectiveCollections } from "@/lib/collections/validity";
+import { calculateTenantMonthlyLedgerPosition } from "@/lib/financial/monthly-ledger";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { displayTenantNetBalance } from "@/lib/tenants/balance-reconciliation";
 import type { Database } from "@/types/database.types";
 import type { DefaulterAssistant, DefaulterItem, DefaultersKpis, DefaultersPageData } from "./types";
 
@@ -101,19 +101,6 @@ function daysBetween(start: string, end = new Date()) {
     return Math.max(0, Math.floor((endDate.getTime() - startDate.getTime()) / 86_400_000));
 }
 
-function liveOutstanding(tenant: TenantRow, room: RoomRow | null | undefined) {
-    const row = tenant as TenantRow & { advance_rent_balance?: number | string | null; outstanding_balance?: number | string | null };
-    const rawOutstanding = row.balance != null
-        ? amount(row.balance)
-        : row.outstanding_balance != null
-            ? amount(row.outstanding_balance)
-            : amount(room?.outstanding_balance);
-    return displayTenantNetBalance({
-        advanceBalance: amount(row.advance_rent_balance),
-        outstandingBalance: rawOutstanding,
-    }).outstandingBalance;
-}
-
 function estimateUnpaidPeriods(outstandingBalance: number, monthlyRent: number) {
     if (outstandingBalance <= 0) return 0;
     if (monthlyRent <= 0) return 1;
@@ -202,6 +189,17 @@ async function safeRows(query: Promise<{ data: unknown[] | null; error: { messag
     return result.data ?? [];
 }
 
+async function safeRowsInChunks(buildQuery: (ids: string[]) => Promise<{ data: unknown[] | null; error: { message: string } | null }>, ids: string[]) {
+    const rows: unknown[] = [];
+    for (let index = 0; index < ids.length; index += 150) {
+        const result = await buildQuery(ids.slice(index, index + 150));
+        if (result.error && /does not exist|schema cache|Could not find/i.test(result.error.message ?? "")) return [];
+        if (result.error) throw new Error(result.error.message);
+        rows.push(...(result.data ?? []));
+    }
+    return rows;
+}
+
 type QueryResult<T> = PromiseLike<{ data: T[] | null; error: { message: string } | null }>;
 
 async function pagedRows<T>(buildQuery: (from: number, to: number) => QueryResult<T>, pageSize = 1000) {
@@ -265,20 +263,7 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
         return query;
     }
 
-    let allocationQuery = db
-        .from("tenant_rent_allocations")
-        .select("tenant_id, allocation_month, allocation_type, amount_allocated")
-        .eq("company_id", companyId)
-        .eq("allocation_month", firstOfCurrentMonth(now));
-    if (!isAdmin && isCollector) {
-        allocationQuery = allocationQuery.in("office_id", collectorScopedOfficeIds);
-    } else if (!isAdmin && activeOfficeId) {
-        allocationQuery = allocationQuery.eq("office_id", activeOfficeId);
-    } else if (isAdmin && selectedOfficeId) {
-        allocationQuery = allocationQuery.eq("office_id", selectedOfficeId);
-    }
-
-    const [tenants, rooms, leases, offices, properties, landlords, collections, promises, actions, assignments, users, debtRows, deductionRows, allocationRows] = await Promise.all([
+    const [tenants, rooms, leases, offices, properties, landlords, collections, promises, actions, assignments, users, debtRows, deductionRows] = await Promise.all([
         pagedRows<TenantRow>((from, to) => scopeOffice(readSupabase.from("tenants").select("*").eq("company_id", companyId).order("full_name", { ascending: true, nullsFirst: false })).range(from, to)),
         pagedRows<RoomRow>((from, to) => scopeOffice(readSupabase.from("rooms").select("*").eq("company_id", companyId)).range(from, to)),
         pagedRows<LeaseRow>((from, to) => scopeOffice(readSupabase.from("leases").select("*").eq("company_id", companyId).eq("status", "active")).range(from, to)),
@@ -292,17 +277,46 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
         pagedRows<Pick<UserRow, "id" | "full_name" | "account_type" | "default_office_id">>((from, to) => readSupabase.from("users").select("id, full_name, account_type, default_office_id").eq("company_id", companyId).range(from, to)),
         safePagedRows<VacatedTenantDebtRow>((from, to) => scopeOffice(db.from("vacated_tenant_debts").select("*").eq("company_id", companyId).gt("remaining_amount", 0)).range(from, to)),
         safePagedRows<LandlordDebtDeductionRow>((from, to) => scopeOffice(db.from("landlord_debt_deductions").select("*").eq("company_id", companyId)).range(from, to)),
-        safeRows(allocationQuery),
     ]);
+    const tenantIdsForLedger = tenants.map((tenant) => tenant.id).filter(Boolean);
+    const [allocationRows, rentMonthRows, legacyArrearsRows] = tenantIdsForLedger.length
+        ? await Promise.all([
+            safeRowsInChunks((ids) => db
+                .from("tenant_rent_allocations")
+                .select("tenant_id, payment_id, allocation_month, allocation_type, amount_allocated, consumed_by_balance_reconciliation, allocation_source, is_historical_credit, coverage_start, coverage_end, coverage_index")
+                .eq("company_id", companyId)
+                .in("tenant_id", ids), tenantIdsForLedger),
+            safeRowsInChunks((ids) => db
+                .from("tenant_rent_months")
+                .select("tenant_id, rent_month, due_date, coverage_start, coverage_end, rent_amount, amount_paid, outstanding_amount, status, created_at, source")
+                .eq("company_id", companyId)
+                .in("tenant_id", ids), tenantIdsForLedger),
+            safeRowsInChunks((ids) => db
+                .from("tenant_pre_system_arrears_periods")
+                .select("tenant_id, allocation_month, legacy_arrears_amount, payments_applied, remaining_amount, status")
+                .eq("company_id", companyId)
+                .in("tenant_id", ids), tenantIdsForLedger),
+        ])
+        : [[], [], []];
     const vacatedDebts = debtRows;
     const deductions = deductionRows;
-    const currentAllocationByTenant = new Map<string, number>();
+    const allocationRowsByTenant = new Map<string, Array<Record<string, unknown>>>();
     for (const allocation of allocationRows as Array<Record<string, unknown>>) {
         const tenantId = String(allocation.tenant_id ?? "");
         if (!tenantId) continue;
-        if (String(allocation.allocation_type) === "current_month") {
-            currentAllocationByTenant.set(tenantId, (currentAllocationByTenant.get(tenantId) ?? 0) + amount(allocation.amount_allocated));
-        }
+        allocationRowsByTenant.set(tenantId, [...(allocationRowsByTenant.get(tenantId) ?? []), allocation]);
+    }
+    const rentMonthRowsByTenant = new Map<string, Array<Record<string, unknown>>>();
+    for (const rentMonth of rentMonthRows as Array<Record<string, unknown>>) {
+        const tenantId = String(rentMonth.tenant_id ?? "");
+        if (!tenantId) continue;
+        rentMonthRowsByTenant.set(tenantId, [...(rentMonthRowsByTenant.get(tenantId) ?? []), rentMonth]);
+    }
+    const legacyArrearsRowsByTenant = new Map<string, Array<Record<string, unknown>>>();
+    for (const legacyRow of legacyArrearsRows as Array<Record<string, unknown>>) {
+        const tenantId = String(legacyRow.tenant_id ?? "");
+        if (!tenantId) continue;
+        legacyArrearsRowsByTenant.set(tenantId, [...(legacyArrearsRowsByTenant.get(tenantId) ?? []), legacyRow]);
     }
 
     const roomById = new Map(rooms.map((room) => [room.id, room]));
@@ -338,15 +352,13 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
     }
 
     const validCollections = uniqueFinanciallyEffectiveCollections(collections);
+    const collectionsByTenant = new Map<string, CollectionRow[]>();
     const latestPaymentByTenant = new Map<string, CollectionRow>();
-    const currentMonthPaidByTenant = new Map<string, number>();
     const currentMonthStart = firstOfCurrentMonth(now);
     for (const collection of validCollections) {
         if (!collection.tenant_id) continue;
+        collectionsByTenant.set(collection.tenant_id, [...(collectionsByTenant.get(collection.tenant_id) ?? []), collection]);
         latestPaymentByTenant.set(collection.tenant_id, latestCollection(latestPaymentByTenant.get(collection.tenant_id), collection));
-        if ((collection.payment_date ?? "") >= currentMonthStart && (collection.payment_date ?? "") <= dateOnly(now)) {
-            currentMonthPaidByTenant.set(collection.tenant_id, (currentMonthPaidByTenant.get(collection.tenant_id) ?? 0) + collectionAmount(collection));
-        }
     }
 
     const openPromiseCountByTenant = new Map<string, number>();
@@ -383,6 +395,15 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
         if (collection.collector_id) collectorByTenant.set(collection.tenant_id, userById.get(collection.collector_id)?.full_name ?? collection.entered_by_name ?? "Collector recorded payment");
     }
 
+    const tenantPosition = (tenant: TenantRow, room: RoomRow | null | undefined, lease: LeaseRow | null | undefined) => calculateTenantMonthlyLedgerPosition({
+        advanceAllocations: allocationRowsByTenant.get(tenant.id) ?? [],
+        collections: collectionsByTenant.get(tenant.id) ?? [],
+        legacyArrears: legacyArrearsRowsByTenant.get(tenant.id) ?? [],
+        monthlyRent: amount(lease?.monthly_rent ?? tenant.monthly_rent ?? room?.monthly_rent),
+        rentMonths: rentMonthRowsByTenant.get(tenant.id) ?? [],
+        selectedMonth: currentMonthStart,
+    });
+
     const lastActionByTenant = new Map<string, CollectionActionRow>();
     for (const action of actions) {
         if (!action.tenant_id) continue;
@@ -406,9 +427,10 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
         const room = lease?.room_id ? roomById.get(lease.room_id) : null;
         if (!room || !isOccupiedRoom(room.status)) continue;
 
-        const monthlyRent = amount(lease?.monthly_rent ?? tenant.monthly_rent ?? room.monthly_rent);
-        const outstandingBalance = liveOutstanding(tenant, room);
-        const currentMonthPaid = currentAllocationByTenant.get(tenant.id) ?? Math.min(currentMonthPaidByTenant.get(tenant.id) ?? 0, monthlyRent);
+        const position = tenantPosition(tenant, room, lease);
+        const monthlyRent = position.currentMonthRent || amount(lease?.monthly_rent ?? tenant.monthly_rent ?? room.monthly_rent);
+        const outstandingBalance = position.outstanding;
+        const currentMonthPaid = position.paymentsThisMonth;
         if (outstandingBalance <= 0) continue;
 
         const billingDay = amount(lease?.billing_day ?? tenant.billing_day);
@@ -543,11 +565,11 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
 
     for (const tenant of tenants) {
         const room = tenant.room_id ? roomById.get(tenant.room_id) : null;
-        if (!isActiveTenant(tenant.status) || liveOutstanding(tenant, room) > 0) continue;
+        const lease = activeLeaseByTenant.get(tenant.id);
+        if (!isActiveTenant(tenant.status) || tenantPosition(tenant, room, lease).outstanding > 0) continue;
         const lastPayment = latestPaymentByTenant.get(tenant.id);
         const clearedDate = lastPayment?.payment_date ?? tenant.updated_at?.slice(0, 10) ?? null;
         if (clearedDate !== dateOnly(now)) continue;
-        const lease = activeLeaseByTenant.get(tenant.id);
         if (!isActiveTenancy(lease, dateOnly(now))) continue;
         const actualRoom = lease?.room_id ? roomById.get(lease.room_id) : null;
         if (!actualRoom || !isOccupiedRoom(actualRoom.status)) continue;
@@ -587,7 +609,7 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
             promiseStatus: "Cleared",
             openPromiseCount: 0,
             failedPromiseCount: 0,
-            currentMonthPaid: currentAllocationByTenant.get(tenant.id) ?? 0,
+            currentMonthPaid: tenantPosition(tenant, actualRoom, lease).paymentsThisMonth,
             isPartialPayer: false,
             collectorAssigned: collectorByTenant.get(tenant.id) ?? "Unassigned",
             riskLevel: "low",
@@ -608,7 +630,7 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
         const room = lease?.room_id ? roomById.get(lease.room_id) : null;
         const property = room?.property_id ? propertyById.get(room.property_id) : null;
         if (requestedLandlordId && (room?.landlord_id ?? property?.landlord_id ?? null) !== requestedLandlordId) return false;
-        return Boolean(room && isOccupiedRoom(room.status) && liveOutstanding(tenant, room) > 0);
+        return Boolean(room && isOccupiedRoom(room.status) && tenantPosition(tenant, room, lease).outstanding > 0);
     }).length;
     const displayedCount = defaulters.filter((item) => item.source === "active_tenant" && item.outstandingBalance > 0).length;
     const integrityAlerts = qualifyingCount === displayedCount ? [] : [`Data integrity alert: ${qualifyingCount.toLocaleString()} live positive-balance accounts qualify, but ${displayedCount.toLocaleString()} are displayed. Refresh or run defaulter reconciliation before collections.`];

@@ -1,5 +1,6 @@
 import { requirePermission } from "@/lib/auth/permissions";
 import { getScopedSupabase } from "@/lib/auth/query";
+import { calculateTenantMonthlyLedgerPosition } from "@/lib/financial/monthly-ledger";
 import type {
     LandlordRow,
     LeaseRow,
@@ -14,6 +15,21 @@ import type {
 
 function dateOnly(date: Date) {
     return date.toISOString().slice(0, 10);
+}
+
+function monthStart() {
+    const date = new Date();
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
+function groupRowsByKey<T extends Record<string, unknown>>(rows: T[], key: string) {
+    const grouped = new Map<string, T[]>();
+    for (const row of rows) {
+        const value = String(row[key] ?? "");
+        if (!value) continue;
+        grouped.set(value, [...(grouped.get(value) ?? []), row]);
+    }
+    return grouped;
 }
 
 function addDays(date: Date, days: number) {
@@ -211,6 +227,7 @@ export async function getPropertyDetailInActiveOffice(propertyId: string): Promi
     const roomIds = rooms.map((room) => room.id);
     const landlordIds = property.landlord_id ? [property.landlord_id] : [];
 
+    const db = supabase as unknown as { from: (table: string) => any };
     const [leasesResult, landlordsResult] = await Promise.all([
         roomIds.length
             ? supabase
@@ -235,22 +252,58 @@ export async function getPropertyDetailInActiveOffice(propertyId: string): Promi
 
     const leases = (leasesResult.data ?? []) as LeaseRow[];
     const tenantIds = [...new Set(leases.map((lease) => lease.tenant_id).filter(Boolean))];
-    const tenantsResult = tenantIds.length
-        ? await supabase
-            .from("tenants")
-            .select("*")
-            .eq("company_id", companyId)
-            .eq("office_id", officeId)
-            .in("id", tenantIds)
-        : { data: [] as TenantRow[], error: null };
+    const [tenantsResult, collectionsResult, rentMonthsResult, legacyArrearsResult, allocationsResult] = tenantIds.length
+        ? await Promise.all([
+            supabase
+                .from("tenants")
+                .select("*")
+                .eq("company_id", companyId)
+                .eq("office_id", officeId)
+                .in("id", tenantIds),
+            db.from("collections").select("*").eq("company_id", companyId).in("tenant_id", tenantIds),
+            db.from("tenant_rent_months").select("tenant_id,rent_month,due_date,coverage_start,coverage_end,rent_amount,amount_paid,outstanding_amount,status,created_at,source").eq("company_id", companyId).in("tenant_id", tenantIds),
+            db.from("tenant_pre_system_arrears_periods").select("tenant_id,allocation_month,legacy_arrears_amount,payments_applied,remaining_amount,status").eq("company_id", companyId).in("tenant_id", tenantIds),
+            db.from("tenant_rent_allocations").select("tenant_id,payment_id,allocation_month,allocation_type,amount_allocated,consumed_by_balance_reconciliation,allocation_source,is_historical_credit,coverage_start,coverage_end,coverage_index").eq("company_id", companyId).in("tenant_id", tenantIds),
+        ])
+        : [
+            { data: [] as TenantRow[], error: null },
+            { data: [] as Array<Record<string, unknown>>, error: null },
+            { data: [] as Array<Record<string, unknown>>, error: null },
+            { data: [] as Array<Record<string, unknown>>, error: null },
+            { data: [] as Array<Record<string, unknown>>, error: null },
+        ];
 
     if (tenantsResult.error) throw new Error(tenantsResult.error.message);
+    if (collectionsResult.error) throw new Error(collectionsResult.error.message);
+    if (rentMonthsResult.error) throw new Error(rentMonthsResult.error.message);
+    if (legacyArrearsResult.error) throw new Error(legacyArrearsResult.error.message);
+    if (allocationsResult.error) throw new Error(allocationsResult.error.message);
+    const roomById = new Map(rooms.map((room) => [room.id, room]));
+    const leaseByTenant = new Map(leases.map((lease) => [lease.tenant_id, lease]));
+    const collectionsByTenant = groupRowsByKey((collectionsResult.data ?? []) as Array<Record<string, unknown>>, "tenant_id");
+    const rentMonthsByTenant = groupRowsByKey((rentMonthsResult.data ?? []) as Array<Record<string, unknown>>, "tenant_id");
+    const arrearsByTenant = groupRowsByKey((legacyArrearsResult.data ?? []) as Array<Record<string, unknown>>, "tenant_id");
+    const allocationsByTenant = groupRowsByKey((allocationsResult.data ?? []) as Array<Record<string, unknown>>, "tenant_id");
+    const selectedMonth = monthStart();
+    const hydratedTenants = ((tenantsResult.data ?? []) as TenantRow[]).map((tenant) => {
+        const lease = leaseByTenant.get(tenant.id) ?? null;
+        const room = tenant.room_id ? roomById.get(tenant.room_id) ?? null : null;
+        const position = calculateTenantMonthlyLedgerPosition({
+            advanceAllocations: allocationsByTenant.get(tenant.id) ?? [],
+            collections: collectionsByTenant.get(tenant.id) ?? [],
+            legacyArrears: arrearsByTenant.get(tenant.id) ?? [],
+            monthlyRent: Number(lease?.monthly_rent ?? tenant.monthly_rent ?? room?.monthly_rent ?? 0),
+            rentMonths: rentMonthsByTenant.get(tenant.id) ?? [],
+            selectedMonth,
+        });
+        return { ...tenant, balance: position.outstanding } as TenantRow;
+    });
 
     const [item] = buildPropertyItems(
         [property],
         rooms,
         leases,
-        (tenantsResult.data ?? []) as TenantRow[],
+        hydratedTenants,
         (landlordsResult.data ?? []) as LandlordRow[],
         [],
     );

@@ -1,5 +1,6 @@
 import { getScopedSupabase } from "@/lib/auth/query";
 import { requireAuth, requirePermission } from "@/lib/auth/permissions";
+import { getTenantCollectionContext } from "@/lib/collections/data";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type {
     CollectionActionRow,
@@ -233,14 +234,19 @@ export async function searchPromiseTenants(query: string): Promise<PromiseTenant
     const landlordById = new Map((landlordRows ?? []).map((landlord) => [String(landlord.id), String(landlord.full_name ?? "Landlord")]));
     const officeById = new Map((officeRows ?? []).map((office) => [String(office.id), String(office.office_name ?? office.name ?? "Office")]));
 
-    const mappedResults = resultTenants
+    const scopedResults = resultTenants
         .filter((tenant) => {
             if (searchAllOffices) return true;
             const lease = leaseByTenant.get(tenant.id);
             const room = tenant.room_id ? roomById.get(tenant.room_id) ?? null : null;
             return (lease?.office_id ?? room?.office_id ?? tenant.office_id ?? null) === officeId;
-        })
-        .map((tenant) => ({
+        });
+    const balancesByTenant = new Map<string, number>();
+    await Promise.all(scopedResults.map(async (tenant) => {
+        const context = await getTenantCollectionContext(tenant.id);
+        balancesByTenant.set(tenant.id, context.monthlyFinancialPosition?.outstanding ?? context.outstandingBalance);
+    }));
+    const mappedResults = scopedResults.map((tenant) => ({
             id: tenant.id,
             fullName: tenant.full_name ?? "Unnamed tenant",
             phone: tenant.phone,
@@ -249,7 +255,7 @@ export async function searchPromiseTenants(query: string): Promise<PromiseTenant
             landlordName: tenant.room_id ? landlordById.get(String((roomById.get(tenant.room_id) as { landlord_id?: string | null } | undefined)?.landlord_id ?? "")) ?? null : null,
             officeName: tenant.room_id ? officeById.get(String(roomById.get(tenant.room_id)?.office_id ?? "")) ?? null : null,
             roomStatus: tenant.room_id ? roomById.get(tenant.room_id)?.status ?? null : null,
-            balance: Number(tenant.balance ?? 0),
+            balance: balancesByTenant.get(tenant.id) ?? 0,
         }));
 
     return mappedResults.length ? mappedResults : fastResults ?? [];
@@ -290,7 +296,7 @@ async function searchPromiseTenantRpc(term: string): Promise<PromiseTenantOption
         landlordName: null,
         officeName: null,
         roomStatus: row.room?.status ?? null,
-        balance: Number(row.outstanding_balance ?? row.tenant.balance ?? row.room?.outstanding_balance ?? 0),
+        balance: 0,
     }));
 }
 

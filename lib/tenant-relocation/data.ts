@@ -1,5 +1,6 @@
 import { hasPermission, requireAuth } from "@/lib/auth/permissions";
 import { getScopedSupabase } from "@/lib/auth/query";
+import { calculateTenantMonthlyLedgerPosition } from "@/lib/financial/monthly-ledger";
 import type { Database } from "@/types/database.types";
 import type {
     TenantRelocationPageData,
@@ -23,6 +24,21 @@ type UserRow = Database["public"]["Tables"]["users"]["Row"];
 function amount(value: unknown) {
     const number = Number(value ?? 0);
     return Number.isFinite(number) ? number : 0;
+}
+
+function monthStart() {
+    const date = new Date();
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
+function groupRowsByKey(rows: Array<Record<string, unknown>>, key: string) {
+    const grouped = new Map<string, Array<Record<string, unknown>>>();
+    for (const row of rows) {
+        const value = String(row[key] ?? "");
+        if (!value) continue;
+        grouped.set(value, [...(grouped.get(value) ?? []), row]);
+    }
+    return grouped;
 }
 
 function officeName(office: OfficeRow | null | undefined) {
@@ -123,6 +139,25 @@ export async function getTenantRelocationPageData(options: { admin?: boolean } =
     const landlords = (landlordsResult.data ?? []) as LandlordRow[];
     const requests = ((requestsResult.data ?? []) as Record<string, unknown>[]);
     const users = (usersResult.data ?? []) as UserRow[];
+    const tenantIds = tenants.map((tenant) => tenant.id).filter(Boolean);
+    const [collectionRows, rentMonthRows, legacyArrearsRows, allocationRows] = tenantIds.length
+        ? await Promise.all([
+            db.from("collections").select("*").eq("company_id", companyId).in("tenant_id", tenantIds),
+            db.from("tenant_rent_months").select("tenant_id,rent_month,due_date,coverage_start,coverage_end,rent_amount,amount_paid,outstanding_amount,status,created_at,source").eq("company_id", companyId).in("tenant_id", tenantIds),
+            db.from("tenant_pre_system_arrears_periods").select("tenant_id,allocation_month,legacy_arrears_amount,payments_applied,remaining_amount,status").eq("company_id", companyId).in("tenant_id", tenantIds),
+            db.from("tenant_rent_allocations").select("tenant_id,payment_id,allocation_month,allocation_type,amount_allocated,consumed_by_balance_reconciliation,allocation_source,is_historical_credit,coverage_start,coverage_end,coverage_index").eq("company_id", companyId).in("tenant_id", tenantIds),
+        ])
+        : [
+            { data: [] },
+            { data: [] },
+            { data: [] },
+            { data: [] },
+        ];
+    const collectionsByTenant = groupRowsByKey((collectionRows.data ?? []) as Array<Record<string, unknown>>, "tenant_id");
+    const rentMonthsByTenant = groupRowsByKey((rentMonthRows.data ?? []) as Array<Record<string, unknown>>, "tenant_id");
+    const arrearsByTenant = groupRowsByKey((legacyArrearsRows.data ?? []) as Array<Record<string, unknown>>, "tenant_id");
+    const allocationsByTenant = groupRowsByKey((allocationRows.data ?? []) as Array<Record<string, unknown>>, "tenant_id");
+    const selectedMonth = monthStart();
 
     const roomById = new Map(rooms.map((room) => [room.id, room]));
     const officeById = new Map(offices.map((office) => [office.id, office]));
@@ -152,12 +187,20 @@ export async function getTenantRelocationPageData(options: { admin?: boolean } =
                 ? officeById.get((lease?.office_id ?? room.office_id ?? tenant.office_id) as string) ?? null
                 : null;
             const rent = amount(lease?.monthly_rent ?? room.monthly_rent ?? tenant.monthly_rent);
+            const position = calculateTenantMonthlyLedgerPosition({
+                advanceAllocations: allocationsByTenant.get(tenant.id) ?? [],
+                collections: collectionsByTenant.get(tenant.id) ?? [],
+                legacyArrears: arrearsByTenant.get(tenant.id) ?? [],
+                monthlyRent: rent,
+                rentMonths: rentMonthsByTenant.get(tenant.id) ?? [],
+                selectedMonth,
+            });
             return {
                 tenantId: tenant.id,
                 tenantName: tenant.full_name ?? "Unnamed tenant",
                 phone: tenant.phone,
                 nationalId: tenant.national_id,
-                balance: amount(tenant.balance),
+                balance: position.outstanding,
                 status: tenant.status,
                 currentRoomId: room.id,
                 currentRoomNumber: room.room_number ?? "Unnumbered",

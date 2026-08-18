@@ -1,4 +1,5 @@
 import "server-only";
+import { calculateTenantMonthlyLedgerPosition } from "@/lib/financial/monthly-ledger";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { addMonthsToBillingDate, clampBillingDay, dateForBillingDay, previousDay } from "@/lib/tenants/billing-cycle";
 
@@ -485,6 +486,25 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
         .eq("payment_id", payment.id);
     if (allocationRows.error && !isMissingSchemaError(allocationRows.error)) throw new Error(allocationRows.error.message);
     const allocations = (allocationRows.data ?? []) as LooseRow[];
+    const tenantId = text(payment.tenant_id);
+    const selectedMonth = `${String(payment.payment_date ?? payment.paid_at ?? new Date().toISOString()).slice(0, 7)}-01`;
+    const [tenantCollectionsResult, tenantRentMonthsResult, tenantLegacyArrearsResult, tenantAllocationsResult] = tenantId
+        ? await Promise.all([
+            db.from("collections").select("*").eq("company_id", companyId).eq("tenant_id", tenantId),
+            db.from("tenant_rent_months").select("tenant_id, rent_month, due_date, coverage_start, coverage_end, rent_amount, amount_paid, outstanding_amount, status, created_at, source").eq("company_id", companyId).eq("tenant_id", tenantId),
+            db.from("tenant_pre_system_arrears_periods").select("tenant_id, allocation_month, legacy_arrears_amount, payments_applied, remaining_amount, status").eq("company_id", companyId).eq("tenant_id", tenantId),
+            db.from("tenant_rent_allocations").select("tenant_id, payment_id, allocation_month, allocation_type, amount_allocated, consumed_by_balance_reconciliation, allocation_source, is_historical_credit, coverage_start, coverage_end, coverage_index").eq("company_id", companyId).eq("tenant_id", tenantId),
+        ])
+        : [
+            { data: [], error: null },
+            { data: [], error: null },
+            { data: [], error: null },
+            { data: [], error: null },
+        ];
+    if (tenantCollectionsResult.error) throw new Error(tenantCollectionsResult.error.message);
+    if (tenantRentMonthsResult.error && !isMissingSchemaError(tenantRentMonthsResult.error)) throw new Error(tenantRentMonthsResult.error.message);
+    if (tenantLegacyArrearsResult.error && !isMissingSchemaError(tenantLegacyArrearsResult.error)) throw new Error(tenantLegacyArrearsResult.error.message);
+    if (tenantAllocationsResult.error && !isMissingSchemaError(tenantAllocationsResult.error)) throw new Error(tenantAllocationsResult.error.message);
     const billingDay = clampBillingDay(Number(lease?.billing_day ?? tenant?.billing_day ?? 1));
     const coveragePeriods = allocations.map((row) => ({
         amount: amount(row.amount_allocated),
@@ -496,9 +516,16 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
     const coveragePeriod = firstCoverage && lastCoverage
         ? firstCoverage === lastCoverage ? firstCoverage : `${firstCoverage}; ${lastCoverage}`
         : null;
-    const advanceBalance = allocations
-        .filter((row) => String(row.allocation_type ?? "") === "advance_month")
-        .reduce((total, row) => total + Math.max(0, amount(row.amount_allocated) - amount(row.consumed_by_balance_reconciliation)), 0);
+    const monthlyRent = amount(room?.monthly_rent ?? tenant?.monthly_rent);
+    const monthlyPosition = calculateTenantMonthlyLedgerPosition({
+        advanceAllocations: (tenantAllocationsResult.data ?? []) as LooseRow[],
+        collections: (tenantCollectionsResult.data ?? []) as LooseRow[],
+        legacyArrears: (tenantLegacyArrearsResult.data ?? []) as LooseRow[],
+        monthlyRent,
+        rentMonths: (tenantRentMonthsResult.data ?? []) as LooseRow[],
+        selectedMonth,
+    });
+    const advanceBalance = monthlyPosition.advance;
     const amountAppliedToOutstanding = amount(payment.used_to_clear_outstanding) || allocations
         .filter((row) => /arrears|outstanding|debt/i.test(String(row.allocation_type ?? "")))
         .reduce((total, row) => total + amount(row.amount_allocated), 0);
@@ -533,7 +560,7 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
         coveragePeriod,
         coveragePeriods,
         landlordName: text(landlord?.full_name),
-        monthlyRent: amount(room?.monthly_rent ?? tenant?.monthly_rent),
+        monthlyRent: monthlyPosition.currentMonthRent || monthlyRent,
         notes: paymentNotes,
         officeName: text(office?.office_name) ?? text(office?.name),
         propertyName: text(property?.property_name) ?? text(property?.name) ?? text(property?.location),
@@ -548,14 +575,14 @@ async function buildTenantReceiptSnapshot(db: Db, payment: LooseRow, receiptNumb
         paymentMethod: text(payment.payment_method),
         preparedByName: issuer.name,
         preparedByRole: issuer.role,
-        previousOutstandingBalance: amount(payment.balance_before_payment ?? payment.expected_amount),
+        previousOutstandingBalance: monthlyPosition.arrears,
         receiptNumber,
         landlordId: text(landlord?.id ?? landlordId),
         officeId: text(receiptOfficeId),
         paymentId: text(payment.id),
         recordedByName: issuer.name ?? text(payment.entered_by_name) ?? (accountTypeAllowsReceiptIssuer(recordedBy.data?.account_type) ? text(recordedBy.data?.full_name) : null),
         referenceNumber: text(payment.reference_number ?? payment.cheque_reference ?? payment.collection_number),
-        remainingOutstandingBalance: amount(payment.balance_after_payment ?? payment.balance),
+        remainingOutstandingBalance: monthlyPosition.outstanding,
         roomId: text(room?.id),
         roomNumber: text(room?.room_number),
         status: text(payment.status) ?? "paid",

@@ -97,7 +97,7 @@ export default function PropertyDetails({ isAdmin = false, onSaved, property, se
                                         />
                                     </td>
                                     <td className="max-w-[220px] truncate px-3 py-2 font-semibold text-slate-700">{room.tenant?.full_name ?? "Vacant"}</td>
-                                    <td className="px-3 py-2 text-right font-bold text-slate-700">{money(Number(room.tenant?.balance ?? room.outstanding_balance ?? 0))}</td>
+                                    <td className="px-3 py-2 text-right font-bold text-slate-700">{money(Number(room.tenant?.balance ?? 0))}</td>
                                     <td className="px-3 py-2">
                                         <button type="button" className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-black uppercase text-slate-700 hover:border-blue-400 hover:text-blue-700">
                                             Select
@@ -117,7 +117,7 @@ export default function PropertyDetails({ isAdmin = false, onSaved, property, se
                     roomNumber: selectedRoom.room_number,
                     status: selectedRoom.status ?? (selectedRoom.activeLease ? "occupied" : "vacant"),
                     monthlyRent: Number(selectedRoom.activeLease?.monthly_rent ?? selectedRoom.monthly_rent ?? 0),
-                    outstandingBalance: Number(selectedRoom.tenant?.balance ?? selectedRoom.outstanding_balance ?? 0),
+                    outstandingBalance: Number(selectedRoom.tenant?.balance ?? 0),
                     landlordName: property.landlord?.full_name ?? null,
                     propertyName: property.property_name ?? property.name ?? property.village ?? null,
                     officeName: null,

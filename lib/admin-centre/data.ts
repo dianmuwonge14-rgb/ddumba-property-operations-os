@@ -1,6 +1,7 @@
 import { requirePermission } from "@/lib/auth/permissions";
 import { getScopedSupabase } from "@/lib/auth/query";
 import { collectionAmount, isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
+import { calculateTenantMonthlyLedgerPosition } from "@/lib/financial/monthly-ledger";
 import { cache } from "react";
 import { getProductionReadinessStatus } from "@/lib/production-readiness/data";
 import type {
@@ -134,6 +135,9 @@ export const getAdminCentreData = cache(async function getAdminCentreData(): Pro
         employeeFinesResult,
         tenantsResult,
         leasesResult,
+        tenantRentMonthsResult,
+        tenantLegacyArrearsResult,
+        tenantAllocationsResult,
         vacatedDebtsResult,
         rentChangeRequestsResult,
     ] = await Promise.all([
@@ -200,6 +204,18 @@ export const getAdminCentreData = cache(async function getAdminCentreData(): Pro
         supabase.from("tenants").select("*").eq("company_id", companyId),
         supabase.from("leases").select("*").eq("company_id", companyId).eq("status", "active"),
         dynamicSupabase
+            .from("tenant_rent_months")
+            .select("tenant_id,office_id,rent_month,due_date,coverage_start,coverage_end,rent_amount,amount_paid,outstanding_amount,status,created_at,source")
+            .eq("company_id", companyId),
+        dynamicSupabase
+            .from("tenant_pre_system_arrears_periods")
+            .select("tenant_id,office_id,allocation_month,legacy_arrears_amount,payments_applied,remaining_amount,status")
+            .eq("company_id", companyId),
+        dynamicSupabase
+            .from("tenant_rent_allocations")
+            .select("tenant_id,office_id,payment_id,allocation_month,allocation_type,amount_allocated,consumed_by_balance_reconciliation,allocation_source,is_historical_credit,coverage_start,coverage_end,coverage_index")
+            .eq("company_id", companyId),
+        dynamicSupabase
             .from("vacated_tenant_debts")
             .select("*")
             .eq("company_id", companyId),
@@ -239,6 +255,9 @@ export const getAdminCentreData = cache(async function getAdminCentreData(): Pro
         landlordsResult,
         tenantsResult,
         leasesResult,
+        tenantRentMonthsResult,
+        tenantLegacyArrearsResult,
+        tenantAllocationsResult,
         rentChangeRequestsResult,
     ]) {
         if (result.error) throw new Error(result.error.message);
@@ -308,6 +327,21 @@ export const getAdminCentreData = cache(async function getAdminCentreData(): Pro
     );
     const tenants = filterByNullableOffice(tenantsResult.data ?? [], officeIds, context.canAccessAllOffices);
     const leases = filterByOffice(leasesResult.data ?? [], officeIds, context.canAccessAllOffices);
+    const tenantRentMonths = filterByNullableOffice(
+        (tenantRentMonthsResult.data ?? []) as Array<Record<string, unknown> & { office_id: string | null }>,
+        officeIds,
+        context.canAccessAllOffices,
+    );
+    const tenantLegacyArrears = filterByNullableOffice(
+        (tenantLegacyArrearsResult.data ?? []) as Array<Record<string, unknown> & { office_id: string | null }>,
+        officeIds,
+        context.canAccessAllOffices,
+    );
+    const tenantAllocations = filterByNullableOffice(
+        (tenantAllocationsResult.data ?? []) as Array<Record<string, unknown> & { office_id: string | null }>,
+        officeIds,
+        context.canAccessAllOffices,
+    );
     const vacatedDebts = filterByNullableOffice(
         (vacatedDebtsResult.error ? [] : vacatedDebtsResult.data ?? []) as Array<Record<string, unknown> & { office_id: string | null }>,
         officeIds,
@@ -348,7 +382,7 @@ export const getAdminCentreData = cache(async function getAdminCentreData(): Pro
         platformConfiguration,
         governance,
         riskHeatMap: buildRiskHeatMap({ offices: officeGovernance, employees: employeeAdmin, devices: deviceManagement, signals: securitySignals }),
-        rentRoll: buildRentRoll({ offices, rooms, collections, tenants, leases }),
+        rentRoll: buildRentRoll({ offices, rooms, collections, tenants, leases, tenantRentMonths, tenantLegacyArrears, tenantAllocations }),
         landlordAssignmentAudit: buildLandlordAssignmentAudit({ offices, rooms, properties, landlords, tenants, leases, auditLogs }),
         landlordRecoveryReminders: buildLandlordRecoveryReminders({ offices, rooms, landlords, leases, vacatedDebts }),
         monthlyFinance: buildMonthlyFinance({
@@ -365,6 +399,9 @@ export const getAdminCentreData = cache(async function getAdminCentreData(): Pro
             employeeSalaryPayments,
             employeeFines,
             tenants,
+            tenantAllocations,
+            tenantLegacyArrears,
+            tenantRentMonths,
             vacatedDebts,
             companySettings,
             payrollModuleStatus: employeePayrollModuleWarnings.length
@@ -655,19 +692,44 @@ function buildRentRoll(input: {
     collections: CollectionRow[];
     tenants: TenantRow[];
     leases: LeaseRow[];
+    tenantRentMonths: Array<Record<string, unknown>>;
+    tenantLegacyArrears: Array<Record<string, unknown>>;
+    tenantAllocations: Array<Record<string, unknown>>;
 }): RentRollSummary {
     const activeRoomIds = new Set([
         ...input.leases.map((lease) => lease.room_id),
         ...input.tenants.map((tenant) => tenant.room_id).filter((id): id is string => Boolean(id)),
     ]);
+    const leaseByTenant = new Map(input.leases.map((lease) => [lease.tenant_id, lease]));
+    const roomById = new Map(input.rooms.map((room) => [room.id, room]));
+    const collectionsByTenant = groupRowsByKey(input.collections as unknown as Array<Record<string, unknown>>, "tenant_id");
+    const rentMonthsByTenant = groupRowsByKey(input.tenantRentMonths, "tenant_id");
+    const arrearsByTenant = groupRowsByKey(input.tenantLegacyArrears, "tenant_id");
+    const allocationsByTenant = groupRowsByKey(input.tenantAllocations, "tenant_id");
     const offices = input.offices.map((office): RentRollOfficeItem => {
         const rooms = input.rooms.filter((room) => room.office_id === office.id);
         const roomIds = new Set(rooms.map((room) => room.id));
+        const tenants = input.tenants.filter((tenant) => {
+            const room = tenant.room_id ? roomById.get(tenant.room_id) ?? null : null;
+            return tenant.office_id === office.id || room?.office_id === office.id;
+        });
         const collectedThisMonth = input.collections
             .filter((collection) => collection.office_id === office.id && (!collection.room_id || roomIds.has(collection.room_id)) && isFinanciallyEffectiveCollection(collection))
             .reduce((total, collection) => total + collectionAmount(collection), 0);
         const expectedMonthlyRent = rooms.reduce((total, room) => total + amount(room.monthly_rent), 0);
-        const outstandingBalance = rooms.reduce((total, room) => total + amount(room.outstanding_balance), 0);
+        const outstandingBalance = tenants.reduce((total, tenant) => {
+            const lease = leaseByTenant.get(tenant.id) ?? null;
+            const room = tenant.room_id ? roomById.get(tenant.room_id) ?? null : null;
+            const position = calculateTenantMonthlyLedgerPosition({
+                advanceAllocations: allocationsByTenant.get(tenant.id) ?? [],
+                collections: (collectionsByTenant.get(tenant.id) ?? []) as CollectionRow[],
+                legacyArrears: arrearsByTenant.get(tenant.id) ?? [],
+                monthlyRent: amount(lease?.monthly_rent ?? tenant.monthly_rent ?? room?.monthly_rent),
+                rentMonths: rentMonthsByTenant.get(tenant.id) ?? [],
+                selectedMonth: monthStartDate(),
+            });
+            return total + position.outstanding;
+        }, 0);
         const occupiedRooms = rooms.filter((room) => activeRoomIds.has(room.id) || ["occupied", "active"].includes((room.status ?? "").toLowerCase())).length;
         return {
             officeId: office.id,
@@ -722,6 +784,9 @@ function buildMonthlyFinance(input: {
     employeeSalaryPayments: Array<Record<string, unknown>>;
     employeeFines: Array<Record<string, unknown>>;
     tenants: TenantRow[];
+    tenantAllocations: Array<Record<string, unknown>>;
+    tenantLegacyArrears: Array<Record<string, unknown>>;
+    tenantRentMonths: Array<Record<string, unknown>>;
     vacatedDebts: Array<Record<string, unknown>>;
     companySettings: CompanySettingRow[];
     payrollModuleStatus: string | null;
@@ -742,6 +807,22 @@ function buildMonthlyFinance(input: {
         return Boolean(expense.approved_at) || status === "approved" || status === "paid";
     };
     const approvedExpenses = input.expenses.filter(isApprovedExpense);
+    const roomById = new Map(input.rooms.map((room) => [room.id, room]));
+    const collectionsByTenant = groupRowsByKey(input.collections as unknown as Array<Record<string, unknown>>, "tenant_id");
+    const rentMonthsByTenant = groupRowsByKey(input.tenantRentMonths, "tenant_id");
+    const arrearsByTenant = groupRowsByKey(input.tenantLegacyArrears, "tenant_id");
+    const allocationsByTenant = groupRowsByKey(input.tenantAllocations, "tenant_id");
+    const tenantOutstanding = (tenant: TenantRow) => {
+        const room = tenant.room_id ? roomById.get(tenant.room_id) ?? null : null;
+        return calculateTenantMonthlyLedgerPosition({
+            advanceAllocations: allocationsByTenant.get(tenant.id) ?? [],
+            collections: (collectionsByTenant.get(tenant.id) ?? []) as CollectionRow[],
+            legacyArrears: arrearsByTenant.get(tenant.id) ?? [],
+            monthlyRent: amount(tenant.monthly_rent ?? room?.monthly_rent),
+            rentMonths: rentMonthsByTenant.get(tenant.id) ?? [],
+            selectedMonth: monthStartDate(),
+        }).outstanding;
+    };
     const advanceItems = input.landlordAdvances
         .map((advance) => {
             const landlord = landlordById.get(advance.landlord_id);
@@ -814,8 +895,7 @@ function buildMonthlyFinance(input: {
         const pendingLandlordPayments = officePayables.length
             ? officePayables.reduce((total, payable) => total + amount(payable.unpaid_balance), 0)
             : Math.max(0, expectedLandlordPayable - landlordPaymentsMade);
-        const outstandingTenantBalances = tenants.reduce((total, tenant) => total + amount(tenant.balance), 0) +
-            rooms.reduce((total, room) => total + amount(room.outstanding_balance), 0);
+        const outstandingTenantBalances = tenants.reduce((total, tenant) => total + tenantOutstanding(tenant), 0);
         const todayCollections = collections
             .filter((collection) => isFinanciallyEffectiveCollection(collection) && isToday(collection.paid_at ?? collection.created_at))
             .reduce((total, collection) => total + collectionAmount(collection), 0);
@@ -1410,6 +1490,16 @@ function filterByOffice<T extends { office_id: string }>(rows: T[], officeIds: S
 function filterByNullableOffice<T extends { office_id: string | null }>(rows: T[], officeIds: Set<string>, allOffices: boolean) {
     if (allOffices) return rows;
     return rows.filter((row) => !row.office_id || officeIds.has(row.office_id));
+}
+
+function groupRowsByKey<T extends Record<string, unknown>>(rows: T[], key: string) {
+    const grouped = new Map<string, T[]>();
+    for (const row of rows) {
+        const value = String(row[key] ?? "");
+        if (!value) continue;
+        grouped.set(value, [...(grouped.get(value) ?? []), row]);
+    }
+    return grouped;
 }
 
 function filterAssignments(rows: UserOfficeRoleRow[], officeIds: Set<string>, allOffices: boolean) {

@@ -1,6 +1,7 @@
 import { requirePermission } from "@/lib/auth/permissions";
 import { getScopedSupabase } from "@/lib/auth/query";
 import { collectionAmount, isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
+import { calculateTenantMonthlyLedgerPosition } from "@/lib/financial/monthly-ledger";
 import type {
     AiIntelligenceData,
     AttendanceEventRow,
@@ -25,6 +26,8 @@ import type {
 } from "./types";
 
 const TIME_ZONE = "Africa/Kampala";
+
+type LooseRow = Record<string, any> & { office_id: string | null };
 
 function todayDate() {
     return new Intl.DateTimeFormat("en-CA", {
@@ -71,6 +74,7 @@ export async function getAiIntelligenceData(): Promise<AiIntelligenceData> {
     const startOfMonth = monthStart();
     const trendStart = dateOffset(-29);
     const accessibleOfficeIds = new Set(context.offices.map((office) => office.id));
+    const dynamicSupabase = supabase as unknown as { from: (table: string) => any };
 
     const [
         officesResult,
@@ -86,6 +90,9 @@ export async function getAiIntelligenceData(): Promise<AiIntelligenceData> {
         insightsResult,
         qualityResult,
         companySettingsResult,
+        tenantRentMonthsResult,
+        tenantLegacyArrearsResult,
+        tenantAllocationsResult,
     ] = await Promise.all([
         supabase.from("offices").select("*").eq("company_id", companyId).neq("status", "archived").order("office_name"),
         supabase.from("collections").select("*").eq("company_id", companyId).gte("paid_at", isoStart(trendStart)).lte("paid_at", isoEnd(today)),
@@ -100,6 +107,9 @@ export async function getAiIntelligenceData(): Promise<AiIntelligenceData> {
         supabase.from("ai_insights").select("*").eq("company_id", companyId).order("created_at", { ascending: false, nullsFirst: false }).limit(20),
         supabase.from("data_quality_findings").select("*").eq("company_id", companyId).is("resolved_at", null).order("created_at", { ascending: false }).limit(20),
         supabase.from("company_settings").select("*").eq("company_id", companyId).eq("key", "default_landlord_commission_rate"),
+        dynamicSupabase.from("tenant_rent_months").select("tenant_id,office_id,rent_month,due_date,coverage_start,coverage_end,rent_amount,amount_paid,outstanding_amount,status,created_at,source").eq("company_id", companyId),
+        dynamicSupabase.from("tenant_pre_system_arrears_periods").select("tenant_id,office_id,allocation_month,legacy_arrears_amount,payments_applied,remaining_amount,status").eq("company_id", companyId),
+        dynamicSupabase.from("tenant_rent_allocations").select("tenant_id,office_id,payment_id,allocation_month,allocation_type,amount_allocated,consumed_by_balance_reconciliation,allocation_source,is_historical_credit,coverage_start,coverage_end,coverage_index").eq("company_id", companyId),
     ]);
 
     for (const result of [
@@ -116,6 +126,9 @@ export async function getAiIntelligenceData(): Promise<AiIntelligenceData> {
         insightsResult,
         qualityResult,
         companySettingsResult,
+        tenantRentMonthsResult,
+        tenantLegacyArrearsResult,
+        tenantAllocationsResult,
     ]) {
         if (result.error) throw new Error(result.error.message);
     }
@@ -127,13 +140,25 @@ export async function getAiIntelligenceData(): Promise<AiIntelligenceData> {
     const properties = filterByOffice(propertiesResult.data ?? [], officeIds);
     const rooms = filterByOffice(roomsResult.data ?? [], officeIds);
     const tenants = filterByOffice(tenantsResult.data ?? [], officeIds);
+    const tenantRentMonths = filterByOffice((tenantRentMonthsResult.data ?? []) as LooseRow[], officeIds);
+    const tenantLegacyArrears = filterByOffice((tenantLegacyArrearsResult.data ?? []) as LooseRow[], officeIds);
+    const tenantAllocations = filterByOffice((tenantAllocationsResult.data ?? []) as LooseRow[], officeIds);
     const expenses = filterByOffice(expensesResult.data ?? [], officeIds);
     const attendance = filterByOffice(attendanceResult.data ?? [], officeIds);
     const employees = filterByOffice(employeesResult.data ?? [], officeIds);
     const officeIntelligence = buildOfficeIntelligence({ offices, collections, promises, rooms, expenses, attendance, employees });
-    const risks = buildExecutiveRisks({ offices, collections, promises, rooms, tenants, expenses, attendance, employees, officeIntelligence });
+    const tenantPositions = buildTenantPositionMap({
+        collections,
+        rooms,
+        selectedMonth: startOfMonth,
+        tenantAllocations,
+        tenantLegacyArrears,
+        tenantRentMonths,
+        tenants,
+    });
+    const risks = buildExecutiveRisks({ offices, collections, promises, rooms, tenants, expenses, attendance, employees, officeIntelligence, tenantPositions });
     const collection = buildCollectionIntelligence({ offices, collections, promises, employees });
-    const tenant = buildTenantIntelligence({ offices, collections, tenants, rooms });
+    const tenant = buildTenantIntelligence({ offices, collections, tenants, rooms, tenantPositions });
     const landlord = buildLandlordIntelligence({ landlords: landlordsResult.data ?? [], properties, collections });
     const finance = buildFinanceIntelligence({
         rooms,
@@ -167,6 +192,47 @@ function filterByOffice<T extends { office_id: string | null }>(rows: T[], offic
     return rows.filter((row) => row.office_id && officeIds.has(row.office_id));
 }
 
+function groupRowsByKey<T extends Record<string, unknown>>(rows: T[], key: string) {
+    const grouped = new Map<string, T[]>();
+    for (const row of rows) {
+        const value = String(row[key] ?? "");
+        if (!value) continue;
+        grouped.set(value, [...(grouped.get(value) ?? []), row]);
+    }
+    return grouped;
+}
+
+type TenantPositionMap = Map<string, ReturnType<typeof calculateTenantMonthlyLedgerPosition>>;
+
+function buildTenantPositionMap(input: {
+    collections: CollectionRow[];
+    rooms: RoomRow[];
+    selectedMonth: string;
+    tenantAllocations: LooseRow[];
+    tenantLegacyArrears: LooseRow[];
+    tenantRentMonths: LooseRow[];
+    tenants: TenantRow[];
+}): TenantPositionMap {
+    const roomById = new Map(input.rooms.map((room) => [room.id, room]));
+    const collectionsByTenant = groupRowsByKey(input.collections as unknown as LooseRow[], "tenant_id");
+    const allocationsByTenant = groupRowsByKey(input.tenantAllocations, "tenant_id");
+    const arrearsByTenant = groupRowsByKey(input.tenantLegacyArrears, "tenant_id");
+    const rentMonthsByTenant = groupRowsByKey(input.tenantRentMonths, "tenant_id");
+    const positions: TenantPositionMap = new Map();
+    for (const tenant of input.tenants) {
+        const room = tenant.room_id ? roomById.get(tenant.room_id) ?? null : null;
+        positions.set(tenant.id, calculateTenantMonthlyLedgerPosition({
+            advanceAllocations: allocationsByTenant.get(tenant.id) ?? [],
+            collections: (collectionsByTenant.get(tenant.id) ?? []) as CollectionRow[],
+            legacyArrears: arrearsByTenant.get(tenant.id) ?? [],
+            monthlyRent: Number(tenant.monthly_rent ?? room?.monthly_rent ?? 0),
+            rentMonths: rentMonthsByTenant.get(tenant.id) ?? [],
+            selectedMonth: input.selectedMonth,
+        }));
+    }
+    return positions;
+}
+
 function buildExecutiveRisks(input: {
     offices: OfficeRow[];
     collections: CollectionRow[];
@@ -177,6 +243,7 @@ function buildExecutiveRisks(input: {
     attendance: AttendanceEventRow[];
     employees: EmployeeRow[];
     officeIntelligence: OfficeIntelligence[];
+    tenantPositions: TenantPositionMap;
 }): ExecutiveRisk[] {
     const risks: ExecutiveRisk[] = [];
     for (const office of input.offices) {
@@ -190,7 +257,7 @@ function buildExecutiveRisks(input: {
         const collections = sumCollections(officeCollections);
         const target = Number(office.collection_target ?? officeCollections.reduce((total, item) => total + amount(item.expected_amount ?? item.amount), 0));
         const targetRate = percent(collections, target || collections);
-        const outstanding = officeTenants.reduce((total, tenant) => total + amount(tenant.balance), 0) + officeRooms.reduce((total, room) => total + amount(room.outstanding_balance), 0);
+        const outstanding = officeTenants.reduce((total, tenant) => total + (input.tenantPositions.get(tenant.id)?.outstanding ?? 0), 0);
         const absenteeism = 100 - attendanceRate(officeAttendance, officeEmployees);
         const expenseValue = sumExpenses(officeExpenses);
         const expenseBudget = Number(office.expense_budget ?? 0);
@@ -274,6 +341,7 @@ function buildTenantIntelligence(input: {
     collections: CollectionRow[];
     tenants: TenantRow[];
     rooms: RoomRow[];
+    tenantPositions: TenantPositionMap;
 }): TenantIntelligence {
     const officeById = new Map(input.offices.map((office) => [office.id, office.office_name ?? office.name ?? "Office"]));
     const lateCollectionsByTenant = new Map<string, number>();
@@ -288,11 +356,11 @@ function buildTenantIntelligence(input: {
             .map((tenant) => ({
                 tenantId: tenant.id,
                 tenantName: tenant.full_name ?? "Tenant",
-                balance: amount(tenant.balance),
+                balance: input.tenantPositions.get(tenant.id)?.outstanding ?? 0,
                 riskScore: Math.max(
                     Number(tenant.risk_score ?? 0),
                     tenant.tenant_reliability_score == null ? 0 : Math.max(0, 100 - Number(tenant.tenant_reliability_score)),
-                    Math.min(100, Math.round(percent(amount(tenant.balance), Math.max(1, amount(tenant.monthly_rent) * 3)))),
+                    Math.min(100, Math.round(percent(input.tenantPositions.get(tenant.id)?.outstanding ?? 0, Math.max(1, amount(tenant.monthly_rent) * 3)))),
                 ),
                 officeName: tenant.office_id ? officeById.get(tenant.office_id) ?? "Office" : "Office",
             }))
@@ -300,18 +368,19 @@ function buildTenantIntelligence(input: {
             .sort((a, b) => b.riskScore - a.riskScore)
             .slice(0, 8),
         repeatedLatePayers: input.tenants
-            .map((tenant) => ({ tenantId: tenant.id, tenantName: tenant.full_name ?? "Tenant", lateCount: lateCollectionsByTenant.get(tenant.id) ?? 0, balance: amount(tenant.balance) }))
+            .map((tenant) => ({ tenantId: tenant.id, tenantName: tenant.full_name ?? "Tenant", lateCount: lateCollectionsByTenant.get(tenant.id) ?? 0, balance: input.tenantPositions.get(tenant.id)?.outstanding ?? 0 }))
             .filter((tenant) => tenant.lateCount >= 2)
             .sort((a, b) => b.lateCount - a.lateCount)
             .slice(0, 6),
         longOutstandingBalances: input.tenants
-            .filter((tenant) => amount(tenant.balance) > 0)
-            .map((tenant) => ({ tenantId: tenant.id, tenantName: tenant.full_name ?? "Tenant", balance: amount(tenant.balance), daysOutstanding: tenant.updated_at ? Math.max(1, daysSince(tenant.updated_at)) : 30 }))
+            .map((tenant) => ({ tenant, balance: input.tenantPositions.get(tenant.id)?.outstanding ?? 0 }))
+            .filter((item) => item.balance > 0)
+            .map(({ tenant, balance }) => ({ tenantId: tenant.id, tenantName: tenant.full_name ?? "Tenant", balance, daysOutstanding: tenant.updated_at ? Math.max(1, daysSince(tenant.updated_at)) : 30 }))
             .sort((a, b) => b.balance - a.balance)
             .slice(0, 6),
         highValueTenants: input.tenants
             .filter((tenant) => amount(tenant.monthly_rent) > 0)
-            .map((tenant) => ({ tenantId: tenant.id, tenantName: tenant.full_name ?? "Tenant", monthlyRent: amount(tenant.monthly_rent), balance: amount(tenant.balance) }))
+            .map((tenant) => ({ tenantId: tenant.id, tenantName: tenant.full_name ?? "Tenant", monthlyRent: amount(tenant.monthly_rent), balance: input.tenantPositions.get(tenant.id)?.outstanding ?? 0 }))
             .sort((a, b) => b.monthlyRent - a.monthlyRent)
             .slice(0, 6),
         vacantRoomOpportunities: input.rooms

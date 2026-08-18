@@ -160,7 +160,7 @@ export default function CollectionActionCentre({ tenantContext, canManage, canPo
                         </div>
                         <p className="mt-1 truncate text-xs font-bold text-slate-600">
                             {tenantContext
-                                ? `Room ${tenantContext.room?.room_number ?? "Unknown"} | Balance UGX ${Number(tenantContext.tenant.balance ?? 0).toLocaleString()} | Collect UGX ${tenantContext.contribution.collectFromTenant.toLocaleString()} | Promise: ${tenantContext.openPromise ? "Yes" : "No"}`
+                                ? `Room ${tenantContext.room?.room_number ?? "Unknown"} | Balance UGX ${Number(tenantContext.monthlyFinancialPosition?.outstanding ?? tenantContext.outstandingBalance).toLocaleString()} | Collect UGX ${tenantContext.contribution.collectFromTenant.toLocaleString()} | Promise: ${tenantContext.openPromise ? "Yes" : "No"}`
                                 : "Select a tenant to begin collection work."}
                         </p>
                     </div>
