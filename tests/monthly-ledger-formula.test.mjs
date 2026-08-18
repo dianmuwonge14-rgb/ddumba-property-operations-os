@@ -111,6 +111,34 @@ test("tenant monthly ledger counts prior consumed advance as opening credit", ()
   assert.equal(position.advance, 0);
 });
 
+test("tenant monthly ledger offsets future advance against current debt before displaying advance", () => {
+  const { calculateTenantMonthlyLedgerPosition } = loadMonthlyLedgerModule();
+  const position = calculateTenantMonthlyLedgerPosition({
+    advanceAllocations: [{ payment_id: "aug-payment", allocation_type: "advance_month", allocation_month: "2026-09-01", amount_allocated: 500_000, consumed_by_balance_reconciliation: 0 }],
+    collections: [{ id: "aug-payment", payment_date: "2026-08-05", amount_paid: 1_000_000, status: "posted" }],
+    monthlyRent: 500_000,
+    rentMonths: [{ rent_month: "2026-08-01", outstanding_amount: 0, rent_amount: 500_000 }],
+    selectedMonth: "2026-08-01",
+  });
+
+  assert.equal(position.rawBalance, -500_000);
+  assert.equal(position.outstanding, 0);
+  assert.equal(position.advance, 500_000);
+});
+
+test("tenant monthly ledger does not allow debt and advance to coexist", () => {
+  const { calculateTenantMonthlyLedgerPosition } = loadMonthlyLedgerModule();
+  const position = calculateTenantMonthlyLedgerPosition({
+    advanceAllocations: [{ payment_id: "old-payment", allocation_type: "advance_month", allocation_month: "2026-09-01", amount_allocated: 120_000, consumed_by_balance_reconciliation: 0 }],
+    collections: [{ id: "old-payment", payment_date: "2026-07-05", amount_paid: 120_000, status: "posted" }],
+    monthlyRent: 200_000,
+    selectedMonth: "2026-08-01",
+  });
+
+  assert.equal(position.outstanding, 80_000);
+  assert.equal(position.advance, 0);
+});
+
 test("tenant balance card no longer exposes direct outstanding edits", () => {
   const source = fs.readFileSync("components/office/payments/FastPaymentsEntry.tsx", "utf8");
   const tenantBalanceSection = source.slice(source.indexOf("function TenantBalance"), source.indexOf("function AdvanceRentAssistant"));

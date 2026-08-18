@@ -149,17 +149,26 @@ function calculatePosition({ allocations, collections, monthlyRent, rentMonths }
     .filter((row) => s(row.allocation_type) === "advance_month")
     .filter((row) => s(row.allocation_month).slice(0, 7) > MONTH)
     .reduce((total, row) => total + availableAdvance(row), 0);
-  const raw = openingArrears + currentMonthRent - paymentsThisMonth - openingCredit;
+  const futureAdvanceOpeningCredit = allocations
+    .filter((row) => s(row.allocation_type) === "advance_month")
+    .filter((row) => s(row.allocation_month).slice(0, 7) > MONTH)
+    .filter((row) => {
+      const payment = paymentById.get(s(row.payment_id));
+      return !payment || paymentDate(payment).slice(0, 7) < MONTH;
+    })
+    .reduce((total, row) => total + availableAdvance(row), 0);
+  const raw = openingArrears + currentMonthRent - paymentsThisMonth - openingCredit - futureAdvanceOpeningCredit;
   return {
     currentMonthRent,
     currentRows,
     futureAdvance,
     openingArrears,
     openingCredit,
+    futureAdvanceOpeningCredit,
     outstanding: Math.max(raw, 0),
     paymentsThisMonth,
     raw,
-    advance: Math.max(Math.max(-raw, 0), futureAdvance),
+    advance: Math.max(-raw, 0),
   };
 }
 

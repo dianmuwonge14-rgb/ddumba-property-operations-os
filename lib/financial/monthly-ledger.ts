@@ -107,10 +107,18 @@ export function calculateTenantMonthlyLedgerPosition({
         .filter((row) => String(row.allocation_type ?? "") === "advance_month")
         .filter((row) => String(row.allocation_month ?? "").slice(0, 7) > selectedKey)
         .reduce((total, row) => total + availableAdvanceAllocation(row), 0);
+    const futureAdvanceOpeningCredit = advanceAllocations
+        .filter((row) => String(row.allocation_type ?? "") === "advance_month")
+        .filter((row) => String(row.allocation_month ?? "").slice(0, 7) > selectedKey)
+        .filter((row) => {
+            const payment = paymentById.get(String(row.payment_id ?? ""));
+            return !payment || collectionDateOnly(payment).slice(0, 7) < selectedKey;
+        })
+        .reduce((total, row) => total + availableAdvanceAllocation(row), 0);
 
-    const rawBalance = arrears + currentMonthRent - paymentsThisMonth - advanceAppliedToCurrentMonth;
+    const rawBalance = arrears + currentMonthRent - paymentsThisMonth - advanceAppliedToCurrentMonth - futureAdvanceOpeningCredit;
     const outstanding = Math.max(rawBalance, 0);
-    const advance = Math.max(Math.max(-rawBalance, 0), futureAdvanceBalance);
+    const advance = Math.max(-rawBalance, 0);
 
     return {
         advance,
