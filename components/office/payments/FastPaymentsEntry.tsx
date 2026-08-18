@@ -2459,8 +2459,7 @@ function TenantBalance({
     const arrears = ledgerNumber(position?.arrears ?? tenant.legacyArrearsBalance);
     const currentMonthRent = ledgerNumber(position?.currentMonthRent ?? tenant.monthlyRent);
     const paymentsThisMonth = ledgerNumber(position?.paymentsThisMonth ?? tenant.currentMonthPaid);
-    const maturedAdvanceCredit = ledgerNumber(position?.advanceAppliedToCurrentMonth);
-    const rawTenantBalance = arrears + currentMonthRent - paymentsThisMonth - maturedAdvanceCredit;
+    const rawTenantBalance = arrears + currentMonthRent - paymentsThisMonth;
     const calculatedOutstanding = Math.max(rawTenantBalance, 0);
     const calculatedAdvance = Math.max(-rawTenantBalance, 0);
 

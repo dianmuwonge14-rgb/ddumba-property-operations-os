@@ -95,7 +95,7 @@ test("tenant monthly ledger handles partial payment with arrears", () => {
   assert.equal(position.advance, 0);
 });
 
-test("tenant monthly ledger consumes matured advance for the selected month before showing debt", () => {
+test("tenant monthly ledger does not subtract advance allocations separately from payments", () => {
   const { calculateTenantMonthlyLedgerPosition } = loadMonthlyLedgerModule();
   const position = calculateTenantMonthlyLedgerPosition({
     advanceAllocations: [{ allocation_type: "advance_month", allocation_month: "2026-09-01", amount_allocated: 30_000, consumed_by_balance_reconciliation: 0 }],
@@ -105,11 +105,12 @@ test("tenant monthly ledger consumes matured advance for the selected month befo
   });
 
   assert.equal(position.advanceAppliedToCurrentMonth, 30_000);
-  assert.equal(position.outstanding, 40_000);
+  assert.equal(position.rawBalance, 70_000);
+  assert.equal(position.outstanding, 70_000);
   assert.equal(position.advance, 0);
 });
 
-test("tenant monthly ledger counts prior consumed advance as opening credit", () => {
+test("tenant monthly ledger keeps the formula independent from consumed allocation snapshots", () => {
   const { calculateTenantMonthlyLedgerPosition } = loadMonthlyLedgerModule();
   const position = calculateTenantMonthlyLedgerPosition({
     advanceAllocations: [{ payment_id: "aug-overpay", allocation_type: "advance_month", allocation_month: "2026-09-01", amount_allocated: 70_000, consumed_by_balance_reconciliation: 70_000 }],
@@ -121,7 +122,8 @@ test("tenant monthly ledger counts prior consumed advance as opening credit", ()
 
   assert.equal(position.advanceAppliedToCurrentMonth, 70_000);
   assert.equal(position.paymentsThisMonth, 0);
-  assert.equal(position.outstanding, 0);
+  assert.equal(position.rawBalance, 70_000);
+  assert.equal(position.outstanding, 70_000);
   assert.equal(position.advance, 0);
 });
 
@@ -173,7 +175,7 @@ test("tenant balance card no longer exposes direct outstanding edits", () => {
   assert.match(tenantBalanceSection, /Arrears/);
   assert.match(tenantBalanceSection, /Payments This Month/);
   assert.match(tenantBalanceSection, /Calculated only: arrears \+ rent - payments/);
-  assert.match(tenantBalanceSection, /rawTenantBalance = arrears \+ currentMonthRent - paymentsThisMonth - maturedAdvanceCredit/);
+  assert.match(tenantBalanceSection, /rawTenantBalance = arrears \+ currentMonthRent - paymentsThisMonth/);
   assert.match(tenantBalanceSection, /calculatedAdvance = Math\.max\(-rawTenantBalance, 0\)/);
   assert.doesNotMatch(tenantBalanceSection, /onEditOutstanding/);
 });

@@ -99,7 +99,7 @@ export function calculateTenantMonthlyLedgerPosition({
         .filter((row) => String(row.allocation_month ?? "").slice(0, 7) > selectedKey)
         .reduce((total, row) => total + availableAdvanceAllocation(row), 0);
 
-    const rawBalance = arrears + currentMonthRent - paymentsThisMonth - advanceAppliedToCurrentMonth;
+    const rawBalance = arrears + currentMonthRent - paymentsThisMonth;
     const outstanding = Math.max(rawBalance, 0);
     const advance = Math.max(-rawBalance, 0);
 

@@ -145,7 +145,7 @@ function calculatePosition({ allocations, collections, monthlyRent, rentMonths }
     .filter((row) => s(row.allocation_type) === "advance_month")
     .filter((row) => s(row.allocation_month).slice(0, 7) > MONTH)
     .reduce((total, row) => total + availableAdvance(row), 0);
-  const raw = openingArrears + currentMonthRent - paymentsThisMonth - openingCredit;
+  const raw = openingArrears + currentMonthRent - paymentsThisMonth;
   return {
     currentMonthRent,
     currentRows,
