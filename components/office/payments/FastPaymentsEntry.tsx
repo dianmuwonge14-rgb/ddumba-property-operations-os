@@ -2,9 +2,9 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Banknote, BrainCircuit, CalendarDays, CheckCircle2, CreditCard, DoorOpen, Eye, History, Home, Loader2, Pencil, ReceiptText, Search, ShieldCheck, Smartphone, Trash2, UserPlus } from "lucide-react";
+import { AlertTriangle, Banknote, BrainCircuit, CalendarDays, CheckCircle2, CreditCard, DoorOpen, Eye, History, Home, Loader2, Pencil, ReceiptText, Search, ShieldCheck, Smartphone, Trash2, UserPlus, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { adminCorrectPayment, recordCollection, requestPaymentCorrection, requestTenantOutstandingBalanceAdjustment } from "@/app/actions/collections";
+import { adminCorrectPayment, recordCollection, requestPaymentCorrection } from "@/app/actions/collections";
 import { recordCollectorPayment } from "@/app/actions/collectors";
 import { logReceiptPrintOrDownload, logReceiptShareLink, sendReceiptByEmail } from "@/app/actions/receipts";
 import { markRoomOccupied, replaceTenantFromPaymentsEntry } from "@/app/actions/room-occupancy";
@@ -64,12 +64,6 @@ type SecurityDepositForm = {
     paymentMethod: string;
     referenceNumber: string;
 };
-type BalanceAdjustmentForm = {
-    effectiveDate: string;
-    newBalance: string;
-    notes: string;
-    reason: string;
-};
 type VacateRoomForm = {
     effectiveDeductionMonth: string;
     finalPaymentAmount: string;
@@ -95,6 +89,11 @@ type ReceiptModalState = {
     sending: boolean;
 };
 type TenantPaymentMethod = "cash" | "bank" | "mobile_money";
+type TenantPaymentListModalState = {
+    payments: CollectionTenantResult["collections"];
+    title: string;
+    total: number;
+} | null;
 
 function today() {
     return currentBusinessDate();
@@ -106,6 +105,22 @@ function isDateOnly(value: string) {
 
 function money(value: number | null | undefined) {
     return `UGX ${Math.round(Number(value ?? 0)).toLocaleString()}`;
+}
+
+function paymentAmount(row: CollectionTenantResult["collections"][number]) {
+    const value = Number((row as Record<string, unknown>).amount_paid ?? (row as Record<string, unknown>).amount ?? 0);
+    return Number.isFinite(value) ? value : 0;
+}
+
+function collectionDateOnly(row: CollectionTenantResult["collections"][number]) {
+    return String((row as Record<string, unknown>).payment_date ?? (row as Record<string, unknown>).paid_at ?? (row as Record<string, unknown>).created_at ?? "").slice(0, 10);
+}
+
+function paymentTime(row: CollectionTenantResult["collections"][number]) {
+    const value = String((row as Record<string, unknown>).paid_at ?? (row as Record<string, unknown>).created_at ?? "");
+    if (!value) return "--";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? "--" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function compactDate(value: string | null | undefined) {
@@ -309,6 +324,8 @@ export default function FastPaymentsEntry({
     const [historyPayment, setHistoryPayment] = useState<FastPaymentRecentItem | null>(null);
     const [historyRows, setHistoryRows] = useState<CorrectionHistoryRow[]>([]);
     const [loadingHistory, setLoadingHistory] = useState(false);
+    const [tenantPaymentListModal, setTenantPaymentListModal] = useState<TenantPaymentListModalState>(null);
+    const [tenantPaymentDetail, setTenantPaymentDetail] = useState<CollectionTenantResult["collections"][number] | null>(null);
     const [newTenantOpen, setNewTenantOpen] = useState(false);
     const [newTenantReturnTo, setNewTenantReturnTo] = useState<string | null>(null);
     const [newTenantError, setNewTenantError] = useState<string | null>(null);
@@ -320,8 +337,6 @@ export default function FastPaymentsEntry({
         paymentMethod: "cash",
         referenceNumber: "",
     });
-    const [balanceAdjustmentOpen, setBalanceAdjustmentOpen] = useState(false);
-    const [balanceAdjustmentError, setBalanceAdjustmentError] = useState<string | null>(null);
     const [vacateRoomOpen, setVacateRoomOpen] = useState(false);
     const [vacateRoomError, setVacateRoomError] = useState<string | null>(null);
     const [vacateRoomForm, setVacateRoomForm] = useState<VacateRoomForm>({
@@ -340,12 +355,6 @@ export default function FastPaymentsEntry({
         securityRefundAmount: "",
         securityRetainedAmount: "",
         vacateDate: today(),
-    });
-    const [balanceAdjustmentForm, setBalanceAdjustmentForm] = useState<BalanceAdjustmentForm>({
-        effectiveDate: today(),
-        newBalance: "",
-        notes: "",
-        reason: "",
     });
     const [newTenantForm, setNewTenantForm] = useState<NewTenantForm>({
         moveInDate: today(),
@@ -518,6 +527,31 @@ export default function FastPaymentsEntry({
         if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
         setLatestPaymentId(paymentId);
         highlightTimerRef.current = setTimeout(() => setLatestPaymentId(null), 2000);
+    }
+
+    function currentMonthPaymentsForTenant(tenant: CollectionTenantResult | null) {
+        if (!tenant) return [];
+        const selectedMonth = tenant.monthlyFinancialPosition?.selectedMonth?.slice(0, 7) ?? paymentDate.slice(0, 7);
+        return tenant.collections.filter((collection) => collectionDateOnly(collection).slice(0, 7) === selectedMonth);
+    }
+
+    function openPaymentsThisMonth() {
+        if (!selectedTenant) return;
+        const payments = currentMonthPaymentsForTenant(selectedTenant);
+        setTenantPaymentListModal({
+            payments,
+            title: `Payments This Month - Room ${selectedTenant.room?.room_number ?? "Unknown"}`,
+            total: payments.reduce((total, payment) => total + paymentAmount(payment), 0),
+        });
+    }
+
+    function openLastPaymentDetail() {
+        if (!selectedTenant) return;
+        const latestId = selectedTenant.monthlyFinancialPosition?.lastPaymentId;
+        const latest = latestId
+            ? selectedTenant.collections.find((collection) => collection.id === latestId)
+            : [...selectedTenant.collections].sort((left, right) => String((right as Record<string, unknown>).payment_date ?? (right as Record<string, unknown>).paid_at ?? (right as Record<string, unknown>).created_at ?? "").localeCompare(String((left as Record<string, unknown>).payment_date ?? (left as Record<string, unknown>).paid_at ?? (left as Record<string, unknown>).created_at ?? "")))[0];
+        if (latest) setTenantPaymentDetail(latest);
     }
 
     async function selectRoomMatch(result: FastPaymentTenantSearchResult, requestSeq = requestSeqRef.current) {
@@ -765,18 +799,6 @@ export default function FastPaymentsEntry({
         });
     }
 
-    function openBalanceAdjustmentModal() {
-        if (!selectedTenant) return;
-        setBalanceAdjustmentError(null);
-        setBalanceAdjustmentForm({
-            effectiveDate: paymentDate,
-            newBalance: String(liveOutstandingBalance(selectedTenant)),
-            notes: "",
-            reason: "",
-        });
-        setBalanceAdjustmentOpen(true);
-    }
-
     function openVacateRoomModal() {
         if (!selectedTenant) return;
         setMessage(null);
@@ -799,49 +821,6 @@ export default function FastPaymentsEntry({
             vacateDate: paymentDate,
         });
         setVacateRoomOpen(true);
-    }
-
-    function submitBalanceAdjustment() {
-        if (!selectedTenant?.room?.id) {
-            setBalanceAdjustmentError("Search and select a room before editing outstanding balance.");
-            return;
-        }
-        const newBalance = Number(balanceAdjustmentForm.newBalance);
-        if (!Number.isFinite(newBalance) || newBalance < 0) {
-            setBalanceAdjustmentError("New outstanding balance must be zero or greater.");
-            return;
-        }
-        if (!balanceAdjustmentForm.reason.trim()) {
-            setBalanceAdjustmentError("Reason for change is required.");
-            return;
-        }
-        if (!isDateOnly(balanceAdjustmentForm.effectiveDate)) {
-            setBalanceAdjustmentError("Effective date is required.");
-            return;
-        }
-        const selected = selectedTenant;
-        startTransition(async () => {
-            try {
-                setMessage(null);
-                setBalanceAdjustmentError(null);
-                await requestTenantOutstandingBalanceAdjustment({
-                    effectiveDate: balanceAdjustmentForm.effectiveDate,
-                    newBalance,
-                    notes: balanceAdjustmentForm.notes || null,
-                    reason: balanceAdjustmentForm.reason,
-                    roomId: selected.room!.id,
-                    tenantId: selected.tenant.id,
-                });
-                setBalanceAdjustmentOpen(false);
-                setMessage(isAdmin ? "Outstanding balance updated by Admin." : "Outstanding balance change sent to Admin for approval.");
-                if (isAdmin) {
-                    await reloadRoomDetails(selected.room?.room_number ?? roomQuery, selected.tenant.id);
-                    void loadAdvanceRentAssistant(paymentDate);
-                }
-            } catch (error) {
-                setBalanceAdjustmentError(error instanceof Error ? error.message : "Outstanding balance change could not be saved.");
-            }
-        });
     }
 
     function submitNewTenant() {
@@ -1568,7 +1547,12 @@ export default function FastPaymentsEntry({
 	                        </div>
 	                    ) : null}
 
-                    <TenantBalance loadingDetails={loadingTenantDetails || isSearchPreviewTenant(selectedTenant)} tenant={selectedTenant} />
+                    <TenantBalance
+                        loadingDetails={loadingTenantDetails || isSearchPreviewTenant(selectedTenant)}
+                        onOpenLastPayment={openLastPaymentDetail}
+                        onOpenPaymentsThisMonth={openPaymentsThisMonth}
+                        tenant={selectedTenant}
+                    />
                     {tenantDetailsError && selectedTenant ? (
                         <div className="mt-3 flex flex-col gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-800 sm:flex-row sm:items-center sm:justify-between">
                             <span>{tenantDetailsError}</span>
@@ -1839,19 +1823,8 @@ export default function FastPaymentsEntry({
                 open={vacateRoomOpen}
                 tenant={selectedTenant}
             />
-            <BalanceAdjustmentModal
-                error={balanceAdjustmentError}
-                form={balanceAdjustmentForm}
-                isAdmin={isAdmin}
-                isPending={isPending}
-                onChange={(patch) => setBalanceAdjustmentForm((current) => ({ ...current, ...patch }))}
-                onClose={() => {
-                    if (!isPending) setBalanceAdjustmentOpen(false);
-                }}
-                onSubmit={submitBalanceAdjustment}
-                open={balanceAdjustmentOpen}
-                tenant={selectedTenant}
-            />
+            <TenantPaymentListModal modal={tenantPaymentListModal} onClose={() => setTenantPaymentListModal(null)} />
+            <TenantPaymentDetailModal payment={tenantPaymentDetail} onClose={() => setTenantPaymentDetail(null)} />
             <ReceiptConfirmationModal
                 modal={receiptModal}
                 onChange={setReceiptModal}
@@ -2424,91 +2397,6 @@ function RecoveryOption({ checked, description, label, onClick }: { checked: boo
     );
 }
 
-function BalanceAdjustmentModal({
-    error,
-    form,
-    isAdmin,
-    isPending,
-    onChange,
-    onClose,
-    onSubmit,
-    open,
-    tenant,
-}: {
-    error: string | null;
-    form: BalanceAdjustmentForm;
-    isAdmin: boolean;
-    isPending: boolean;
-    onChange: (patch: Partial<BalanceAdjustmentForm>) => void;
-    onClose: () => void;
-    onSubmit: () => void;
-    open: boolean;
-    tenant: CollectionTenantResult | null;
-}) {
-    if (!open || !tenant) return null;
-    const currentBalance = liveOutstandingBalance(tenant);
-    const newBalance = Number(form.newBalance || 0);
-    const delta = Number.isFinite(newBalance) ? newBalance - currentBalance : 0;
-
-    return (
-        <div className="fixed inset-0 z-[140] flex items-center justify-center overflow-y-auto bg-slate-950/75 p-4 backdrop-blur-sm">
-            <div className="my-6 w-full max-w-2xl overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-2xl">
-                <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-slate-950 p-5 text-white">
-                    <div>
-                        <p className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-black uppercase text-cyan-100">
-                            <Pencil size={14} />
-                            Edit outstanding balance
-                        </p>
-                        <h2 className="mt-3 text-2xl font-black">Room {tenant.room?.room_number ?? "Unknown"}</h2>
-                        <p className="mt-1 text-sm font-semibold text-slate-300">
-                            {isAdmin ? "Admin adjustment applies immediately." : "Office adjustment will wait for Admin approval."}
-                        </p>
-                    </div>
-                    <button type="button" disabled={isPending} onClick={onClose} className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-black text-white disabled:opacity-40">
-                        Close
-                    </button>
-                </div>
-                <div className="grid gap-4 p-5 sm:grid-cols-2">
-                    <MiniStat label="Room number" value={tenant.room?.room_number ?? "Unknown"} />
-                    <MiniStat label="Tenant name" value={tenant.tenant.full_name ?? "Unnamed tenant"} />
-                    <MiniStat label="Current outstanding" value={money(currentBalance)} tone="text-rose-700" />
-                    <MiniStat label="Adjustment amount" value={`${delta >= 0 ? "+" : "-"}${money(Math.abs(delta))}`} tone={delta > 0 ? "text-rose-700" : delta < 0 ? "text-emerald-700" : "text-slate-700"} />
-                    <TextField label="New outstanding balance" type="number" value={form.newBalance} onChange={(value) => onChange({ newBalance: value })} placeholder="UGX" />
-                    <TextField label="Effective month/date" type="date" value={form.effectiveDate} onChange={(value) => onChange({ effectiveDate: value })} />
-                    <label className="sm:col-span-2 block">
-                        <span className="text-xs font-black uppercase text-slate-500">Reason for change</span>
-                        <input
-                            value={form.reason}
-                            onChange={(event) => onChange({ reason: event.target.value })}
-                            placeholder="Required reason"
-                            className="mt-1 h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-black text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                        />
-                    </label>
-                    <label className="sm:col-span-2 block">
-                        <span className="text-xs font-black uppercase text-slate-500">Notes</span>
-                        <textarea
-                            value={form.notes}
-                            onChange={(event) => onChange({ notes: event.target.value })}
-                            placeholder="Optional notes"
-                            className="mt-1 min-h-24 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-950 outline-none focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-100"
-                        />
-                    </label>
-                </div>
-                <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 p-5">
-                    {error ? <div className="mr-auto w-full rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-black text-rose-700 lg:w-auto">{error}</div> : null}
-                    <button type="button" disabled={isPending} onClick={onClose} className="rounded-2xl bg-white px-5 py-3 text-sm font-black text-slate-700 shadow disabled:opacity-40">
-                        Cancel
-                    </button>
-                    <button type="button" disabled={isPending} onClick={onSubmit} className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white shadow-lg disabled:opacity-40">
-                        {isPending ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
-                        {isAdmin ? "Apply Adjustment" : "Submit for Admin Approval"}
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-}
-
 function TextField({ label, onChange, placeholder, readOnly = false, type = "text", value }: { label: string; onChange: (value: string) => void; placeholder?: string; readOnly?: boolean; type?: string; value: string }) {
     return (
         <label className="block">
@@ -2543,7 +2431,17 @@ function MiniStat({ label, tone = "text-slate-950", value }: { label: string; to
     );
 }
 
-function TenantBalance({ loadingDetails, tenant }: { loadingDetails: boolean; tenant: CollectionTenantResult | null }) {
+function TenantBalance({
+    loadingDetails,
+    onOpenLastPayment,
+    onOpenPaymentsThisMonth,
+    tenant,
+}: {
+    loadingDetails: boolean;
+    onOpenLastPayment: () => void;
+    onOpenPaymentsThisMonth: () => void;
+    tenant: CollectionTenantResult | null;
+}) {
     if (!tenant) {
         return (
             <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center">
@@ -2581,10 +2479,11 @@ function TenantBalance({ loadingDetails, tenant }: { loadingDetails: boolean; te
                     </p>
                 ) : null}
             </div>
-            <div className="rounded-2xl border border-cyan-100 bg-cyan-50 p-4">
+            <button type="button" disabled={loadingDetails} onClick={onOpenPaymentsThisMonth} className="rounded-2xl border border-cyan-100 bg-cyan-50 p-4 text-left transition hover:-translate-y-0.5 hover:shadow-lg disabled:cursor-wait disabled:opacity-70">
                 <p className="text-xs font-black uppercase text-cyan-500">Payments This Month</p>
                 <p className="mt-1 text-2xl font-black text-cyan-700">{liveValue(money(paymentsThisMonth))}</p>
-            </div>
+                <p className="mt-1 text-[11px] font-bold text-cyan-600">Click to audit included payments.</p>
+            </button>
             <div className="rounded-2xl border border-rose-100 bg-rose-50 p-4">
                 <p className="text-xs font-black uppercase text-rose-400">Outstanding Balance</p>
                 <p className="mt-1 text-2xl font-black text-rose-700">{liveValue(money(calculatedOutstanding))}</p>
@@ -2592,10 +2491,11 @@ function TenantBalance({ loadingDetails, tenant }: { loadingDetails: boolean; te
                     {loadingDetails ? "Fetching live balance..." : "Calculated only: arrears + rent - payments."}
                 </p>
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <button type="button" disabled={loadingDetails || !tenant.lastAmountPaid} onClick={onOpenLastPayment} className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:-translate-y-0.5 hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-70">
                 <p className="text-xs font-black uppercase text-slate-500">Last Amount Paid</p>
                 <p className="mt-1 text-2xl font-black text-slate-950">{liveValue(money(tenant.lastAmountPaid))}</p>
-            </div>
+                <p className="mt-1 text-[11px] font-bold text-slate-500">Click to open exact payment.</p>
+            </button>
             <div className="rounded-2xl border border-violet-100 bg-violet-50 p-4">
                 <p className="text-xs font-black uppercase text-violet-500">Advance</p>
                 <p className="mt-1 text-2xl font-black text-violet-700">{liveValue(money(calculatedAdvance))}</p>
@@ -2711,6 +2611,103 @@ function TenantBalance({ loadingDetails, tenant }: { loadingDetails: boolean; te
                     </div>
                 </div>
             ) : null}
+        </div>
+    );
+}
+
+function TenantPaymentListModal({ modal, onClose }: { modal: TenantPaymentListModalState; onClose: () => void }) {
+    if (!modal) return null;
+    return (
+        <div className="fixed inset-0 z-[155] flex items-center justify-center overflow-y-auto bg-slate-950/75 p-4 backdrop-blur-sm" onClick={onClose}>
+            <div className="my-6 w-full max-w-5xl overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label={modal.title}>
+                <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-gradient-to-br from-slate-950 via-cyan-950 to-blue-950 p-5 text-white">
+                    <div className="min-w-0">
+                        <p className="text-xs font-black uppercase tracking-wide text-cyan-200">Monthly ledger audit</p>
+                        <h2 className="mt-1 text-2xl font-black">{modal.title}</h2>
+                        <p className="mt-1 text-sm font-bold text-cyan-100">Total included: {money(modal.total)}</p>
+                    </div>
+                    <button type="button" onClick={onClose} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-white/10 px-4 text-sm font-black text-white ring-1 ring-white/20 hover:bg-white hover:text-slate-950">
+                        <X size={18} /> Close
+                    </button>
+                </div>
+                <div className="max-h-[70vh] overflow-auto p-5">
+                    {modal.payments.length ? (
+                        <table className="w-full min-w-[920px] text-left text-sm">
+                            <thead className="bg-slate-950 text-xs uppercase text-white">
+                                <tr>
+                                    <th className="px-3 py-2">Date</th>
+                                    <th className="px-3 py-2">Time</th>
+                                    <th className="px-3 py-2 text-right">Amount</th>
+                                    <th className="px-3 py-2">Method</th>
+                                    <th className="px-3 py-2">Receipt</th>
+                                    <th className="px-3 py-2">Recorded By</th>
+                                    <th className="px-3 py-2">Room</th>
+                                    <th className="px-3 py-2">Tenant</th>
+                                    <th className="px-3 py-2">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {modal.payments.map((payment) => {
+                                    const raw = payment as Record<string, unknown>;
+                                    return (
+                                        <tr key={payment.id} className="border-b border-slate-100">
+                                            <td className="px-3 py-2 font-bold text-slate-700">{collectionDateOnly(payment) || "--"}</td>
+                                            <td className="px-3 py-2 font-bold text-slate-500">{paymentTime(payment)}</td>
+                                            <td className="px-3 py-2 text-right font-black text-emerald-700">{money(paymentAmount(payment))}</td>
+                                            <td className="px-3 py-2 font-bold capitalize text-slate-700">{String(raw.payment_method ?? "--").replaceAll("_", " ")}</td>
+                                            <td className="px-3 py-2 font-mono text-xs font-bold text-slate-500">{String(raw.receipt_number ?? raw.receipt_id ?? raw.reference_number ?? "--")}</td>
+                                            <td className="px-3 py-2 font-bold text-slate-700">{String(raw.recorded_by_name ?? raw.prepared_by_name ?? raw.recorded_by ?? "--")}</td>
+                                            <td className="px-3 py-2 font-black text-slate-950">{String(raw.room_number ?? raw.room_id ?? "--")}</td>
+                                            <td className="px-3 py-2 font-bold text-slate-700">{String(raw.tenant_name ?? raw.tenant_id ?? "--")}</td>
+                                            <td className="px-3 py-2 font-bold capitalize text-slate-700">{String(raw.status ?? "posted").replaceAll("_", " ")}</td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                            <tfoot>
+                                <tr className="bg-slate-50 font-black">
+                                    <td colSpan={2} className="px-3 py-3 text-right">Total</td>
+                                    <td className="px-3 py-3 text-right text-emerald-700">{money(modal.total)}</td>
+                                    <td colSpan={6} />
+                                </tr>
+                            </tfoot>
+                        </table>
+                    ) : (
+                        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm font-black text-slate-600">No financially effective payments found for this billing month.</div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function TenantPaymentDetailModal({ onClose, payment }: { onClose: () => void; payment: CollectionTenantResult["collections"][number] | null }) {
+    if (!payment) return null;
+    const raw = payment as Record<string, unknown>;
+    return (
+        <div className="fixed inset-0 z-[156] flex items-center justify-center overflow-y-auto bg-slate-950/75 p-4 backdrop-blur-sm" onClick={onClose}>
+            <div className="my-6 w-full max-w-2xl overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="Payment detail">
+                <div className="flex items-start justify-between gap-4 border-b border-slate-200 bg-slate-950 p-5 text-white">
+                    <div>
+                        <p className="text-xs font-black uppercase tracking-wide text-teal-200">Exact payment record</p>
+                        <h2 className="mt-1 text-2xl font-black">{money(paymentAmount(payment))}</h2>
+                        <p className="mt-1 text-sm font-bold text-slate-300">{collectionDateOnly(payment)} · {String(raw.payment_method ?? "--").replaceAll("_", " ")}</p>
+                    </div>
+                    <button type="button" onClick={onClose} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-white/10 px-4 text-sm font-black text-white ring-1 ring-white/20 hover:bg-white hover:text-slate-950">
+                        <X size={18} /> Close
+                    </button>
+                </div>
+                <div className="grid gap-3 p-5 sm:grid-cols-2">
+                    <MiniStat label="Payment ID" value={String(payment.id ?? "--")} />
+                    <MiniStat label="Receipt" value={String(raw.receipt_number ?? raw.receipt_id ?? raw.reference_number ?? "--")} />
+                    <MiniStat label="Room" value={String(raw.room_number ?? raw.room_id ?? "--")} />
+                    <MiniStat label="Tenant" value={String(raw.tenant_name ?? raw.tenant_id ?? "--")} />
+                    <MiniStat label="Recorded By" value={String(raw.recorded_by_name ?? raw.prepared_by_name ?? raw.recorded_by ?? "--")} />
+                    <MiniStat label="Status" value={String(raw.status ?? "posted").replaceAll("_", " ")} />
+                    <MiniStat label="Balance Before" value={money(Number(raw.balance_before_payment ?? 0))} />
+                    <MiniStat label="Balance After" value={money(Number(raw.balance_after_payment ?? 0))} />
+                </div>
+            </div>
         </div>
     );
 }

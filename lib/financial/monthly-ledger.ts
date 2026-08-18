@@ -52,6 +52,7 @@ export function calculateTenantMonthlyLedgerPosition({
     const selected = monthStart(selectedMonth);
     const selectedKey = selected.slice(0, 7);
     const effectivePayments = collections.filter(isFinanciallyEffectiveCollection);
+    const paymentById = new Map(effectivePayments.map((collection) => [String(collection.id ?? ""), collection]));
     const paymentsThisMonth = effectivePayments
         .filter((collection) => collectionDateOnly(collection).slice(0, 7) === selectedKey)
         .reduce((total, collection) => total + collectionAmount(collection), 0);
@@ -82,10 +83,26 @@ export function calculateTenantMonthlyLedgerPosition({
         }
     }
 
+    const currentMonthPaymentsAppliedToPriorPeriods = advanceAllocations
+        .filter((row) => String(row.allocation_month ?? "").slice(0, 7) < selectedKey)
+        .filter((row) => {
+            const payment = paymentById.get(String(row.payment_id ?? ""));
+            return payment && collectionDateOnly(payment).slice(0, 7) === selectedKey;
+        })
+        .reduce((total, row) => total + moneyAmount(row.amount_allocated), 0);
+    arrears += currentMonthPaymentsAppliedToPriorPeriods;
+
     const advanceAppliedToCurrentMonth = advanceAllocations
         .filter((row) => String(row.allocation_type ?? "") === "advance_month")
         .filter((row) => String(row.allocation_month ?? "").slice(0, 7) <= selectedKey)
-        .reduce((total, row) => total + availableAdvanceAllocation(row), 0);
+        .filter((row) => {
+            const payment = paymentById.get(String(row.payment_id ?? ""));
+            return !payment || collectionDateOnly(payment).slice(0, 7) < selectedKey;
+        })
+        .reduce((total, row) => {
+            const consumed = moneyAmount(row.consumed_by_balance_reconciliation);
+            return total + (consumed > 0 ? consumed : availableAdvanceAllocation(row));
+        }, 0);
     const futureAdvanceBalance = advanceAllocations
         .filter((row) => String(row.allocation_type ?? "") === "advance_month")
         .filter((row) => String(row.allocation_month ?? "").slice(0, 7) > selectedKey)

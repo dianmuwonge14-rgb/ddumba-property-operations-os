@@ -35,14 +35,33 @@ export type ArchivedIntegrityRecord = {
     comment: string | null;
 };
 
+export type MonthlyLedgerIssueType =
+    | "TENANT_FORMULA_MISMATCH"
+    | "OUTSTANDING_AND_ADVANCE_CONFLICT"
+    | "PAYMENTS_TOTAL_MISMATCH"
+    | "ARREARS_ROLLOVER_MISMATCH"
+    | "BILLING_PERIOD_MISMATCH"
+    | "LANDLORD_FORMULA_MISMATCH";
+
+export type MonthlyLedgerIssue = {
+    id: string;
+    type: MonthlyLedgerIssueType;
+    title: string;
+    severity: "critical" | "high" | "medium" | "low";
+    officeName: string | null;
+    details: string[];
+};
+
 export type DataIntegrityCentreData = {
     generatedAt: string;
     summary: {
         duplicateGroups: number;
         criticalGroups: number;
         archivedDuplicates: number;
+        formulaIssues: number;
         orphanWarnings: number;
     };
     duplicates: IntegrityDuplicateRecord[];
+    formulaIssues: MonthlyLedgerIssue[];
     archivedRecords: ArchivedIntegrityRecord[];
 };

@@ -34,10 +34,14 @@ function loadMonthlyLedgerModule() {
 test("tenant monthly ledger clears E13-style arrears plus rent with current month payments", () => {
   const { calculateTenantMonthlyLedgerPosition } = loadMonthlyLedgerModule();
   const position = calculateTenantMonthlyLedgerPosition({
+    advanceAllocations: [
+      { payment_id: "payment-e13", allocation_type: "current_month", allocation_month: "2026-07-01", amount_allocated: 70_000, consumed_by_balance_reconciliation: 0 },
+      { payment_id: "payment-e13", allocation_type: "advance_month", allocation_month: "2026-08-01", amount_allocated: 70_000, consumed_by_balance_reconciliation: 70_000 },
+    ],
     collections: [{ id: "payment-e13", payment_date: "2026-08-10", amount_paid: 140_000, status: "posted" }],
     monthlyRent: 70_000,
     rentMonths: [
-      { rent_month: "2026-07-01", outstanding_amount: 70_000, rent_amount: 70_000 },
+      { rent_month: "2026-07-01", outstanding_amount: 0, rent_amount: 70_000 },
       { rent_month: "2026-08-01", outstanding_amount: 0, rent_amount: 70_000 },
     ],
     selectedMonth: "2026-08-01",
@@ -88,6 +92,22 @@ test("tenant monthly ledger consumes matured advance for the selected month befo
 
   assert.equal(position.advanceAppliedToCurrentMonth, 30_000);
   assert.equal(position.outstanding, 40_000);
+  assert.equal(position.advance, 0);
+});
+
+test("tenant monthly ledger counts prior consumed advance as opening credit", () => {
+  const { calculateTenantMonthlyLedgerPosition } = loadMonthlyLedgerModule();
+  const position = calculateTenantMonthlyLedgerPosition({
+    advanceAllocations: [{ payment_id: "aug-overpay", allocation_type: "advance_month", allocation_month: "2026-09-01", amount_allocated: 70_000, consumed_by_balance_reconciliation: 70_000 }],
+    collections: [{ id: "aug-overpay", payment_date: "2026-08-10", amount_paid: 140_000, status: "posted" }],
+    monthlyRent: 70_000,
+    rentMonths: [{ rent_month: "2026-09-01", outstanding_amount: 0, rent_amount: 70_000, amount_paid: 70_000 }],
+    selectedMonth: "2026-09-01",
+  });
+
+  assert.equal(position.advanceAppliedToCurrentMonth, 70_000);
+  assert.equal(position.paymentsThisMonth, 0);
+  assert.equal(position.outstanding, 0);
   assert.equal(position.advance, 0);
 });
 

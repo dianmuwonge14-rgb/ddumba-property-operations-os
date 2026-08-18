@@ -3,7 +3,7 @@
 import { useActionState } from "react";
 import { Archive, Eye, GitMerge, RotateCcw, ShieldCheck, TriangleAlert } from "lucide-react";
 import { archiveDuplicateRoomAction, restoreArchivedRoomAction, type IntegrityActionState } from "@/app/actions/data-integrity";
-import type { DataIntegrityCentreData, IntegrityDuplicateRecord, IntegrityEntityRecord } from "@/lib/data-integrity/types";
+import type { DataIntegrityCentreData, IntegrityDuplicateRecord, IntegrityEntityRecord, MonthlyLedgerIssue } from "@/lib/data-integrity/types";
 
 const initialState: IntegrityActionState = { ok: false, message: "" };
 
@@ -28,10 +28,11 @@ export default function DataIntegrityCentre({ data }: { data: DataIntegrityCentr
                 </div>
             </section>
 
-            <section className="grid gap-3 md:grid-cols-4">
+            <section className="grid gap-3 md:grid-cols-5">
                 <Kpi title="Duplicate Groups" value={data.summary.duplicateGroups.toString()} tone="blue" />
                 <Kpi title="Critical / High" value={data.summary.criticalGroups.toString()} tone={data.summary.criticalGroups ? "red" : "green"} />
                 <Kpi title="Archived Duplicates" value={data.summary.archivedDuplicates.toString()} tone="amber" />
+                <Kpi title="Formula Issues" value={data.summary.formulaIssues.toString()} tone={data.summary.formulaIssues ? "red" : "green"} />
                 <Kpi title="Orphan Warnings" value={data.summary.orphanWarnings.toString()} tone={data.summary.orphanWarnings ? "red" : "green"} />
             </section>
 
@@ -40,6 +41,25 @@ export default function DataIntegrityCentre({ data }: { data: DataIntegrityCentr
                     {archiveState.message || restoreState.message}
                 </div>
             )}
+
+            <section className="rounded-[1.5rem] border border-white/10 bg-white/[0.04] shadow-2xl shadow-black/20">
+                <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
+                    <div>
+                        <h2 className="text-lg font-black">Monthly Ledger Formula Checks</h2>
+                        <p className="text-xs font-semibold text-slate-400">Tenant balance mathematics, payment totals, billing periods, and advance conflicts.</p>
+                    </div>
+                    <TriangleAlert className={data.formulaIssues.length ? "text-amber-200" : "text-emerald-200"} size={22} />
+                </div>
+                {data.formulaIssues.length === 0 ? (
+                    <div className="p-8 text-sm font-bold text-emerald-100">No monthly ledger formula issues found.</div>
+                ) : (
+                    <div className="grid gap-3 p-5 xl:grid-cols-2">
+                        {data.formulaIssues.map((issue) => (
+                            <FormulaIssueCard key={issue.id} issue={issue} />
+                        ))}
+                    </div>
+                )}
+            </section>
 
             <section className="rounded-[1.5rem] border border-white/10 bg-white/[0.04] shadow-2xl shadow-black/20">
                 <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
@@ -109,6 +129,24 @@ export default function DataIntegrityCentre({ data }: { data: DataIntegrityCentr
                 )}
             </section>
         </main>
+    );
+}
+
+function FormulaIssueCard({ issue }: { issue: MonthlyLedgerIssue }) {
+    return (
+        <article className="rounded-2xl border border-white/10 bg-slate-950/45 p-4">
+            <div className="flex flex-wrap items-center gap-2">
+                <span className={`rounded-full px-2.5 py-1 text-[11px] font-black uppercase ${severityClass(issue.severity)}`}>{issue.severity}</span>
+                <span className="rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-[11px] font-black uppercase text-slate-200">{issue.type.replaceAll("_", " ")}</span>
+            </div>
+            <h3 className="mt-3 text-base font-black text-white">{issue.title}</h3>
+            <p className="mt-1 text-xs font-semibold text-slate-400">{issue.officeName ?? "Company"}</p>
+            <div className="mt-3 space-y-1">
+                {issue.details.map((detail) => (
+                    <p key={detail} className="break-words text-xs font-semibold text-slate-300">{detail}</p>
+                ))}
+            </div>
+        </article>
     );
 }
 
@@ -202,7 +240,7 @@ function Kpi({ title, value, tone }: { title: string; value: string; tone: "blue
     );
 }
 
-function severityClass(severity: IntegrityDuplicateRecord["severity"]) {
+function severityClass(severity: IntegrityDuplicateRecord["severity"] | MonthlyLedgerIssue["severity"]) {
     if (severity === "critical" || severity === "high") return "bg-red-400/15 text-red-100";
     if (severity === "medium") return "bg-amber-400/15 text-amber-100";
     return "bg-blue-400/15 text-blue-100";

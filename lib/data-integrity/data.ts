@@ -1,8 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isFinanciallyEffectiveCollection } from "@/lib/collections/validity";
+import { clampBillingDay, dateForBillingDay, previousDay, addMonthsToBillingDate } from "@/lib/tenants/billing-cycle";
+import { calculateTenantMonthlyLedgerPosition } from "@/lib/financial/monthly-ledger";
 import type { AuthContext } from "@/lib/auth/types";
-import type { ArchivedIntegrityRecord, DataIntegrityCentreData, IntegrityDuplicateRecord, IntegrityEntityRecord } from "./types";
+import type { ArchivedIntegrityRecord, DataIntegrityCentreData, IntegrityDuplicateRecord, IntegrityEntityRecord, MonthlyLedgerIssue } from "./types";
 
 type LooseRow = Record<string, unknown>;
 
@@ -13,15 +15,18 @@ export async function getDataIntegrityCentreData(context: AuthContext): Promise<
     if (!companyId) return emptyData();
 
     const supabase = createSupabaseAdminClient() as unknown as SupabaseClient;
-    const [officesResult, roomsResult, landlordsResult, tenantsResult, collectionsResult] = await Promise.all([
+    const [officesResult, roomsResult, landlordsResult, tenantsResult, collectionsResult, rentMonthsResult, allocationsResult, leasesResult] = await Promise.all([
         supabase.from("offices").select("id, office_name, name").eq("company_id", companyId).limit(1000),
         supabase.from("rooms").select("id, company_id, office_id, property_id, landlord_id, room_number, status, monthly_rent, outstanding_balance, workbook_comment, workbook_raw_data, created_at, updated_at").eq("company_id", companyId).limit(5000),
         supabase.from("landlords").select("id, company_id, full_name, phone, status, created_at").eq("company_id", companyId).limit(5000),
-        supabase.from("tenants").select("id, company_id, office_id, room_id, full_name, phone, status, outstanding_balance:balance, created_at").eq("company_id", companyId).limit(5000),
+        supabase.from("tenants").select("id, company_id, office_id, room_id, full_name, phone, status, outstanding_balance:balance, monthly_rent, created_at, billing_day").eq("company_id", companyId).limit(5000),
         supabase.from("collections").select("id, company_id, office_id, room_id, tenant_id, payment_date, amount, amount_paid, status, created_at, financial_effective, reversed_at, voided_at, deleted_at, superseded_at, superseded_by_payment_id, corrected_by_payment_id, correction_of_payment_id").eq("company_id", companyId).limit(10000),
+        supabase.from("tenant_rent_months").select("id, company_id, room_id, tenant_id, rent_month, due_date, coverage_start, coverage_end, rent_amount, amount_paid, outstanding_amount, status").eq("company_id", companyId).limit(20000),
+        supabase.from("tenant_rent_allocations").select("id, company_id, room_id, tenant_id, payment_id, allocation_month, allocation_type, amount_allocated, consumed_by_balance_reconciliation, allocation_source, is_historical_credit, coverage_start, coverage_end").eq("company_id", companyId).limit(30000),
+        supabase.from("leases").select("id, company_id, room_id, tenant_id, billing_day, start_date, monthly_rent, status").eq("company_id", companyId).eq("status", "active").limit(5000),
     ]);
 
-    for (const result of [officesResult, roomsResult, landlordsResult, tenantsResult, collectionsResult]) {
+    for (const result of [officesResult, roomsResult, landlordsResult, tenantsResult, collectionsResult, rentMonthsResult, allocationsResult, leasesResult]) {
         if (result.error) throw new Error(result.error.message);
     }
 
@@ -31,6 +36,9 @@ export async function getDataIntegrityCentreData(context: AuthContext): Promise<
     const landlords = (landlordsResult.data ?? []) as unknown as LooseRow[];
     const tenants = (tenantsResult.data ?? []) as unknown as LooseRow[];
     const collections = (collectionsResult.data ?? []) as unknown as LooseRow[];
+    const rentMonths = (rentMonthsResult.data ?? []) as unknown as LooseRow[];
+    const allocations = (allocationsResult.data ?? []) as unknown as LooseRow[];
+    const leases = (leasesResult.data ?? []) as unknown as LooseRow[];
 
     const duplicates: IntegrityDuplicateRecord[] = [
         ...duplicateRooms(rooms, officeById),
@@ -40,6 +48,15 @@ export async function getDataIntegrityCentreData(context: AuthContext): Promise<
         ...duplicatePayments(collections, officeById),
     ];
     const archivedRecords = archivedDuplicateRooms(rooms, officeById);
+    const formulaIssues = monthlyLedgerFormulaIssues({
+        allocations,
+        collections,
+        leases,
+        officeById,
+        rentMonths,
+        rooms,
+        tenants,
+    });
     const criticalGroups = duplicates.filter((duplicate) => duplicate.severity === "critical" || duplicate.severity === "high").length;
 
     return {
@@ -48,11 +65,145 @@ export async function getDataIntegrityCentreData(context: AuthContext): Promise<
             duplicateGroups: duplicates.length,
             criticalGroups,
             archivedDuplicates: archivedRecords.length,
+            formulaIssues: formulaIssues.length,
             orphanWarnings: 0,
         },
         duplicates,
+        formulaIssues,
         archivedRecords,
     };
+}
+
+function monthlyLedgerFormulaIssues({
+    allocations,
+    collections,
+    leases,
+    officeById,
+    rentMonths,
+    rooms,
+    tenants,
+}: {
+    allocations: LooseRow[];
+    collections: LooseRow[];
+    leases: LooseRow[];
+    officeById: Map<string, string>;
+    rentMonths: LooseRow[];
+    rooms: LooseRow[];
+    tenants: LooseRow[];
+}): MonthlyLedgerIssue[] {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const selectedMonth = `${currentMonth}-01`;
+    const roomById = new Map(rooms.map((room) => [stringValue(room.id), room]));
+    const activeTenants = tenants.filter((tenant) => !inactive(tenant.status) && stringValue(tenant.room_id));
+    const collectionsByTenant = groupBy(collections.filter(isFinanciallyEffectiveCollection), (row) => stringValue(row.tenant_id));
+    const rentMonthsByTenant = groupBy(rentMonths, (row) => stringValue(row.tenant_id));
+    const allocationsByTenant = groupBy(allocations, (row) => stringValue(row.tenant_id));
+    const leaseByTenant = new Map(leases.map((lease) => [stringValue(lease.tenant_id), lease]));
+    const issues: MonthlyLedgerIssue[] = [];
+
+    for (const tenant of activeTenants) {
+        const tenantId = stringValue(tenant.id);
+        const room = roomById.get(stringValue(tenant.room_id));
+        const lease = leaseByTenant.get(tenantId);
+        const monthlyRent = numberValue(lease?.monthly_rent) || numberValue(tenant.monthly_rent) || numberValue(room?.monthly_rent);
+        const position = calculateTenantMonthlyLedgerPosition({
+            advanceAllocations: allocationsByTenant.get(tenantId) ?? [],
+            collections: collectionsByTenant.get(tenantId) ?? [],
+            monthlyRent,
+            rentMonths: rentMonthsByTenant.get(tenantId) ?? [],
+            selectedMonth,
+        });
+        const storedOutstanding = Math.max(numberValue(tenant.outstanding_balance), numberValue(room?.outstanding_balance));
+        const label = `Room ${stringValue(room?.room_number) || "Unknown"} · ${displayName(tenant)}`;
+        const officeName = officeById.get(stringValue(room?.office_id) || stringValue(tenant.office_id)) ?? null;
+
+        if (Math.abs(storedOutstanding - position.outstanding) > 1) {
+            issues.push({
+                id: `tenant-formula-${tenantId}`,
+                type: "TENANT_FORMULA_MISMATCH",
+                title: label,
+                severity: "high",
+                officeName,
+                details: [
+                    `Opening arrears: UGX ${position.arrears.toLocaleString("en-UG")}`,
+                    `Current month rent: UGX ${position.currentMonthRent.toLocaleString("en-UG")}`,
+                    `Payments this month: UGX ${position.paymentsThisMonth.toLocaleString("en-UG")}`,
+                    `Formula outstanding: UGX ${position.outstanding.toLocaleString("en-UG")}`,
+                    `Stored/display snapshot: UGX ${storedOutstanding.toLocaleString("en-UG")}`,
+                ],
+            });
+        }
+        if (position.outstanding > 1 && position.advance > 1) {
+            issues.push({
+                id: `tenant-conflict-${tenantId}`,
+                type: "OUTSTANDING_AND_ADVANCE_CONFLICT",
+                title: label,
+                severity: "critical",
+                officeName,
+                details: [
+                    `Formula outstanding: UGX ${position.outstanding.toLocaleString("en-UG")}`,
+                    `Formula advance: UGX ${position.advance.toLocaleString("en-UG")}`,
+                    "Normal rent advance must not coexist with collectible rent debt.",
+                ],
+            });
+        }
+        const currentRows = (rentMonthsByTenant.get(tenantId) ?? []).filter((row) => stringValue(row.rent_month).slice(0, 7) === currentMonth);
+        for (const row of currentRows) {
+            const billingDay = clampBillingDay(numberValue(lease?.billing_day ?? tenant.billing_day) || 1);
+            const expectedStart = dateForBillingDay(Number(currentMonth.slice(0, 4)), Number(currentMonth.slice(5, 7)) - 1, billingDay);
+            const expectedEnd = previousDay(addMonthsToBillingDate(expectedStart, 1, billingDay));
+            const actualStart = stringValue(row.coverage_start).slice(0, 10);
+            const actualEnd = stringValue(row.coverage_end).slice(0, 10);
+            if ((actualStart && actualStart !== expectedStart) || (actualEnd && actualEnd !== expectedEnd)) {
+                issues.push({
+                    id: `tenant-billing-period-${tenantId}-${stringValue(row.rent_month)}`,
+                    type: "BILLING_PERIOD_MISMATCH",
+                    title: label,
+                    severity: "medium",
+                    officeName,
+                    details: [
+                        `Billing day: ${billingDay}`,
+                        `Expected coverage: ${expectedStart} to ${expectedEnd}`,
+                        `Displayed coverage: ${actualStart || "missing"} to ${actualEnd || "missing"}`,
+                    ],
+                });
+            }
+        }
+        const paymentSum = (collectionsByTenant.get(tenantId) ?? [])
+            .filter((collection) => collectionDateKey(collection) === currentMonth)
+            .reduce((total, collection) => total + numberValue(collection.amount_paid ?? collection.amount), 0);
+        if (Math.abs(paymentSum - position.paymentsThisMonth) > 1) {
+            issues.push({
+                id: `tenant-payments-total-${tenantId}`,
+                type: "PAYMENTS_TOTAL_MISMATCH",
+                title: label,
+                severity: "high",
+                officeName,
+                details: [
+                    `Formula payments this month: UGX ${position.paymentsThisMonth.toLocaleString("en-UG")}`,
+                    `Independent payment sum: UGX ${paymentSum.toLocaleString("en-UG")}`,
+                ],
+            });
+        }
+        const priorRemaining = (rentMonthsByTenant.get(tenantId) ?? [])
+            .filter((row) => stringValue(row.rent_month).slice(0, 7) < currentMonth)
+            .reduce((total, row) => total + numberValue(row.outstanding_amount), 0);
+        if (priorRemaining > 0 && position.arrears < priorRemaining - 1) {
+            issues.push({
+                id: `tenant-arrears-rollover-${tenantId}`,
+                type: "ARREARS_ROLLOVER_MISMATCH",
+                title: label,
+                severity: "high",
+                officeName,
+                details: [
+                    `Prior rent-period remaining: UGX ${priorRemaining.toLocaleString("en-UG")}`,
+                    `Formula opening arrears: UGX ${position.arrears.toLocaleString("en-UG")}`,
+                ],
+            });
+        }
+    }
+
+    return issues;
 }
 
 function duplicateRooms(rooms: LooseRow[], officeById: Map<string, string>): IntegrityDuplicateRecord[] {
@@ -200,8 +351,9 @@ function entity(row: LooseRow, officeById: Map<string, string>, label: string, d
 function emptyData(): DataIntegrityCentreData {
     return {
         generatedAt: new Date().toISOString(),
-        summary: { duplicateGroups: 0, criticalGroups: 0, archivedDuplicates: 0, orphanWarnings: 0 },
+        summary: { duplicateGroups: 0, criticalGroups: 0, archivedDuplicates: 0, formulaIssues: 0, orphanWarnings: 0 },
         duplicates: [],
+        formulaIssues: [],
         archivedRecords: [],
     };
 }
@@ -237,6 +389,20 @@ function dateOnly(value: unknown) {
     return stringValue(value).slice(0, 10);
 }
 
+function collectionDateKey(collection: LooseRow) {
+    return (dateOnly(collection.payment_date) || dateOnly(collection.paid_at) || dateOnly(collection.created_at)).slice(0, 7);
+}
+
 function objectValue(value: unknown): Record<string, unknown> {
     return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function groupBy<T>(rows: T[], keyFn: (row: T) => string) {
+    const groups = new Map<string, T[]>();
+    for (const row of rows) {
+        const key = keyFn(row);
+        if (!key) continue;
+        groups.set(key, [...(groups.get(key) ?? []), row]);
+    }
+    return groups;
 }
