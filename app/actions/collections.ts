@@ -13,7 +13,8 @@ import { buildTenantPaymentCoverageAllocations } from "@/lib/collections/move-in
 import { recordCollectionLedgerAndCash } from "@/lib/collections/payment-ledger";
 import { paymentRemovalReversalAmount } from "@/lib/collections/payment-removal";
 import { displayPaymentMethod, paymentMethodBucket } from "@/lib/collections/payment-methods";
-import { availableAdvanceAllocation, displayTenantNetBalance, moneyAmount } from "@/lib/tenants/balance-reconciliation";
+import { calculateTenantMonthlyLedgerPosition } from "@/lib/financial/monthly-ledger";
+import { availableAdvanceAllocation, moneyAmount } from "@/lib/tenants/balance-reconciliation";
 import { recalculateTenantScore } from "@/lib/tenants/scoring";
 import { normalizeOfflineTransactionUuid } from "@/lib/offline/idempotency";
 import type {
@@ -124,6 +125,7 @@ async function getFastTenantPaymentContext(input: {
     supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
     companyId: string;
     tenantId: string;
+    paymentDate?: string | null;
 }) {
     const { supabase, companyId, tenantId } = input;
     const { data: tenant, error: tenantError } = await supabase
@@ -135,7 +137,7 @@ async function getFastTenantPaymentContext(input: {
     if (tenantError) throw new Error(tenantError.message);
     if (!tenant) throw new Error("Tenant not found.");
 
-    const [roomResult, leaseResult, sponsorResult, allocationResult] = await Promise.all([
+    const [roomResult, leaseResult, sponsorResult, allocationResult, collectionResult, rentMonthResult, legacyArrearsResult] = await Promise.all([
         tenant.room_id
             ? supabase
                 .from("rooms")
@@ -164,6 +166,21 @@ async function getFastTenantPaymentContext(input: {
             .eq("company_id", companyId)
             .eq("tenant_id", tenantId)
             .eq("allocation_type", "advance_month"),
+        (supabase as unknown as DynamicDb)
+            .from("collections")
+            .select("*")
+            .eq("company_id", companyId)
+            .eq("tenant_id", tenantId),
+        (supabase as unknown as DynamicDb)
+            .from("tenant_rent_months")
+            .select("tenant_id, rent_month, due_date, coverage_start, coverage_end, rent_amount, amount_paid, outstanding_amount, status, created_at, source")
+            .eq("company_id", companyId)
+            .eq("tenant_id", tenantId),
+        (supabase as unknown as DynamicDb)
+            .from("tenant_pre_system_arrears_periods")
+            .select("tenant_id, allocation_month, legacy_arrears_amount, payments_applied, remaining_amount, status")
+            .eq("company_id", companyId)
+            .eq("tenant_id", tenantId),
     ]);
     if (roomResult.error) throw new Error(roomResult.error.message);
     if (leaseResult.error) throw new Error(leaseResult.error.message);
@@ -172,6 +189,13 @@ async function getFastTenantPaymentContext(input: {
     }
     if (allocationResult.error && !/does not exist|schema cache|Could not find|consumed_by_balance_reconciliation/i.test(allocationResult.error.message ?? "")) {
         throw new Error(allocationResult.error.message);
+    }
+    if (collectionResult.error) throw new Error(collectionResult.error.message ?? "Could not load tenant payments.");
+    if (rentMonthResult.error && !/does not exist|schema cache|Could not find/i.test(rentMonthResult.error.message ?? "")) {
+        throw new Error(rentMonthResult.error.message);
+    }
+    if (legacyArrearsResult.error && !/does not exist|schema cache|Could not find/i.test(legacyArrearsResult.error.message ?? "")) {
+        throw new Error(legacyArrearsResult.error.message);
     }
 
     const lease = leaseResult.data;
@@ -187,12 +211,15 @@ async function getFastTenantPaymentContext(input: {
         room = leaseRoomResult.data;
     }
     const monthlyRent = Number(lease?.monthly_rent ?? tenant.monthly_rent ?? room?.monthly_rent ?? 0);
-    const activeAdvanceBalance = (allocationResult.data ?? []).reduce((total: number, row: Record<string, unknown>) => total + availableAdvanceAllocation(row), 0);
-    const netBalance = displayTenantNetBalance({
-        advanceBalance: activeAdvanceBalance,
-        outstandingBalance: Math.max(0, Number(tenant.balance ?? room?.outstanding_balance ?? 0)),
+    const monthlyPosition = calculateTenantMonthlyLedgerPosition({
+        advanceAllocations: allocationResult.data ?? [],
+        collections: collectionResult.data ?? [],
+        legacyArrears: legacyArrearsResult.data ?? [],
+        monthlyRent,
+        rentMonths: rentMonthResult.data ?? [],
+        selectedMonth: monthStartDate(input.paymentDate ?? new Date().toISOString().slice(0, 10)),
     });
-    const outstandingBalance = netBalance.outstandingBalance;
+    const outstandingBalance = monthlyPosition.outstanding;
     const sponsor = sponsorResult.data ?? null;
     const employerExpected = Math.max(0, Number(sponsor?.covered_amount ?? 0));
     const tenantTopUpExpected = Math.max(0, Number(sponsor?.tenant_top_up_amount ?? (employerExpected ? monthlyRent - employerExpected : 0)));
@@ -1120,6 +1147,8 @@ export async function recordCollection(input: RecordCollectionInput) {
     const amount = Number(input.amount);
     assertPositiveAmount(amount, "Collection amount");
     const paymentMethod = canonicalTenantPaymentMethod(input.paymentMethod);
+    const paymentEntryDate = assertPaymentEntryDate(context, input.paymentDate, input.backdatingReason);
+    const paymentDate = paymentEntryDate.date;
     const offlineTransactionUuid = normalizeOfflineTransactionUuid(input.offlineTransactionUuid);
 
     if (!context.activeCompany?.id || !context.activeOffice?.id) {
@@ -1154,6 +1183,7 @@ export async function recordCollection(input: RecordCollectionInput) {
     }
     const tenantContext = await getFastTenantPaymentContext({
         companyId: context.activeCompany.id,
+        paymentDate,
         supabase,
         tenantId: input.tenantId,
     });
@@ -1172,8 +1202,6 @@ export async function recordCollection(input: RecordCollectionInput) {
     const usedToClearOutstanding = Math.min(balanceBefore, amount);
     const paymentSource = input.paymentSource === "employer" || input.paymentKind === "employer_sponsor" ? "employer" : "tenant";
     const paymentKind = input.paymentKind ?? (paymentSource === "employer" ? "employer_sponsor" : "tenant_normal");
-    const paymentEntryDate = assertPaymentEntryDate(context, input.paymentDate, input.backdatingReason);
-    const paymentDate = paymentEntryDate.date;
     const paidAt = new Date().toISOString();
     const employeeId = authenticatedEmployeeId(context);
     const employerBalanceAfter = paymentSource === "employer"
