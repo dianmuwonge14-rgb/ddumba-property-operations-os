@@ -173,5 +173,7 @@ test("tenant balance card no longer exposes direct outstanding edits", () => {
   assert.match(tenantBalanceSection, /Arrears/);
   assert.match(tenantBalanceSection, /Payments This Month/);
   assert.match(tenantBalanceSection, /Calculated only: arrears \+ rent - payments/);
+  assert.match(tenantBalanceSection, /rawTenantBalance = arrears \+ currentMonthRent - paymentsThisMonth - maturedAdvanceCredit/);
+  assert.match(tenantBalanceSection, /calculatedAdvance = Math\.max\(-rawTenantBalance, 0\)/);
   assert.doesNotMatch(tenantBalanceSection, /onEditOutstanding/);
 });

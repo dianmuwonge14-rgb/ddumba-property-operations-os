@@ -2454,8 +2454,10 @@ function TenantBalance({
     const arrears = position?.arrears ?? tenant.legacyArrearsBalance ?? 0;
     const currentMonthRent = position?.currentMonthRent ?? tenant.monthlyRent;
     const paymentsThisMonth = position?.paymentsThisMonth ?? tenant.currentMonthPaid;
-    const calculatedOutstanding = position?.outstanding ?? liveOutstandingBalance(tenant);
-    const calculatedAdvance = position?.advance ?? tenant.advanceRentBalance;
+    const maturedAdvanceCredit = position?.advanceAppliedToCurrentMonth ?? 0;
+    const rawTenantBalance = arrears + currentMonthRent - paymentsThisMonth - maturedAdvanceCredit;
+    const calculatedOutstanding = Math.max(rawTenantBalance, 0);
+    const calculatedAdvance = Math.max(-rawTenantBalance, 0);
 
     return (
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -2546,10 +2548,10 @@ function TenantBalance({
                         {tenant.nextAdvanceRentMonth ? ` Advance month: ${tenant.nextAdvanceRentMonth}.` : ""}
                     </p>
                 </div>
-            ) : !loadingDetails && tenant.advanceRentBalance > 0 ? (
+            ) : !loadingDetails && calculatedAdvance > 0 ? (
                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 xl:col-span-4">
                     <p className="text-sm font-black text-emerald-800">
-                        Tenant has {money(tenant.advanceRentBalance)} saved as advance rent for future months.
+                        Tenant has {money(calculatedAdvance)} remaining as advance after clearing this billing month's obligation.
                     </p>
                 </div>
             ) : null}
