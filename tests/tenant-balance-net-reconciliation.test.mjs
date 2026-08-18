@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
+import vm from "node:vm";
+import ts from "typescript";
 
 function reconcile({ outstandingBalance, advanceBalance }) {
   const requestedOutstanding = Math.max(0, Number(outstandingBalance ?? 0));
@@ -106,6 +108,48 @@ test("tenant payment allocation creates advance only from true overpayment", () 
   const allocationSource = fs.readFileSync("lib/collections/move-in-allocation.ts", "utf8");
   assert.match(allocationSource, /genuineAdvanceCredit = Math\.max\(0, amount - totalDueBeforePayment\)/);
   assert.match(allocationSource, /remaining = Math\.min\(remaining, genuineAdvanceCredit\)/);
+});
+
+test("payment removal reverses only real debt impact instead of raw amount", () => {
+  const helperSource = fs.readFileSync("lib/collections/payment-removal.ts", "utf8");
+  const transpiled = ts.transpileModule(helperSource, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const sandbox = {
+    exports: {},
+    require(specifier) {
+      if (specifier === "@/lib/tenants/balance-reconciliation") {
+        return { moneyAmount: (value) => Math.max(0, Number(value ?? 0) || 0) };
+      }
+      throw new Error(`Unexpected require: ${specifier}`);
+    },
+  };
+  vm.runInNewContext(transpiled, sandbox);
+  const { paymentRemovalReversalAmount } = sandbox.exports;
+
+  assert.equal(
+    paymentRemovalReversalAmount({
+      amount_paid: 140_000,
+      balance_before_payment: 0,
+      balance_after_payment: 0,
+      used_to_clear_outstanding: 0,
+    }),
+    0,
+  );
+  assert.equal(
+    paymentRemovalReversalAmount(
+      { amount_paid: 140_000, balance_before_payment: 0, balance_after_payment: 0, used_to_clear_outstanding: 0 },
+      [{ allocation_type: "advance_month", consumed_by_balance_reconciliation: 70_000 }],
+    ),
+    70_000,
+  );
+  assert.equal(
+    paymentRemovalReversalAmount(
+      { amount_paid: 140_000, balance_before_payment: 70_000, balance_after_payment: 0, used_to_clear_outstanding: 70_000 },
+      [{ allocation_type: "advance_month", consumed_by_balance_reconciliation: 100_000 }],
+    ),
+    140_000,
+  );
 });
 
 test("approved legacy arrears are reconstructed as pre-system monthly debt", () => {

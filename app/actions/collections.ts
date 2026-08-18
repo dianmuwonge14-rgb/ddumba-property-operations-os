@@ -11,6 +11,7 @@ import { assertFinancialEntryDate } from "@/lib/business-date";
 import { getTenantCollectionContext } from "@/lib/collections/data";
 import { buildTenantPaymentCoverageAllocations } from "@/lib/collections/move-in-allocation";
 import { recordCollectionLedgerAndCash } from "@/lib/collections/payment-ledger";
+import { paymentRemovalReversalAmount } from "@/lib/collections/payment-removal";
 import { displayPaymentMethod, paymentMethodBucket } from "@/lib/collections/payment-methods";
 import { availableAdvanceAllocation, displayTenantNetBalance, moneyAmount } from "@/lib/tenants/balance-reconciliation";
 import { recalculateTenantScore } from "@/lib/tenants/scoring";
@@ -242,15 +243,6 @@ function paymentBusinessDate(payment: Record<string, unknown>) {
     return explicitDate || dateOnly(String(payment.paid_at ?? ""));
 }
 
-function paymentRemovalReversalAmount(payment: Record<string, unknown>) {
-    const amount = Number(payment.amount_paid ?? payment.amount ?? 0);
-    const balanceBefore = Number(payment.balance_before_payment ?? payment.expected_amount ?? 0);
-    const usedToClear = Number(payment.used_to_clear_outstanding ?? 0);
-    if (usedToClear > 0) return usedToClear;
-    if (balanceBefore > 0) return Math.min(balanceBefore, amount);
-    return amount;
-}
-
 async function applyApprovedPaymentRemoval(input: {
     db: DynamicDb;
     companyId: string;
@@ -264,9 +256,23 @@ async function applyApprovedPaymentRemoval(input: {
     const { companyId, payment, reason } = input;
     const paymentId = String(payment.id ?? "");
     const originalAmount = Number(payment.amount_paid ?? payment.amount ?? 0);
-    const reversalAmount = paymentRemovalReversalAmount(payment);
     const tenantId = payment.tenant_id ? String(payment.tenant_id) : null;
     const roomId = payment.room_id ? String(payment.room_id) : null;
+
+    const { data: allocationRows, error: allocationRowsError } = await adminDb
+        .from("tenant_rent_allocations")
+        .select("allocation_type, amount_allocated, consumed_by_balance_reconciliation")
+        .eq("company_id", companyId)
+        .eq("payment_id", paymentId);
+    if (allocationRowsError && !isMissingSchemaError(allocationRowsError)) {
+        throw new Error(allocationRowsError.message);
+    }
+    const reversalAmount = paymentRemovalReversalAmount(payment, allocationRows ?? []);
+
+    const allocationDelete = await adminDb.from("tenant_rent_allocations").delete().eq("company_id", companyId).eq("payment_id", paymentId);
+    if (allocationDelete.error && !isMissingSchemaError(allocationDelete.error)) {
+        throw new Error(allocationDelete.error.message);
+    }
 
     const { data: tenant, error: tenantError } = tenantId
         ? await adminDb.from("tenants").select("*").eq("company_id", companyId).eq("id", tenantId).maybeSingle()
@@ -286,11 +292,6 @@ async function applyApprovedPaymentRemoval(input: {
         tenantId,
     });
     const nextBalance = reconciled.outstandingAfter;
-
-    const allocationDelete = await adminDb.from("tenant_rent_allocations").delete().eq("company_id", companyId).eq("payment_id", paymentId);
-    if (allocationDelete.error && !/does not exist|schema cache|Could not find/i.test(allocationDelete.error.message ?? "")) {
-        throw new Error(allocationDelete.error.message);
-    }
 
     const update = await adminDb
         .from("collections")
