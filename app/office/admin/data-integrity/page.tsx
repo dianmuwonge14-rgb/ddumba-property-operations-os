@@ -2,6 +2,9 @@ import DataIntegrityCentre from "@/components/office/admin/DataIntegrityCentre";
 import { requireCompanyAdminMode } from "@/lib/auth/permissions";
 import { getDataIntegrityCentreData } from "@/lib/data-integrity/data";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function AdminDataIntegrityPage() {
     const context = await requireCompanyAdminMode();
     const data = await getDataIntegrityCentreData(context);
