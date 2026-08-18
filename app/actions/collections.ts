@@ -312,7 +312,7 @@ async function applyApprovedPaymentRemoval(input: {
     if (update.error) throw new Error(update.error.message);
 
     const ledgerInsert = await adminDb.from("tenant_ledger_entries").insert({
-        amount: reversalAmount || originalAmount,
+        amount: reversalAmount,
         balance_after: nextBalance,
         company_id: companyId,
         description: `Admin removed payment of UGX ${Math.round(originalAmount).toLocaleString()}. Reversed outstanding effect UGX ${Math.round(reversalAmount).toLocaleString()}. Reason: ${reason}`,
