@@ -245,7 +245,7 @@ function emptyPaymentTotals(): FastPaymentRecentTotals {
 
 function liveOutstandingBalance(tenant: CollectionTenantResult | null) {
     if (!tenant) return 0;
-    return Math.max(0, Number(tenant.outstandingBalance ?? tenant.tenant.balance ?? tenant.room?.outstanding_balance ?? 0));
+    return Math.max(0, Number(tenant.monthlyFinancialPosition?.outstanding ?? tenant.outstandingBalance ?? tenant.tenant.balance ?? tenant.room?.outstanding_balance ?? 0));
 }
 
 function roomLabel(result: CollectionTenantResult) {
@@ -1568,7 +1568,7 @@ export default function FastPaymentsEntry({
 	                        </div>
 	                    ) : null}
 
-                    <TenantBalance isAdmin={isAdmin} loadingDetails={loadingTenantDetails || isSearchPreviewTenant(selectedTenant)} onEditOutstanding={openBalanceAdjustmentModal} tenant={selectedTenant} />
+                    <TenantBalance loadingDetails={loadingTenantDetails || isSearchPreviewTenant(selectedTenant)} tenant={selectedTenant} />
                     {tenantDetailsError && selectedTenant ? (
                         <div className="mt-3 flex flex-col gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-800 sm:flex-row sm:items-center sm:justify-between">
                             <span>{tenantDetailsError}</span>
@@ -2543,7 +2543,7 @@ function MiniStat({ label, tone = "text-slate-950", value }: { label: string; to
     );
 }
 
-function TenantBalance({ isAdmin, loadingDetails, onEditOutstanding, tenant }: { isAdmin: boolean; loadingDetails: boolean; onEditOutstanding: () => void; tenant: CollectionTenantResult | null }) {
+function TenantBalance({ loadingDetails, tenant }: { loadingDetails: boolean; tenant: CollectionTenantResult | null }) {
     if (!tenant) {
         return (
             <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-center">
@@ -2552,25 +2552,20 @@ function TenantBalance({ isAdmin, loadingDetails, onEditOutstanding, tenant }: {
         );
     }
     const liveValue = (value: string) => loadingDetails ? "Loading..." : value;
+    const position = tenant.monthlyFinancialPosition;
+    const arrears = position?.arrears ?? tenant.legacyArrearsBalance ?? 0;
+    const currentMonthRent = position?.currentMonthRent ?? tenant.monthlyRent;
+    const paymentsThisMonth = position?.paymentsThisMonth ?? tenant.currentMonthPaid;
+    const calculatedOutstanding = position?.outstanding ?? liveOutstandingBalance(tenant);
+    const calculatedAdvance = position?.advance ?? tenant.advanceRentBalance;
 
     return (
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-2xl border border-rose-100 bg-rose-50 p-4">
-                <div className="flex items-start justify-between gap-3">
-                    <p className="text-xs font-black uppercase text-rose-400">Outstanding Balance</p>
-                    <button
-                        type="button"
-                        disabled={loadingDetails}
-                        onClick={onEditOutstanding}
-                        className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-white px-2.5 py-1 text-[10px] font-black uppercase text-rose-700 shadow-sm hover:border-rose-300 disabled:opacity-40"
-                    >
-                        <Pencil size={12} />
-                        Edit
-                    </button>
-                </div>
-                <p className="mt-1 text-2xl font-black text-rose-700">{liveValue(money(liveOutstandingBalance(tenant)))}</p>
+            <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
+                <p className="text-xs font-black uppercase text-amber-500">Arrears</p>
+                <p className="mt-1 text-2xl font-black text-amber-700">{liveValue(money(arrears))}</p>
                 <p className="mt-1 text-[11px] font-bold text-rose-500">
-                    {loadingDetails ? "Fetching live balance..." : isAdmin ? "Admin changes apply instantly." : "Office changes require Admin approval."}
+                    {loadingDetails ? "Calculating opening balance..." : "Previous unpaid balance before this billing month."}
                 </p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -2579,36 +2574,31 @@ function TenantBalance({ isAdmin, loadingDetails, onEditOutstanding, tenant }: {
             </div>
             <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
                 <p className="text-xs font-black uppercase text-blue-500">Current Month Rent</p>
-                <p className="mt-1 text-2xl font-black text-blue-700">{liveValue(money(tenant.monthlyRent))}</p>
+                <p className="mt-1 text-2xl font-black text-blue-700">{liveValue(money(currentMonthRent))}</p>
                 {!loadingDetails && tenant.currentRentPeriod ? (
                     <p className="mt-1 text-[11px] font-black text-blue-500">
                         Period: {compactDate(tenant.currentRentPeriod.start)} - {compactDate(tenant.currentRentPeriod.end)}
                     </p>
                 ) : null}
             </div>
-            <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
-                <p className="text-xs font-black uppercase text-amber-500">Outstanding Before Last Payment</p>
-                <p className="mt-1 text-2xl font-black text-amber-700">{liveValue(money(tenant.previousOutstandingBeforeLastPayment))}</p>
-            </div>
             <div className="rounded-2xl border border-cyan-100 bg-cyan-50 p-4">
-                <p className="text-xs font-black uppercase text-cyan-500">Current Month Paid</p>
-                <p className="mt-1 text-2xl font-black text-cyan-700">{liveValue(money(tenant.currentMonthPaid))}</p>
+                <p className="text-xs font-black uppercase text-cyan-500">Payments This Month</p>
+                <p className="mt-1 text-2xl font-black text-cyan-700">{liveValue(money(paymentsThisMonth))}</p>
+            </div>
+            <div className="rounded-2xl border border-rose-100 bg-rose-50 p-4">
+                <p className="text-xs font-black uppercase text-rose-400">Outstanding Balance</p>
+                <p className="mt-1 text-2xl font-black text-rose-700">{liveValue(money(calculatedOutstanding))}</p>
+                <p className="mt-1 text-[11px] font-bold text-rose-500">
+                    {loadingDetails ? "Fetching live balance..." : "Calculated only: arrears + rent - payments."}
+                </p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
                 <p className="text-xs font-black uppercase text-slate-500">Last Amount Paid</p>
                 <p className="mt-1 text-2xl font-black text-slate-950">{liveValue(money(tenant.lastAmountPaid))}</p>
             </div>
-            <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
-                <p className="text-xs font-black uppercase text-indigo-500">Used to Clear Outstanding</p>
-                <p className="mt-1 text-2xl font-black text-indigo-700">{liveValue(money(tenant.amountUsedToClearOutstanding))}</p>
-            </div>
-            <div className="rounded-2xl border border-teal-100 bg-teal-50 p-4">
-                <p className="text-xs font-black uppercase text-teal-500">Allocated to Next Month</p>
-                <p className="mt-1 text-2xl font-black text-teal-700">{liveValue(money(tenant.amountAllocatedToNextMonth))}</p>
-            </div>
             <div className="rounded-2xl border border-violet-100 bg-violet-50 p-4">
-                <p className="text-xs font-black uppercase text-violet-500">Advance Rent Balance</p>
-                <p className="mt-1 text-2xl font-black text-violet-700">{liveValue(money(tenant.advanceRentBalance))}</p>
+                <p className="text-xs font-black uppercase text-violet-500">Advance</p>
+                <p className="mt-1 text-2xl font-black text-violet-700">{liveValue(money(calculatedAdvance))}</p>
                 {!loadingDetails && tenant.advanceRentMonths.length ? (
                     <div className="mt-2 space-y-1">
                         <p className="text-xs font-black uppercase text-violet-500">Advance Month Paid</p>

@@ -1,6 +1,7 @@
 import { getScopedSupabase } from "@/lib/auth/query";
 import { requirePermission } from "@/lib/auth/permissions";
 import { collectionAmount, isFinanciallyEffectiveCollection, uniqueFinanciallyEffectiveCollections } from "@/lib/collections/validity";
+import { calculateTenantMonthlyLedgerPosition } from "@/lib/financial/monthly-ledger";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { availableAdvanceAllocation, displayTenantNetBalance } from "@/lib/tenants/balance-reconciliation";
 import { addMonthsToBillingDate, billingPeriodForDate, clampBillingDay, dateForBillingDay, nextBillingDate, previousDay } from "@/lib/tenants/billing-cycle";
@@ -1527,7 +1528,6 @@ function fastPaymentRpcRowToTenantResult(row: Record<string, unknown>, paymentMo
             : null;
     const billingPeriod = billingPeriodForDate({ billingDay, businessDate, leaseStartDate });
     const nextCharge = nextBillingDate({ billingDay, businessDate, leaseStartDate });
-
     return {
         tenant,
         room,
@@ -2088,31 +2088,38 @@ async function hydrateFastPaymentTenantResults(tenants: TenantRow[], companyId: 
         const property = propertyId ? propertyById.get(propertyId) ?? null : null;
         const landlordId = room?.landlord_id ?? property?.landlord_id ?? null;
         const resolvedOfficeId = lease?.office_id ?? room?.office_id ?? tenant.office_id ?? officeId;
-        const displayedBalance = displayTenantNetBalance({
-            advanceBalance: advanceRentBalance,
-            outstandingBalance: Number(tenant.balance ?? room?.outstanding_balance ?? 0),
+        const monthlyFinancialPosition = calculateTenantMonthlyLedgerPosition({
+            advanceAllocations: tenantAllocations,
+            collections: tenantCollections,
+            legacyArrears: tenantLegacyArrears,
+            monthlyRent,
+            rentMonths: rentMonthsByTenant.get(tenant.id) ?? [],
+            selectedMonth: monthStart,
         });
+        const formulaOutstandingBalance = monthlyFinancialPosition.outstanding;
+        const formulaAdvanceBalance = monthlyFinancialPosition.advance;
 
         return {
-            tenant: { ...tenant, balance: displayedBalance.outstandingBalance } as TenantRow,
-            room: room ? { ...room, landlord_id: landlordId, outstanding_balance: displayedBalance.outstandingBalance } as RoomRow : room,
+            tenant: { ...tenant, balance: formulaOutstandingBalance } as TenantRow,
+            room: room ? { ...room, landlord_id: landlordId, outstanding_balance: formulaOutstandingBalance } as RoomRow : room,
             property,
             office: resolvedOfficeId ? officeById.get(resolvedOfficeId) ?? null : null,
             landlord: landlordId ? landlordById.get(landlordId) ?? null : null,
             lease,
-            outstandingBalance: displayedBalance.outstandingBalance,
+            outstandingBalance: formulaOutstandingBalance,
             previousOutstandingBeforeLastPayment,
             totalDueBeforeLastPayment: rawOutstandingBeforeLastPayment,
-            lastAmountPaid,
+            lastAmountPaid: monthlyFinancialPosition.lastPaymentAmount || lastAmountPaid,
             amountUsedToClearOutstanding,
             amountAllocatedToNextMonth,
-            monthlyRent,
+            monthlyRent: monthlyFinancialPosition.currentMonthRent || monthlyRent,
+            monthlyFinancialPosition,
             billingAnniversaryDay,
             currentRentPeriod,
             lastRentChargeDate: lastRentChargeByTenant.get(tenant.id) ?? null,
             nextRentChargeDate: nextCharge,
             currentMonthPaid,
-            advanceRentBalance: displayedBalance.advanceBalance,
+            advanceRentBalance: formulaAdvanceBalance,
             advanceRentMonths,
             legacyArrearsBalance,
             legacyArrearsMonths,
@@ -2542,31 +2549,38 @@ async function hydrateTenantResults(tenants: TenantRow[], companyId: string, off
             businessDate,
             leaseStartDate: lease?.start_date ?? tenant.created_at?.slice(0, 10) ?? null,
         });
-        const displayedBalance = displayTenantNetBalance({
-            advanceBalance: advanceRentBalance,
-            outstandingBalance: Number(tenant.balance ?? room?.outstanding_balance ?? 0),
+        const monthlyFinancialPosition = calculateTenantMonthlyLedgerPosition({
+            advanceAllocations: tenantAllocations,
+            collections: tenantCollections,
+            legacyArrears: [],
+            monthlyRent,
+            rentMonths: rentMonthsByTenant.get(tenant.id) ?? [],
+            selectedMonth: monthStart,
         });
+        const formulaOutstandingBalance = monthlyFinancialPosition.outstanding;
+        const formulaAdvanceBalance = monthlyFinancialPosition.advance;
 
         return {
-            tenant: { ...tenant, balance: displayedBalance.outstandingBalance } as TenantRow,
-            room: room ? { ...room, landlord_id: landlordId, outstanding_balance: displayedBalance.outstandingBalance } as RoomRow : room,
+            tenant: { ...tenant, balance: formulaOutstandingBalance } as TenantRow,
+            room: room ? { ...room, landlord_id: landlordId, outstanding_balance: formulaOutstandingBalance } as RoomRow : room,
             property,
             office: resolvedOfficeId ? officeById.get(resolvedOfficeId) ?? null : null,
             landlord: landlordId ? landlordById.get(landlordId) ?? null : null,
             lease,
-            outstandingBalance: displayedBalance.outstandingBalance,
+            outstandingBalance: formulaOutstandingBalance,
             previousOutstandingBeforeLastPayment,
             totalDueBeforeLastPayment,
-            lastAmountPaid,
+            lastAmountPaid: monthlyFinancialPosition.lastPaymentAmount || lastAmountPaid,
             amountUsedToClearOutstanding,
             amountAllocatedToNextMonth,
-            monthlyRent,
+            monthlyRent: monthlyFinancialPosition.currentMonthRent || monthlyRent,
+            monthlyFinancialPosition,
             billingAnniversaryDay,
             currentRentPeriod,
             lastRentChargeDate: lastRentChargeByTenant.get(tenant.id) ?? null,
             nextRentChargeDate: nextCharge,
             currentMonthPaid,
-            advanceRentBalance: displayedBalance.advanceBalance,
+            advanceRentBalance: formulaAdvanceBalance,
             advanceRentMonths,
             rentMonthAllocations,
             nextMonthCoveredAmount,

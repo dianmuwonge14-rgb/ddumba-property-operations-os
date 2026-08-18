@@ -211,6 +211,18 @@ type EmployeeLunchDetail = EntrySearchResult & {
     pendingSalaryRequestId?: string | null;
 };
 type LandlordEntryDetail = EntrySearchResult & {
+    landlordMonthlyFinancialPosition?: {
+        arrears: number;
+        deductionsThisMonth: number;
+        lastPaymentAmount: number;
+        lastPaymentDate: string | null;
+        lastPaymentId: string | null;
+        netPayable: number;
+        outstanding: number;
+        paymentsThisMonth: number;
+        rawBalance: number;
+        settlementMonth: string;
+    };
     currentMonthPendingSettlement?: number;
     deductionBreakdown?: Array<{
         amount: number;
@@ -2611,6 +2623,9 @@ function LandlordFinancialWorkspace({
     selectedOfficeName,
 }: LandlordFinancialWorkspaceProps) {
     const outstanding = landlord?.outstandingBalance ?? 0;
+    const landlordPosition = landlord?.landlordMonthlyFinancialPosition;
+    const landlordArrears = landlordPosition?.arrears ?? 0;
+    const landlordPaymentsThisMonth = landlordPosition?.paymentsThisMonth ?? 0;
     const amountPaid = Number(amount || 0);
     const remainingAfter = Math.max(0, outstanding - (Number.isFinite(amountPaid) ? amountPaid : 0));
     const canRequest = !isManager;
@@ -2643,11 +2658,13 @@ function LandlordFinancialWorkspace({
             <div className="p-4">
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
                     <WorkspaceMetricCard actionLabel="Open Portfolio" label="Portfolio Gross" onAction={onOpenPortfolio} tone="indigo" value={loading ? "Loading..." : money(landlord?.portfolioGross ?? landlord?.fullRentRoll ?? 0)} />
-                    <WorkspaceMetricCard label="Net Payable" subtitle={`Payable Period: ${landlord?.payablePeriodLabel ?? "--"}`} tone="emerald" value={loading ? "Loading..." : metricMoney(landlord?.netPayable)} />
+                    <WorkspaceMetricCard label="Landlord Arrears" subtitle="Brought forward unpaid payable" tone="amber" value={loading ? "Loading..." : metricMoney(landlordArrears)} />
+                    <WorkspaceMetricCard label="Current Month Net Payable" subtitle={`Payable Period: ${landlord?.payablePeriodLabel ?? "--"}`} tone="emerald" value={loading ? "Loading..." : metricMoney(landlordPosition?.netPayable ?? landlord?.netPayable)} />
+                    <WorkspaceMetricCard actionLabel="View Payments" label="Payments Made This Month" onAction={onOpenReport} tone="teal" value={loading ? "Loading..." : metricMoney(landlordPaymentsThisMonth)} />
                     <WorkspaceMetricCard actionLabel={canRequest ? `${actionWord} Advance` : undefined} label="Advance Taken" onAction={canRequest ? onEditAdvance : undefined} tone="amber" value={loading ? "Loading..." : metricMoney(landlord?.advanceBalance)} />
-                    <WorkspaceMetricCard actionLabel="View Deductions" label="Total Deductions" onAction={onOpenDeductions} tone="rose" value={loading ? "Loading..." : metricMoney(landlord?.totalDeductions)} />
+                    <WorkspaceMetricCard actionLabel="View Deductions" label="Total Deductions This Month" onAction={onOpenDeductions} tone="rose" value={loading ? "Loading..." : metricMoney(landlordPosition?.deductionsThisMonth ?? landlord?.totalDeductions)} />
                     <WorkspaceMetricCard actionLabel="View Vacant Rooms" label="Vacant Rooms" onAction={onOpenVacantRooms} tone="violet" value={loading ? "Loading..." : metricText(landlord?.vacantRooms, "0")} />
-                    <WorkspaceMetricCard actionLabel={canRequest ? `${actionWord} Outstanding` : undefined} label="Total Outstanding" onAction={canRequest ? onEditOutstanding : undefined} tone="gold" value={loading ? "Loading..." : metricMoney(outstanding)} />
+                    <WorkspaceMetricCard label="Outstanding" subtitle="Calculated from arrears, payable and payments" tone="gold" value={loading ? "Loading..." : metricMoney(landlordPosition?.outstanding ?? outstanding)} />
                     <WorkspaceMetricCard label="Last Amount Paid" tone="teal" value={loading ? "Loading..." : (landlord?.lastPaymentDate ? metricMoney(landlord?.lastPaymentAmount) : financialUnavailable ? "Could not load" : "No Previous Payment")} />
                     <WorkspaceMetricCard label="Last Payment Date" tone="slate" value={loading ? "Loading..." : (financialUnavailable ? "Could not load" : landlord?.lastPaymentDate ?? "No Previous Payment")} />
                     <WorkspaceMetricCard actionLabel={canRequest ? (landlord?.paymentDueDate || landlord?.landlordPaymentDate ? `${actionWord} Due Date` : "Set Due Date") : undefined} label="Payment Due Date" onAction={canRequest ? onEditDueDate : undefined} tone="cyan" value={loading ? "Loading..." : (financialUnavailable ? "Could not load" : landlord?.paymentDueDate ?? landlord?.landlordPaymentDate ?? "Not Set")} />

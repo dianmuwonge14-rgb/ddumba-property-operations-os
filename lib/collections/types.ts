@@ -70,6 +70,20 @@ export type CollectionTenantResult = {
     currentRentPeriod?: { start: string; end: string } | null;
     lastRentChargeDate?: string | null;
     nextRentChargeDate?: string | null;
+    monthlyFinancialPosition?: {
+        advance: number;
+        advanceAppliedToCurrentMonth: number;
+        arrears: number;
+        currentMonthRent: number;
+        futureAdvanceBalance: number;
+        lastPaymentAmount: number;
+        lastPaymentDate: string | null;
+        lastPaymentId: string | null;
+        outstanding: number;
+        paymentsThisMonth: number;
+        rawBalance: number;
+        selectedMonth: string;
+    };
     currentMonthPaid: number;
     advanceRentBalance: number;
     advanceRentMonths: Array<{ month: string; label: string; amount: number; coverageStart?: string | null; coverageEnd?: string | null }>;

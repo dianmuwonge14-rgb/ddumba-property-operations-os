@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isCompanyOperationalManager, requirePermission } from "@/lib/auth/permissions";
+import { calculateLandlordMonthlyLedgerPosition } from "@/lib/financial/monthly-ledger";
 import { getLiveLandlordMonthlyNetPayable } from "@/lib/landlord-payables/live-net";
 import { normalizeSettlementTiming, summarizeLandlordPayables } from "@/lib/landlord-payables/payment-allocation";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -521,6 +522,16 @@ export async function GET(request: NextRequest) {
                 { type: "Other Approved Deduction", amount: amount(currentPayable.other_deductions), period: summary.payablePeriod, reason: String(currentPayable.reasons_notes ?? currentPayable.accounting_notes ?? "Other approved deduction"), date: String(currentPayable.updated_at ?? currentPayable.created_at ?? "").slice(0, 10), reference: String(currentPayable.id ?? "") },
             ].filter((row) => row.amount > 0);
             const totalDeductions = deductionRows.reduce((total, row) => total + row.amount, 0);
+            const landlordArrears = summary.unpaidRows
+                .filter((row) => !summary.payablePeriod || row.month < summary.payablePeriod)
+                .reduce((total, row) => total + amount(row.unpaid), 0);
+            const landlordMonthlyFinancialPosition = calculateLandlordMonthlyLedgerPosition({
+                arrears: landlordArrears,
+                deductionsThisMonth: totalDeductions,
+                netPayable: liveNetPayable,
+                payments: ((paymentsResult.data ?? []) as Array<Record<string, unknown>>).filter(activePaymentStatus),
+                settlementMonth: summary.payablePeriod ?? currentMonth,
+            });
             const lastPaymentAmount = amount(lastPayment?.amount ?? lastPayment?.amount_paid ?? lastPayment?.payment_amount ?? lastPayment?.paid_amount);
             const lastPaymentDate = typeof lastPayment?.paid_at === "string"
                 ? String(lastPayment.paid_at).slice(0, 10)
@@ -536,7 +547,8 @@ export async function GET(request: NextRequest) {
                     officeId: typeof firstRoom?.office_id === "string" ? firstRoom.office_id : typeof searchIndex?.office_id === "string" ? searchIndex.office_id : null,
                     officeName: String(office?.office_name ?? office?.name ?? searchIndex?.office_name ?? "Office"),
                     location: String(landlord.location ?? landlord.address ?? searchIndex?.location_text ?? ""),
-                    outstandingBalance,
+                    landlordMonthlyFinancialPosition,
+                    outstandingBalance: landlordMonthlyFinancialPosition.outstanding,
                     lastPaymentAmount,
                     lastPaymentDate,
                     landlordPaymentDate: String(landlord.payment_date ?? landlord.landlord_payment_date ?? landlord.preferred_payment_date ?? expenseDate).slice(0, 10),
@@ -545,7 +557,7 @@ export async function GET(request: NextRequest) {
                     commissionType: String(landlord.commission_calculation_mode ?? landlord.commission_input_mode ?? ""),
                     commissionRate: Number.isFinite(Number(landlord.commission_rate)) ? Number(landlord.commission_rate) : null,
                     fullRentRoll: liveFullRentRoll,
-                    netPayable: summary.currentMonthNetPayable || liveNetPayable || outstandingBalance,
+                    netPayable: landlordMonthlyFinancialPosition.netPayable,
                     portfolioValue: fullRentRoll,
                     totalRooms: rooms.length || amount(searchIndex?.room_count),
                     occupiedRooms,
