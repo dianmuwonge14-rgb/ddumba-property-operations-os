@@ -263,6 +263,11 @@ function liveOutstandingBalance(tenant: CollectionTenantResult | null) {
     return Math.max(0, Number(tenant.monthlyFinancialPosition?.outstanding ?? tenant.outstandingBalance ?? tenant.tenant.balance ?? tenant.room?.outstanding_balance ?? 0));
 }
 
+function ledgerNumber(value: unknown) {
+    const parsed = Number(value ?? 0);
+    return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+}
+
 function roomLabel(result: CollectionTenantResult) {
     return result.room?.room_number ?? "Unknown";
 }
@@ -2451,10 +2456,10 @@ function TenantBalance({
     }
     const liveValue = (value: string) => loadingDetails ? "Loading..." : value;
     const position = tenant.monthlyFinancialPosition;
-    const arrears = position?.arrears ?? tenant.legacyArrearsBalance ?? 0;
-    const currentMonthRent = position?.currentMonthRent ?? tenant.monthlyRent;
-    const paymentsThisMonth = position?.paymentsThisMonth ?? tenant.currentMonthPaid;
-    const maturedAdvanceCredit = position?.advanceAppliedToCurrentMonth ?? 0;
+    const arrears = ledgerNumber(position?.arrears ?? tenant.legacyArrearsBalance);
+    const currentMonthRent = ledgerNumber(position?.currentMonthRent ?? tenant.monthlyRent);
+    const paymentsThisMonth = ledgerNumber(position?.paymentsThisMonth ?? tenant.currentMonthPaid);
+    const maturedAdvanceCredit = ledgerNumber(position?.advanceAppliedToCurrentMonth);
     const rawTenantBalance = arrears + currentMonthRent - paymentsThisMonth - maturedAdvanceCredit;
     const calculatedOutstanding = Math.max(rawTenantBalance, 0);
     const calculatedAdvance = Math.max(-rawTenantBalance, 0);
