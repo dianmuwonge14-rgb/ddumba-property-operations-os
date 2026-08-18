@@ -15,18 +15,18 @@ export async function getDataIntegrityCentreData(context: AuthContext): Promise<
     if (!companyId) return emptyData();
 
     const supabase = createSupabaseAdminClient() as unknown as SupabaseClient;
-    const [officesResult, roomsResult, landlordsResult, tenantsResult, collectionsResult, rentMonthsResult, allocationsResult, leasesResult] = await Promise.all([
+    const [officesResult, roomsResult, landlordsResult, tenantsResult, collections, rentMonths, allocations, leases] = await Promise.all([
         supabase.from("offices").select("id, office_name, name").eq("company_id", companyId).limit(1000),
         supabase.from("rooms").select("id, company_id, office_id, property_id, landlord_id, room_number, status, monthly_rent, outstanding_balance, workbook_comment, workbook_raw_data, created_at, updated_at").eq("company_id", companyId).limit(5000),
         supabase.from("landlords").select("id, company_id, full_name, phone, status, created_at").eq("company_id", companyId).limit(5000),
         supabase.from("tenants").select("id, company_id, office_id, room_id, full_name, phone, status, outstanding_balance:balance, monthly_rent, created_at, billing_day").eq("company_id", companyId).limit(5000),
-        supabase.from("collections").select("id, company_id, office_id, room_id, tenant_id, payment_date, amount, amount_paid, status, created_at, financial_effective, reversed_at, voided_at, deleted_at, superseded_at, superseded_by_payment_id, corrected_by_payment_id, correction_of_payment_id").eq("company_id", companyId).limit(10000),
-        supabase.from("tenant_rent_months").select("id, company_id, room_id, tenant_id, rent_month, due_date, coverage_start, coverage_end, rent_amount, amount_paid, outstanding_amount, status").eq("company_id", companyId).limit(20000),
-        supabase.from("tenant_rent_allocations").select("id, company_id, room_id, tenant_id, payment_id, allocation_month, allocation_type, amount_allocated, consumed_by_balance_reconciliation, allocation_source, is_historical_credit, coverage_start, coverage_end").eq("company_id", companyId).limit(30000),
-        supabase.from("leases").select("id, company_id, room_id, tenant_id, billing_day, start_date, monthly_rent, status").eq("company_id", companyId).eq("status", "active").limit(5000),
+        fetchAllRows((from, to) => supabase.from("collections").select("id, company_id, office_id, room_id, tenant_id, payment_date, paid_at, amount, amount_paid, status, created_at, financial_effective, reversed_at, voided_at, deleted_at, superseded_at, superseded_by_payment_id, corrected_by_payment_id, correction_of_payment_id").eq("company_id", companyId).range(from, to)),
+        fetchAllRows((from, to) => supabase.from("tenant_rent_months").select("id, company_id, room_id, tenant_id, rent_month, due_date, coverage_start, coverage_end, rent_amount, amount_paid, outstanding_amount, status").eq("company_id", companyId).range(from, to)),
+        fetchAllRows((from, to) => supabase.from("tenant_rent_allocations").select("id, company_id, room_id, tenant_id, payment_id, allocation_month, allocation_type, amount_allocated, consumed_by_balance_reconciliation, allocation_source, is_historical_credit, coverage_start, coverage_end").eq("company_id", companyId).range(from, to)),
+        fetchAllRows((from, to) => supabase.from("leases").select("id, company_id, room_id, tenant_id, billing_day, start_date, monthly_rent, status").eq("company_id", companyId).eq("status", "active").range(from, to)),
     ]);
 
-    for (const result of [officesResult, roomsResult, landlordsResult, tenantsResult, collectionsResult, rentMonthsResult, allocationsResult, leasesResult]) {
+    for (const result of [officesResult, roomsResult, landlordsResult, tenantsResult]) {
         if (result.error) throw new Error(result.error.message);
     }
 
@@ -35,10 +35,6 @@ export async function getDataIntegrityCentreData(context: AuthContext): Promise<
     const rooms = (roomsResult.data ?? []) as unknown as LooseRow[];
     const landlords = (landlordsResult.data ?? []) as unknown as LooseRow[];
     const tenants = (tenantsResult.data ?? []) as unknown as LooseRow[];
-    const collections = (collectionsResult.data ?? []) as unknown as LooseRow[];
-    const rentMonths = (rentMonthsResult.data ?? []) as unknown as LooseRow[];
-    const allocations = (allocationsResult.data ?? []) as unknown as LooseRow[];
-    const leases = (leasesResult.data ?? []) as unknown as LooseRow[];
 
     const duplicates: IntegrityDuplicateRecord[] = [
         ...duplicateRooms(rooms, officeById),
@@ -314,6 +310,22 @@ function archivedDuplicateRooms(rooms: LooseRow[], officeById: Map<string, strin
                 comment: stringValue(room.workbook_comment) || null,
             };
         });
+}
+
+async function fetchAllRows<T extends LooseRow>(
+    queryFactory: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+    pageSize = 1000,
+) {
+    const rows: T[] = [];
+    for (let from = 0; ; from += pageSize) {
+        const to = from + pageSize - 1;
+        const result = await queryFactory(from, to);
+        if (result.error) throw new Error(result.error.message);
+        const page = result.data ?? [];
+        rows.push(...page);
+        if (page.length < pageSize) break;
+    }
+    return rows;
 }
 
 function duplicateBy(rows: LooseRow[], keyFn: (row: LooseRow) => string, build: (key: string, records: LooseRow[]) => IntegrityDuplicateRecord) {
