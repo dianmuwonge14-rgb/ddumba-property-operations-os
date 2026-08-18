@@ -83,15 +83,6 @@ export function calculateTenantMonthlyLedgerPosition({
         }
     }
 
-    const currentMonthPaymentsAppliedToPriorPeriods = advanceAllocations
-        .filter((row) => String(row.allocation_month ?? "").slice(0, 7) < selectedKey)
-        .filter((row) => {
-            const payment = paymentById.get(String(row.payment_id ?? ""));
-            return payment && collectionDateOnly(payment).slice(0, 7) === selectedKey;
-        })
-        .reduce((total, row) => total + moneyAmount(row.amount_allocated), 0);
-    arrears += currentMonthPaymentsAppliedToPriorPeriods;
-
     const advanceAppliedToCurrentMonth = advanceAllocations
         .filter((row) => String(row.allocation_type ?? "") === "advance_month")
         .filter((row) => String(row.allocation_month ?? "").slice(0, 7) <= selectedKey)
@@ -107,16 +98,8 @@ export function calculateTenantMonthlyLedgerPosition({
         .filter((row) => String(row.allocation_type ?? "") === "advance_month")
         .filter((row) => String(row.allocation_month ?? "").slice(0, 7) > selectedKey)
         .reduce((total, row) => total + availableAdvanceAllocation(row), 0);
-    const futureAdvanceOpeningCredit = advanceAllocations
-        .filter((row) => String(row.allocation_type ?? "") === "advance_month")
-        .filter((row) => String(row.allocation_month ?? "").slice(0, 7) > selectedKey)
-        .filter((row) => {
-            const payment = paymentById.get(String(row.payment_id ?? ""));
-            return !payment || collectionDateOnly(payment).slice(0, 7) < selectedKey;
-        })
-        .reduce((total, row) => total + availableAdvanceAllocation(row), 0);
 
-    const rawBalance = arrears + currentMonthRent - paymentsThisMonth - advanceAppliedToCurrentMonth - futureAdvanceOpeningCredit;
+    const rawBalance = arrears + currentMonthRent - paymentsThisMonth - advanceAppliedToCurrentMonth;
     const outstanding = Math.max(rawBalance, 0);
     const advance = Math.max(-rawBalance, 0);
 

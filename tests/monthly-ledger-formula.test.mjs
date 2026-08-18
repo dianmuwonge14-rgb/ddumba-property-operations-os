@@ -31,7 +31,7 @@ function loadMonthlyLedgerModule() {
   return sandbox.exports;
 }
 
-test("tenant monthly ledger clears E13-style arrears plus rent with current month payments", () => {
+test("tenant monthly ledger calculates E13-style overpayment as only the negative raw balance", () => {
   const { calculateTenantMonthlyLedgerPosition } = loadMonthlyLedgerModule();
   const position = calculateTenantMonthlyLedgerPosition({
     advanceAllocations: [
@@ -47,11 +47,12 @@ test("tenant monthly ledger clears E13-style arrears plus rent with current mont
     selectedMonth: "2026-08-01",
   });
 
-  assert.equal(position.arrears, 70_000);
+  assert.equal(position.arrears, 0);
   assert.equal(position.currentMonthRent, 70_000);
   assert.equal(position.paymentsThisMonth, 140_000);
+  assert.equal(position.rawBalance, -70_000);
   assert.equal(position.outstanding, 0);
-  assert.equal(position.advance, 0);
+  assert.equal(position.advance, 70_000);
   assert.equal(position.lastPaymentId, "payment-e13");
 });
 
@@ -66,6 +67,19 @@ test("tenant monthly ledger turns negative raw balance into advance", () => {
   assert.equal(position.rawBalance, -30_000);
   assert.equal(position.outstanding, 0);
   assert.equal(position.advance, 30_000);
+});
+
+test("tenant monthly ledger shows no advance for exact payment", () => {
+  const { calculateTenantMonthlyLedgerPosition } = loadMonthlyLedgerModule();
+  const position = calculateTenantMonthlyLedgerPosition({
+    collections: [{ payment_date: "2026-08-10", amount_paid: 70_000, status: "posted" }],
+    monthlyRent: 70_000,
+    selectedMonth: "2026-08-01",
+  });
+
+  assert.equal(position.rawBalance, 0);
+  assert.equal(position.outstanding, 0);
+  assert.equal(position.advance, 0);
 });
 
 test("tenant monthly ledger handles partial payment with arrears", () => {
@@ -111,7 +125,7 @@ test("tenant monthly ledger counts prior consumed advance as opening credit", ()
   assert.equal(position.advance, 0);
 });
 
-test("tenant monthly ledger offsets future advance against current debt before displaying advance", () => {
+test("tenant monthly ledger uses the negative raw balance as advance", () => {
   const { calculateTenantMonthlyLedgerPosition } = loadMonthlyLedgerModule();
   const position = calculateTenantMonthlyLedgerPosition({
     advanceAllocations: [{ payment_id: "aug-payment", allocation_type: "advance_month", allocation_month: "2026-09-01", amount_allocated: 500_000, consumed_by_balance_reconciliation: 0 }],
@@ -135,8 +149,22 @@ test("tenant monthly ledger does not allow debt and advance to coexist", () => {
     selectedMonth: "2026-08-01",
   });
 
-  assert.equal(position.outstanding, 80_000);
+  assert.equal(position.outstanding, 200_000);
   assert.equal(position.advance, 0);
+});
+
+test("tenant monthly ledger handles arrears plus overpayment", () => {
+  const { calculateTenantMonthlyLedgerPosition } = loadMonthlyLedgerModule();
+  const position = calculateTenantMonthlyLedgerPosition({
+    collections: [{ payment_date: "2026-08-12", amount_paid: 150_000, status: "posted" }],
+    monthlyRent: 70_000,
+    rentMonths: [{ rent_month: "2026-07-01", outstanding_amount: 50_000, rent_amount: 70_000 }],
+    selectedMonth: "2026-08-01",
+  });
+
+  assert.equal(position.rawBalance, -30_000);
+  assert.equal(position.outstanding, 0);
+  assert.equal(position.advance, 30_000);
 });
 
 test("tenant balance card no longer exposes direct outstanding edits", () => {

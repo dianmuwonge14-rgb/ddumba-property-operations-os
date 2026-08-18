@@ -132,11 +132,7 @@ function calculatePosition({ allocations, collections, monthlyRent, rentMonths }
   const priorRemaining = rentMonths
     .filter((row) => s(row.rent_month || row.due_date || row.coverage_start).slice(0, 7) < MONTH)
     .reduce((total, row) => total + n(row.outstanding_amount), 0);
-  const currentPaymentToPrior = allocations
-    .filter((row) => s(row.allocation_month).slice(0, 7) < MONTH)
-    .filter((row) => paymentById.has(s(row.payment_id)) && paymentDate(paymentById.get(s(row.payment_id))).slice(0, 7) === MONTH)
-    .reduce((total, row) => total + n(row.amount_allocated), 0);
-  const openingArrears = priorRemaining + currentPaymentToPrior;
+  const openingArrears = priorRemaining;
   const openingCredit = allocations
     .filter((row) => s(row.allocation_type) === "advance_month")
     .filter((row) => s(row.allocation_month).slice(0, 7) <= MONTH)
@@ -149,22 +145,13 @@ function calculatePosition({ allocations, collections, monthlyRent, rentMonths }
     .filter((row) => s(row.allocation_type) === "advance_month")
     .filter((row) => s(row.allocation_month).slice(0, 7) > MONTH)
     .reduce((total, row) => total + availableAdvance(row), 0);
-  const futureAdvanceOpeningCredit = allocations
-    .filter((row) => s(row.allocation_type) === "advance_month")
-    .filter((row) => s(row.allocation_month).slice(0, 7) > MONTH)
-    .filter((row) => {
-      const payment = paymentById.get(s(row.payment_id));
-      return !payment || paymentDate(payment).slice(0, 7) < MONTH;
-    })
-    .reduce((total, row) => total + availableAdvance(row), 0);
-  const raw = openingArrears + currentMonthRent - paymentsThisMonth - openingCredit - futureAdvanceOpeningCredit;
+  const raw = openingArrears + currentMonthRent - paymentsThisMonth - openingCredit;
   return {
     currentMonthRent,
     currentRows,
     futureAdvance,
     openingArrears,
     openingCredit,
-    futureAdvanceOpeningCredit,
     outstanding: Math.max(raw, 0),
     paymentsThisMonth,
     raw,
