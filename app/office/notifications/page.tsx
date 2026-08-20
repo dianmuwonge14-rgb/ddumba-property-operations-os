@@ -5,14 +5,19 @@ import { getMyNotificationEmailSettings } from "@/lib/notifications/email-settin
 
 export const dynamic = "force-dynamic";
 
-export default async function OfficeNotificationsPage() {
+type PageProps = {
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+export default async function OfficeNotificationsPage({ searchParams }: PageProps) {
     let data: Awaited<ReturnType<typeof getNotificationsCentreData>> | null = null;
     let emailSettings: Awaited<ReturnType<typeof getMyNotificationEmailSettings>> | null = null;
     let loadingError: string | null = null;
+    const params = await searchParams;
 
     try {
         [data, emailSettings] = await Promise.all([
-            getNotificationsCentreData(),
+            getNotificationsCentreData(params),
             getMyNotificationEmailSettings(),
         ]);
     } catch (error) {

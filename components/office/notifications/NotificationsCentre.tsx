@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { BellRing, CheckCircle2, History, XCircle } from "lucide-react";
 import { decidePaymentCorrection, decideTenantOutstandingBalanceAdjustment } from "@/app/actions/collections";
 import { approveExpense, rejectExpense } from "@/app/actions/expenses";
+import { markMatchingNotificationsRead, markNotificationsRead } from "@/app/actions/notifications";
 import { decideLandlordPaymentDetails } from "@/app/actions/landlords";
 import { decidePromiseChangeRequest } from "@/app/actions/promises";
 import { reviewLandlordBulkRoomRequest } from "@/app/actions/properties";
@@ -167,8 +168,47 @@ function promiseValueSummary(value: Record<string, unknown> | null | undefined) 
     ].filter(Boolean).join(" · ") || "No value";
 }
 
+const notificationStatusOptions = [
+    ["all", "All"],
+    ["unread", "Unread"],
+    ["read", "Read"],
+    ["pending", "Pending"],
+    ["approved", "Approved"],
+    ["rejected", "Rejected"],
+] as const;
+
+const notificationTypeOptions = [
+    ["all", "All"],
+    ["payments", "Payments"],
+    ["manual_adjustments", "Manual Adjustments"],
+    ["landlord_payments", "Landlord Payments"],
+    ["expenses", "Expenses"],
+    ["salaries", "Salaries"],
+    ["vacate_requests", "Vacate Requests"],
+    ["security_deposits", "Security Deposits"],
+    ["attendance", "Attendance"],
+    ["cash_banking", "Cash/Banking"],
+    ["system", "System"],
+] as const;
+
+function MiniMetric({ label, tone, value }: { label: string; tone: "amber" | "blue" | "rose" | "slate"; value: number }) {
+    const toneClass = {
+        amber: "bg-amber-50 text-amber-800 ring-amber-200",
+        blue: "bg-blue-50 text-blue-800 ring-blue-200",
+        rose: "bg-rose-50 text-rose-800 ring-rose-200",
+        slate: "bg-slate-100 text-slate-800 ring-slate-200",
+    }[tone];
+    return (
+        <div className={`rounded-2xl px-3 py-2 ring-1 ${toneClass}`}>
+            <p className="text-[10px] font-black uppercase leading-tight">{label}</p>
+            <p className="mt-1 text-2xl font-black">{value.toLocaleString()}</p>
+        </div>
+    );
+}
+
 export default function NotificationsCentre({ data, embedded = false }: Props) {
     const router = useRouter();
+    const searchParams = useSearchParams();
     const [filter, setFilter] = useState<Filter>("pending");
     const [modal, setModal] = useState<ModalState>(null);
     const [paymentModal, setPaymentModal] = useState<PaymentModalState>(null);
@@ -288,7 +328,13 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
         : filter === "approved"
             ? approvedExpenseRequests
             : rejectedExpenseRequests;
-    const feed = safeData.notifications.slice(0, 12);
+    const feed = safeData.notifications;
+    const notificationFilters = safeData.notificationFilters;
+    const notificationCounts = safeData.notificationCounts;
+    const currentPage = notificationFilters.page;
+    const totalPages = notificationCounts.pages;
+    const canGoPrevious = currentPage > 1;
+    const canGoNext = currentPage < totalPages;
     const hasRentQueue = visibleRequests.length > 0 || requests.length > 0;
     const hasPaymentQueue = visiblePaymentDateRequests.length > 0 || paymentDateRequests.length > 0;
     const hasBalanceQueue = visibleBalanceAdjustmentRequests.length > 0 || safeData.tenantBalanceAdjustmentRequests.length > 0;
@@ -314,6 +360,57 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
         }
         return grouped;
     })();
+
+    function updateNotificationParams(changes: Record<string, string | number | null>) {
+        const params = new URLSearchParams(searchParams.toString());
+        for (const [key, value] of Object.entries(changes)) {
+            if (value === null || value === "" || value === "all" || (key === "page" && Number(value) <= 1) || (key === "pageSize" && Number(value) === 10)) {
+                params.delete(key);
+            } else {
+                params.set(key, String(value));
+            }
+        }
+        router.push(`/office/notifications${params.toString() ? `?${params.toString()}` : ""}`);
+    }
+
+    function markVisibleRead() {
+        const ids = feed.filter((notification) => !notification.is_read).map((notification) => notification.id);
+        if (!ids.length) {
+            setMessage("No unread notifications on this page.");
+            return;
+        }
+        startTransition(async () => {
+            try {
+                setMessage(null);
+                setActionLabel("Marking visible notifications...");
+                const result = await markNotificationsRead({ ids });
+                setMessage(`${result.updated} visible notification${result.updated === 1 ? "" : "s"} marked as read.`);
+                router.refresh();
+            } catch (error) {
+                setMessage(error instanceof Error ? error.message : "Could not mark visible notifications as read.");
+            } finally {
+                setActionLabel(null);
+            }
+        });
+    }
+
+    function markAllMatchingRead() {
+        if (!window.confirm("Mark all notifications matching the current filters as read?")) return;
+        const filters = Object.fromEntries(searchParams.entries());
+        startTransition(async () => {
+            try {
+                setMessage(null);
+                setActionLabel("Marking matching notifications...");
+                const result = await markMatchingNotificationsRead({ filters });
+                setMessage(`${result.updated} matching notification${result.updated === 1 ? "" : "s"} marked as read.`);
+                router.refresh();
+            } catch (error) {
+                setMessage(error instanceof Error ? error.message : "Could not mark all matching notifications as read.");
+            } finally {
+                setActionLabel(null);
+            }
+        });
+    }
 
     function openRejectModal(request: NotificationRentRequest) {
         setMessage(null);
@@ -920,22 +1017,117 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
                 )}
 
                 <section className="enterprise-panel mt-6 p-5">
-                    <h2 className="text-xl font-black text-slate-950">{safeData.isAdmin ? "Notification Feed" : "Office Approval Updates"}</h2>
+                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                        <div>
+                            <h2 className="text-xl font-black text-slate-950">{safeData.isAdmin ? "Notification Inbox" : "Office Approval Updates"}</h2>
+                            <p className="mt-1 text-sm font-semibold text-slate-500">All notifications remain accessible with database-backed pagination.</p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                            <MiniMetric label="All Notifications" value={notificationCounts.all} tone="blue" />
+                            <MiniMetric label="Unread" value={notificationCounts.unread} tone="amber" />
+                            <MiniMetric label="Pending Approvals" value={notificationCounts.pendingApprovals} tone="rose" />
+                            <MiniMetric label="Read" value={notificationCounts.read} tone="slate" />
+                        </div>
+                    </div>
+
+                    <div className="mt-5 grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 lg:grid-cols-[1fr_180px_190px_190px_130px]">
+                        <label className="block">
+                            <span className="text-[10px] font-black uppercase tracking-wide text-slate-500">Search</span>
+                            <input
+                                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800 outline-none focus:border-blue-500"
+                                defaultValue={notificationFilters.query}
+                                onKeyDown={(event) => {
+                                    if (event.key === "Enter") updateNotificationParams({ page: 1, q: event.currentTarget.value.trim() });
+                                }}
+                                placeholder="Search room, name, office, requester, reference..."
+                            />
+                        </label>
+                        <label className="block">
+                            <span className="text-[10px] font-black uppercase tracking-wide text-slate-500">Status</span>
+                            <select value={notificationFilters.status} onChange={(event) => updateNotificationParams({ page: 1, status: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-800">
+                                {notificationStatusOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                            </select>
+                        </label>
+                        <label className="block">
+                            <span className="text-[10px] font-black uppercase tracking-wide text-slate-500">Type</span>
+                            <select value={notificationFilters.type} onChange={(event) => updateNotificationParams({ page: 1, type: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-800">
+                                {notificationTypeOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                            </select>
+                        </label>
+                        <label className="block">
+                            <span className="text-[10px] font-black uppercase tracking-wide text-slate-500">Office</span>
+                            <select
+                                disabled={!safeData.isAdmin}
+                                value={safeData.isAdmin ? notificationFilters.officeId : "office"}
+                                onChange={(event) => updateNotificationParams({ office: event.target.value, page: 1 })}
+                                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-800 disabled:bg-slate-100"
+                            >
+                                {safeData.isAdmin ? <option value="all">All Offices</option> : <option value="office">{safeData.activeOfficeName ?? "My Office"}</option>}
+                                {safeData.isAdmin ? safeData.officeFilterOptions.map((office) => <option key={office.id} value={office.id}>{office.name}</option>) : null}
+                            </select>
+                        </label>
+                        <label className="block">
+                            <span className="text-[10px] font-black uppercase tracking-wide text-slate-500">Page Size</span>
+                            <select value={notificationFilters.pageSize} onChange={(event) => updateNotificationParams({ page: 1, pageSize: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-black text-slate-800">
+                                <option value="10">10</option>
+                                <option value="25">25</option>
+                                <option value="50">50</option>
+                            </select>
+                        </label>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-xs font-black uppercase tracking-wide text-slate-500">
+                            Showing {feed.length} of {notificationCounts.filtered} matching notifications · Page {currentPage} of {totalPages}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                            <button type="button" disabled={isPending || feed.every((notification) => notification.is_read)} onClick={markVisibleRead} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-black text-slate-700 disabled:opacity-40">Mark All Visible as Read</button>
+                            <button type="button" disabled={isPending || notificationCounts.unread === 0} onClick={markAllMatchingRead} className="rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white disabled:opacity-40">Mark All as Read</button>
+                        </div>
+                    </div>
+
                     <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-2">
                         {feed.length === 0 ? (
                             <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm font-bold text-slate-500">No notifications yet.</div>
                         ) : feed.map((notification) => (
                             <div key={notification.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                                 <div className="flex items-start justify-between gap-3">
-                                    <div>
+                                    <div className="min-w-0">
+                                        <p className="text-[10px] font-black uppercase tracking-wide text-blue-700">{notification.entity_type?.replaceAll("_", " ") ?? notification.recipient_type ?? "Notification"}</p>
                                         <p className="font-black text-slate-950">{notification.title ?? "Notification"}</p>
-                                        <p className="mt-1 text-sm font-semibold text-slate-600">{notification.message ?? "No message."}</p>
+                                        <p className="mt-1 break-words text-sm font-semibold leading-6 text-slate-600">{notification.message ?? "No message."}</p>
                                     </div>
                                     <StatusChip label={notification.is_read ? "read" : "new"} tone={notification.is_read ? "slate" : "blue"} />
                                 </div>
-                                <p className="mt-3 text-xs font-bold text-slate-500">{formatDate(notification.created_at)}</p>
+                                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                                    <div className="text-xs font-bold text-slate-500">
+                                        <span>{formatDate(notification.created_at)}</span>
+                                        <span className="mx-2">·</span>
+                                        <span>{lookup(safeData.lookups.offices, notification.office_id, "All Offices")}</span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {notification.action_url ? <a href={notification.action_url} onClick={() => void markNotificationsRead({ ids: [notification.id] })} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700">View</a> : null}
+                                        {!notification.is_read ? <button type="button" disabled={isPending} onClick={() => {
+                                            startTransition(async () => {
+                                                try {
+                                                    setMessage(null);
+                                                    const result = await markNotificationsRead({ ids: [notification.id] });
+                                                    setMessage(`${result.updated} notification marked as read.`);
+                                                    router.refresh();
+                                                } catch (error) {
+                                                    setMessage(error instanceof Error ? error.message : "Could not mark notification as read.");
+                                                }
+                                            });
+                                        }} className="rounded-xl bg-blue-700 px-3 py-2 text-xs font-black text-white disabled:opacity-40">Mark as Read</button> : null}
+                                    </div>
+                                </div>
                             </div>
                         ))}
+                    </div>
+                    <div className="mt-5 flex items-center justify-center gap-3">
+                        <button type="button" disabled={!canGoPrevious} onClick={() => updateNotificationParams({ page: currentPage - 1 })} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 disabled:opacity-40">Previous</button>
+                        <span className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700">Page {currentPage} of {totalPages}</span>
+                        <button type="button" disabled={!canGoNext} onClick={() => updateNotificationParams({ page: currentPage + 1 })} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 disabled:opacity-40">Next</button>
                     </div>
                 </section>
 

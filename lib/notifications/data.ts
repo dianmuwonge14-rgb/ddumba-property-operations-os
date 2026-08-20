@@ -8,7 +8,31 @@ type Db = {
 };
 
 const INITIAL_APPROVAL_LIMIT = 250;
-const INITIAL_NOTIFICATION_LIMIT = 50;
+const DEFAULT_NOTIFICATION_PAGE_SIZE = 10;
+const MAX_NOTIFICATION_PAGE_SIZE = 50;
+
+export type NotificationStatusFilter = "all" | "unread" | "read" | "pending" | "approved" | "rejected";
+export type NotificationTypeFilter =
+    | "all"
+    | "payments"
+    | "manual_adjustments"
+    | "landlord_payments"
+    | "expenses"
+    | "salaries"
+    | "vacate_requests"
+    | "security_deposits"
+    | "attendance"
+    | "cash_banking"
+    | "system";
+
+export type NotificationFeedFilters = {
+    officeId: string;
+    page: number;
+    pageSize: number;
+    query: string;
+    status: NotificationStatusFilter;
+    type: NotificationTypeFilter;
+};
 
 export type NotificationRentRequest = {
     id: string;
@@ -208,6 +232,8 @@ export type NotificationFeedRow = {
     title: string | null;
     message: string | null;
     action_url?: string | null;
+    entity_type?: string | null;
+    severity?: string | null;
     recipient_type: string | null;
     delivery_status: string | null;
     is_read: boolean | null;
@@ -252,6 +278,16 @@ export type NotificationsCentreData = {
     landlordBulkRoomRequests: NotificationLandlordBulkRoomRequest[];
     expenseApprovalRequests: NotificationExpenseApprovalRequest[];
     notifications: NotificationFeedRow[];
+    notificationFilters: NotificationFeedFilters;
+    notificationCounts: {
+        all: number;
+        unread: number;
+        pendingApprovals: number;
+        read: number;
+        filtered: number;
+        pages: number;
+    };
+    officeFilterOptions: NotificationLookupRow[];
     lookups: {
         rooms: NotificationLookupRow[];
         tenants: NotificationLookupRow[];
@@ -302,19 +338,18 @@ export async function getNotificationBadgeCount(context?: AuthContext) {
 async function safeCount(db: Db, table: string, companyId: string) {
     const result = await db
         .from(table)
-        .select("id")
+        .select("id", { count: "exact", head: true })
         .eq("company_id", companyId)
-        .eq("status", "pending")
-        .limit(200);
+        .eq("status", "pending");
     if (result.error && optionalQueryError(result.error.message)) return { count: 0 };
-    return { count: result.error ? 0 : (result.data ?? []).length };
+    return { count: result.error ? 0 : result.count ?? 0 };
 }
 
 function optionalQueryError(message: string | null | undefined) {
     return /does not exist|relation|schema cache|statement timeout|canceling statement/i.test(message ?? "");
 }
 
-async function safeRows(query: Promise<{ data: unknown[] | null; error: { message: string } | null }>) {
+async function safeRows(query: Promise<{ count?: number | null; data: unknown[] | null; error: { message: string } | null }>) {
     const result = await query;
     if (result.error && optionalQueryError(result.error.message)) {
         console.warn("Optional notifications query skipped:", result.error.message);
@@ -323,11 +358,103 @@ async function safeRows(query: Promise<{ data: unknown[] | null; error: { messag
     return result;
 }
 
-export async function getNotificationsCentreData(): Promise<NotificationsCentreData> {
+function firstParam(value: string | string[] | undefined, fallback = "") {
+    if (Array.isArray(value)) return String(value[0] ?? fallback);
+    return String(value ?? fallback);
+}
+
+function normalizePageSize(value: string | string[] | undefined) {
+    const parsed = Number(firstParam(value, String(DEFAULT_NOTIFICATION_PAGE_SIZE)));
+    if (parsed === 25 || parsed === 50) return parsed;
+    return DEFAULT_NOTIFICATION_PAGE_SIZE;
+}
+
+function normalizePositiveInt(value: string | string[] | undefined, fallback: number) {
+    const parsed = Math.floor(Number(firstParam(value, String(fallback))));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeStatusFilter(value: string | string[] | undefined): NotificationStatusFilter {
+    const normalized = firstParam(value, "all").toLowerCase();
+    if (["unread", "read", "pending", "approved", "rejected"].includes(normalized)) return normalized as NotificationStatusFilter;
+    return "all";
+}
+
+function normalizeTypeFilter(value: string | string[] | undefined): NotificationTypeFilter {
+    const normalized = firstParam(value, "all").toLowerCase();
+    if (["payments", "manual_adjustments", "landlord_payments", "expenses", "salaries", "vacate_requests", "security_deposits", "attendance", "cash_banking", "system"].includes(normalized)) {
+        return normalized as NotificationTypeFilter;
+    }
+    return "all";
+}
+
+export function normalizeNotificationFeedFilters(searchParams?: Record<string, string | string[] | undefined>): NotificationFeedFilters {
+    return {
+        officeId: firstParam(searchParams?.office, "all") || "all",
+        page: normalizePositiveInt(searchParams?.page, 1),
+        pageSize: Math.min(MAX_NOTIFICATION_PAGE_SIZE, normalizePageSize(searchParams?.pageSize)),
+        query: firstParam(searchParams?.q, "").trim().slice(0, 120),
+        status: normalizeStatusFilter(searchParams?.status),
+        type: normalizeTypeFilter(searchParams?.type),
+    };
+}
+
+function applyNotificationStatusFilter(query: any, status: NotificationStatusFilter) {
+    if (status === "unread") return query.eq("is_read", false);
+    if (status === "read") return query.eq("is_read", true);
+    if (status === "pending") return query.or("title.ilike.%pending%,message.ilike.%pending%,delivery_status.ilike.%pending%");
+    if (status === "approved") return query.or("title.ilike.%approved%,message.ilike.%approved%,delivery_status.ilike.%approved%");
+    if (status === "rejected") return query.or("title.ilike.%rejected%,message.ilike.%rejected%,delivery_status.ilike.%rejected%");
+    return query;
+}
+
+function applyNotificationTypeFilter(query: any, type: NotificationTypeFilter) {
+    const patterns: Record<NotificationTypeFilter, string[]> = {
+        all: [],
+        attendance: ["attendance"],
+        cash_banking: ["cash", "bank", "banking", "handover", "mobile money"],
+        expenses: ["expense"],
+        landlord_payments: ["landlord payment", "landlord_payment"],
+        manual_adjustments: ["manual balance", "balance adjustment", "tenant_balance_adjustment", "landlord_balance"],
+        payments: ["payment", "collection", "receipt", "correction"],
+        salaries: ["salary", "payroll"],
+        security_deposits: ["security deposit", "deposit"],
+        system: ["system", "integrity", "automation", "health"],
+        vacate_requests: ["vacate", "vacancy", "move out"],
+    };
+    const terms = patterns[type] ?? [];
+    if (!terms.length) return query;
+    return query.or(terms.flatMap((term) => [
+        `title.ilike.%${term}%`,
+        `message.ilike.%${term}%`,
+        `entity_type.ilike.%${term.replaceAll(" ", "_")}%`,
+        `action_url.ilike.%${term.replaceAll(" ", "-")}%`,
+    ]).join(","));
+}
+
+function applyNotificationSearchFilter(query: any, search: string) {
+    if (!search) return query;
+    const escaped = search.replaceAll("%", "\\%").replaceAll("_", "\\_");
+    return query.or([
+        `title.ilike.%${escaped}%`,
+        `message.ilike.%${escaped}%`,
+        `action_url.ilike.%${escaped}%`,
+        `entity_type.ilike.%${escaped}%`,
+    ].join(","));
+}
+
+function baseNotificationQuery(db: Db, companyId: string, isAdmin: boolean, officeId: string | null | undefined) {
+    let query = db.from("notifications").select("id", { count: "exact", head: true }).eq("company_id", companyId);
+    if (isAdmin) return query.eq("recipient_type", "admin");
+    return query.eq("recipient_type", "office").eq("office_id", officeId);
+}
+
+export async function getNotificationsCentreData(searchParams?: Record<string, string | string[] | undefined>): Promise<NotificationsCentreData> {
     const context = await requireAuth();
     if (!context.activeCompany?.id) throw new Error("Active company is required.");
     const db = await createSupabaseServerClient() as unknown as Db;
     const isAdmin = context.isCompanyAdmin && !context.isOfficeMode;
+    const filters = normalizeNotificationFeedFilters(searchParams);
 
     let requestQuery = db
         .from("room_rent_change_requests")
@@ -420,18 +547,23 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
 
     let notificationQuery = db
         .from("notifications")
-        .select("id,company_id,office_id,title,message,recipient_type,delivery_status,is_read,created_at,action_url")
+        .select("id,company_id,office_id,title,message,recipient_type,delivery_status,is_read,created_at,action_url,entity_type,severity", { count: "exact" })
         .eq("company_id", context.activeCompany.id)
         .order("created_at", { ascending: false })
-        .limit(INITIAL_NOTIFICATION_LIMIT);
+        .order("id", { ascending: false });
 
     if (isAdmin) {
         notificationQuery = notificationQuery.eq("recipient_type", "admin");
+        if (filters.officeId !== "all") notificationQuery = notificationQuery.eq("office_id", filters.officeId);
     } else {
         notificationQuery = notificationQuery
             .eq("recipient_type", "office")
             .eq("office_id", context.activeOffice?.id);
     }
+    notificationQuery = applyNotificationSearchFilter(applyNotificationTypeFilter(applyNotificationStatusFilter(notificationQuery, filters.status), filters.type), filters.query);
+    const from = (filters.page - 1) * filters.pageSize;
+    const to = from + filters.pageSize - 1;
+    notificationQuery = notificationQuery.range(from, to);
 
     const [requestResult, paymentDateRequestResult, tenantBalanceAdjustmentResult, promiseChangeRequestResult, landlordPaymentRequestResult, landlordPaymentDetailRequestResult, landlordBulkRoomRequestResult, expenseApprovalRequestResult, notificationResult] = await Promise.all([
         safeRows(requestQuery),
@@ -458,6 +590,7 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
     const landlordBulkRoomRequests = (landlordBulkRoomRequestResult.data ?? []) as NotificationLandlordBulkRoomRequest[];
     const expenseApprovalRequests = (expenseApprovalRequestResult.data ?? []) as NotificationExpenseApprovalRequest[];
     const notifications = (notificationResult.data ?? []) as NotificationFeedRow[];
+    const filteredNotificationCount = Number(notificationResult.count ?? notifications.length);
     const requestIds = requests.map((request) => request.id);
     const paymentDateRequestIds = paymentDateRequests.map((request) => request.id);
     const paymentIds = unique(paymentDateRequests.map((request) => request.payment_id));
@@ -503,7 +636,9 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
     const promiseChangeRequestIds = promiseChangeRequests.map((request) => request.id);
     const allApprovalIds = [...requestIds, ...paymentDateRequestIds, ...tenantBalanceAdjustmentRequestIds, ...promiseChangeRequestIds, ...landlordPaymentRequestIds, ...landlordPaymentDetailRequestIds, ...landlordBulkRoomRequestIds];
 
-    const [rooms, tenants, landlords, offices, users, payments, landlordPaymentPayables] = await Promise.all([
+    const scopedNotificationCountQuery = baseNotificationQuery(db, context.activeCompany.id, isAdmin, context.activeOffice?.id);
+    const scopedUnreadCountQuery = baseNotificationQuery(db, context.activeCompany.id, isAdmin, context.activeOffice?.id).eq("is_read", false);
+    const [rooms, tenants, landlords, offices, users, payments, landlordPaymentPayables, allActiveOffices, scopedNotificationCount, scopedUnreadNotificationCount] = await Promise.all([
         roomIds.length ? safeRows(db.from("rooms").select("id, room_number").in("id", roomIds).limit(200)) : { data: [], error: null },
         tenantIds.length ? safeRows(db.from("tenants").select("id, full_name, phone").in("id", tenantIds).limit(200)) : { data: [], error: null },
         landlordIds.length ? safeRows(db.from("landlords").select("id, full_name, phone, settlement_timing").in("id", landlordIds).limit(200)) : { data: [], error: null },
@@ -519,6 +654,9 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
                 .neq("status", "archived")
                 .order("settlement_month", { ascending: true }))
             : { data: [], error: null },
+        safeRows(db.from("offices").select("id, office_name, name").eq("company_id", context.activeCompany.id).ilike("status", "active").order("office_name").limit(500)),
+        scopedNotificationCountQuery,
+        scopedUnreadCountQuery,
     ]);
 
     const livePayablesByLandlordOffice = new Map<string, Array<Record<string, unknown>>>();
@@ -571,7 +709,10 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
         + landlordPaymentDetailRequests.filter((request) => request.status === "pending").length
         + landlordBulkRoomRequests.filter((request) => request.status === "pending").length
         + expenseApprovalRequests.filter((request) => request.status === "pending").length;
-    const unreadNotificationCount = notifications.filter((notification) => notification.is_read === false).length;
+    const unreadNotificationCount = scopedUnreadNotificationCount.count ?? notifications.filter((notification) => notification.is_read === false).length;
+    const allNotificationCount = scopedNotificationCount.count ?? filteredNotificationCount;
+    const readNotificationCount = Math.max(0, allNotificationCount - unreadNotificationCount);
+    const pages = Math.max(1, Math.ceil(filteredNotificationCount / filters.pageSize));
 
     return {
         activeOfficeName: context.activeOffice?.office_name ?? context.activeOffice?.name ?? null,
@@ -587,6 +728,22 @@ export async function getNotificationsCentreData(): Promise<NotificationsCentreD
             landlordBulkRoomRequests,
             expenseApprovalRequests,
         notifications,
+        notificationCounts: {
+            all: allNotificationCount,
+            filtered: filteredNotificationCount,
+            pages,
+            pendingApprovals: pendingApprovalCount,
+            read: readNotificationCount,
+            unread: unreadNotificationCount,
+        },
+        notificationFilters: {
+            ...filters,
+            page: Math.min(filters.page, pages),
+        },
+        officeFilterOptions: ((allActiveOffices.data ?? []) as Array<Record<string, unknown>>).map((office) => ({
+            id: String(office.id),
+            name: String(office.office_name ?? office.name ?? "Office"),
+        })),
         lookups: {
             rooms: ((rooms.data ?? []) as Array<Record<string, unknown>>).map((room) => ({
                 id: String(room.id),
