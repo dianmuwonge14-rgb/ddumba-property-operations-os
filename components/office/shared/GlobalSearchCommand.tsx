@@ -225,18 +225,21 @@ export default function GlobalSearchCommand(props: Props) {
         if (destination === "properties") navigate(`/office/properties?room=${encodeURIComponent(room)}`);
     }
 
+    function openBestMatch(currentQuery: string) {
+        const exact = exactPageMatch(currentQuery, props);
+        if (exact) {
+            navigate(pageHref(exact, props));
+            return;
+        }
+        if (showRoomMenu) return;
+        const selected = suggestions[activeIndex] ?? suggestions[0];
+        if (selected) navigate(selected.href);
+    }
+
     function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
         if (event.key === "Enter") {
             event.preventDefault();
-            const currentQuery = event.currentTarget.value;
-            const exact = exactPageMatch(currentQuery, props);
-            if (exact) {
-                navigate(pageHref(exact, props));
-                return;
-            }
-            if (showRoomMenu) return;
-            const selected = suggestions[activeIndex] ?? suggestions[0];
-            if (selected) navigate(selected.href);
+            openBestMatch(event.currentTarget.value);
         }
         if (event.key === "ArrowDown") {
             event.preventDefault();
@@ -246,6 +249,12 @@ export default function GlobalSearchCommand(props: Props) {
             event.preventDefault();
             setActiveIndex((index) => Math.max(index - 1, 0));
         }
+    }
+
+    function handleKeyUp(event: React.KeyboardEvent<HTMLInputElement>) {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        openBestMatch(event.currentTarget.value);
     }
 
     return (
@@ -261,6 +270,7 @@ export default function GlobalSearchCommand(props: Props) {
                     }}
                     onFocus={() => setFocused(true)}
                     onKeyDown={handleKeyDown}
+                    onKeyUp={handleKeyUp}
                     placeholder="Search page, room, tenant..."
                     className="min-w-0 flex-1 bg-transparent text-xs font-black text-white outline-none placeholder:text-slate-400"
                 />
@@ -295,6 +305,7 @@ export default function GlobalSearchCommand(props: Props) {
                                 value={query}
                                 onChange={(event) => setQuery(event.target.value)}
                                 onKeyDown={handleKeyDown}
+                                onKeyUp={handleKeyUp}
                                 placeholder="Search page, room, tenant..."
                                 className="min-w-0 flex-1 bg-transparent text-sm font-black text-white outline-none placeholder:text-slate-500"
                             />
