@@ -2556,6 +2556,43 @@ function ManualBalanceAdjustmentModal({
     open: boolean;
     tenant: CollectionTenantResult | null;
 }) {
+    const modalRef = useRef<HTMLDivElement | null>(null);
+    const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+    useEffect(() => {
+        if (!open || !tenant) return;
+        const originalOverflow = document.body.style.overflow;
+        const originalOverscroll = document.body.style.overscrollBehavior;
+        document.body.style.overflow = "hidden";
+        document.body.style.overscrollBehavior = "none";
+        closeButtonRef.current?.focus();
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") {
+                event.preventDefault();
+                onClose();
+                return;
+            }
+            if (event.key !== "Tab" || !modalRef.current) return;
+            const focusable = Array.from(modalRef.current.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex='-1'])"))
+                .filter((element) => !element.hasAttribute("aria-hidden") && element.offsetParent !== null);
+            if (!focusable.length) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        };
+        window.addEventListener("keydown", handleKeyDown);
+        return () => {
+            document.body.style.overflow = originalOverflow;
+            document.body.style.overscrollBehavior = originalOverscroll;
+            window.removeEventListener("keydown", handleKeyDown);
+        };
+    }, [onClose, open, tenant]);
+
     if (!open || !tenant) return null;
     const position = tenant.monthlyFinancialPosition;
     const currentOutstanding = Number(position?.outstanding ?? tenant.outstandingBalance ?? 0);
@@ -2568,20 +2605,28 @@ function ManualBalanceAdjustmentModal({
     const projectedAdvance = Math.max(-projectedRaw, 0);
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/70 p-4 backdrop-blur-sm">
-            <div className="w-full max-w-2xl rounded-[28px] border border-slate-200 bg-white shadow-2xl">
-                <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
-                    <div>
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-hidden bg-slate-950/70 p-2 backdrop-blur-sm sm:items-center sm:p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+            <div
+                ref={modalRef}
+                className="flex w-[calc(100vw-16px)] max-w-2xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl sm:w-[min(760px,calc(100vw-32px))]"
+                style={{ maxHeight: "calc(100dvh - 16px)" }}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="manual-balance-adjustment-title"
+                onMouseDown={(event) => event.stopPropagation()}
+            >
+                <div className="sticky top-0 z-20 flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                    <div className="min-w-0">
                         <p className="text-xs font-black uppercase tracking-wide text-fuchsia-700">Manual balance adjustment</p>
-                        <h2 className="mt-1 text-2xl font-black text-slate-950">Room {tenant.room?.room_number ?? "Unknown"}</h2>
+                        <h2 id="manual-balance-adjustment-title" className="mt-1 break-words text-xl font-black text-slate-950 sm:text-2xl">Room {tenant.room?.room_number ?? "Unknown"}</h2>
                         <p className="mt-1 text-sm font-bold text-slate-500">{tenant.tenant.full_name ?? "Tenant"} · Formula input, not an outstanding override</p>
                     </div>
-                    <button type="button" disabled={isPending} onClick={onClose} className="rounded-full border border-slate-200 bg-white p-2 text-slate-600 shadow-sm hover:bg-slate-50 disabled:opacity-40" aria-label="Close manual balance adjustment">
+                    <button ref={closeButtonRef} type="button" disabled={isPending} onClick={onClose} className="shrink-0 rounded-full border border-slate-200 bg-white p-2 text-slate-600 shadow-sm hover:bg-slate-50 disabled:opacity-40" aria-label="Close manual balance adjustment">
                         <X size={18} />
                     </button>
                 </div>
-                <div className="grid gap-4 p-5">
-                    <div className="grid gap-3 sm:grid-cols-4">
+                <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto overscroll-contain p-4 sm:p-5">
+                    <div className="grid gap-3 min-[520px]:grid-cols-2 lg:grid-cols-4">
                         <MiniStat label="Current Outstanding" value={money(currentOutstanding)} tone="text-rose-700" />
                         <MiniStat label="Current Advance" value={money(currentAdvance)} tone="text-violet-700" />
                         <MiniStat label="Current Adjustment" value={`${currentManualAdjustment > 0 ? "+" : currentManualAdjustment < 0 ? "-" : ""}${money(Math.abs(currentManualAdjustment))}`} tone="text-fuchsia-700" />
@@ -2605,7 +2650,7 @@ function ManualBalanceAdjustmentModal({
                             ))}
                         </div>
                     </fieldset>
-                    <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="grid gap-3 md:grid-cols-2">
                         <TextField label="Amount" type="number" value={form.amount} onChange={(amount) => onChange({ amount })} placeholder="UGX" />
                         <TextField label="Effective billing month" type="date" value={form.effectiveDate} onChange={(effectiveDate) => onChange({ effectiveDate })} />
                     </div>
@@ -2647,7 +2692,7 @@ function ManualBalanceAdjustmentModal({
                     ) : null}
                     {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-black text-rose-700">{error}</div> : null}
                 </div>
-                <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 p-5">
+                <div className="sticky bottom-0 z-20 flex shrink-0 flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50/95 p-4 shadow-[0_-10px_30px_rgba(15,23,42,0.08)] backdrop-blur sm:p-5">
                     <button type="button" disabled={isPending} onClick={onClose} className="rounded-2xl bg-white px-5 py-3 text-sm font-black text-slate-700 shadow disabled:opacity-40">
                         Cancel
                     </button>
