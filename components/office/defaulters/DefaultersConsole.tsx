@@ -1068,8 +1068,12 @@ function PrintPreview({
                             <p>Prepared by: __________________________</p>
                             <p>Approved by: __________________________</p>
                         </footer>
-                        <div className="non-print-ui mt-8 flex justify-end print:hidden">
-                            <button onClick={onClose} className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white">Close Report</button>
+                        <div className="report-actions non-print-ui mt-8 flex flex-wrap justify-end gap-3 print:hidden">
+                            <button onClick={printReport} className="inline-flex items-center gap-2 rounded-2xl bg-rose-700 px-5 py-3 text-sm font-black uppercase text-white shadow-lg shadow-rose-900/20">
+                                <Printer size={16} />
+                                Print A4
+                            </button>
+                            <button onClick={onClose} className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black uppercase text-white">Close Report</button>
                         </div>
                     </div>
                 </div>
@@ -1094,6 +1098,8 @@ function PrintPreview({
                         .app-navigation,
                         .report-toolbar,
                         .report-toolbar *,
+                        .report-actions,
+                        .report-actions *,
                         .non-print-ui,
                         .non-print-ui * {
                             display: none !important;
@@ -1102,6 +1108,8 @@ function PrintPreview({
                         .report-scroll-area {
                             display: block !important;
                             overflow: visible !important;
+                            height: auto !important;
+                            max-height: none !important;
                             background: #ffffff !important;
                             padding: 0 !important;
                         }
@@ -1111,6 +1119,8 @@ function PrintPreview({
                             background: #ffffff !important;
                             padding: 0 !important;
                             overflow: visible !important;
+                            height: auto !important;
+                            max-height: none !important;
                         }
                         .report-document {
                             box-shadow: none !important;
@@ -1120,6 +1130,8 @@ function PrintPreview({
                             top: 0;
                             width: 190mm !important;
                             min-height: auto !important;
+                            height: auto !important;
+                            max-height: none !important;
                             padding: 0 !important;
                             margin: 0 !important;
                         }
