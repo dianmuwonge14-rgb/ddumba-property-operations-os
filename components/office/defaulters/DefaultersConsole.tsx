@@ -868,9 +868,6 @@ function PrintPreview({
         return [...offices.values()].sort((a, b) => normalize(a.officeName).localeCompare(normalize(b.officeName)));
     }, [defaulters]);
 
-    const totalMonthlyRent = defaulters.reduce((total, item) => total + item.monthlyRent, 0);
-    const totalArrears = defaulters.reduce((total, item) => total + item.arrears, 0);
-    const totalPayments = defaulters.reduce((total, item) => total + item.currentMonthPaid, 0);
     const totalOutstanding = landlordGroups.reduce((total, group) => total + group.totalOutstanding, 0);
 
     return (
@@ -904,11 +901,10 @@ function PrintPreview({
                             Applied Filters: Office: {selectedFilters.office} · Landlord: {selectedFilters.landlord} · Collector: {selectedFilters.collector} · Property: {selectedFilters.property} · List: {selectedFilters.list} · Search: {selectedFilters.search}
                         </p>
                     </header>
-                    <section className="mt-5 grid gap-3 sm:grid-cols-4">
-                        <ReportBox label="Defaulters" value={kpis.totalDefaulters.toLocaleString()} />
-                        <ReportBox label="Landlords" value={landlordGroups.length.toLocaleString()} />
-                        <ReportBox label="Outstanding" value={money(totalOutstanding)} />
-                        <ReportBox label="Payments This Month" value={money(totalPayments)} />
+                    <section className="mt-5 grid gap-3 sm:grid-cols-3">
+                        <ReportBox label="Total Landlords" value={landlordGroups.length.toLocaleString()} />
+                        <ReportBox label="Total Defaulting Rooms" value={defaulters.length.toLocaleString()} />
+                        <ReportBox label="Total Outstanding" value={money(totalOutstanding)} />
                     </section>
                     <div className="mt-6 space-y-6">
                         {landlordGroups.map((group) => (
@@ -917,54 +913,46 @@ function PrintPreview({
                                     <p className="text-xs font-black uppercase tracking-wide">Landlord</p>
                                     <h2 className="text-xl font-black uppercase">{group.landlordName}</h2>
                                 </div>
-                                <div className="grid gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold sm:grid-cols-3 lg:grid-cols-6">
+                                <div className="grid gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold sm:grid-cols-3">
                                     <p><span className="text-slate-500">Office:</span><br />{group.officeName}</p>
                                     <p><span className="text-slate-500">Defaulting Rooms:</span><br />{group.items.length.toLocaleString()}</p>
                                     <p><span className="text-slate-500">Total Outstanding:</span><br />{money(group.totalOutstanding)}</p>
-                                    <p><span className="text-slate-500">Highest Room:</span><br />{group.highestOutstandingRoom?.roomNumber ?? "N/A"} · {money(group.highestOutstandingRoom?.outstandingBalance ?? 0)}</p>
-                                    <p><span className="text-slate-500">Oldest Debt:</span><br />{group.oldestDebt ? `${group.oldestDebt.daysDefaulted} days` : "N/A"}</p>
-                                    <p><span className="text-slate-500">Payments:</span><br />{money(group.totalPayments)}</p>
                                 </div>
-                                <table className="w-full border-collapse text-[10px]">
+                                <table className="w-full border-collapse text-xs">
                                     <thead>
                                         <tr className="bg-slate-100 text-left text-slate-700">
-                                            <th className="border border-slate-300 px-2 py-2">Room</th>
-                                            <th className="border border-slate-300 px-2 py-2">Tenant</th>
-                                            <th className="border border-slate-300 px-2 py-2">Phone</th>
-                                            <th className="border border-slate-300 px-2 py-2 text-right">Monthly Rent</th>
-                                            <th className="border border-slate-300 px-2 py-2 text-right">Arrears</th>
-                                            <th className="border border-slate-300 px-2 py-2 text-right">Manual Adj.</th>
-                                            <th className="border border-slate-300 px-2 py-2 text-right">Payments</th>
-                                            <th className="border border-slate-300 px-2 py-2 text-right">Outstanding</th>
-                                            <th className="border border-slate-300 px-2 py-2">Oldest Period</th>
-                                            <th className="border border-slate-300 px-2 py-2">Days</th>
-                                            <th className="border border-slate-300 px-2 py-2">Last Payment</th>
-                                            <th className="border border-slate-300 px-2 py-2">Collector</th>
+                                            <th className="w-[12%] border border-slate-300 px-3 py-2">Room</th>
+                                            <th className="w-[28%] border border-slate-300 px-3 py-2">Tenant</th>
+                                            <th className="w-[16%] border border-slate-300 px-3 py-2">Phone</th>
+                                            <th className="w-[15%] border border-slate-300 px-3 py-2 text-right">Monthly Rent</th>
+                                            <th className="w-[15%] border border-slate-300 px-3 py-2">Last Payment</th>
+                                            <th className="w-[14%] border border-slate-300 px-3 py-2 text-right">Outstanding</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {group.items.map((item) => (
                                             <tr key={`${item.id}:print:${item.paymentDueDate}`}>
-                                                <td className="border border-slate-300 px-2 py-2 font-bold">{item.roomNumber}</td>
-                                                <td className="border border-slate-300 px-2 py-2">{item.tenantName}</td>
-                                                <td className="border border-slate-300 px-2 py-2">{item.tenantPhone ?? ""}</td>
-                                                <td className="border border-slate-300 px-2 py-2 text-right font-bold">{money(item.monthlyRent)}</td>
-                                                <td className="border border-slate-300 px-2 py-2 text-right">{money(item.arrears)}</td>
-                                                <td className="border border-slate-300 px-2 py-2 text-right">{item.manualBalanceAdjustment > 0 ? "+" : item.manualBalanceAdjustment < 0 ? "-" : ""}{money(Math.abs(item.manualBalanceAdjustment))}</td>
-                                                <td className="border border-slate-300 px-2 py-2 text-right">{money(item.currentMonthPaid)}</td>
-                                                <td className="border border-slate-300 px-2 py-2 text-right font-bold">{money(item.outstandingBalance)}</td>
-                                                <td className="border border-slate-300 px-2 py-2">{item.oldestUnpaidPeriod}</td>
-                                                <td className="border border-slate-300 px-2 py-2">{item.daysDefaulted}</td>
-                                                <td className="border border-slate-300 px-2 py-2">{item.lastPaymentDate ?? "No payment"}<br />{money(item.lastPaymentAmount)}</td>
-                                                <td className="border border-slate-300 px-2 py-2">{item.collectorAssigned}</td>
+                                                <td className="border border-slate-300 px-3 py-2 font-bold">{item.roomNumber}</td>
+                                                <td className="border border-slate-300 px-3 py-2">{item.tenantName}</td>
+                                                <td className="border border-slate-300 px-3 py-2">{item.tenantPhone ?? ""}</td>
+                                                <td className="border border-slate-300 px-3 py-2 text-right font-bold">{money(item.monthlyRent)}</td>
+                                                <td className="border border-slate-300 px-3 py-2">
+                                                    {item.lastPaymentDate ? (
+                                                        <>
+                                                            <span className="font-bold">{money(item.lastPaymentAmount)}</span>
+                                                            <br />
+                                                            <span className="text-slate-500">{item.lastPaymentDate}</span>
+                                                        </>
+                                                    ) : "No payment"}
+                                                </td>
+                                                <td className="border border-slate-300 px-3 py-2 text-right font-black">{money(item.outstandingBalance)}</td>
                                             </tr>
                                         ))}
                                     </tbody>
                                     <tfoot>
                                         <tr className="bg-slate-50 font-black">
-                                            <td className="border border-slate-300 px-2 py-2" colSpan={7}>LANDLORD TOTAL</td>
-                                            <td className="border border-slate-300 px-2 py-2 text-right">{money(group.totalOutstanding)}</td>
-                                            <td className="border border-slate-300 px-2 py-2" colSpan={4}></td>
+                                            <td className="border border-slate-300 px-3 py-2" colSpan={5}>TOTAL OUTSTANDING</td>
+                                            <td className="border border-slate-300 px-3 py-2 text-right">{money(group.totalOutstanding)}</td>
                                         </tr>
                                     </tfoot>
                                 </table>
@@ -974,12 +962,9 @@ function PrintPreview({
                     <section className="mt-8 rounded-2xl border-2 border-slate-950 p-4">
                         <h2 className="text-lg font-black uppercase">Report Summary</h2>
                         <div className="mt-3 grid gap-3 text-sm font-bold sm:grid-cols-2 lg:grid-cols-3">
-                            <p>Total Landlords With Defaulters<br /><span className="text-xl font-black">{landlordGroups.length.toLocaleString()}</span></p>
+                            <p>Total Landlords<br /><span className="text-xl font-black">{landlordGroups.length.toLocaleString()}</span></p>
                             <p>Total Defaulting Rooms<br /><span className="text-xl font-black">{defaulters.length.toLocaleString()}</span></p>
                             <p>Total Outstanding<br /><span className="text-xl font-black">{money(totalOutstanding)}</span></p>
-                            <p>Total Monthly Rent of Defaulting Rooms<br /><span className="text-xl font-black">{money(totalMonthlyRent)}</span></p>
-                            <p>Total Arrears<br /><span className="text-xl font-black">{money(totalArrears)}</span></p>
-                            <p>Total Payments This Month<br /><span className="text-xl font-black">{money(totalPayments)}</span></p>
                         </div>
                         {showOfficeSummary ? (
                             <div className="mt-5">
