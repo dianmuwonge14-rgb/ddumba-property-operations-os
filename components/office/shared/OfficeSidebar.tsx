@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import type { AttendanceGateStatus } from "@/lib/attendance/gate";
 import AttendanceAccountControls from "./AttendanceAccountControls";
+import GlobalSearchCommand from "./GlobalSearchCommand";
 
 const adminSections = [
     {
@@ -190,6 +191,7 @@ type Props = {
     isAdmin: boolean;
     isReadOnlyManager?: boolean;
     officeName: string | null;
+    offices: Array<{ id: string; name: string }>;
     attendance: AttendanceGateStatus;
     notificationCount: number;
 };
@@ -219,7 +221,7 @@ function themeForPath(pathname: string) {
     return "admin";
 }
 
-export default function OfficeSidebar({ isAdmin, isCollector = false, isReadOnlyManager = false, officeName, attendance, notificationCount }: Props) {
+export default function OfficeSidebar({ isAdmin, isCollector = false, isReadOnlyManager = false, officeName, offices, attendance, notificationCount }: Props) {
     const pathname = usePathname();
     const moduleTheme = themeForPath(pathname);
     const sections = isCollector ? collectorSections : isReadOnlyManager ? managerSections : isAdmin ? adminSections : officeSections;
@@ -265,6 +267,7 @@ export default function OfficeSidebar({ isAdmin, isCollector = false, isReadOnly
                         </div>
                     </div>
                     <div className="app-header-controls flex min-w-0 items-center gap-1.5 overflow-x-auto pb-0.5 sm:justify-end sm:gap-2 sm:overflow-visible sm:pb-0">
+                        <GlobalSearchCommand isAdmin={isAdmin} isCollector={isCollector} isReadOnlyManager={isReadOnlyManager} offices={offices} />
                         <span className={`mobile-nowrap inline-flex max-w-[52vw] shrink-0 items-center gap-1 overflow-hidden rounded-full border px-2 py-1 text-[11px] font-black shadow-sm sm:max-w-none sm:px-3 sm:text-xs ${attendanceClass}`}>
                             <ShieldCheck className="shrink-0" size={13} />
                             <span className="truncate">{attendanceLabel}</span>

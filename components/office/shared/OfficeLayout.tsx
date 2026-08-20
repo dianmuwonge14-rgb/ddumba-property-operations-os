@@ -35,6 +35,7 @@ export default async function OfficeLayout({
                     isAdmin={context.isCompanyAdmin && !context.isOfficeMode}
                     isReadOnlyManager={context.isCompanyReadOnlyManager}
                     officeName={context.activeOffice?.office_name ?? context.activeOffice?.name ?? null}
+                    offices={context.offices.map((office) => ({ id: office.id, name: office.office_name ?? office.name ?? "Office" }))}
                     attendance={attendance}
                     notificationCount={notificationCount}
                 />
