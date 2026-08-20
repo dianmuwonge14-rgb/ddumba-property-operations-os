@@ -167,6 +167,7 @@ export type ExpensesPageData = {
         advanceRecoveryAmount: number;
         cashPaymentAmount: number;
         expenseId?: string | null;
+        approvedLandlordPaymentId?: string | null;
         remainingAdvanceBalance: number;
         currentNetPayable: number;
         alreadyPaidAmount: number;

@@ -43,6 +43,17 @@ function expenseStatus(expense: Record<string, unknown>) {
     return String(expense.status ?? (expense.approved_at ? "approved" : "pending")).toLowerCase();
 }
 
+function isMissingSchemaLikeError(error: { code?: string; message?: string } | null | undefined) {
+    const message = String(error?.message ?? "").toLowerCase();
+    return error?.code === "42P01"
+        || error?.code === "42703"
+        || error?.code === "PGRST204"
+        || error?.code === "PGRST205"
+        || message.includes("schema cache")
+        || message.includes("does not exist")
+        || message.includes("could not find the");
+}
+
 function isPhysicalCashCollection(collection: CollectionRow | Record<string, unknown>) {
     const raw = collection as CollectionRow & Record<string, unknown>;
     const type = String(raw.type ?? raw.collection_type ?? "").toUpperCase();
@@ -92,6 +103,18 @@ function isApprovedPhysicalCashExpense(expense: Record<string, unknown>) {
     const description = String(expense.description ?? expense.category ?? expense.item ?? "").toLowerCase();
     if (description.includes("bank") || description.includes("mobile money")) return false;
     return true;
+}
+
+function isLandlordPaymentExpenseMirror(expense: Record<string, unknown>) {
+    const text = `${expense.category ?? ""} ${expense.item ?? ""} ${expense.description ?? ""}`.toLowerCase();
+    return text.includes("[landlord_payment_approved]")
+        || text.includes("landlord paid")
+        || text.includes("landlord payment approved");
+}
+
+function isSalaryPaymentExpenseMirror(expense: Record<string, unknown>) {
+    const text = `${expense.category ?? ""} ${expense.item ?? ""} ${expense.description ?? ""}`.toLowerCase();
+    return text.includes("salary payment");
 }
 
 function isCashMethod(value: string | null | undefined) {
@@ -564,7 +587,7 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
         collectionQuery = collectionQuery.eq("office_id", selectedOfficeId);
     }
 
-    const [expensesResult, collectionsResult, categoriesResult, propertiesResult, landlordsResult, usersResult, officesResult, cashAccountsResult, cashTransactionsResult, pendingExpensesResult, cashSourceExpensesResult, employeesResult] = await Promise.all([
+    const [expensesResult, collectionsResult, categoriesResult, propertiesResult, landlordsResult, usersResult, officesResult, cashAccountsResult, cashTransactionsResult, pendingExpensesResult, cashSourceExpensesResult, landlordPaymentsResult, salaryPaymentsResult, employeesResult] = await Promise.all([
         expenseQuery,
         collectionQuery,
         supabase.from("expense_categories").select("*").or(`company_id.eq.${companyId},company_id.is.null`),
@@ -603,15 +626,35 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
             if (selectedOfficeId) query = query.eq("office_id", selectedOfficeId);
             return query;
         })(),
+        (() => {
+            let query = (supabase as unknown as { from: (table: string) => any })
+                .from("landlord_payments")
+                .select("*")
+                .eq("company_id", companyId)
+                .limit(20000);
+            if (selectedOfficeId) query = query.eq("office_id", selectedOfficeId);
+            return query;
+        })(),
+        (() => {
+            let query = (supabase as unknown as { from: (table: string) => any })
+                .from("employee_salary_payments")
+                .select("*")
+                .eq("company_id", companyId)
+                .limit(20000);
+            if (selectedOfficeId) query = query.eq("office_id", selectedOfficeId);
+            return query;
+        })(),
         supabase.from("employees").select("*").eq("company_id", companyId).neq("status", "terminated"),
     ]);
 
-    for (const result of [expensesResult, collectionsResult, categoriesResult, propertiesResult, landlordsResult, usersResult, officesResult, cashAccountsResult, cashTransactionsResult, pendingExpensesResult, cashSourceExpensesResult, employeesResult]) {
-        if (result.error) throw new Error(result.error.message);
+    for (const result of [expensesResult, collectionsResult, categoriesResult, propertiesResult, landlordsResult, usersResult, officesResult, cashAccountsResult, cashTransactionsResult, pendingExpensesResult, cashSourceExpensesResult, landlordPaymentsResult, salaryPaymentsResult, employeesResult]) {
+        if (result.error && !isMissingSchemaLikeError(result.error)) throw new Error(result.error.message);
     }
 
     const expenses = expensesResult.data ?? [];
     const cashSourceExpenses = (cashSourceExpensesResult.data ?? []) as ExpenseRow[];
+    const landlordPaymentRows = ((landlordPaymentsResult.data ?? []) as Array<Record<string, unknown>>);
+    const salaryPaymentRows = ((salaryPaymentsResult.data ?? []) as Array<Record<string, unknown>>);
     const collections = uniqueFinanciallyEffectiveCollections((collectionsResult.data ?? []) as CollectionRow[]);
     const items = hydrateExpenseItems(expenses, categoriesResult.data ?? [], propertiesResult.data ?? [], landlordsResult.data ?? [], usersResult.data ?? []);
     const officeById = new Map((officesResult.data ?? []).map((office) => [office.id, office.office_name ?? office.name ?? "Office"]));
@@ -745,13 +788,34 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
             .filter((request) => request.expenseId)
             .map((request) => [request.expenseId as string, request]),
     );
-    const approvedCashExpenses = cashSourceExpenses.filter((expense) => {
+    const approvedLandlordRequestPaymentIds = new Set(
+        landlordPaymentRequests
+            .filter((request) => request.approvedLandlordPaymentId)
+            .map((request) => request.approvedLandlordPaymentId as string),
+    );
+    const approvedCashLandlordRequests = landlordPaymentRequests.filter((request) => {
+        const status = String(request.status ?? "").toLowerCase();
+        return ["approved", "paid", "partial", "completed", "posted"].includes(status) && isCashMethod(request.paymentMethod);
+    });
+    const legacyCashLandlordPayments = landlordPaymentRows.filter((payment) => {
+        if (!isEffectiveCashPayout(payment)) return false;
+        const paymentId = typeof payment.id === "string" ? payment.id : null;
+        if (paymentId && approvedLandlordRequestPaymentIds.has(paymentId)) return false;
+        const reference = String(payment.payout_reference ?? "");
+        return !reference.startsWith("EXP-LP-");
+    });
+    const cashSalaryPayments = salaryPaymentRows.filter(isEffectiveCashPayout);
+    const approvedOrdinaryCashExpenses = cashSourceExpenses.filter((expense) => {
         if (!isApprovedExpense(expense as Record<string, unknown>)) return false;
-        const linkedLandlordRequest = landlordPaymentRequestByExpenseId.get(expense.id);
-        if (linkedLandlordRequest) return isCashMethod(linkedLandlordRequest.paymentMethod);
+        if (landlordPaymentRequestByExpenseId.has(expense.id) || isLandlordPaymentExpenseMirror(expense as Record<string, unknown>)) return false;
+        if (isSalaryPaymentExpenseMirror(expense as Record<string, unknown>)) return false;
         return isApprovedPhysicalCashExpense(expense as Record<string, unknown>);
     });
-    const approvedCashExpenseOutflows = approvedCashExpenses.reduce((total, expense) => total + Number(expense.amount ?? 0), 0);
+    const approvedOrdinaryCashExpenseOutflows = approvedOrdinaryCashExpenses.reduce((total, expense) => total + Number(expense.amount ?? 0), 0);
+    const approvedLandlordCashOutflows = approvedCashLandlordRequests.reduce((total, request) => total + Number(request.amount ?? 0), 0)
+        + legacyCashLandlordPayments.reduce((total, payment) => total + payoutAmount(payment), 0);
+    const approvedSalaryCashOutflows = cashSalaryPayments.reduce((total, payment) => total + payoutAmount(payment), 0);
+    const approvedCashOutflows = approvedOrdinaryCashExpenseOutflows + approvedLandlordCashOutflows + approvedSalaryCashOutflows;
     const sourceOutflowTypesCoveredByApprovedExpenses = new Set([
         "expense",
         "employee_salary_payment",
@@ -768,7 +832,7 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
         .filter(isCashLedgerInflow)
         .reduce((total, row) => total + Number(row.amount ?? 0), 0);
     const otherLedgerCashOutflows = otherOfficeCashOutflowRows.reduce((total, row) => total + Number(row.amount ?? 0), 0);
-    const currentActualOfficeCash = ledgerCashInflows - approvedCashExpenseOutflows - otherLedgerCashOutflows;
+    const currentActualOfficeCash = ledgerCashInflows - approvedCashOutflows - otherLedgerCashOutflows;
 
     return {
         filters: resolved,
@@ -785,7 +849,7 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
             paymentRows: collections.length,
         },
         cashProjection: {
-            approvedCashOutflows: approvedCashExpenseOutflows,
+            approvedCashOutflows,
             currentActualOfficeCash,
             ledgerCashInflows,
             otherApprovedCashOutflows: otherLedgerCashOutflows,
@@ -801,7 +865,9 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
         },
         officeCashReconciliation: [
             { label: "Cash inflows posted to office cash ledger", amount: ledgerCashInflows, count: officeCashTransactions.filter(isCashLedgerInflow).length, direction: "inflow" },
-            { label: "Approved cash expenses, landlord payments and salaries", amount: approvedCashExpenseOutflows, count: approvedCashExpenses.length, direction: "outflow" },
+            { label: "Approved ordinary cash expenses", amount: approvedOrdinaryCashExpenseOutflows, count: approvedOrdinaryCashExpenses.length, direction: "outflow" },
+            { label: "Approved landlord cash payments", amount: approvedLandlordCashOutflows, count: approvedCashLandlordRequests.length + legacyCashLandlordPayments.length, direction: "outflow" },
+            { label: "Approved salary cash payments", amount: approvedSalaryCashOutflows, count: cashSalaryPayments.length, direction: "outflow" },
             { label: "Banking, cash handovers and other cash ledger outflows", amount: otherLedgerCashOutflows, count: officeCashTransactions.filter(isCashLedgerOutflow).filter((row) => !sourceOutflowTypesCoveredByApprovedExpenses.has(String(row.source_type ?? "").toLowerCase())).length, direction: "outflow" },
         ],
         pendingCashExpenses: hydratedPendingCashExpenses,
@@ -930,6 +996,17 @@ function isCashLedgerOutflow(row: Record<string, unknown>) {
 
 function isCashLedgerInflow(row: Record<string, unknown>) {
     return !isCashLedgerOutflow(row);
+}
+
+function isEffectiveCashPayout(row: Record<string, unknown>) {
+    if (row.financial_effective === false || row.active === false) return false;
+    const status = String(row.status ?? "approved").toLowerCase();
+    if (["rejected", "cancelled", "canceled", "void", "voided", "deleted", "removed", "reversed", "superseded", "financially_ineffective"].includes(status)) return false;
+    return isCashMethod(typeof row.payment_method === "string" ? row.payment_method : "cash");
+}
+
+function payoutAmount(row: Record<string, unknown>) {
+    return Number(row.amount ?? row.paid_amount ?? row.requested_amount ?? row.cash_payment_amount ?? 0);
 }
 
 function metadataBankAccount(value: unknown) {
@@ -1343,6 +1420,7 @@ async function getLandlordPaymentExpenseRequests(input: {
                 advanceRecoveryAmount: Number(request.advance_recovery_amount ?? 0),
                 cashPaymentAmount: Number(request.cash_payment_amount ?? request.normal_payment_amount ?? request.requested_amount ?? 0),
                 expenseId: typeof request.expense_id === "string" ? request.expense_id : null,
+                approvedLandlordPaymentId: typeof request.approved_landlord_payment_id === "string" ? request.approved_landlord_payment_id : null,
                 remainingAdvanceBalance: Number(request.advance_balance_after ?? 0),
                 currentNetPayable: Number(request.current_net_payable ?? 0),
                 alreadyPaidAmount: Number(request.already_paid_amount ?? 0),
