@@ -136,7 +136,7 @@ type LandlordPaymentPreview = Awaited<ReturnType<typeof previewLandlordPaymentEx
 type ExpenseEntryMode = "landlord_payment" | "authorised" | "unauthorised" | "banking" | "cash_handover_admin" | "salary_payment";
 type AuthorisedExpenseType = "employee_lunch" | "airtime" | "internet" | "transport_kampala";
 type ExpenseModalMode = "view" | "amount" | "delete" | "history";
-type SummaryDrilldownKind = "collections" | "adminCapitalInjection" | "expenses";
+type SummaryDrilldownKind = "collections" | "adminCapitalInjection" | "expenses" | "pendingCashExpenses";
 type RecordDatePreset = "today" | "yesterday" | "week" | "month" | "custom_date" | "custom_range" | "all_dates";
 type LandlordDueFilter = "" | "due_today" | "due_this_week" | "overdue" | "no_due_date" | "paid" | "outstanding";
 type ExpenseStatusFilter = "active" | "pending_changes" | "corrected" | "deleted" | "all";
@@ -568,6 +568,14 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
         () => report?.totals ?? { totalCollections: 0, adminCapitalInjectionTotal: 0, totalExpenses: 0, remainingBalance: 0, expenseRows: 0, paymentRows: 0 },
         [report?.totals],
     );
+    const cashProjection = useMemo(() => report?.cashProjection ?? {
+        currentActualOfficeCash: 0,
+        pendingCashExpenses: 0,
+        pendingCashExpenseCount: 0,
+        pendingBankExpenses: 0,
+        pendingMobileMoneyExpenses: 0,
+        projectedOfficeCashAfterPendingExpenses: 0,
+    }, [report?.cashProjection]);
     const periodLabel = report ? `${report.filters.startDate} to ${report.filters.endDate}` : filters.singleDate;
     const isLandlordPaidMode = entryMode === "landlord_payment";
     const isAuthorisedMode = entryMode === "authorised";
@@ -1341,6 +1349,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                         expenseDate,
                         item: itemName,
                         officeId: selectedEntryOfficeId || null,
+                        paymentMethod,
                         supportingProof,
                     });
                     flashExpense(saved.id);
@@ -1546,6 +1555,42 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                     <BalanceCard label="Remaining Office Balance" value={money(totals.remainingBalance)} hint="Collections minus expenses" tone={totals.remainingBalance >= 0 ? "blue" : "red"} icon={<WalletCards size={18} />} />
                     <BalanceCard label="Number of expense rows" value={totals.expenseRows.toLocaleString()} hint={periodLabel} tone="slate" icon={<CheckCircle2 size={18} />} />
                     <BalanceCard label="Number of payment rows" value={totals.paymentRows.toLocaleString()} hint={report?.officeName ?? "Selected scope"} tone="slate" icon={<FileText size={18} />} />
+                </section>
+
+                <section className="mx-auto mt-5 max-w-6xl rounded-[30px] border border-emerald-200 bg-gradient-to-br from-white via-emerald-50 to-cyan-50 p-4 shadow-2xl shadow-slate-950/15">
+                    <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
+                        <div>
+                            <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">Pending expense projection</p>
+                            <h2 className="mt-1 text-2xl font-black text-slate-950">Projected Office Cash After Pending Expenses</h2>
+                            <p className="mt-1 text-sm font-bold text-slate-600">Expected office cash if every currently pending cash expense is approved.</p>
+                        </div>
+                        <span className="w-fit rounded-full border border-white/70 bg-white px-3 py-1 text-xs font-black uppercase text-slate-700">{report?.officeName ?? "Selected scope"}</span>
+                    </div>
+                    <div className="mt-4 grid gap-3 md:grid-cols-3">
+                        <BalanceCard label="Current Office Cash" value={money(cashProjection.currentActualOfficeCash)} hint="True live physical office cash" tone="green" icon={<WalletCards size={18} />} />
+                        <BalanceCard
+                            interactive
+                            label="Pending Cash Expenses"
+                            value={money(cashProjection.pendingCashExpenses)}
+                            hint={`Pending Expense Requests: ${cashProjection.pendingCashExpenseCount.toLocaleString()} · Open records`}
+                            tone="amber"
+                            icon={<ReceiptText size={18} />}
+                            onClick={() => setSummaryDrilldown("pendingCashExpenses")}
+                        />
+                        <BalanceCard
+                            label="Projected After Approval"
+                            value={money(cashProjection.projectedOfficeCashAfterPendingExpenses)}
+                            hint={cashProjection.projectedOfficeCashAfterPendingExpenses < 0 ? `Cash shortfall: ${money(Math.abs(cashProjection.projectedOfficeCashAfterPendingExpenses))}` : "Actual cash minus pending cash expenses"}
+                            tone={cashProjection.projectedOfficeCashAfterPendingExpenses < 0 ? "red" : "blue"}
+                            icon={<HandCoins size={18} />}
+                        />
+                    </div>
+                    {(cashProjection.pendingBankExpenses > 0 || cashProjection.pendingMobileMoneyExpenses > 0) ? (
+                        <div className="mt-3 grid gap-2 text-xs font-black text-slate-600 sm:grid-cols-2">
+                            <p className="rounded-2xl bg-white/80 px-3 py-2">Pending Bank Expenses: {money(cashProjection.pendingBankExpenses)}</p>
+                            <p className="rounded-2xl bg-white/80 px-3 py-2">Pending Mobile Money Expenses: {money(cashProjection.pendingMobileMoneyExpenses)}</p>
+                        </div>
+                    ) : null}
                 </section>
 
                 <ExpenseFinanceAssistant insights={financeInsights} />
@@ -2161,6 +2206,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                     requests={data.landlordPaymentRequests}
                 />
                 <GenericExpenseApprovalQueue
+                    bankingSummaries={data.banking.summaries}
                     isAdmin={isAdmin}
                     requests={data.expenses.filter((expense) => (expense.status ?? expense.approvalState) === "pending")}
                     onReviewed={() => setRefreshToken((token) => token + 1)}
@@ -2381,8 +2427,9 @@ function DateField({ label, onChange, type, value, visible }: { label: string; o
     );
 }
 
-function BalanceCard({ hint, icon, interactive = false, label, onClick, tone, value }: { hint: string; icon: ReactNode; interactive?: boolean; label: string; onClick?: () => void; tone: "blue" | "green" | "red" | "slate"; value: string }) {
+function BalanceCard({ hint, icon, interactive = false, label, onClick, tone, value }: { hint: string; icon: ReactNode; interactive?: boolean; label: string; onClick?: () => void; tone: "amber" | "blue" | "green" | "red" | "slate"; value: string }) {
     const toneClass = {
+        amber: "border-amber-200 bg-amber-50 text-amber-800",
         blue: "border-blue-200 bg-blue-50 text-blue-800",
         green: "border-emerald-200 bg-emerald-50 text-emerald-800",
         red: "border-rose-200 bg-rose-50 text-rose-800",
@@ -2422,7 +2469,11 @@ function SummaryDrilldownModal({ kind, onClose, report }: { kind: SummaryDrilldo
         return () => window.removeEventListener("keydown", handleKey);
     }, [onClose]);
     const isCollections = kind === "collections" || kind === "adminCapitalInjection";
-    const expenses = useMemo(() => (report?.expenses ?? []).filter((expense) => normalizeStatus(expense.status ?? expense.approvalState) === "approved"), [report?.expenses]);
+    const isPendingCashExpenses = kind === "pendingCashExpenses";
+    const expenses = useMemo(() => {
+        if (isPendingCashExpenses) return report?.pendingCashExpenses ?? [];
+        return (report?.expenses ?? []).filter((expense) => normalizeStatus(expense.status ?? expense.approvalState) === "approved");
+    }, [isPendingCashExpenses, report?.expenses, report?.pendingCashExpenses]);
     const collections = useMemo(() => {
         const rows = report?.collections ?? [];
         return kind === "adminCapitalInjection" ? rows.filter((collection) => collection.collectionSourceKey === "admin_capital_injection") : rows;
@@ -2431,9 +2482,9 @@ function SummaryDrilldownModal({ kind, onClose, report }: { kind: SummaryDrilldo
         ? collections.reduce((sum, collection) => sum + Number(collection.amountValue ?? 0), 0)
         : expenses.reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
     const count = isCollections ? collections.length : expenses.length;
-    const title = kind === "adminCapitalInjection" ? "Admin Capital Injection Records" : isCollections ? "Total Collections Records" : "Total Expenses Records";
+    const title = kind === "adminCapitalInjection" ? "Admin Capital Injection Records" : isCollections ? "Total Collections Records" : isPendingCashExpenses ? "Pending Cash Expense Requests" : "Total Expenses Records";
     const officeLabel = report?.officeName ?? "Selected scope";
-    const period = report ? `${report.filters.startDate} to ${report.filters.endDate}` : "Current filter";
+    const period = isPendingCashExpenses ? "All currently pending cash expenses" : report ? `${report.filters.startDate} to ${report.filters.endDate}` : "Current filter";
     const collectionUrl = report
         ? `/office/collections?startDate=${encodeURIComponent(report.filters.startDate)}&endDate=${encodeURIComponent(report.filters.endDate)}${report.filters.officeId ? `&officeId=${encodeURIComponent(report.filters.officeId)}` : ""}${kind === "adminCapitalInjection" ? "&collectionSource=admin_capital_injection" : ""}`
         : "/office/collections";
@@ -2516,7 +2567,9 @@ function SummaryDrilldownModal({ kind, onClose, report }: { kind: SummaryDrilldo
                                     <th className="px-4 py-3">Expense Date</th>
                                     <th className="px-4 py-3">Expense</th>
                                     <th className="px-4 py-3">Office</th>
-                                    <th className="px-4 py-3">Recorded By</th>
+                                    <th className="px-4 py-3">{isPendingCashExpenses ? "Requested By" : "Recorded By"}</th>
+                                    {isPendingCashExpenses ? <th className="px-4 py-3">Payment Method</th> : null}
+                                    {isPendingCashExpenses ? <th className="px-4 py-3">Submitted</th> : null}
                                     <th className="px-4 py-3">Status</th>
                                     <th className="px-4 py-3 text-right">Amount</th>
                                 </tr>
@@ -2528,11 +2581,21 @@ function SummaryDrilldownModal({ kind, onClose, report }: { kind: SummaryDrilldo
                                         <td className="px-4 py-3 font-black text-slate-950">{expense.item ?? expense.expense_number ?? "Expense"}</td>
                                         <td className="px-4 py-3 font-bold text-slate-500">{expense.officeName ?? officeLabel}</td>
                                         <td className="px-4 py-3 font-bold text-slate-500">{expense.submittedByName ?? "System"}</td>
+                                        {isPendingCashExpenses ? <td className="px-4 py-3 font-bold text-slate-500">{methodLabel(expense.paymentMethod)}</td> : null}
+                                        {isPendingCashExpenses ? <td className="px-4 py-3 font-bold text-slate-500">{expense.created_at ? formatDateTime(expense.created_at) : "--"}</td> : null}
                                         <td className="px-4 py-3"><StatusBadge status={expense.status ?? expense.approvalState} /></td>
                                         <td className="px-4 py-3 text-right font-black text-rose-700">{money(expense.amount)}</td>
                                     </tr>
                                 ))}
                             </tbody>
+                            {isPendingCashExpenses ? (
+                                <tfoot>
+                                    <tr className="bg-amber-50 text-xs uppercase text-amber-900">
+                                        <td className="px-4 py-3 font-black" colSpan={7}>Total Pending Cash Expenses</td>
+                                        <td className="px-4 py-3 text-right font-black">{money(total)}</td>
+                                    </tr>
+                                </tfoot>
+                            ) : null}
                         </table>
                     )}
                 </div>
@@ -3122,11 +3185,13 @@ function LandlordPaymentAiPreview({
     );
 }
 
-function MiniFinance({ label, tone, value }: { label: string; tone: "green" | "amber" | "slate"; value: string }) {
+function MiniFinance({ label, tone, value }: { label: string; tone: "green" | "amber" | "red" | "slate"; value: string }) {
     const classes = tone === "green"
         ? "bg-emerald-100 text-emerald-800"
         : tone === "amber"
             ? "bg-amber-100 text-amber-800"
+            : tone === "red"
+                ? "bg-rose-100 text-rose-800"
             : "bg-slate-100 text-slate-700";
     return (
         <div className={`rounded-2xl px-4 py-3 ${classes}`}>
@@ -3274,7 +3339,7 @@ function AdvanceAgreementPanel({
     );
 }
 
-function GenericExpenseApprovalQueue({ isAdmin, onReviewed, requests }: { isAdmin: boolean; onReviewed: () => void; requests: ExpenseItem[] }) {
+function GenericExpenseApprovalQueue({ bankingSummaries, isAdmin, onReviewed, requests }: { bankingSummaries: ExpensesPageData["banking"]["summaries"]; isAdmin: boolean; onReviewed: () => void; requests: ExpenseItem[] }) {
     const [comments, setComments] = useState<Record<string, string>>({});
     const [message, setMessage] = useState<string | null>(null);
     const [pendingId, setPendingId] = useState<string | null>(null);
@@ -3319,6 +3384,9 @@ function GenericExpenseApprovalQueue({ isAdmin, onReviewed, requests }: { isAdmi
                 {requests.map((expense) => {
                     const note = comments[expense.id] ?? "";
                     const busy = isPending && pendingId === expense.id;
+                    const officeCash = bankingSummaries.find((summary) => summary.officeId === expense.office_id)?.currentPhysicalOfficeCash ?? 0;
+                    const cashImpacting = methodLabel(expense.paymentMethod).toLowerCase().includes("cash");
+                    const projectedAfterThisApproval = cashImpacting ? officeCash - Number(expense.amount ?? 0) : officeCash;
                     const proofPath = String((expense as ExpenseItem & { supporting_document?: string | null }).supporting_document ?? "");
                     const proofName = String((expense as ExpenseItem & { supporting_document_original_name?: string | null }).supporting_document_original_name ?? "Supporting proof");
                     const proofMime = String((expense as ExpenseItem & { supporting_document_mime_type?: string | null }).supporting_document_mime_type ?? "");
@@ -3342,7 +3410,9 @@ function GenericExpenseApprovalQueue({ isAdmin, onReviewed, requests }: { isAdmi
                                 <MiniFinance label="Category" value={expense.categoryName ?? expense.category ?? "Expense"} tone="slate" />
                                 <MiniFinance label="Cash impact now" value="UGX 0 pending" tone="amber" />
                                 <MiniFinance label="Payment method" value={expense.paymentMethod ?? "Not set"} tone="slate" />
-                                <MiniFinance label="Projected after approval" value={`-${money(expense.amount)}`} tone="amber" />
+                                <MiniFinance label="Office current cash" value={money(officeCash)} tone="green" />
+                                <MiniFinance label="This expense" value={money(expense.amount)} tone="amber" />
+                                <MiniFinance label="Projected after this approval" value={money(projectedAfterThisApproval)} tone={projectedAfterThisApproval < 0 ? "red" : "amber"} />
                             </div>
                             <section className="mt-3 rounded-2xl border border-slate-200 bg-white p-3">
                                 <p className="text-xs font-black uppercase tracking-wide text-slate-500">Supporting Proof</p>

@@ -61,6 +61,23 @@ function isApprovedExpense(expense: Record<string, unknown>) {
     return status === "approved" || status === "corrected";
 }
 
+function isPendingExpense(expense: Record<string, unknown>) {
+    const status = expenseStatus(expense);
+    if (expense.financial_effective === false) return false;
+    if (expense.deleted_at || expense.reversed_at || expense.voided_at) return false;
+    return ["pending", "submitted", "awaiting_approval", "pending_admin_approval", "admin_review"].includes(status);
+}
+
+function expensePaymentBucket(expense: Record<string, unknown>) {
+    return paymentMethodBucket(typeof expense.payment_method === "string" ? expense.payment_method : null);
+}
+
+function isPendingPhysicalCashExpense(expense: Record<string, unknown>) {
+    const sourceType = String(expense.cash_source_type ?? "").toLowerCase();
+    const rawMethod = String(expense.payment_method ?? "").trim();
+    return rawMethod ? expensePaymentBucket(expense) === "cash" : sourceType === "office_cash";
+}
+
 function monthBounds(monthKey: string | null | undefined) {
     const fallback = new Date().toISOString().slice(0, 7);
     const value = /^\d{4}-\d{2}$/.test(monthKey ?? "") ? String(monthKey) : fallback;
@@ -475,6 +492,15 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
             isAdmin,
             officeName: "No office",
             totals: { totalCollections: 0, adminCapitalInjectionTotal: 0, totalExpenses: 0, remainingBalance: 0, expenseRows: 0, paymentRows: 0 },
+            cashProjection: {
+                currentActualOfficeCash: 0,
+                pendingCashExpenses: 0,
+                pendingCashExpenseCount: 0,
+                pendingBankExpenses: 0,
+                pendingMobileMoneyExpenses: 0,
+                projectedOfficeCashAfterPendingExpenses: 0,
+            },
+            pendingCashExpenses: [],
             expenses: [],
             collections: [],
         };
@@ -504,7 +530,7 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
         collectionQuery = collectionQuery.eq("office_id", selectedOfficeId);
     }
 
-    const [expensesResult, collectionsResult, categoriesResult, propertiesResult, landlordsResult, usersResult, officesResult] = await Promise.all([
+    const [expensesResult, collectionsResult, categoriesResult, propertiesResult, landlordsResult, usersResult, officesResult, cashAccountsResult, cashTransactionsResult, pendingExpensesResult] = await Promise.all([
         expenseQuery,
         collectionQuery,
         supabase.from("expense_categories").select("*").or(`company_id.eq.${companyId},company_id.is.null`),
@@ -512,9 +538,29 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
         supabase.from("landlords").select("*").eq("company_id", companyId),
         supabase.from("users").select("*").eq("company_id", companyId),
         supabase.from("offices").select("id, office_name, name").eq("company_id", companyId),
+        supabase.from("cash_accounts").select("*").eq("company_id", companyId).eq("status", "active"),
+        (() => {
+            let query = (supabase as unknown as { from: (table: string) => any })
+                .from("cash_transactions")
+                .select("id, company_id, office_id, cash_account_id, amount, transaction_type, direction, source_type, source_id, transaction_date, occurred_at, created_at, status")
+                .eq("company_id", companyId)
+                .limit(10000);
+            if (selectedOfficeId) query = query.eq("office_id", selectedOfficeId);
+            return query;
+        })(),
+        (() => {
+            let query = supabase
+                .from("expenses")
+                .select("*")
+                .eq("company_id", companyId)
+                .order("created_at", { ascending: false, nullsFirst: false })
+                .limit(10000);
+            if (selectedOfficeId) query = query.eq("office_id", selectedOfficeId);
+            return query;
+        })(),
     ]);
 
-    for (const result of [expensesResult, collectionsResult, categoriesResult, propertiesResult, landlordsResult, usersResult, officesResult]) {
+    for (const result of [expensesResult, collectionsResult, categoriesResult, propertiesResult, landlordsResult, usersResult, officesResult, cashAccountsResult, cashTransactionsResult, pendingExpensesResult]) {
         if (result.error) throw new Error(result.error.message);
     }
 
@@ -533,6 +579,20 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
     const approvedExpenses = expenses.filter(isApprovedExpense);
     const totalExpenses = sumExpenses(approvedExpenses);
     const collectionItems = hydrateCollectionItems(collections, usersResult.data ?? [], officeById);
+    const accountById = new Map(((cashAccountsResult.data ?? []) as Array<Record<string, unknown>>).map((account) => [String(account.id), account]));
+    const officeCashTransactions = ((cashTransactionsResult.data ?? []) as Array<Record<string, unknown>>)
+        .filter(isApprovedLedger)
+        .filter((row) => accountById.get(String(row.cash_account_id))?.account_type === "office_cash");
+    const currentActualOfficeCash = Math.max(0, officeCashTransactions.reduce((total, row) => total + signedCashAmount(row), 0));
+    const pendingExpenses = ((pendingExpensesResult.data ?? []) as ExpenseRow[]).filter((expense) => isPendingExpense(expense as Record<string, unknown>));
+    const pendingCashExpenses = pendingExpenses.filter((expense) => isPendingPhysicalCashExpense(expense as Record<string, unknown>));
+    const pendingBankExpenses = pendingExpenses
+        .filter((expense) => expensePaymentBucket(expense as Record<string, unknown>) === "bank")
+        .reduce((total, expense) => total + Number(expense.amount ?? 0), 0);
+    const pendingMobileMoneyExpenses = pendingExpenses
+        .filter((expense) => expensePaymentBucket(expense as Record<string, unknown>) === "mobile_money")
+        .reduce((total, expense) => total + Number(expense.amount ?? 0), 0);
+    const pendingCashExpenseTotal = sumExpenses(pendingCashExpenses);
 
     return {
         filters: resolved,
@@ -548,6 +608,18 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
             expenseRows: approvedExpenses.length,
             paymentRows: collections.length,
         },
+        cashProjection: {
+            currentActualOfficeCash,
+            pendingCashExpenses: pendingCashExpenseTotal,
+            pendingCashExpenseCount: pendingCashExpenses.length,
+            pendingBankExpenses,
+            pendingMobileMoneyExpenses,
+            projectedOfficeCashAfterPendingExpenses: currentActualOfficeCash - pendingCashExpenseTotal,
+        },
+        pendingCashExpenses: hydrateExpenseItems(pendingCashExpenses, categoriesResult.data ?? [], propertiesResult.data ?? [], landlordsResult.data ?? [], usersResult.data ?? []).map((expense) => ({
+            ...expense,
+            officeName: expense.office_id ? officeById.get(expense.office_id) ?? null : null,
+        }) as ExpenseItem),
         expenses: items.map((expense) => ({
             ...expense,
             officeName: expense.office_id ? officeById.get(expense.office_id) ?? null : null,

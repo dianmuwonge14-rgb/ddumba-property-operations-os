@@ -263,6 +263,15 @@ export type ExpenseBalanceTotals = {
     paymentRows: number;
 };
 
+export type PendingCashExpenseProjection = {
+    currentActualOfficeCash: number;
+    pendingCashExpenses: number;
+    pendingCashExpenseCount: number;
+    pendingBankExpenses: number;
+    pendingMobileMoneyExpenses: number;
+    projectedOfficeCashAfterPendingExpenses: number;
+};
+
 export type ExpenseReportCollectionItem = CollectionRow & {
     amountValue: number;
     auditReference: string | null;
@@ -289,6 +298,8 @@ export type ExpenseBalanceReport = {
     generatedAt: string;
     generatedBy: string;
     totals: ExpenseBalanceTotals;
+    cashProjection: PendingCashExpenseProjection;
+    pendingCashExpenses: ExpenseItem[];
     expenses: ExpenseItem[];
     collections: ExpenseReportCollectionItem[];
 };
