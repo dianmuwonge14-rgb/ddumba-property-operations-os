@@ -452,8 +452,17 @@ export default function FastPaymentsEntry({
         }
 
         if (requestedRoom) {
+            suppressNextSearchRef.current = true;
             setRoomQuery(requestedRoom);
-            setRoomMatchesOpen(true);
+            setSearching(true);
+            void reloadRoomDetails(requestedRoom).catch((error) => {
+                setResults([]);
+                setSelectedTenant(null);
+                setRoomMatchesOpen(false);
+                setMessage(error instanceof Error ? error.message : "Room details could not load.");
+            }).finally(() => {
+                setSearching(false);
+            });
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
