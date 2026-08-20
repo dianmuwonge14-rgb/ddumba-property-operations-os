@@ -17,6 +17,7 @@ import type {
     ExpensesPageData,
     LandlordExpenseEditRequestItem,
     LandlordRow,
+    PendingCashOutflowItem,
     PropertyRow,
     SalaryPaymentRequestItem,
     UserRow,
@@ -68,6 +69,10 @@ function isPendingExpense(expense: Record<string, unknown>) {
     return ["pending", "submitted", "awaiting_approval", "pending_admin_approval", "admin_review"].includes(status);
 }
 
+function isPendingStatus(value: string | null | undefined) {
+    return ["pending", "submitted", "awaiting_approval", "pending_admin_approval", "admin_review", "requested"].includes(String(value ?? "").toLowerCase());
+}
+
 function expensePaymentBucket(expense: Record<string, unknown>) {
     return paymentMethodBucket(typeof expense.payment_method === "string" ? expense.payment_method : null);
 }
@@ -76,6 +81,14 @@ function isPendingPhysicalCashExpense(expense: Record<string, unknown>) {
     const sourceType = String(expense.cash_source_type ?? "").toLowerCase();
     const rawMethod = String(expense.payment_method ?? "").trim();
     return rawMethod ? expensePaymentBucket(expense) === "cash" : sourceType === "office_cash";
+}
+
+function isCashMethod(value: string | null | undefined) {
+    return paymentMethodBucket(value ?? null) === "cash";
+}
+
+function pendingOutflowBucket(value: string | null | undefined) {
+    return paymentMethodBucket(value ?? null);
 }
 
 function monthBounds(monthKey: string | null | undefined) {
@@ -328,6 +341,7 @@ export async function getExpensesPageData(): Promise<ExpensesPageData> {
         landlordById: new Map(landlords.map((landlord) => [landlord.id, landlord.full_name ?? "Landlord"])),
         landlordDueDateById: new Map(landlords.map((landlord) => [landlord.id, typeof (landlord as Record<string, unknown>).payment_date === "string" ? String((landlord as Record<string, unknown>).payment_date).slice(0, 10) : null])),
         supabase,
+        userById,
     });
     const employeeExpenseRequests = await getEmployeeExpenseRequests({
         companyId,
@@ -430,7 +444,7 @@ async function getSalaryPaymentRequests(input: {
             .eq("active", true)
             .order("created_at", { ascending: false })
             .limit(100);
-        if (!input.isAdmin && input.officeId) query = query.eq("requesting_office_id", input.officeId);
+        if (input.officeId) query = query.eq("requesting_office_id", input.officeId);
         const { data, error } = await query;
         if (error) {
             if (/relation .*employee_salary_payment_requests|does not exist|schema cache/i.test(error.message ?? "")) return [];
@@ -498,15 +512,20 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
                 pendingCashExpenseCount: 0,
                 pendingBankExpenses: 0,
                 pendingMobileMoneyExpenses: 0,
+                pendingOrdinaryExpenses: 0,
+                pendingLandlordPayments: 0,
+                pendingSalaryPayments: 0,
+                pendingOtherCashOutflows: 0,
                 projectedOfficeCashAfterPendingExpenses: 0,
             },
             pendingCashExpenses: [],
+            pendingCashOutflows: [],
             expenses: [],
             collections: [],
         };
     }
 
-    const selectedOfficeId = isAdmin && resolved.officeId ? resolved.officeId : isAdmin ? null : officeId;
+    const selectedOfficeId = isAdmin && resolved.officeId ? resolved.officeId : isAdmin ? null : officeId ?? null;
     let expenseQuery = supabase
         .from("expenses")
         .select("*")
@@ -530,7 +549,7 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
         collectionQuery = collectionQuery.eq("office_id", selectedOfficeId);
     }
 
-    const [expensesResult, collectionsResult, categoriesResult, propertiesResult, landlordsResult, usersResult, officesResult, cashAccountsResult, cashTransactionsResult, pendingExpensesResult] = await Promise.all([
+    const [expensesResult, collectionsResult, categoriesResult, propertiesResult, landlordsResult, usersResult, officesResult, cashAccountsResult, cashTransactionsResult, pendingExpensesResult, employeesResult] = await Promise.all([
         expenseQuery,
         collectionQuery,
         supabase.from("expense_categories").select("*").or(`company_id.eq.${companyId},company_id.is.null`),
@@ -558,9 +577,10 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
             if (selectedOfficeId) query = query.eq("office_id", selectedOfficeId);
             return query;
         })(),
+        supabase.from("employees").select("*").eq("company_id", companyId).neq("status", "terminated"),
     ]);
 
-    for (const result of [expensesResult, collectionsResult, categoriesResult, propertiesResult, landlordsResult, usersResult, officesResult, cashAccountsResult, cashTransactionsResult, pendingExpensesResult]) {
+    for (const result of [expensesResult, collectionsResult, categoriesResult, propertiesResult, landlordsResult, usersResult, officesResult, cashAccountsResult, cashTransactionsResult, pendingExpensesResult, employeesResult]) {
         if (result.error) throw new Error(result.error.message);
     }
 
@@ -586,13 +606,114 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
     const currentActualOfficeCash = Math.max(0, officeCashTransactions.reduce((total, row) => total + signedCashAmount(row), 0));
     const pendingExpenses = ((pendingExpensesResult.data ?? []) as ExpenseRow[]).filter((expense) => isPendingExpense(expense as Record<string, unknown>));
     const pendingCashExpenses = pendingExpenses.filter((expense) => isPendingPhysicalCashExpense(expense as Record<string, unknown>));
-    const pendingBankExpenses = pendingExpenses
-        .filter((expense) => expensePaymentBucket(expense as Record<string, unknown>) === "bank")
-        .reduce((total, expense) => total + Number(expense.amount ?? 0), 0);
-    const pendingMobileMoneyExpenses = pendingExpenses
-        .filter((expense) => expensePaymentBucket(expense as Record<string, unknown>) === "mobile_money")
-        .reduce((total, expense) => total + Number(expense.amount ?? 0), 0);
-    const pendingCashExpenseTotal = sumExpenses(pendingCashExpenses);
+    const employeeById = new Map(((employeesResult.data ?? []) as EmployeeRow[]).map((employee) => [employee.id, employee.full_name ?? "Employee"]));
+    const userById = new Map((usersResult.data ?? []).map((user) => [user.id, user.full_name ?? user.email ?? "User"]));
+    const landlordPaymentRequests = await getLandlordPaymentExpenseRequests({
+        companyId,
+        isAdmin,
+        officeById,
+        officeId: selectedOfficeId,
+        landlordById: new Map((landlordsResult.data ?? []).map((landlord) => [landlord.id, landlord.full_name ?? "Landlord"])),
+        landlordDueDateById: new Map((landlordsResult.data ?? []).map((landlord) => [landlord.id, typeof (landlord as Record<string, unknown>).payment_date === "string" ? String((landlord as Record<string, unknown>).payment_date).slice(0, 10) : null])),
+        supabase,
+        userById,
+    });
+    const employeeExpenseRequests = await getEmployeeExpenseRequests({
+        companyId,
+        employeeById,
+        isAdmin,
+        officeById,
+        officeId: selectedOfficeId,
+        supabase,
+    });
+    const salaryPaymentRequests = await getSalaryPaymentRequests({
+        companyId,
+        employeeById,
+        employeesById: new Map(((employeesResult.data ?? []) as EmployeeRow[]).map((employee) => [employee.id, employee])),
+        isAdmin,
+        officeById,
+        officeId: selectedOfficeId,
+        supabase,
+        userById,
+    });
+    const hydratedPendingCashExpenses = hydrateExpenseItems(pendingCashExpenses, categoriesResult.data ?? [], propertiesResult.data ?? [], landlordsResult.data ?? [], usersResult.data ?? []).map((expense) => ({
+        ...expense,
+        officeName: expense.office_id ? officeById.get(expense.office_id) ?? null : null,
+    }) as ExpenseItem);
+    const pendingOrdinaryCashOutflows: PendingCashOutflowItem[] = hydratedPendingCashExpenses.map((expense) => ({
+        id: expense.id,
+        type: String(expense.category ?? expense.item ?? "").toLowerCase().includes("authorised") ? "Authorised Expense" : "Expense",
+        reference: expense.expense_number ?? expense.id,
+        beneficiary: expense.vendor ?? expense.item ?? "Office expense",
+        amount: Number(expense.amount ?? 0),
+        paymentMethod: expense.paymentMethod ?? "cash",
+        officeId: expense.office_id,
+        officeName: expense.officeName ?? "Office",
+        submittedByName: expense.submittedByName ?? "System",
+        submittedDate: typeof expense.created_at === "string" ? expense.created_at : null,
+        status: expense.status ?? expense.approvalState,
+    }));
+    const pendingLandlordCashOutflows: PendingCashOutflowItem[] = landlordPaymentRequests
+        .filter((request) => isPendingStatus(request.status) && isCashMethod(request.paymentMethod))
+        .map((request) => ({
+            id: request.id,
+            type: "Landlord Payment",
+            reference: request.paymentMonth ? `Landlord payment · ${request.paymentMonth}` : request.id,
+            beneficiary: request.landlordName,
+            amount: Number(request.amount ?? 0),
+            paymentMethod: request.paymentMethod,
+            officeId: request.officeId,
+            officeName: request.officeName,
+            submittedByName: request.requestedByName ?? "Office user",
+            submittedDate: request.createdAt,
+            status: request.status,
+        }));
+    const pendingSalaryCashOutflows: PendingCashOutflowItem[] = salaryPaymentRequests
+        .filter((request) => isPendingStatus(request.status) && isCashMethod(request.paymentMethod))
+        .map((request) => ({
+            id: request.id,
+            type: "Salary Payment",
+            reference: request.reference ?? `Salary payment · ${request.monthKey}`,
+            beneficiary: request.employeeName,
+            amount: Number(request.requestedAmount ?? request.salaryAmount ?? 0),
+            paymentMethod: request.paymentMethod,
+            officeId: request.requestingOfficeId,
+            officeName: request.requestingOfficeName,
+            submittedByName: request.requestedByName,
+            submittedDate: request.createdAt,
+            status: request.status,
+        }));
+    const pendingEmployeeExpenseCashOutflows: PendingCashOutflowItem[] = employeeExpenseRequests
+        .filter((request) => isPendingStatus(request.status))
+        .map((request) => ({
+            id: request.id,
+            type: "Employee Expense",
+            reference: request.itemName,
+            beneficiary: request.employeeName,
+            amount: Number(request.amount ?? 0),
+            paymentMethod: "cash",
+            officeId: request.officeId,
+            officeName: request.officeName,
+            submittedByName: "Office user",
+            submittedDate: request.createdAt,
+            status: request.status,
+        }));
+    const pendingCashOutflows = [...pendingOrdinaryCashOutflows, ...pendingLandlordCashOutflows, ...pendingSalaryCashOutflows, ...pendingEmployeeExpenseCashOutflows];
+    const pendingCashExpenseTotal = pendingCashOutflows.reduce((total, row) => total + Number(row.amount ?? 0), 0);
+    const pendingBankExpenses = [
+        ...pendingExpenses.map((expense) => ({ amount: Number(expense.amount ?? 0), method: (expense as Record<string, unknown>).payment_method as string | null | undefined })),
+        ...landlordPaymentRequests.filter((request) => isPendingStatus(request.status)).map((request) => ({ amount: request.amount, method: request.paymentMethod })),
+        ...salaryPaymentRequests.filter((request) => isPendingStatus(request.status)).map((request) => ({ amount: request.requestedAmount, method: request.paymentMethod })),
+    ].filter((row) => pendingOutflowBucket(row.method) === "bank").reduce((total, row) => total + Number(row.amount ?? 0), 0);
+    const pendingMobileMoneyExpenses = [
+        ...pendingExpenses.map((expense) => ({ amount: Number(expense.amount ?? 0), method: (expense as Record<string, unknown>).payment_method as string | null | undefined })),
+        ...landlordPaymentRequests.filter((request) => isPendingStatus(request.status)).map((request) => ({ amount: request.amount, method: request.paymentMethod })),
+        ...salaryPaymentRequests.filter((request) => isPendingStatus(request.status)).map((request) => ({ amount: request.requestedAmount, method: request.paymentMethod })),
+    ].filter((row) => pendingOutflowBucket(row.method) === "mobile_money").reduce((total, row) => total + Number(row.amount ?? 0), 0);
+    const pendingOrdinaryExpensesTotal = pendingOrdinaryCashOutflows.reduce((total, row) => total + row.amount, 0);
+    const pendingLandlordPaymentTotal = pendingLandlordCashOutflows.reduce((total, row) => total + row.amount, 0);
+    const pendingSalaryPaymentTotal = pendingSalaryCashOutflows.reduce((total, row) => total + row.amount, 0);
+    const pendingOtherCashOutflowTotal = pendingEmployeeExpenseCashOutflows.reduce((total, row) => total + row.amount, 0);
 
     return {
         filters: resolved,
@@ -604,22 +725,24 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
             totalCollections,
             adminCapitalInjectionTotal,
             totalExpenses,
-            remainingBalance: physicalCollections - totalExpenses,
+            remainingBalance: currentActualOfficeCash,
             expenseRows: approvedExpenses.length,
             paymentRows: collections.length,
         },
         cashProjection: {
             currentActualOfficeCash,
             pendingCashExpenses: pendingCashExpenseTotal,
-            pendingCashExpenseCount: pendingCashExpenses.length,
+            pendingCashExpenseCount: pendingCashOutflows.length,
             pendingBankExpenses,
             pendingMobileMoneyExpenses,
+            pendingOrdinaryExpenses: pendingOrdinaryExpensesTotal,
+            pendingLandlordPayments: pendingLandlordPaymentTotal,
+            pendingSalaryPayments: pendingSalaryPaymentTotal,
+            pendingOtherCashOutflows: pendingOtherCashOutflowTotal,
             projectedOfficeCashAfterPendingExpenses: currentActualOfficeCash - pendingCashExpenseTotal,
         },
-        pendingCashExpenses: hydrateExpenseItems(pendingCashExpenses, categoriesResult.data ?? [], propertiesResult.data ?? [], landlordsResult.data ?? [], usersResult.data ?? []).map((expense) => ({
-            ...expense,
-            officeName: expense.office_id ? officeById.get(expense.office_id) ?? null : null,
-        }) as ExpenseItem),
+        pendingCashExpenses: hydratedPendingCashExpenses,
+        pendingCashOutflows,
         expenses: items.map((expense) => ({
             ...expense,
             officeName: expense.office_id ? officeById.get(expense.office_id) ?? null : null,
@@ -1073,7 +1196,7 @@ async function getEmployeeExpenseRequests(input: {
             .eq("active", true)
             .order("created_at", { ascending: false })
             .limit(100);
-        if (!input.isAdmin && input.officeId) query = query.eq("office_id", input.officeId);
+        if (input.officeId) query = query.eq("office_id", input.officeId);
         const { data, error } = await query;
         if (error) {
             if (/relation .*employee_expense_requests|does not exist|schema cache/i.test(error.message ?? "")) return [];
@@ -1116,6 +1239,7 @@ async function getLandlordPaymentExpenseRequests(input: {
     landlordById: Map<string, string>;
     landlordDueDateById?: Map<string, string | null>;
     supabase: { from: (table: string) => any };
+    userById?: Map<string, string>;
 }) {
     try {
         let query = input.supabase
@@ -1124,7 +1248,7 @@ async function getLandlordPaymentExpenseRequests(input: {
             .eq("company_id", input.companyId)
             .order("created_at", { ascending: false })
             .limit(80);
-        if (!input.isAdmin && input.officeId) query = query.eq("office_id", input.officeId);
+        if (input.officeId) query = query.eq("office_id", input.officeId);
         const { data, error } = await query;
         if (error) {
             if (/relation .*landlord_payment_expense_requests|does not exist/i.test(error.message ?? "")) return [];
@@ -1133,6 +1257,7 @@ async function getLandlordPaymentExpenseRequests(input: {
         return ((data ?? []) as Array<Record<string, unknown>>).map((request) => {
             const landlordId = String(request.landlord_id ?? "");
             const officeId = String(request.office_id ?? "");
+            const requestedBy = String(request.requested_by ?? request.created_by ?? request.submitted_by ?? request.recorded_by ?? "");
             return {
                 id: String(request.id),
                 landlordId,
@@ -1157,6 +1282,7 @@ async function getLandlordPaymentExpenseRequests(input: {
                 notes: typeof request.notes === "string" ? request.notes : null,
                 createdAt: typeof request.created_at === "string" ? request.created_at : null,
                 adminComment: typeof request.admin_comment === "string" ? request.admin_comment : null,
+                requestedByName: input.userById?.get(requestedBy) ?? null,
             };
         });
     } catch (error) {

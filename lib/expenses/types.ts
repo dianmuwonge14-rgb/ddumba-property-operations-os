@@ -113,6 +113,20 @@ export type SalaryPaymentRequestItem = {
     proofUrl?: string | null;
 };
 
+export type PendingCashOutflowItem = {
+    id: string;
+    type: "Expense" | "Landlord Payment" | "Salary Payment" | "Authorised Expense" | "Unauthorised Expense" | "Employee Expense" | "Other Cash Outflow";
+    reference: string;
+    beneficiary: string;
+    amount: number;
+    paymentMethod: string;
+    officeId: string | null;
+    officeName: string;
+    submittedByName: string;
+    submittedDate: string | null;
+    status: string;
+};
+
 export type ExpensesPageData = {
     company: CompanyRow | null;
     office: OfficeRow | null;
@@ -165,6 +179,7 @@ export type ExpensesPageData = {
         notes: string | null;
         createdAt: string | null;
         adminComment: string | null;
+        requestedByName?: string | null;
     }>;
     employeeExpenseRequests: Array<{
         id: string;
@@ -269,6 +284,10 @@ export type PendingCashExpenseProjection = {
     pendingCashExpenseCount: number;
     pendingBankExpenses: number;
     pendingMobileMoneyExpenses: number;
+    pendingOrdinaryExpenses: number;
+    pendingLandlordPayments: number;
+    pendingSalaryPayments: number;
+    pendingOtherCashOutflows: number;
     projectedOfficeCashAfterPendingExpenses: number;
 };
 
@@ -300,6 +319,7 @@ export type ExpenseBalanceReport = {
     totals: ExpenseBalanceTotals;
     cashProjection: PendingCashExpenseProjection;
     pendingCashExpenses: ExpenseItem[];
+    pendingCashOutflows: PendingCashOutflowItem[];
     expenses: ExpenseItem[];
     collections: ExpenseReportCollectionItem[];
 };
