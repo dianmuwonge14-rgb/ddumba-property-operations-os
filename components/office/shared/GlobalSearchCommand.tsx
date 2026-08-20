@@ -222,7 +222,8 @@ export default function GlobalSearchCommand(props: Props) {
     function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
         if (event.key === "Enter") {
             event.preventDefault();
-            const exact = exactPageMatch(query, props);
+            const currentQuery = event.currentTarget.value;
+            const exact = exactPageMatch(currentQuery, props);
             if (exact) {
                 navigate(pageHref(exact, props));
                 return;
