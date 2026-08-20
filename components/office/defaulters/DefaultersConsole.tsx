@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { Fragment, useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Bot, CalendarClock, Download, FileText, MessageCircle, Phone, Printer, RefreshCw, Search, Send, Sparkles, WalletCards, Wifi } from "lucide-react";
@@ -13,8 +13,20 @@ type Props = {
 
 type PeriodFilter = "all" | "today" | "1_7" | "8_14" | "15_30" | "1_month" | "2_months" | "3_plus" | "custom_days" | "custom_months";
 type ListFilter = "active" | "vacated" | "high_risk" | "promises_due";
-type SortMode = "risk_high" | "days_high" | "balance_high" | "room_asc";
-const INITIAL_TABLE_LIMIT = 100;
+type LandlordSort = "az" | "za";
+
+type LandlordGroup = {
+    landlordId: string;
+    landlordName: string;
+    officeName: string;
+    items: DefaulterItem[];
+    totalOutstanding: number;
+    totalMonthlyRent: number;
+    totalArrears: number;
+    totalPayments: number;
+    highestOutstandingRoom: DefaulterItem | null;
+    oldestDebt: DefaulterItem | null;
+};
 
 function money(value: number | string | null | undefined) {
     return `UGX ${Math.round(Number(value ?? 0)).toLocaleString()}`;
@@ -22,6 +34,55 @@ function money(value: number | string | null | undefined) {
 
 function normalize(value: string | null | undefined) {
     return String(value ?? "").trim().toLowerCase();
+}
+
+function landlordSortValue(value: string | null | undefined) {
+    return normalize(value || "Unknown landlord");
+}
+
+function compareLandlordNames(a: string | null | undefined, b: string | null | undefined, direction: LandlordSort) {
+    const comparison = landlordSortValue(a).localeCompare(landlordSortValue(b), undefined, { numeric: true, sensitivity: "base" });
+    return direction === "za" ? -comparison : comparison;
+}
+
+function compareRoomNumbers(a: string | null | undefined, b: string | null | undefined) {
+    return String(a ?? "").trim().localeCompare(String(b ?? "").trim(), undefined, { numeric: true, sensitivity: "base" });
+}
+
+function compareByLandlordThenRoom(a: DefaulterItem, b: DefaulterItem, direction: LandlordSort) {
+    const landlordComparison = compareLandlordNames(a.landlordName, b.landlordName, direction);
+    if (landlordComparison !== 0) return landlordComparison;
+    return compareRoomNumbers(a.roomNumber, b.roomNumber) || normalize(a.tenantName).localeCompare(normalize(b.tenantName));
+}
+
+function groupDefaultersByLandlord(items: DefaulterItem[], direction: LandlordSort): LandlordGroup[] {
+    const groups = new Map<string, LandlordGroup>();
+    for (const item of items) {
+        const key = item.landlordId || `unknown:${landlordSortValue(item.landlordName)}:${normalize(item.officeName)}`;
+        const group = groups.get(key) ?? {
+            landlordId: key,
+            landlordName: item.landlordName || "Unknown landlord",
+            officeName: item.officeName || "Unknown office",
+            items: [],
+            totalOutstanding: 0,
+            totalMonthlyRent: 0,
+            totalArrears: 0,
+            totalPayments: 0,
+            highestOutstandingRoom: null,
+            oldestDebt: null,
+        };
+        group.items.push(item);
+        group.totalOutstanding += item.outstandingBalance;
+        group.totalMonthlyRent += item.monthlyRent;
+        group.totalArrears += item.arrears;
+        group.totalPayments += item.currentMonthPaid;
+        if (!group.highestOutstandingRoom || item.outstandingBalance > group.highestOutstandingRoom.outstandingBalance) group.highestOutstandingRoom = item;
+        if (!group.oldestDebt || item.daysDefaulted > group.oldestDebt.daysDefaulted) group.oldestDebt = item;
+        groups.set(key, group);
+    }
+    return [...groups.values()]
+        .map((group) => ({ ...group, items: [...group.items].sort((a, b) => compareRoomNumbers(a.roomNumber, b.roomNumber) || normalize(a.tenantName).localeCompare(normalize(b.tenantName))) }))
+        .sort((a, b) => compareLandlordNames(a.landlordName, b.landlordName, direction) || normalize(a.officeName).localeCompare(normalize(b.officeName)));
 }
 
 function phoneHref(value: string | null) {
@@ -57,7 +118,7 @@ export default function DefaultersConsole({ data }: Props) {
     const [customDaysMax, setCustomDaysMax] = useState("");
     const [customMonthsMin, setCustomMonthsMin] = useState("");
     const [customMonthsMax, setCustomMonthsMax] = useState("");
-    const [sort, setSort] = useState<SortMode>("risk_high");
+    const [landlordSort, setLandlordSort] = useState<LandlordSort>("az");
     const [showPrintPreview, setShowPrintPreview] = useState(false);
     const [selectedLedgerItem, setSelectedLedgerItem] = useState<DefaulterItem | null>(null);
     const [liveStatus, setLiveStatus] = useState("Live");
@@ -153,7 +214,7 @@ export default function DefaultersConsole({ data }: Props) {
         setCustomDaysMax("");
         setCustomMonthsMin("");
         setCustomMonthsMax("");
-        setSort("risk_high");
+        setLandlordSort("az");
         if (data.isCollector) startTransition(() => router.push("/office/collector/defaulters"));
     }
 
@@ -197,20 +258,16 @@ export default function DefaultersConsole({ data }: Props) {
                 return true;
             })
             .sort((a, b) => {
-                const exactRoomA = term && normalize(a.roomNumber) === term ? 1 : 0;
-                const exactRoomB = term && normalize(b.roomNumber) === term ? 1 : 0;
-                if (exactRoomA !== exactRoomB) return exactRoomB - exactRoomA;
-                if (sort === "days_high") return b.daysDefaulted - a.daysDefaulted || b.outstandingBalance - a.outstandingBalance;
-                if (sort === "balance_high") return b.outstandingBalance - a.outstandingBalance || b.daysDefaulted - a.daysDefaulted;
-                if (sort === "room_asc") return a.roomNumber.localeCompare(b.roomNumber);
-                return (b.daysDefaulted * b.outstandingBalance) - (a.daysDefaulted * a.outstandingBalance);
+                return compareByLandlordThenRoom(a, b, landlordSort);
             });
-    }, [collector, customDaysMax, customDaysMin, customMonthsMax, customMonthsMin, data.defaulters, data.isAdmin, data.isCollector, landlordId, listFilter, maxRent, minRent, officeId, period, propertyName, query, sort]);
+    }, [collector, customDaysMax, customDaysMin, customMonthsMax, customMonthsMin, data.defaulters, data.isAdmin, data.isCollector, landlordId, landlordSort, listFilter, maxRent, minRent, officeId, period, propertyName, query]);
 
     const visibleKpis = useMemo(() => buildKpis(filteredDefaulters), [filteredDefaulters]);
-    const visibleDefaulters = useMemo(() => filteredDefaulters.slice(0, INITIAL_TABLE_LIMIT), [filteredDefaulters]);
     const paymentHref = data.isAdmin ? "/office/admin/payments" : data.isCollector ? "/office/collector/payments" : "/office/payments";
     const promiseHref = data.isCollector ? "/office/collector/promises" : "/office/promises";
+    const selectedOfficeName = officeId ? data.offices.find((office) => office.id === officeId)?.name ?? "Selected office" : data.isAdmin ? "All Offices" : data.isCollector ? "All Assigned Offices" : data.activeOffice?.office_name ?? data.activeOffice?.name ?? "Active office";
+    const selectedLandlordName = landlordId ? data.landlords.find((landlord) => landlord.id === landlordId)?.name ?? "Selected landlord" : "All Landlords";
+    const selectedPeriodName = period === "all" ? "All defaulters" : period.replaceAll("_", " ");
 
     function exportCsv() {
         const header = ["Type", "Room", "Tenant", "Phone", "Office", "Landlord", "Property", "Location", "Monthly Rent", "Outstanding", "Oldest Unpaid Period", "Unpaid Periods", "Due Date", "Days Overdue", "Last Payment Date", "Last Payment Amount", "Promise Status", "Collector", "Risk", "Last Follow-up", "Next Action", "Recovery Status", "Landlord Deduction"];
@@ -301,7 +358,7 @@ export default function DefaultersConsole({ data }: Props) {
                     <RiskCard label="High Risk" value={data.kpis.highRiskDefaulters.toLocaleString()} hint="Visit or notice" tone="purple" icon={<AlertTriangle size={18} />} onClick={() => setListFilter("high_risk")} />
                     <RiskCard label="Promises Due Today" value={data.kpis.promisesDueToday.toLocaleString()} hint="Collector follow-up" tone="amber" icon={<CalendarClock size={18} />} onClick={() => setListFilter("promises_due")} />
                     <RiskCard label="Vacated With Debt" value={data.kpis.vacatedWithDebt.toLocaleString()} hint="Recovery register" tone="red" icon={<FileText size={18} />} onClick={() => setListFilter("vacated")} />
-                    <RiskCard label="Oldest Account" value={data.kpis.oldestOutstandingAccount} hint="Longest overdue" tone="slate" icon={<WalletCards size={18} />} onClick={() => setSort("days_high")} />
+                    <RiskCard label="Oldest Account" value={data.kpis.oldestOutstandingAccount} hint="Longest overdue" tone="slate" icon={<WalletCards size={18} />} onClick={() => setPeriod("3_plus")} />
                 </section>
 
                 <AssistantPanel assistant={data.assistant} />
@@ -335,16 +392,14 @@ export default function DefaultersConsole({ data }: Props) {
                         ]} />
                         {data.isAdmin || data.isCollector ? <FilterSelect label="Office" value={officeId} onChange={data.isCollector ? changeOffice : setOfficeId} options={[{ id: "", name: data.isCollector ? "All Assigned Offices" : "All offices" }, ...data.offices]} /> : null}
                         <SearchableFilterSelect label="Landlord" value={landlordId} onChange={data.isCollector ? changeLandlord : setLandlordId} options={[{ id: "", name: "All Landlords" }, ...landlordOptions]} />
+                        <FilterSelect label="Landlord Sort" value={landlordSort} onChange={(value) => setLandlordSort(value as LandlordSort)} options={[
+                            { id: "az", name: "A → Z" },
+                            { id: "za", name: "Z → A" },
+                        ]} />
                         <FilterSelect label="Property" value={propertyName} onChange={setPropertyName} options={[{ id: "", name: "All properties" }, ...data.properties.map((property) => ({ id: property.name, name: property.name }))]} />
                         <FilterSelect label="Collector" value={collector} onChange={setCollector} options={[{ id: "", name: "All collectors" }, ...data.collectors]} />
                         <FilterInput label="Min rent" value={minRent} onChange={setMinRent} />
                         <FilterInput label="Max rent" value={maxRent} onChange={setMaxRent} />
-                        <FilterSelect label="Sort" value={sort} onChange={(value) => setSort(value as SortMode)} options={[
-                            { id: "risk_high", name: "Highest risk" },
-                            { id: "days_high", name: "Longest defaulted" },
-                            { id: "balance_high", name: "Highest balance" },
-                            { id: "room_asc", name: "Room number" },
-                        ]} />
                     </div>
                     {period === "custom_days" ? (
                         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:max-w-md">
@@ -371,12 +426,14 @@ export default function DefaultersConsole({ data }: Props) {
                 </section>
 
                 <section className="mx-auto mt-5 max-w-7xl">
-                    {filteredDefaulters.length > visibleDefaulters.length ? (
-                        <div className="mb-3 rounded-2xl border border-amber-200/60 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-900">
-                            Showing first {visibleDefaulters.length.toLocaleString()} of {filteredDefaulters.length.toLocaleString()} matching defaulters. Use filters, print, or CSV export for the full report.
-                        </div>
-                    ) : null}
-                    <DefaultersTable defaulters={visibleDefaulters} paymentHref={paymentHref} promiseHref={promiseHref} onViewLedger={setSelectedLedgerItem} />
+                    <DefaultersTable
+                        defaulters={filteredDefaulters}
+                        landlordSort={landlordSort}
+                        onFilterLandlord={(nextLandlordId) => changeLandlord(nextLandlordId)}
+                        paymentHref={paymentHref}
+                        promiseHref={promiseHref}
+                        onViewLedger={setSelectedLedgerItem}
+                    />
                     {!filteredDefaulters.length ? (
                         <div className="rounded-[26px] border border-dashed border-white/20 bg-white/8 p-8 text-center text-white">
                             <p className="text-lg font-black">No defaulters match these filters.</p>
@@ -392,8 +449,20 @@ export default function DefaultersConsole({ data }: Props) {
                     defaulters={filteredDefaulters}
                     generatedAt={data.generatedAt}
                     kpis={visibleKpis}
+                    landlordSort={landlordSort}
                     onClose={() => setShowPrintPreview(false)}
-                    scope={data.isAdmin ? "All offices" : data.isCollector ? "Authorized offices" : data.activeOffice?.office_name ?? data.activeOffice?.name ?? "Active office"}
+                    onExportCsv={exportCsv}
+                    selectedFilters={{
+                        collector: collector ? data.collectors.find((item) => item.id === collector)?.name ?? collector : "All collectors",
+                        landlord: selectedLandlordName,
+                        list: listFilter.replaceAll("_", " "),
+                        office: selectedOfficeName,
+                        period: selectedPeriodName,
+                        property: propertyName || "All properties",
+                        search: query || "None",
+                    }}
+                    showOfficeSummary={data.isAdmin && !officeId}
+                    scope={selectedOfficeName}
                 />
             ) : null}
             {selectedLedgerItem ? <LedgerBreakdownModal item={selectedLedgerItem} onClose={() => setSelectedLedgerItem(null)} /> : null}
@@ -428,7 +497,8 @@ function buildKpis(items: DefaulterItem[]) {
     };
 }
 
-function DefaultersTable({ defaulters, onViewLedger, paymentHref, promiseHref }: { defaulters: DefaulterItem[]; onViewLedger: (item: DefaulterItem) => void; paymentHref: string; promiseHref: string }) {
+function DefaultersTable({ defaulters, landlordSort, onFilterLandlord, onViewLedger, paymentHref, promiseHref }: { defaulters: DefaulterItem[]; landlordSort: LandlordSort; onFilterLandlord: (landlordId: string) => void; onViewLedger: (item: DefaulterItem) => void; paymentHref: string; promiseHref: string }) {
+    const landlordGroups = useMemo(() => groupDefaultersByLandlord(defaulters, landlordSort), [defaulters, landlordSort]);
     return (
         <div className="overflow-hidden rounded-[26px] border border-white/70 bg-white shadow-2xl shadow-slate-950/15">
             <div className="max-h-[680px] overflow-auto">
@@ -454,72 +524,103 @@ function DefaultersTable({ defaulters, onViewLedger, paymentHref, promiseHref }:
                         </tr>
                     </thead>
                     <tbody>
-                        {defaulters.map((item) => (
-                            <tr key={`${item.id}:ledger:${item.paymentDueDate}`} className="border-b border-slate-100">
-                                <td className="px-4 py-3">
-                                    <p className="font-black text-slate-950">Room {item.roomNumber}</p>
-                                    <p className="text-sm font-bold text-slate-600">{item.tenantName}</p>
-                                    <p className="text-xs font-bold text-slate-400">{item.tenantPhone ?? "No phone"}</p>
-                                </td>
-                                <td className="px-4 py-3 font-bold text-slate-600">{item.officeName}</td>
-                                <td className="px-4 py-3 font-bold text-slate-600">{item.landlordName}</td>
-                                <td className="px-4 py-3 font-bold text-slate-600">{item.propertyName}<br /><span className="text-xs text-slate-400">{item.location}</span></td>
-                                <td className="px-4 py-3 text-right font-black text-slate-950">{money(item.monthlyRent)}</td>
-                                <td className="px-4 py-3 text-right">
-                                    <button type="button" onClick={() => onViewLedger(item)} className="text-right font-black text-rose-700 underline decoration-rose-200 underline-offset-4 hover:text-rose-900">
-                                        {money(item.outstandingBalance)}
-                                    </button>
-                                    <p className="mt-1 text-[10px] font-black uppercase text-slate-400">View formula</p>
-                                </td>
-                                <td className="px-4 py-3 font-bold text-slate-600">
-                                    {item.oldestUnpaidPeriod}
-                                    <br />
-                                    <span className="text-xs text-slate-400">{item.paymentDueDate} due</span>
-                                </td>
-                                <td className="px-4 py-3">
-                                    <span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-black uppercase text-rose-700 ring-1 ring-rose-100">{item.daysDefaulted} days</span>
-                                    <p className="mt-1 text-xs font-bold text-slate-400">{item.unpaidPeriods} period(s)</p>
-                                </td>
-                                <td className="px-4 py-3 font-bold text-slate-600">
-                                    {item.lastPaymentDate ?? "No payment"}
-                                    <br />
-                                    <span className="text-xs text-slate-400">{money(item.lastPaymentAmount)}</span>
-                                    {item.isPartialPayer ? <span className="mt-1 inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-black uppercase text-blue-700">Partial paid {money(item.currentMonthPaid)}</span> : null}
-                                </td>
-                                <td className="px-4 py-3 font-bold text-slate-600">
-                                    {item.promiseStatus}
-                                    {item.openPromiseCount ? <p className="text-xs text-slate-400">{item.openPromiseCount} open</p> : null}
-                                </td>
-                                <td className="px-4 py-3 font-bold text-slate-600">{item.collectorAssigned}</td>
-                                <td className="px-4 py-3">
-                                    <span className={`rounded-full px-3 py-1 text-xs font-black uppercase ${item.riskLevel === "high" ? "bg-rose-50 text-rose-700 ring-1 ring-rose-100" : item.riskLevel === "medium" ? "bg-amber-50 text-amber-700 ring-1 ring-amber-100" : "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"}`}>{item.riskLevel}</span>
-                                </td>
-                                <td className="px-4 py-3 font-bold text-slate-600">{item.lastFollowUp ?? "No follow-up"}</td>
-                                <td className="px-4 py-3">
-                                    <div className="flex max-w-[220px] flex-wrap gap-1">
-                                        {[item.nextRecommendedAction, ...item.suggestedActions.filter((action) => action !== item.nextRecommendedAction)].slice(0, 4).map((action) => (
-                                            <span key={`${item.id}:action:${action.toLowerCase().replaceAll(" ", "-")}:${item.paymentDueDate}`} className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-700">{action}</span>
-                                        ))}
-                                    </div>
-                                </td>
-                                <td className="px-4 py-3 font-bold text-slate-600">
-                                    {item.source === "vacated_debt" ? (
-                                        <>
-                                            <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-700">Vacated</span>
-                                            <p className="mt-1 text-xs text-slate-500">{item.recoveryStatus ?? "Pending"} · {item.landlordDeductionStatus ?? "No deduction"}</p>
-                                        </>
-                                    ) : item.clearedDate ? `Cleared ${item.clearedDate}` : "Active room"}
-                                </td>
-                                <td className="px-4 py-3">
-                                    <div className="flex flex-wrap gap-1.5">
-                                        <a href={phoneHref(item.tenantPhone)} className="rounded-xl bg-slate-100 px-2.5 py-2 text-xs font-black text-slate-700"><Phone size={13} className="inline" /> Call</a>
-                                        <a href={whatsappHref(item.tenantPhone, item.tenantName, item.roomNumber)} target="_blank" rel="noreferrer" className="rounded-xl bg-emerald-50 px-2.5 py-2 text-xs font-black text-emerald-700"><MessageCircle size={13} className="inline" /> WhatsApp</a>
-                                        <a href={smsHref(item.tenantPhone)} className="rounded-xl bg-blue-50 px-2.5 py-2 text-xs font-black text-blue-700"><Send size={13} className="inline" /> SMS</a>
-                                        <Link href={paymentHref} className="rounded-xl bg-slate-950 px-2.5 py-2 text-xs font-black text-white">Record Payment</Link>
-                                        <Link href={promiseHref} className="rounded-xl bg-amber-50 px-2.5 py-2 text-xs font-black text-amber-700">Promise{item.openPromiseCount ? ` (${item.openPromiseCount})` : ""}</Link>
-                                    </div>
-                                </td>
-                            </tr>
+                        {landlordGroups.map((group) => (
+                            <Fragment key={`landlord-group:${group.landlordId}`}>
+                                <tr className="sticky top-[41px] z-10 border-y border-slate-200 bg-slate-100/95">
+                                    <td colSpan={16} className="px-4 py-3">
+                                        <div className="flex flex-wrap items-center justify-between gap-3">
+                                            <div>
+                                                {group.landlordId.startsWith("unknown:") ? (
+                                                    <p className="text-sm font-black uppercase tracking-wide text-slate-900">LANDLORD: {group.landlordName}</p>
+                                                ) : (
+                                                    <button type="button" onClick={() => onFilterLandlord(group.landlordId)} className="text-left text-sm font-black uppercase tracking-wide text-slate-900 underline decoration-slate-300 underline-offset-4 hover:text-rose-700">
+                                                        LANDLORD: {group.landlordName}
+                                                    </button>
+                                                )}
+                                                <p className="mt-1 text-xs font-bold text-slate-500">{group.officeName} · {group.items.length.toLocaleString()} defaulting room(s)</p>
+                                            </div>
+                                            <div className="flex flex-wrap gap-2 text-xs font-black">
+                                                <span className="rounded-full bg-white px-3 py-1 text-slate-700 ring-1 ring-slate-200">Total {money(group.totalOutstanding)}</span>
+                                                <span className="rounded-full bg-white px-3 py-1 text-slate-700 ring-1 ring-slate-200">Highest {group.highestOutstandingRoom?.roomNumber ?? "N/A"} · {money(group.highestOutstandingRoom?.outstandingBalance ?? 0)}</span>
+                                                <span className="rounded-full bg-white px-3 py-1 text-slate-700 ring-1 ring-slate-200">Oldest {group.oldestDebt?.daysDefaulted ?? 0} days</span>
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {group.items.map((item) => (
+                                    <tr key={`${item.id}:ledger:${item.paymentDueDate}`} className="border-b border-slate-100">
+                                        <td className="px-4 py-3">
+                                            <p className="font-black text-slate-950">Room {item.roomNumber}</p>
+                                            <p className="text-sm font-bold text-slate-600">{item.tenantName}</p>
+                                            <p className="text-xs font-bold text-slate-400">{item.tenantPhone ?? "No phone"}</p>
+                                        </td>
+                                        <td className="px-4 py-3 font-bold text-slate-600">{item.officeName}</td>
+                                        <td className="px-4 py-3 font-bold text-slate-600">
+                                            {item.landlordId ? (
+                                                <button type="button" onClick={() => onFilterLandlord(item.landlordId ?? "")} className="text-left font-black text-slate-700 underline decoration-slate-200 underline-offset-4 hover:text-rose-700">
+                                                    {item.landlordName}
+                                                </button>
+                                            ) : item.landlordName}
+                                        </td>
+                                        <td className="px-4 py-3 font-bold text-slate-600">{item.propertyName}<br /><span className="text-xs text-slate-400">{item.location}</span></td>
+                                        <td className="px-4 py-3 text-right font-black text-slate-950">{money(item.monthlyRent)}</td>
+                                        <td className="px-4 py-3 text-right">
+                                            <button type="button" onClick={() => onViewLedger(item)} className="text-right font-black text-rose-700 underline decoration-rose-200 underline-offset-4 hover:text-rose-900">
+                                                {money(item.outstandingBalance)}
+                                            </button>
+                                            <p className="mt-1 text-[10px] font-black uppercase text-slate-400">View formula</p>
+                                        </td>
+                                        <td className="px-4 py-3 font-bold text-slate-600">
+                                            {item.oldestUnpaidPeriod}
+                                            <br />
+                                            <span className="text-xs text-slate-400">{item.paymentDueDate} due</span>
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            <span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-black uppercase text-rose-700 ring-1 ring-rose-100">{item.daysDefaulted} days</span>
+                                            <p className="mt-1 text-xs font-bold text-slate-400">{item.unpaidPeriods} period(s)</p>
+                                        </td>
+                                        <td className="px-4 py-3 font-bold text-slate-600">
+                                            {item.lastPaymentDate ?? "No payment"}
+                                            <br />
+                                            <span className="text-xs text-slate-400">{money(item.lastPaymentAmount)}</span>
+                                            {item.isPartialPayer ? <span className="mt-1 inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-black uppercase text-blue-700">Partial paid {money(item.currentMonthPaid)}</span> : null}
+                                        </td>
+                                        <td className="px-4 py-3 font-bold text-slate-600">
+                                            {item.promiseStatus}
+                                            {item.openPromiseCount ? <p className="text-xs text-slate-400">{item.openPromiseCount} open</p> : null}
+                                        </td>
+                                        <td className="px-4 py-3 font-bold text-slate-600">{item.collectorAssigned}</td>
+                                        <td className="px-4 py-3">
+                                            <span className={`rounded-full px-3 py-1 text-xs font-black uppercase ${item.riskLevel === "high" ? "bg-rose-50 text-rose-700 ring-1 ring-rose-100" : item.riskLevel === "medium" ? "bg-amber-50 text-amber-700 ring-1 ring-amber-100" : "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"}`}>{item.riskLevel}</span>
+                                        </td>
+                                        <td className="px-4 py-3 font-bold text-slate-600">{item.lastFollowUp ?? "No follow-up"}</td>
+                                        <td className="px-4 py-3">
+                                            <div className="flex max-w-[220px] flex-wrap gap-1">
+                                                {[item.nextRecommendedAction, ...item.suggestedActions.filter((action) => action !== item.nextRecommendedAction)].slice(0, 4).map((action) => (
+                                                    <span key={`${item.id}:action:${action.toLowerCase().replaceAll(" ", "-")}:${item.paymentDueDate}`} className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-700">{action}</span>
+                                                ))}
+                                            </div>
+                                        </td>
+                                        <td className="px-4 py-3 font-bold text-slate-600">
+                                            {item.source === "vacated_debt" ? (
+                                                <>
+                                                    <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black uppercase text-slate-700">Vacated</span>
+                                                    <p className="mt-1 text-xs text-slate-500">{item.recoveryStatus ?? "Pending"} · {item.landlordDeductionStatus ?? "No deduction"}</p>
+                                                </>
+                                            ) : item.clearedDate ? `Cleared ${item.clearedDate}` : "Active room"}
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            <div className="flex flex-wrap gap-1.5">
+                                                <a href={phoneHref(item.tenantPhone)} className="rounded-xl bg-slate-100 px-2.5 py-2 text-xs font-black text-slate-700"><Phone size={13} className="inline" /> Call</a>
+                                                <a href={whatsappHref(item.tenantPhone, item.tenantName, item.roomNumber)} target="_blank" rel="noreferrer" className="rounded-xl bg-emerald-50 px-2.5 py-2 text-xs font-black text-emerald-700"><MessageCircle size={13} className="inline" /> WhatsApp</a>
+                                                <a href={smsHref(item.tenantPhone)} className="rounded-xl bg-blue-50 px-2.5 py-2 text-xs font-black text-blue-700"><Send size={13} className="inline" /> SMS</a>
+                                                <Link href={paymentHref} className="rounded-xl bg-slate-950 px-2.5 py-2 text-xs font-black text-white">Record Payment</Link>
+                                                <Link href={promiseHref} className="rounded-xl bg-amber-50 px-2.5 py-2 text-xs font-black text-amber-700">Promise{item.openPromiseCount ? ` (${item.openPromiseCount})` : ""}</Link>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </Fragment>
                         ))}
                     </tbody>
                 </table>
@@ -714,70 +815,225 @@ function LedgerMetric({ label, signed = false, tone, value }: { label: string; s
     );
 }
 
-function PrintPreview({ companyName, defaulters, generatedAt, kpis, onClose, scope }: { companyName: string; defaulters: DefaulterItem[]; generatedAt: string; kpis: ReturnType<typeof buildKpis>; onClose: () => void; scope: string }) {
+function PrintPreview({
+    companyName,
+    defaulters,
+    generatedAt,
+    kpis,
+    landlordSort,
+    onClose,
+    onExportCsv,
+    scope,
+    selectedFilters,
+    showOfficeSummary,
+}: {
+    companyName: string;
+    defaulters: DefaulterItem[];
+    generatedAt: string;
+    kpis: ReturnType<typeof buildKpis>;
+    landlordSort: LandlordSort;
+    onClose: () => void;
+    onExportCsv: () => void;
+    scope: string;
+    selectedFilters: {
+        collector: string;
+        landlord: string;
+        list: string;
+        office: string;
+        period: string;
+        property: string;
+        search: string;
+    };
+    showOfficeSummary: boolean;
+}) {
+    useEffect(() => {
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") onClose();
+        };
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [onClose]);
+
+    const landlordGroups = useMemo(() => groupDefaultersByLandlord(defaulters, landlordSort), [defaulters, landlordSort]);
+    const officeSummary = useMemo(() => {
+        const offices = new Map<string, { landlordIds: Set<string>; officeName: string; rooms: number; outstanding: number }>();
+        for (const item of defaulters) {
+            const key = item.officeId || item.officeName;
+            const current = offices.get(key) ?? { landlordIds: new Set<string>(), officeName: item.officeName, rooms: 0, outstanding: 0 };
+            current.landlordIds.add(item.landlordId || item.landlordName);
+            current.rooms += 1;
+            current.outstanding += item.outstandingBalance;
+            offices.set(key, current);
+        }
+        return [...offices.values()].sort((a, b) => normalize(a.officeName).localeCompare(normalize(b.officeName)));
+    }, [defaulters]);
+
+    const totalMonthlyRent = defaulters.reduce((total, item) => total + item.monthlyRent, 0);
+    const totalArrears = defaulters.reduce((total, item) => total + item.arrears, 0);
+    const totalPayments = defaulters.reduce((total, item) => total + item.currentMonthPaid, 0);
+    const totalOutstanding = landlordGroups.reduce((total, group) => total + group.totalOutstanding, 0);
+
     return (
-        <div className="fixed inset-0 z-[150] overflow-auto bg-slate-950/80 p-4 backdrop-blur-sm">
-            <div className="mx-auto max-w-6xl rounded-3xl bg-white p-5 shadow-2xl">
+        <div className="fixed inset-0 z-[150] overflow-auto bg-slate-950/80 p-4 backdrop-blur-sm" onClick={onClose}>
+            <div className="mx-auto max-h-[calc(100vh-2rem)] max-w-7xl overflow-auto rounded-3xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="defaulters-report-title">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3 print:hidden">
                     <div>
                         <p className="text-xs font-black uppercase text-rose-700">Print preview</p>
-                        <h2 className="text-xl font-black text-slate-950">Defaulters Report</h2>
+                        <h2 id="defaulters-report-title" className="text-xl font-black text-slate-950">Defaulters Report</h2>
                     </div>
                     <div className="flex gap-2">
-                        <button onClick={() => window.print()} className="rounded-2xl bg-slate-950 px-4 py-2 text-sm font-black text-white">Print / Save PDF</button>
-                        <button onClick={onClose} className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700">Close</button>
+                        <button onClick={() => window.print()} className="rounded-2xl bg-slate-950 px-4 py-2 text-sm font-black text-white">Print</button>
+                        <button onClick={() => window.print()} className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700">PDF</button>
+                        <button onClick={onExportCsv} className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700">CSV</button>
+                        <button onClick={onClose} className="rounded-2xl bg-rose-50 px-4 py-2 text-sm font-black text-rose-700">Close ✕</button>
                     </div>
                 </div>
-                <div className="min-h-[1050px] bg-white p-6 text-slate-950">
+                <div className="defaulters-report-print min-h-[1050px] bg-white p-6 text-slate-950">
                     <header className="border-b-2 border-slate-950 pb-4">
                         <p className="text-sm font-black uppercase tracking-wide text-slate-500">{companyName}</p>
-                        <h1 className="mt-1 text-3xl font-black">Defaulters Report</h1>
-                        <div className="mt-3 grid gap-2 text-sm font-semibold sm:grid-cols-2">
-                            <p>Scope: {scope}</p>
+                        <h1 className="mt-1 text-3xl font-black uppercase">Defaulters Report</h1>
+                        <div className="mt-3 grid gap-2 text-sm font-semibold sm:grid-cols-2 lg:grid-cols-3">
+                            <p>Report Date: {new Date(generatedAt).toLocaleDateString()}</p>
+                            <p>Selected Office: {scope}</p>
+                            <p>Selected Period: {selectedFilters.period}</p>
                             <p>Generated: {new Date(generatedAt).toLocaleString()}</p>
+                            <p>Generated By: Ddumba OS</p>
+                            <p>Landlord Sort: {landlordSort === "az" ? "A → Z" : "Z → A"}</p>
                         </div>
+                        <p className="mt-3 text-xs font-bold uppercase tracking-wide text-slate-500">
+                            Applied Filters: Office: {selectedFilters.office} · Landlord: {selectedFilters.landlord} · Collector: {selectedFilters.collector} · Property: {selectedFilters.property} · List: {selectedFilters.list} · Search: {selectedFilters.search}
+                        </p>
                     </header>
                     <section className="mt-5 grid gap-3 sm:grid-cols-4">
                         <ReportBox label="Defaulters" value={kpis.totalDefaulters.toLocaleString()} />
-                        <ReportBox label="Outstanding" value={money(kpis.totalOutstanding)} />
-                        <ReportBox label="1-7 Days" value={kpis.defaultedOneToSevenDays.toLocaleString()} />
-                        <ReportBox label="1+ Month" value={kpis.defaultedOneMonthPlus.toLocaleString()} />
+                        <ReportBox label="Landlords" value={landlordGroups.length.toLocaleString()} />
+                        <ReportBox label="Outstanding" value={money(totalOutstanding)} />
+                        <ReportBox label="Payments This Month" value={money(totalPayments)} />
                     </section>
-                    <table className="mt-6 w-full border-collapse text-xs">
-                        <thead>
-                            <tr className="bg-slate-950 text-left text-white">
-                                <th className="border border-slate-300 px-2 py-2">Room</th>
-                                <th className="border border-slate-300 px-2 py-2">Tenant</th>
-                                <th className="border border-slate-300 px-2 py-2">Phone</th>
-                                <th className="border border-slate-300 px-2 py-2">Office</th>
-                                <th className="border border-slate-300 px-2 py-2">Landlord</th>
-                                <th className="border border-slate-300 px-2 py-2 text-right">Rent</th>
-                                <th className="border border-slate-300 px-2 py-2 text-right">Outstanding</th>
-                                <th className="border border-slate-300 px-2 py-2">Due Date</th>
-                                <th className="border border-slate-300 px-2 py-2">Days</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {defaulters.map((item) => (
-                                <tr key={`${item.id}:print:${item.paymentDueDate}`}>
-                                    <td className="border border-slate-300 px-2 py-2 font-bold">{item.roomNumber}</td>
-                                    <td className="border border-slate-300 px-2 py-2">{item.tenantName}</td>
-                                    <td className="border border-slate-300 px-2 py-2">{item.tenantPhone ?? ""}</td>
-                                    <td className="border border-slate-300 px-2 py-2">{item.officeName}</td>
-                                    <td className="border border-slate-300 px-2 py-2">{item.landlordName}</td>
-                                    <td className="border border-slate-300 px-2 py-2 text-right font-bold">{money(item.monthlyRent)}</td>
-                                    <td className="border border-slate-300 px-2 py-2 text-right font-bold">{money(item.outstandingBalance)}</td>
-                                    <td className="border border-slate-300 px-2 py-2">{item.paymentDueDate}</td>
-                                    <td className="border border-slate-300 px-2 py-2">{item.daysDefaulted}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                    <div className="mt-6 space-y-6">
+                        {landlordGroups.map((group) => (
+                            <section key={`print-landlord:${group.landlordId}`} className="landlord-report-section rounded-2xl border border-slate-300">
+                                <div className="bg-slate-950 px-4 py-3 text-white">
+                                    <p className="text-xs font-black uppercase tracking-wide">Landlord</p>
+                                    <h2 className="text-xl font-black uppercase">{group.landlordName}</h2>
+                                </div>
+                                <div className="grid gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold sm:grid-cols-3 lg:grid-cols-6">
+                                    <p><span className="text-slate-500">Office:</span><br />{group.officeName}</p>
+                                    <p><span className="text-slate-500">Defaulting Rooms:</span><br />{group.items.length.toLocaleString()}</p>
+                                    <p><span className="text-slate-500">Total Outstanding:</span><br />{money(group.totalOutstanding)}</p>
+                                    <p><span className="text-slate-500">Highest Room:</span><br />{group.highestOutstandingRoom?.roomNumber ?? "N/A"} · {money(group.highestOutstandingRoom?.outstandingBalance ?? 0)}</p>
+                                    <p><span className="text-slate-500">Oldest Debt:</span><br />{group.oldestDebt ? `${group.oldestDebt.daysDefaulted} days` : "N/A"}</p>
+                                    <p><span className="text-slate-500">Payments:</span><br />{money(group.totalPayments)}</p>
+                                </div>
+                                <table className="w-full border-collapse text-[10px]">
+                                    <thead>
+                                        <tr className="bg-slate-100 text-left text-slate-700">
+                                            <th className="border border-slate-300 px-2 py-2">Room</th>
+                                            <th className="border border-slate-300 px-2 py-2">Tenant</th>
+                                            <th className="border border-slate-300 px-2 py-2">Phone</th>
+                                            <th className="border border-slate-300 px-2 py-2 text-right">Monthly Rent</th>
+                                            <th className="border border-slate-300 px-2 py-2 text-right">Arrears</th>
+                                            <th className="border border-slate-300 px-2 py-2 text-right">Manual Adj.</th>
+                                            <th className="border border-slate-300 px-2 py-2 text-right">Payments</th>
+                                            <th className="border border-slate-300 px-2 py-2 text-right">Outstanding</th>
+                                            <th className="border border-slate-300 px-2 py-2">Oldest Period</th>
+                                            <th className="border border-slate-300 px-2 py-2">Days</th>
+                                            <th className="border border-slate-300 px-2 py-2">Last Payment</th>
+                                            <th className="border border-slate-300 px-2 py-2">Collector</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {group.items.map((item) => (
+                                            <tr key={`${item.id}:print:${item.paymentDueDate}`}>
+                                                <td className="border border-slate-300 px-2 py-2 font-bold">{item.roomNumber}</td>
+                                                <td className="border border-slate-300 px-2 py-2">{item.tenantName}</td>
+                                                <td className="border border-slate-300 px-2 py-2">{item.tenantPhone ?? ""}</td>
+                                                <td className="border border-slate-300 px-2 py-2 text-right font-bold">{money(item.monthlyRent)}</td>
+                                                <td className="border border-slate-300 px-2 py-2 text-right">{money(item.arrears)}</td>
+                                                <td className="border border-slate-300 px-2 py-2 text-right">{item.manualBalanceAdjustment > 0 ? "+" : item.manualBalanceAdjustment < 0 ? "-" : ""}{money(Math.abs(item.manualBalanceAdjustment))}</td>
+                                                <td className="border border-slate-300 px-2 py-2 text-right">{money(item.currentMonthPaid)}</td>
+                                                <td className="border border-slate-300 px-2 py-2 text-right font-bold">{money(item.outstandingBalance)}</td>
+                                                <td className="border border-slate-300 px-2 py-2">{item.oldestUnpaidPeriod}</td>
+                                                <td className="border border-slate-300 px-2 py-2">{item.daysDefaulted}</td>
+                                                <td className="border border-slate-300 px-2 py-2">{item.lastPaymentDate ?? "No payment"}<br />{money(item.lastPaymentAmount)}</td>
+                                                <td className="border border-slate-300 px-2 py-2">{item.collectorAssigned}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                    <tfoot>
+                                        <tr className="bg-slate-50 font-black">
+                                            <td className="border border-slate-300 px-2 py-2" colSpan={7}>LANDLORD TOTAL</td>
+                                            <td className="border border-slate-300 px-2 py-2 text-right">{money(group.totalOutstanding)}</td>
+                                            <td className="border border-slate-300 px-2 py-2" colSpan={4}></td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </section>
+                        ))}
+                    </div>
+                    <section className="mt-8 rounded-2xl border-2 border-slate-950 p-4">
+                        <h2 className="text-lg font-black uppercase">Report Summary</h2>
+                        <div className="mt-3 grid gap-3 text-sm font-bold sm:grid-cols-2 lg:grid-cols-3">
+                            <p>Total Landlords With Defaulters<br /><span className="text-xl font-black">{landlordGroups.length.toLocaleString()}</span></p>
+                            <p>Total Defaulting Rooms<br /><span className="text-xl font-black">{defaulters.length.toLocaleString()}</span></p>
+                            <p>Total Outstanding<br /><span className="text-xl font-black">{money(totalOutstanding)}</span></p>
+                            <p>Total Monthly Rent of Defaulting Rooms<br /><span className="text-xl font-black">{money(totalMonthlyRent)}</span></p>
+                            <p>Total Arrears<br /><span className="text-xl font-black">{money(totalArrears)}</span></p>
+                            <p>Total Payments This Month<br /><span className="text-xl font-black">{money(totalPayments)}</span></p>
+                        </div>
+                        {showOfficeSummary ? (
+                            <div className="mt-5">
+                                <h3 className="text-sm font-black uppercase text-slate-600">Office Summary</h3>
+                                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                                    {officeSummary.map((office) => (
+                                        <div key={`office-summary:${office.officeName}`} className="rounded-xl border border-slate-200 p-3 text-sm font-bold">
+                                            <p className="font-black uppercase">{office.officeName}</p>
+                                            <p>Landlords with defaults: {office.landlordIds.size.toLocaleString()}</p>
+                                            <p>Rooms: {office.rooms.toLocaleString()}</p>
+                                            <p>Outstanding: {money(office.outstanding)}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : null}
+                    </section>
                     <footer className="mt-10 grid gap-8 text-sm font-semibold sm:grid-cols-2">
                         <p>Prepared by: __________________________</p>
                         <p>Approved by: __________________________</p>
                     </footer>
                 </div>
+                <div className="mt-4 flex justify-end print:hidden">
+                    <button onClick={onClose} className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white">Close</button>
+                </div>
+                <style jsx global>{`
+                    @media print {
+                        @page {
+                            size: A4;
+                            margin: 14mm;
+                        }
+                        body * {
+                            visibility: hidden;
+                        }
+                        .defaulters-report-print,
+                        .defaulters-report-print * {
+                            visibility: visible;
+                        }
+                        .defaulters-report-print {
+                            position: absolute;
+                            left: 0;
+                            top: 0;
+                            width: 100%;
+                            padding: 0 !important;
+                        }
+                        .landlord-report-section {
+                            break-inside: avoid;
+                            page-break-inside: avoid;
+                        }
+                        .landlord-report-section thead {
+                            display: table-header-group;
+                        }
+                    }
+                `}</style>
             </div>
         </div>
     );
