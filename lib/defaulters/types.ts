@@ -5,7 +5,7 @@ export type OfficeRow = Database["public"]["Tables"]["offices"]["Row"];
 
 export type DefaulterItem = {
     id: string;
-    source: "active_tenant" | "vacated_debt" | "recently_cleared";
+    source: "active_tenant" | "vacated_debt";
     tenantId: string;
     roomId: string | null;
     roomNumber: string;
@@ -18,7 +18,12 @@ export type DefaulterItem = {
     propertyName: string;
     location: string;
     monthlyRent: number;
+    arrears: number;
+    manualBalanceAdjustment: number;
     outstandingBalance: number;
+    advanceBalance: number;
+    rawBalance: number;
+    totalDue: number;
     oldestUnpaidPeriod: string;
     unpaidPeriods: number;
     paymentDueDay: number;

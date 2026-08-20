@@ -279,7 +279,7 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
         safePagedRows<LandlordDebtDeductionRow>((from, to) => scopeOffice(db.from("landlord_debt_deductions").select("*").eq("company_id", companyId)).range(from, to)),
     ]);
     const tenantIdsForLedger = tenants.map((tenant) => tenant.id).filter(Boolean);
-    const [allocationRows, rentMonthRows, legacyArrearsRows] = tenantIdsForLedger.length
+    const [allocationRows, rentMonthRows, legacyArrearsRows, manualAdjustmentRows] = tenantIdsForLedger.length
         ? await Promise.all([
             safeRowsInChunks((ids) => db
                 .from("tenant_rent_allocations")
@@ -296,8 +296,14 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
                 .select("tenant_id, allocation_month, legacy_arrears_amount, payments_applied, remaining_amount, status")
                 .eq("company_id", companyId)
                 .in("tenant_id", ids), tenantIdsForLedger),
+            safeRowsInChunks((ids) => db
+                .from("tenant_balance_adjustments")
+                .select("id, tenant_id, room_id, billing_month, effective_date, adjustment_amount, status, financial_effective, reversed_at, reason")
+                .eq("company_id", companyId)
+                .in("tenant_id", ids)
+                .in("status", ["approved", "direct_admin_change"]), tenantIdsForLedger),
         ])
-        : [[], [], []];
+        : [[], [], [], []];
     const vacatedDebts = debtRows;
     const deductions = deductionRows;
     const allocationRowsByTenant = new Map<string, Array<Record<string, unknown>>>();
@@ -317,6 +323,12 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
         const tenantId = String(legacyRow.tenant_id ?? "");
         if (!tenantId) continue;
         legacyArrearsRowsByTenant.set(tenantId, [...(legacyArrearsRowsByTenant.get(tenantId) ?? []), legacyRow]);
+    }
+    const manualAdjustmentsByTenant = new Map<string, Array<Record<string, unknown>>>();
+    for (const adjustment of manualAdjustmentRows as Array<Record<string, unknown>>) {
+        const tenantId = String(adjustment.tenant_id ?? "");
+        if (!tenantId) continue;
+        manualAdjustmentsByTenant.set(tenantId, [...(manualAdjustmentsByTenant.get(tenantId) ?? []), adjustment]);
     }
 
     const roomById = new Map(rooms.map((room) => [room.id, room]));
@@ -399,6 +411,7 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
         advanceAllocations: allocationRowsByTenant.get(tenant.id) ?? [],
         collections: collectionsByTenant.get(tenant.id) ?? [],
         legacyArrears: legacyArrearsRowsByTenant.get(tenant.id) ?? [],
+        manualAdjustments: manualAdjustmentsByTenant.get(tenant.id) ?? [],
         monthlyRent: amount(lease?.monthly_rent ?? tenant.monthly_rent ?? room?.monthly_rent),
         rentMonths: rentMonthRowsByTenant.get(tenant.id) ?? [],
         selectedMonth: currentMonthStart,
@@ -474,7 +487,12 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
             propertyName: propertyName(property),
             location: propertyLocation(property),
             monthlyRent,
+            arrears: position.arrears,
+            manualBalanceAdjustment: position.manualBalanceAdjustment,
             outstandingBalance,
+            advanceBalance: position.advance,
+            rawBalance: position.rawBalance,
+            totalDue: position.totalDue,
             oldestUnpaidPeriod: oldestUnpaidPeriod({ paymentDueDate, unpaidPeriods }),
             unpaidPeriods,
             paymentDueDay,
@@ -537,7 +555,12 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
             propertyName: propertyName(property),
             location: propertyLocation(property),
             monthlyRent,
+            arrears: 0,
+            manualBalanceAdjustment: 0,
             outstandingBalance,
+            advanceBalance: 0,
+            rawBalance: outstandingBalance,
+            totalDue: outstandingBalance,
             oldestUnpaidPeriod: oldestUnpaidPeriod({ paymentDueDate, unpaidPeriods }),
             unpaidPeriods,
             paymentDueDay: dayFromDate(paymentDueDate),
@@ -560,65 +583,6 @@ export async function getDefaultersPageData(options: { admin?: boolean; landlord
             recoveryStatus: debt.recovery_status ?? "pending",
             landlordDeductionStatus: debt.landlord_deduction_status ?? deductionStatusByDebt.get(debt.id) ?? (debt.tenant_id ? deductionStatusByTenant.get(debt.tenant_id) : null) ?? "Pending review",
             suggestedActions,
-        });
-    }
-
-    for (const tenant of tenants) {
-        const room = tenant.room_id ? roomById.get(tenant.room_id) : null;
-        const lease = activeLeaseByTenant.get(tenant.id);
-        if (!isActiveTenant(tenant.status) || tenantPosition(tenant, room, lease).outstanding > 0) continue;
-        const lastPayment = latestPaymentByTenant.get(tenant.id);
-        const clearedDate = lastPayment?.payment_date ?? tenant.updated_at?.slice(0, 10) ?? null;
-        if (clearedDate !== dateOnly(now)) continue;
-        if (!isActiveTenancy(lease, dateOnly(now))) continue;
-        const actualRoom = lease?.room_id ? roomById.get(lease.room_id) : null;
-        if (!actualRoom || !isOccupiedRoom(actualRoom.status)) continue;
-        const office = (actualRoom?.office_id ? officeById.get(actualRoom.office_id) : null) ?? (tenant.office_id ? officeById.get(tenant.office_id) : null) ?? null;
-        const property = (actualRoom?.property_id ? propertyById.get(actualRoom.property_id) : null) ?? (tenant.property_id ? propertyById.get(tenant.property_id) : null) ?? null;
-        const landlordId = actualRoom?.landlord_id ?? property?.landlord_id ?? null;
-        if (requestedLandlordId && landlordId !== requestedLandlordId) continue;
-        const landlord = landlordId ? landlordById.get(landlordId) ?? null : null;
-        const monthlyRent = amount(lease?.monthly_rent ?? tenant.monthly_rent ?? actualRoom?.monthly_rent);
-        const paymentDueDate = dueDateForDay(amount(lease?.billing_day ?? tenant.billing_day) || 1, now);
-
-        defaulters.push({
-            id: `cleared-${tenant.id}`,
-            source: "recently_cleared",
-            tenantId: tenant.id,
-            roomId: actualRoom?.id ?? null,
-            roomNumber: actualRoom?.room_number ?? "Unnumbered",
-            tenantName: tenant.full_name ?? "Unknown tenant",
-            tenantPhone: tenant.phone ?? tenant.alternative_phone,
-            officeId: actualRoom?.office_id ?? tenant.office_id,
-            officeName: officeName(office),
-            landlordId,
-            landlordName: landlord?.full_name ?? "No landlord",
-            propertyName: propertyName(property),
-            location: propertyLocation(property),
-            monthlyRent,
-            outstandingBalance: 0,
-            oldestUnpaidPeriod: paymentDueDate.slice(0, 7),
-            unpaidPeriods: 0,
-            paymentDueDay: dayFromDate(paymentDueDate),
-            paymentDueDate,
-            dueSource: "default_first",
-            daysDefaulted: 0,
-            monthsDefaulted: 0,
-            lastPaymentDate: lastPayment?.payment_date ?? lastPayment?.paid_at?.slice(0, 10) ?? null,
-            lastPaymentAmount: collectionAmount(lastPayment),
-            promiseStatus: "Cleared",
-            openPromiseCount: 0,
-            failedPromiseCount: 0,
-            currentMonthPaid: tenantPosition(tenant, actualRoom, lease).paymentsThisMonth,
-            isPartialPayer: false,
-            collectorAssigned: collectorByTenant.get(tenant.id) ?? "Unassigned",
-            riskLevel: "low",
-            lastFollowUp: lastActionByTenant.get(tenant.id)?.created_at?.slice(0, 10) ?? null,
-            nextRecommendedAction: "Keep in history",
-            clearedDate,
-            recoveryStatus: null,
-            landlordDeductionStatus: null,
-            suggestedActions: ["Keep in history"],
         });
     }
 
@@ -690,7 +654,7 @@ function buildKpis(items: DefaulterItem[]): DefaultersKpis {
         totalDefaulters: activeItems.length,
         totalOutstanding: activeItems.reduce((total, item) => total + item.outstandingBalance, 0),
         defaultersAddedToday: activeItems.filter((item) => item.daysDefaulted <= 1).length,
-        clearedToday: items.filter((item) => item.source === "recently_cleared" && item.clearedDate === dateOnly()).length,
+        clearedToday: 0,
         highRiskDefaulters: activeItems.filter((item) => item.riskLevel === "high").length,
         promisesDueToday: activeItems.filter((item) => item.promiseStatus === "Due today").length,
         vacatedWithDebt: items.filter((item) => item.source === "vacated_debt" && item.outstandingBalance > 0).length,

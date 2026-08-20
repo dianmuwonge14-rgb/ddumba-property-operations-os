@@ -12,7 +12,7 @@ type Props = {
 };
 
 type PeriodFilter = "all" | "today" | "1_7" | "8_14" | "15_30" | "1_month" | "2_months" | "3_plus" | "custom_days" | "custom_months";
-type ListFilter = "active" | "vacated" | "cleared" | "high_risk" | "promises_due";
+type ListFilter = "active" | "vacated" | "high_risk" | "promises_due";
 type SortMode = "risk_high" | "days_high" | "balance_high" | "room_asc";
 const INITIAL_TABLE_LIMIT = 100;
 
@@ -59,6 +59,7 @@ export default function DefaultersConsole({ data }: Props) {
     const [customMonthsMax, setCustomMonthsMax] = useState("");
     const [sort, setSort] = useState<SortMode>("risk_high");
     const [showPrintPreview, setShowPrintPreview] = useState(false);
+    const [selectedLedgerItem, setSelectedLedgerItem] = useState<DefaulterItem | null>(null);
     const [liveStatus, setLiveStatus] = useState("Live");
     const [isPending, startTransition] = useTransition();
 
@@ -86,6 +87,7 @@ export default function DefaultersConsole({ data }: Props) {
             .on("postgres_changes", { event: "*", schema: "public", table: "rooms" }, refreshFromRealtime)
             .on("postgres_changes", { event: "*", schema: "public", table: "leases" }, refreshFromRealtime)
             .on("postgres_changes", { event: "*", schema: "public", table: "collections" }, refreshFromRealtime)
+            .on("postgres_changes", { event: "*", schema: "public", table: "tenant_balance_adjustments" }, refreshFromRealtime)
             .on("postgres_changes", { event: "*", schema: "public", table: "promises" }, refreshFromRealtime)
             .on("postgres_changes", { event: "*", schema: "public", table: "collection_actions" }, refreshFromRealtime)
             .on("postgres_changes", { event: "*", schema: "public", table: "vacated_tenant_debts" }, refreshFromRealtime)
@@ -167,7 +169,6 @@ export default function DefaultersConsole({ data }: Props) {
             .filter((item) => {
                 if (listFilter === "active" && (item.source !== "active_tenant" || item.outstandingBalance <= 0)) return false;
                 if (listFilter === "vacated" && item.source !== "vacated_debt") return false;
-                if (listFilter === "cleared" && item.source !== "recently_cleared") return false;
                 if (listFilter === "high_risk" && item.riskLevel !== "high") return false;
                 if (listFilter === "promises_due" && item.promiseStatus !== "Due today") return false;
                 const searchable = [item.roomNumber, item.tenantName, item.tenantPhone, item.landlordName, item.officeName, item.propertyName, item.location, String(item.monthlyRent)].map(normalize).join(" ");
@@ -297,7 +298,6 @@ export default function DefaultersConsole({ data }: Props) {
                     <RiskCard label="Total Defaulters" value={data.kpis.totalDefaulters.toLocaleString()} hint="Live positive balances" tone="red" icon={<AlertTriangle size={18} />} onClick={() => setListFilter("active")} />
                     <RiskCard label="Total Outstanding" value={money(data.kpis.totalOutstanding)} hint="Sum of live balances" tone="red" icon={<WalletCards size={18} />} onClick={() => setListFilter("active")} />
                     <RiskCard label="Added Today" value={data.kpis.defaultersAddedToday.toLocaleString()} hint="New or due today" tone="amber" icon={<CalendarClock size={18} />} onClick={() => { setListFilter("active"); setPeriod("today"); }} />
-                    <RiskCard label="Cleared Today" value={data.kpis.clearedToday.toLocaleString()} hint="History only" tone="slate" icon={<FileText size={18} />} onClick={() => setListFilter("cleared")} />
                     <RiskCard label="High Risk" value={data.kpis.highRiskDefaulters.toLocaleString()} hint="Visit or notice" tone="purple" icon={<AlertTriangle size={18} />} onClick={() => setListFilter("high_risk")} />
                     <RiskCard label="Promises Due Today" value={data.kpis.promisesDueToday.toLocaleString()} hint="Collector follow-up" tone="amber" icon={<CalendarClock size={18} />} onClick={() => setListFilter("promises_due")} />
                     <RiskCard label="Vacated With Debt" value={data.kpis.vacatedWithDebt.toLocaleString()} hint="Recovery register" tone="red" icon={<FileText size={18} />} onClick={() => setListFilter("vacated")} />
@@ -318,7 +318,6 @@ export default function DefaultersConsole({ data }: Props) {
                         <FilterSelect label="List" value={listFilter} onChange={(value) => setListFilter(value as ListFilter)} options={[
                             { id: "active", name: "Active defaulters" },
                             { id: "vacated", name: "Vacated with debt" },
-                            { id: "cleared", name: "Recently cleared" },
                             { id: "high_risk", name: "High risk" },
                             { id: "promises_due", name: "Promises due today" },
                         ]} />
@@ -377,7 +376,7 @@ export default function DefaultersConsole({ data }: Props) {
                             Showing first {visibleDefaulters.length.toLocaleString()} of {filteredDefaulters.length.toLocaleString()} matching defaulters. Use filters, print, or CSV export for the full report.
                         </div>
                     ) : null}
-                    <DefaultersTable defaulters={visibleDefaulters} paymentHref={paymentHref} promiseHref={promiseHref} />
+                    <DefaultersTable defaulters={visibleDefaulters} paymentHref={paymentHref} promiseHref={promiseHref} onViewLedger={setSelectedLedgerItem} />
                     {!filteredDefaulters.length ? (
                         <div className="rounded-[26px] border border-dashed border-white/20 bg-white/8 p-8 text-center text-white">
                             <p className="text-lg font-black">No defaulters match these filters.</p>
@@ -397,6 +396,7 @@ export default function DefaultersConsole({ data }: Props) {
                     scope={data.isAdmin ? "All offices" : data.isCollector ? "Authorized offices" : data.activeOffice?.office_name ?? data.activeOffice?.name ?? "Active office"}
                 />
             ) : null}
+            {selectedLedgerItem ? <LedgerBreakdownModal item={selectedLedgerItem} onClose={() => setSelectedLedgerItem(null)} /> : null}
         </main>
     );
 }
@@ -415,7 +415,7 @@ function buildKpis(items: DefaulterItem[]) {
         totalDefaulters: activeItems.length,
         totalOutstanding: activeItems.reduce((total, item) => total + item.outstandingBalance, 0),
         defaultersAddedToday: activeItems.filter((item) => item.daysDefaulted <= 1).length,
-        clearedToday: items.filter((item) => item.source === "recently_cleared").length,
+        clearedToday: 0,
         highRiskDefaulters: activeItems.filter((item) => item.riskLevel === "high").length,
         promisesDueToday: activeItems.filter((item) => item.promiseStatus === "Due today").length,
         vacatedWithDebt: items.filter((item) => item.source === "vacated_debt" && item.outstandingBalance > 0).length,
@@ -428,7 +428,7 @@ function buildKpis(items: DefaulterItem[]) {
     };
 }
 
-function DefaultersTable({ defaulters, paymentHref, promiseHref }: { defaulters: DefaulterItem[]; paymentHref: string; promiseHref: string }) {
+function DefaultersTable({ defaulters, onViewLedger, paymentHref, promiseHref }: { defaulters: DefaulterItem[]; onViewLedger: (item: DefaulterItem) => void; paymentHref: string; promiseHref: string }) {
     return (
         <div className="overflow-hidden rounded-[26px] border border-white/70 bg-white shadow-2xl shadow-slate-950/15">
             <div className="max-h-[680px] overflow-auto">
@@ -465,7 +465,12 @@ function DefaultersTable({ defaulters, paymentHref, promiseHref }: { defaulters:
                                 <td className="px-4 py-3 font-bold text-slate-600">{item.landlordName}</td>
                                 <td className="px-4 py-3 font-bold text-slate-600">{item.propertyName}<br /><span className="text-xs text-slate-400">{item.location}</span></td>
                                 <td className="px-4 py-3 text-right font-black text-slate-950">{money(item.monthlyRent)}</td>
-                                <td className="px-4 py-3 text-right font-black text-rose-700">{money(item.outstandingBalance)}</td>
+                                <td className="px-4 py-3 text-right">
+                                    <button type="button" onClick={() => onViewLedger(item)} className="text-right font-black text-rose-700 underline decoration-rose-200 underline-offset-4 hover:text-rose-900">
+                                        {money(item.outstandingBalance)}
+                                    </button>
+                                    <p className="mt-1 text-[10px] font-black uppercase text-slate-400">View formula</p>
+                                </td>
                                 <td className="px-4 py-3 font-bold text-slate-600">
                                     {item.oldestUnpaidPeriod}
                                     <br />
@@ -647,6 +652,65 @@ function RiskCard({ hint, icon, label, onClick, tone, value }: { hint: string; i
             <p className="mt-3 break-words text-xl font-black leading-tight">{value}</p>
             <p className="mt-1 text-xs font-bold opacity-70">{hint}</p>
         </button>
+    );
+}
+
+function LedgerBreakdownModal({ item, onClose }: { item: DefaulterItem; onClose: () => void }) {
+    return (
+        <div className="fixed inset-0 z-[160] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm" onClick={onClose}>
+            <div className="w-full max-w-2xl rounded-[28px] bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+                <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-4">
+                    <div>
+                        <p className="text-xs font-black uppercase tracking-wide text-rose-700">Canonical Tenant Ledger</p>
+                        <h2 className="mt-1 text-2xl font-black text-slate-950">Room {item.roomNumber} · {item.tenantName}</h2>
+                        <p className="mt-1 text-sm font-bold text-slate-500">{item.officeName} · {item.paymentDueDate}</p>
+                    </div>
+                    <button type="button" onClick={onClose} className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700">Close</button>
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <LedgerMetric label="Arrears" value={item.arrears} tone="amber" />
+                    <LedgerMetric label="Current Month Rent" value={item.monthlyRent} tone="blue" />
+                    <LedgerMetric label="Manual Adjustments" value={item.manualBalanceAdjustment} tone={item.manualBalanceAdjustment < 0 ? "green" : item.manualBalanceAdjustment > 0 ? "rose" : "slate"} signed />
+                    <LedgerMetric label="Payments This Month" value={item.currentMonthPaid} tone="green" />
+                    <LedgerMetric label="Raw Balance" value={item.rawBalance} tone={item.rawBalance > 0 ? "rose" : item.rawBalance < 0 ? "green" : "slate"} signed />
+                    <LedgerMetric label="Advance" value={item.advanceBalance} tone="purple" />
+                </div>
+                <div className="mt-4 rounded-2xl bg-slate-950 p-4 text-white">
+                    <p className="text-xs font-black uppercase tracking-wide text-slate-400">Formula</p>
+                    <p className="mt-2 text-sm font-bold leading-7">
+                        Raw = {money(item.arrears)} + {money(item.monthlyRent)} {item.manualBalanceAdjustment < 0 ? "-" : "+"} {money(Math.abs(item.manualBalanceAdjustment))} - {money(item.currentMonthPaid)}
+                    </p>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-2xl bg-white/10 p-3">
+                            <p className="text-xs font-black uppercase text-rose-200">Outstanding</p>
+                            <p className="mt-1 text-2xl font-black">{money(item.outstandingBalance)}</p>
+                        </div>
+                        <div className="rounded-2xl bg-white/10 p-3">
+                            <p className="text-xs font-black uppercase text-purple-200">Advance</p>
+                            <p className="mt-1 text-2xl font-black">{money(item.advanceBalance)}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function LedgerMetric({ label, signed = false, tone, value }: { label: string; signed?: boolean; tone: "amber" | "blue" | "green" | "purple" | "rose" | "slate"; value: number }) {
+    const classes = {
+        amber: "bg-amber-50 text-amber-800 ring-amber-200",
+        blue: "bg-blue-50 text-blue-800 ring-blue-200",
+        green: "bg-emerald-50 text-emerald-800 ring-emerald-200",
+        purple: "bg-purple-50 text-purple-800 ring-purple-200",
+        rose: "bg-rose-50 text-rose-800 ring-rose-200",
+        slate: "bg-slate-100 text-slate-800 ring-slate-200",
+    }[tone];
+    const prefix = signed && value > 0 ? "+" : "";
+    return (
+        <div className={`rounded-2xl p-4 ring-1 ${classes}`}>
+            <p className="text-xs font-black uppercase tracking-wide">{label}</p>
+            <p className="mt-2 text-xl font-black">{prefix}{money(value)}</p>
+        </div>
     );
 }
 
