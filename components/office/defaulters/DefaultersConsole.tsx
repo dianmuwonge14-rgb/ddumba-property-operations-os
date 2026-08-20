@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState, useTransition } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Bot, CalendarClock, Download, FileText, MessageCircle, Phone, Printer, RefreshCw, Search, Send, Sparkles, WalletCards, Wifi } from "lucide-react";
@@ -107,7 +107,7 @@ export default function DefaultersConsole({ data }: Props) {
     const router = useRouter();
     const [query, setQuery] = useState("");
     const [officeId, setOfficeId] = useState(data.filters.officeId ?? "");
-    const [landlordId, setLandlordId] = useState(data.filters.landlordId ?? "");
+    const [selectedLandlordIds, setSelectedLandlordIds] = useState<string[]>(() => data.filters.landlordId ? [data.filters.landlordId] : []);
     const [propertyName, setPropertyName] = useState("");
     const [collector, setCollector] = useState("");
     const [listFilter, setListFilter] = useState<ListFilter>("active");
@@ -126,7 +126,7 @@ export default function DefaultersConsole({ data }: Props) {
 
     useEffect(() => {
         setOfficeId(data.filters.officeId ?? "");
-        setLandlordId(data.filters.landlordId ?? "");
+        setSelectedLandlordIds(data.filters.landlordId ? [data.filters.landlordId] : []);
     }, [data.filters.landlordId, data.filters.officeId]);
 
     useEffect(() => {
@@ -171,39 +171,36 @@ export default function DefaultersConsole({ data }: Props) {
     }, [data.landlords, officeId]);
 
     useEffect(() => {
-        if (!landlordId) return;
-        if (landlordOptions.some((landlord) => landlord.id === landlordId)) return;
-        setLandlordId("");
-    }, [landlordId, landlordOptions]);
+        setSelectedLandlordIds((current) => current.filter((landlordId) => landlordOptions.some((landlord) => landlord.id === landlordId)));
+    }, [landlordOptions]);
 
-    function pushCollectorFilters(nextOfficeId: string, nextLandlordId: string) {
+    function pushCollectorFilters(nextOfficeId: string, nextLandlordIds: string[]) {
         if (!data.isCollector) return;
         const params = new URLSearchParams(window.location.search);
         if (nextOfficeId) params.set("officeId", nextOfficeId);
         else params.delete("officeId");
-        if (nextLandlordId) params.set("landlordId", nextLandlordId);
+        if (nextLandlordIds.length === 1) params.set("landlordId", nextLandlordIds[0]);
         else params.delete("landlordId");
         const qs = params.toString();
         startTransition(() => router.push(`/office/collector/defaulters${qs ? `?${qs}` : ""}`));
     }
 
     function changeOffice(nextOfficeId: string) {
-        const validLandlord = landlordId && (!nextOfficeId || data.landlords.find((landlord) => landlord.id === landlordId)?.officeIds.includes(nextOfficeId));
-        const nextLandlordId = validLandlord ? landlordId : "";
+        const nextLandlordIds = selectedLandlordIds.filter((landlordId) => !nextOfficeId || data.landlords.find((landlord) => landlord.id === landlordId)?.officeIds.includes(nextOfficeId));
         setOfficeId(nextOfficeId);
-        setLandlordId(nextLandlordId);
-        pushCollectorFilters(nextOfficeId, nextLandlordId);
+        setSelectedLandlordIds(nextLandlordIds);
+        pushCollectorFilters(nextOfficeId, nextLandlordIds);
     }
 
-    function changeLandlord(nextLandlordId: string) {
-        setLandlordId(nextLandlordId);
-        pushCollectorFilters(officeId, nextLandlordId);
+    function changeLandlords(nextLandlordIds: string[]) {
+        setSelectedLandlordIds(nextLandlordIds);
+        pushCollectorFilters(officeId, nextLandlordIds);
     }
 
     function resetFilters() {
         setQuery("");
         setOfficeId("");
-        setLandlordId("");
+        setSelectedLandlordIds([]);
         setPropertyName("");
         setCollector("");
         setListFilter("active");
@@ -235,7 +232,7 @@ export default function DefaultersConsole({ data }: Props) {
                 const searchable = [item.roomNumber, item.tenantName, item.tenantPhone, item.landlordName, item.officeName, item.propertyName, item.location, String(item.monthlyRent)].map(normalize).join(" ");
                 if (term && !searchable.includes(term)) return false;
                 if ((data.isAdmin || data.isCollector) && officeId && item.officeId !== officeId) return false;
-                if (landlordId && item.landlordId !== landlordId) return false;
+                if (selectedLandlordIds.length && !selectedLandlordIds.includes(item.landlordId ?? "")) return false;
                 if (propertyName && item.propertyName !== propertyName) return false;
                 if (collector && item.collectorAssigned !== collector) return false;
                 if (min > 0 && item.monthlyRent < min) return false;
@@ -260,13 +257,16 @@ export default function DefaultersConsole({ data }: Props) {
             .sort((a, b) => {
                 return compareByLandlordThenRoom(a, b, landlordSort);
             });
-    }, [collector, customDaysMax, customDaysMin, customMonthsMax, customMonthsMin, data.defaulters, data.isAdmin, data.isCollector, landlordId, landlordSort, listFilter, maxRent, minRent, officeId, period, propertyName, query]);
+    }, [collector, customDaysMax, customDaysMin, customMonthsMax, customMonthsMin, data.defaulters, data.isAdmin, data.isCollector, landlordSort, listFilter, maxRent, minRent, officeId, period, propertyName, query, selectedLandlordIds]);
 
     const visibleKpis = useMemo(() => buildKpis(filteredDefaulters), [filteredDefaulters]);
     const paymentHref = data.isAdmin ? "/office/admin/payments" : data.isCollector ? "/office/collector/payments" : "/office/payments";
     const promiseHref = data.isCollector ? "/office/collector/promises" : "/office/promises";
     const selectedOfficeName = officeId ? data.offices.find((office) => office.id === officeId)?.name ?? "Selected office" : data.isAdmin ? "All Offices" : data.isCollector ? "All Assigned Offices" : data.activeOffice?.office_name ?? data.activeOffice?.name ?? "Active office";
-    const selectedLandlordName = landlordId ? data.landlords.find((landlord) => landlord.id === landlordId)?.name ?? "Selected landlord" : "All Landlords";
+    const selectedLandlordNames = selectedLandlordIds
+        .map((landlordId) => data.landlords.find((landlord) => landlord.id === landlordId)?.name)
+        .filter(Boolean) as string[];
+    const selectedLandlordName = selectedLandlordNames.length ? selectedLandlordNames.join(", ") : "All Landlords";
     const selectedPeriodName = period === "all" ? "All defaulters" : period.replaceAll("_", " ");
 
     function exportCsv() {
@@ -391,7 +391,7 @@ export default function DefaultersConsole({ data }: Props) {
                             { id: "custom_months", name: "Custom months" },
                         ]} />
                         {data.isAdmin || data.isCollector ? <FilterSelect label="Office" value={officeId} onChange={data.isCollector ? changeOffice : setOfficeId} options={[{ id: "", name: data.isCollector ? "All Assigned Offices" : "All offices" }, ...data.offices]} /> : null}
-                        <SearchableFilterSelect label="Landlord" value={landlordId} onChange={data.isCollector ? changeLandlord : setLandlordId} options={[{ id: "", name: "All Landlords" }, ...landlordOptions]} />
+                        <SearchableLandlordMultiSelect label="Landlords" selectedIds={selectedLandlordIds} onChange={changeLandlords} options={landlordOptions} />
                         <FilterSelect label="Landlord Sort" value={landlordSort} onChange={(value) => setLandlordSort(value as LandlordSort)} options={[
                             { id: "az", name: "A → Z" },
                             { id: "za", name: "Z → A" },
@@ -417,7 +417,7 @@ export default function DefaultersConsole({ data }: Props) {
                         <div className="flex flex-wrap items-center gap-2 text-xs font-black text-slate-200">
                             <span className="rounded-full bg-white/10 px-3 py-1">Showing: {filteredDefaulters.length.toLocaleString()} Defaulters</span>
                             {data.isCollector ? <span className="rounded-full bg-white/10 px-3 py-1">Office: {data.offices.find((office) => office.id === officeId)?.name ?? "All Assigned Offices"}</span> : null}
-                            {landlordId ? <span className="rounded-full bg-white/10 px-3 py-1">Landlord: {data.landlords.find((landlord) => landlord.id === landlordId)?.name ?? "Selected landlord"}</span> : <span className="rounded-full bg-white/10 px-3 py-1">Landlord: All Landlords</span>}
+                            {selectedLandlordIds.length ? <span className="rounded-full bg-white/10 px-3 py-1">Landlords: {selectedLandlordIds.length.toLocaleString()} selected</span> : <span className="rounded-full bg-white/10 px-3 py-1">Landlord: All Landlords</span>}
                         </div>
                         <button type="button" onClick={resetFilters} className="inline-flex h-10 items-center justify-center rounded-2xl border border-white/10 bg-white/10 px-4 text-xs font-black text-white hover:bg-white hover:text-slate-950">
                             Reset Filters
@@ -429,7 +429,7 @@ export default function DefaultersConsole({ data }: Props) {
                     <DefaultersTable
                         defaulters={filteredDefaulters}
                         landlordSort={landlordSort}
-                        onFilterLandlord={(nextLandlordId) => changeLandlord(nextLandlordId)}
+                        onFilterLandlord={(nextLandlordId) => changeLandlords([nextLandlordId])}
                         paymentHref={paymentHref}
                         promiseHref={promiseHref}
                         onViewLedger={setSelectedLedgerItem}
@@ -718,22 +718,92 @@ function FilterSelect({ label, onChange, options, value }: { label: string; onCh
     );
 }
 
-function SearchableFilterSelect({ label, onChange, options, value }: { label: string; onChange: (value: string) => void; options: Array<{ id: string; name: string }>; value: string }) {
+function SearchableLandlordMultiSelect({ label, onChange, options, selectedIds }: { label: string; onChange: (value: string[]) => void; options: Array<{ id: string; name: string }>; selectedIds: string[] }) {
     const [search, setSearch] = useState("");
+    const [open, setOpen] = useState(false);
+    const rootRef = useRef<HTMLDivElement | null>(null);
     const visibleOptions = useMemo(() => {
         const term = normalize(search);
         if (!term) return options;
         return options.filter((option) => normalize(option.name).includes(term));
     }, [options, search]);
+    const selectedNames = selectedIds
+        .map((id) => options.find((option) => option.id === id)?.name)
+        .filter(Boolean) as string[];
+    const summary = selectedNames.length === 0
+        ? "All Landlords"
+        : selectedNames.length === 1
+            ? selectedNames[0]
+            : `${selectedNames[0]} +${selectedNames.length - 1}`;
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+        };
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") setOpen(false);
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        window.addEventListener("keydown", handleKeyDown);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+            window.removeEventListener("keydown", handleKeyDown);
+        };
+    }, []);
+
+    function toggle(id: string) {
+        if (selectedIds.includes(id)) onChange(selectedIds.filter((current) => current !== id));
+        else onChange([...selectedIds, id]);
+    }
+
     return (
-        <label>
+        <div ref={rootRef} className="relative">
             <span className="text-xs font-black uppercase tracking-wide text-slate-400">{label}</span>
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search landlords" className="mt-1 h-9 w-full rounded-t-2xl border border-b-0 border-white/10 bg-slate-950 px-3 text-xs font-bold text-white outline-none placeholder:text-slate-500" />
-            <select value={value} onChange={(event) => onChange(event.target.value)} className="h-12 w-full rounded-b-2xl border border-white/10 bg-slate-950 px-3 text-sm font-black text-white outline-none">
-                {visibleOptions.map((option) => <option key={`filter-option:${label}:${option.id || option.name}`} value={option.id}>{option.name}</option>)}
-                {!visibleOptions.length ? <option value="">No landlords found</option> : null}
-            </select>
-        </label>
+            <button
+                type="button"
+                onClick={() => setOpen((current) => !current)}
+                className="mt-1 flex h-12 w-full items-center justify-between gap-2 rounded-2xl border border-white/10 bg-slate-950 px-3 text-left text-sm font-black text-white outline-none hover:border-cyan-300/30"
+            >
+                <span className="min-w-0 truncate">{selectedIds.length ? `Landlords: ${selectedIds.length} selected` : summary}</span>
+                <span className="shrink-0 rounded-full bg-white/10 px-2 py-1 text-[10px] uppercase text-slate-300">{selectedIds.length ? "Multi" : "All"}</span>
+            </button>
+            {open ? (
+                <div className="absolute left-0 top-[76px] z-[70] w-[min(92vw,360px)] overflow-hidden rounded-2xl border border-white/10 bg-slate-950 shadow-2xl shadow-black/40">
+                    <div className="border-b border-white/10 p-3">
+                        <input
+                            value={search}
+                            onChange={(event) => setSearch(event.target.value)}
+                            placeholder="Search landlords"
+                            className="h-10 w-full rounded-xl border border-white/10 bg-slate-900 px-3 text-xs font-bold text-white outline-none placeholder:text-slate-500"
+                        />
+                        <div className="mt-2 flex gap-2">
+                            <button type="button" onClick={() => onChange([])} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-950">All Landlords</button>
+                            <button type="button" onClick={() => onChange(options.map((option) => option.id))} className="rounded-xl bg-white/10 px-3 py-2 text-xs font-black text-white">Select All</button>
+                            <button type="button" onClick={() => onChange([])} className="rounded-xl bg-white/10 px-3 py-2 text-xs font-black text-white">Clear All</button>
+                        </div>
+                    </div>
+                    <div className="max-h-72 overflow-auto p-2">
+                        {visibleOptions.length ? visibleOptions.map((option) => {
+                            const checked = selectedIds.includes(option.id);
+                            return (
+                                <label key={`landlord-multi:${option.id}`} className="flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2 text-sm font-bold text-white hover:bg-white/10">
+                                    <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={() => toggle(option.id)}
+                                        className="h-4 w-4 rounded border-white/20 bg-slate-900 accent-cyan-300"
+                                    />
+                                    <span className="min-w-0 flex-1 truncate">{option.name}</span>
+                                    {checked ? <span className="rounded-full bg-cyan-300/15 px-2 py-0.5 text-[10px] font-black uppercase text-cyan-100">Selected</span> : null}
+                                </label>
+                            );
+                        }) : (
+                            <p className="px-3 py-3 text-xs font-bold text-slate-400">No landlords found.</p>
+                        )}
+                    </div>
+                </div>
+            ) : null}
+        </div>
     );
 }
 
@@ -873,16 +943,16 @@ function PrintPreview({
     return (
         <div className="fixed inset-0 z-[150] overflow-auto bg-slate-950/80 p-4 backdrop-blur-sm" onClick={onClose}>
             <div className="mx-auto max-h-[calc(100vh-2rem)] max-w-7xl overflow-auto rounded-3xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="defaulters-report-title">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3 print:hidden">
+                <div className="sticky top-0 z-20 -mx-5 -mt-5 mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white/95 px-5 py-4 shadow-sm backdrop-blur print:hidden">
                     <div>
                         <p className="text-xs font-black uppercase text-rose-700">Print preview</p>
                         <h2 id="defaulters-report-title" className="text-xl font-black text-slate-950">Defaulters Report</h2>
                     </div>
                     <div className="flex gap-2">
-                        <button onClick={() => window.print()} className="rounded-2xl bg-slate-950 px-4 py-2 text-sm font-black text-white">Print</button>
-                        <button onClick={() => window.print()} className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700">PDF</button>
+                        <button onClick={() => window.print()} className="rounded-2xl bg-slate-950 px-5 py-2 text-sm font-black uppercase text-white shadow-lg shadow-slate-950/20">Print</button>
+                        <button onClick={() => window.print()} className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black uppercase text-slate-700">PDF</button>
                         <button onClick={onExportCsv} className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700">CSV</button>
-                        <button onClick={onClose} className="rounded-2xl bg-rose-50 px-4 py-2 text-sm font-black text-rose-700">Close ✕</button>
+                        <button onClick={onClose} className="rounded-2xl bg-rose-50 px-4 py-2 text-sm font-black uppercase text-rose-700">Close ✕</button>
                     </div>
                 </div>
                 <div className="defaulters-report-print min-h-[1050px] bg-white p-6 text-slate-950">
@@ -996,6 +1066,11 @@ function PrintPreview({
                             size: A4;
                             margin: 14mm;
                         }
+                        html,
+                        body {
+                            background: #ffffff !important;
+                            margin: 0 !important;
+                        }
                         body * {
                             visibility: hidden;
                         }
@@ -1008,7 +1083,9 @@ function PrintPreview({
                             left: 0;
                             top: 0;
                             width: 100%;
+                            min-height: auto !important;
                             padding: 0 !important;
+                            background: #ffffff !important;
                         }
                         .landlord-report-section {
                             break-inside: avoid;
