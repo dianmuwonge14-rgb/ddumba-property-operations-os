@@ -520,12 +520,13 @@ export default function FastPaymentsEntry({
                     });
 
                     const nextResults = payload.results ?? [];
+                    const exactRoomMatch = nextResults.find((result: FastPaymentTenantSearchResult) => normalize(result?.room?.room_number) === normalize(lookup));
                     setResults(nextResults);
-                    setRoomMatchesOpen(nextResults.length > 0);
-                    setMessage(nextResults.length ? "Select the correct room." : "No tenant/room found.");
+                    setRoomMatchesOpen(nextResults.length > 0 && !exactRoomMatch);
+                    setMessage(nextResults.length ? (exactRoomMatch ? null : "Select the correct room.") : "No tenant/room found.");
 
-                    if (nextResults.length === 1 && normalize(nextResults[0]?.room?.room_number) === normalize(lookup)) {
-                        void selectRoomMatch(nextResults[0], requestSeq);
+                    if (exactRoomMatch) {
+                        void selectRoomMatch(exactRoomMatch, requestSeq);
                     }
                 } catch (error) {
                     if (controller.signal.aborted) return;
