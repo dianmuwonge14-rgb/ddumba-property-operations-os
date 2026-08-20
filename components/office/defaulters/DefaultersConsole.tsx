@@ -947,24 +947,27 @@ function PrintPreview({
     }, [defaulters]);
 
     const totalOutstanding = landlordGroups.reduce((total, group) => total + group.totalOutstanding, 0);
+    const printReport = () => {
+        requestAnimationFrame(() => window.print());
+    };
 
     return (
-        <div className="fixed inset-0 z-[150] flex items-start justify-center overflow-hidden bg-slate-950/80 p-2 pt-4 backdrop-blur-sm sm:p-4" onClick={onClose}>
-            <div className="flex h-[94vh] w-full max-w-7xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="defaulters-report-title">
-                <div className="report-toolbar sticky top-0 z-50 flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white/95 px-3 py-3 shadow-sm backdrop-blur print:hidden sm:px-5">
+        <div className="modal-backdrop fixed inset-0 z-[150] flex items-start justify-center overflow-hidden bg-slate-950/80 p-2 pt-3 backdrop-blur-sm sm:p-4" onClick={onClose}>
+            <div className="flex h-[94vh] w-full max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-3xl bg-white shadow-2xl sm:max-w-7xl" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="defaulters-report-title">
+                <div className="report-toolbar non-print-ui sticky top-0 z-[100] flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white/95 px-3 py-3 shadow-sm backdrop-blur print:hidden sm:px-5">
                     <div>
                         <p className="text-xs font-black uppercase text-rose-700">Print preview</p>
                         <h2 id="defaulters-report-title" className="text-xl font-black text-slate-950">Defaulters Report</h2>
                     </div>
                     <div className="flex shrink-0 gap-1.5 sm:gap-2">
-                        <button onClick={() => window.print()} className="rounded-2xl bg-slate-950 px-5 py-2 text-sm font-black uppercase text-white shadow-lg shadow-slate-950/20">Print</button>
-                        <button onClick={() => window.print()} className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black uppercase text-slate-700">PDF</button>
+                        <button onClick={printReport} className="rounded-2xl bg-slate-950 px-5 py-2 text-sm font-black uppercase text-white shadow-lg shadow-slate-950/20">Print</button>
+                        <button onClick={printReport} className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black uppercase text-slate-700">PDF</button>
                         <button onClick={onExportCsv} className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-black text-slate-700">CSV</button>
                         <button onClick={onClose} className="rounded-2xl bg-rose-50 px-3 py-2 text-sm font-black uppercase text-rose-700 sm:px-4">Close ✕</button>
                     </div>
                 </div>
-                <div ref={reportScrollRef} className="report-scroll-area min-h-0 flex-1 overflow-y-auto bg-slate-100 p-3 sm:p-5">
-                    <div className="defaulters-report-print mx-auto min-h-[1050px] max-w-[210mm] bg-white p-6 text-slate-950 shadow-xl print:shadow-none">
+                <div ref={reportScrollRef} className="report-scroll-area min-h-0 flex-1 overflow-y-auto bg-slate-200 p-3 sm:p-6">
+                    <div className="report-document defaulters-report-print mx-auto bg-white p-[10mm] text-slate-950 shadow-2xl ring-1 ring-slate-300 print:shadow-none print:ring-0" style={{ width: "min(210mm, calc(100vw - 2rem))", minHeight: "297mm" }}>
                         <header className="border-b-2 border-slate-950 pb-4">
                             <p className="text-sm font-black uppercase tracking-wide text-slate-500">{companyName}</p>
                             <h1 className="mt-1 text-3xl font-black uppercase">Defaulters Report</h1>
@@ -1065,7 +1068,7 @@ function PrintPreview({
                             <p>Prepared by: __________________________</p>
                             <p>Approved by: __________________________</p>
                         </footer>
-                        <div className="mt-8 flex justify-end print:hidden">
+                        <div className="non-print-ui mt-8 flex justify-end print:hidden">
                             <button onClick={onClose} className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white">Close Report</button>
                         </div>
                     </div>
@@ -1074,7 +1077,7 @@ function PrintPreview({
                     @media print {
                         @page {
                             size: A4;
-                            margin: 14mm;
+                            margin: 10mm;
                         }
                         html,
                         body {
@@ -1084,32 +1087,50 @@ function PrintPreview({
                         body * {
                             visibility: hidden;
                         }
-                        .defaulters-report-print,
-                        .defaulters-report-print * {
+                        .report-document,
+                        .report-document * {
                             visibility: visible;
                         }
+                        .app-navigation,
                         .report-toolbar,
                         .report-toolbar *,
-                        .report-scroll-area {
-                            overflow: visible !important;
-                        }
-                        .report-toolbar,
-                        .report-toolbar * {
+                        .non-print-ui,
+                        .non-print-ui * {
                             display: none !important;
                             visibility: hidden !important;
                         }
-                        .defaulters-report-print {
+                        .report-scroll-area {
+                            display: block !important;
+                            overflow: visible !important;
+                            background: #ffffff !important;
+                            padding: 0 !important;
+                        }
+                        .modal-backdrop {
+                            position: static !important;
+                            display: block !important;
+                            background: #ffffff !important;
+                            padding: 0 !important;
+                            overflow: visible !important;
+                        }
+                        .report-document {
+                            box-shadow: none !important;
+                            background: #ffffff !important;
                             position: absolute;
                             left: 0;
                             top: 0;
-                            width: 100%;
+                            width: 190mm !important;
                             min-height: auto !important;
                             padding: 0 !important;
-                            background: #ffffff !important;
+                            margin: 0 !important;
                         }
-                        .landlord-report-section {
+                        .landlord-report-section > div:first-child,
+                        .landlord-report-section > div:nth-child(2) {
                             break-inside: avoid;
                             page-break-inside: avoid;
+                        }
+                        .landlord-report-section {
+                            break-inside: auto;
+                            page-break-inside: auto;
                         }
                         .landlord-report-section thead {
                             display: table-header-group;
