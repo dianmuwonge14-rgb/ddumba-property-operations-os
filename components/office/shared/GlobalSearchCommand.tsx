@@ -11,6 +11,7 @@ type SearchResult = {
     subtitle: string;
     details: string[];
     href: string;
+    amount?: number;
 };
 
 type Props = {
@@ -123,10 +124,15 @@ export default function GlobalSearchCommand(props: Props) {
         const order = ["rooms", "receipts", "payments", "tenants", "landlords", "employees", "vacantRooms", "expenses", "promises", "landlordPayments"];
         return order.flatMap((key) => results[key] ?? []).slice(0, 6);
     }, [results]);
-    const exactRoom = liveItems.find((item) => item.type === "room" && compact(item.title).replace(/^room/, "") === compact(query).replace(/^room/, ""));
+    const exactRoomQuery = compact(query).replace(/^room/, "");
+    const exactOccupiedRoom = liveItems.find((item) => item.type === "room" && compact(item.title).replace(/^room/, "") === exactRoomQuery);
+    const exactVacantRoom = liveItems.find((item) => item.type === "vacant_room" && compact(item.title).replace(/^room/, "") === exactRoomQuery);
+    const exactRoom = exactOccupiedRoom ?? exactVacantRoom;
     const suggestions = exactRoom ? [exactRoom] : [...pages, ...liveItems].slice(0, 6);
     const showPopover = focused && (mobileActive || query.trim().length > 0 || loading || Boolean(error));
     const showRoomMenu = Boolean(exactRoom);
+    const isVacantRoom = exactRoom?.type === "vacant_room";
+    const hasOutstanding = typeof exactRoom?.amount === "number" && exactRoom.amount > 0;
 
     useEffect(() => {
         const handleDocumentPointer = (event: MouseEvent) => {
@@ -292,9 +298,9 @@ export default function GlobalSearchCommand(props: Props) {
                             <p className="text-sm font-black">{exactRoom.title} found</p>
                             <p className="mt-1 text-xs font-bold text-slate-400">{exactRoom.subtitle} · {exactRoom.details.slice(0, 2).join(" · ")}</p>
                             <div className="mt-3 grid grid-cols-2 gap-2">
-                                <button type="button" onClick={() => openRoomDestination("payments")} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-950">Payments Entry</button>
-                                <button type="button" onClick={() => openRoomDestination("defaulters")} className="rounded-xl bg-rose-400/15 px-3 py-2 text-xs font-black text-rose-100 ring-1 ring-rose-300/20">Defaulters</button>
-                                <button type="button" onClick={() => openRoomDestination("vacant")} className="rounded-xl bg-white/10 px-3 py-2 text-xs font-black text-slate-100">Vacant Rooms</button>
+                                {!isVacantRoom ? <button type="button" onClick={() => openRoomDestination("payments")} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-950">Payments Entry</button> : null}
+                                {!isVacantRoom && hasOutstanding ? <button type="button" onClick={() => openRoomDestination("defaulters")} className="rounded-xl bg-rose-400/15 px-3 py-2 text-xs font-black text-rose-100 ring-1 ring-rose-300/20">Defaulters</button> : null}
+                                {isVacantRoom ? <button type="button" onClick={() => openRoomDestination("vacant")} className="rounded-xl bg-white px-3 py-2 text-xs font-black text-slate-950">Vacant Rooms</button> : null}
                                 <button type="button" onClick={() => openRoomDestination("properties")} className="rounded-xl bg-white/10 px-3 py-2 text-xs font-black text-slate-100">Properties</button>
                             </div>
                         </div>
