@@ -7,7 +7,7 @@ type Db = {
     from: (table: string) => any;
 };
 
-const INITIAL_APPROVAL_LIMIT = 50;
+const INITIAL_APPROVAL_LIMIT = 250;
 const INITIAL_NOTIFICATION_LIMIT = 50;
 
 export type NotificationRentRequest = {

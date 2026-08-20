@@ -196,6 +196,7 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
     const [selectedLandlordPaymentDetailRequestIds, setSelectedLandlordPaymentDetailRequestIds] = useState<string[]>([]);
     const [selectedLandlordBulkRoomRequestIds, setSelectedLandlordBulkRoomRequestIds] = useState<string[]>([]);
     const [selectedExpenseRequestIds, setSelectedExpenseRequestIds] = useState<string[]>([]);
+    const [processingBalanceRequestIds, setProcessingBalanceRequestIds] = useState<string[]>([]);
     const [localLandlordPaymentStatuses, setLocalLandlordPaymentStatuses] = useState<Record<string, "approved" | "rejected">>({});
     const [isPending, startTransition] = useTransition();
 
@@ -415,6 +416,7 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
         startTransition(async () => {
             try {
                 setMessage(null);
+                setProcessingBalanceRequestIds([request.id]);
                 setActionLabel(decision === "approved" ? "Approving balance adjustment..." : "Rejecting balance adjustment...");
                 await decideTenantOutstandingBalanceAdjustment({ adjustmentId: request.id, decision, comment });
                 setMessage(decision === "approved"
@@ -426,6 +428,7 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
             } catch (error) {
                 setMessage(error instanceof Error ? error.message : "Unable to process outstanding balance adjustment.");
             } finally {
+                setProcessingBalanceRequestIds([]);
                 setActionLabel(null);
             }
         });
@@ -603,6 +606,7 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
         startTransition(async () => {
             try {
                 setMessage(null);
+                if (bulkModal.queue === "balance") setProcessingBalanceRequestIds(bulkModal.ids);
                 setActionLabel(`${bulkModal.decision === "approved" ? "Approving" : "Rejecting"} ${bulkModal.ids.length} ${bulkModal.queueLabel.toLowerCase()}...`);
                 const comment = bulkModal.decision === "approved" ? bulkComment.trim() : bulkComment.trim();
                 if (bulkModal.queue === "rent") {
@@ -645,6 +649,7 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
             } catch (error) {
                 setMessage(error instanceof Error ? error.message : "Unable to complete bulk action.");
             } finally {
+                setProcessingBalanceRequestIds([]);
                 setActionLabel(null);
             }
         });
@@ -753,6 +758,7 @@ export default function NotificationsCentre({ data, embedded = false }: Props) {
                             requests={visibleBalanceAdjustmentRequests}
                             onToggleSelected={(id) => toggleSelectedId(selectedBalanceRequestIds, setSelectedBalanceRequestIds, id)}
                             onApprove={(request) => executeBalanceAdjustmentDecision(request, "approved", "")}
+                            processingIds={processingBalanceRequestIds}
                             onReject={(request) => openBalanceAdjustmentRejectModal(request)}
                             onReason={(request) => setBalanceAdjustmentModal({ type: "reason", request })}
                         />
@@ -1427,6 +1433,7 @@ function BalanceAdjustmentApprovalTable({
     isPending,
     selectedIds = [],
     requests,
+    processingIds = [],
     onToggleSelected,
     onApprove,
     onReject,
@@ -1436,6 +1443,7 @@ function BalanceAdjustmentApprovalTable({
     isPending: boolean;
     selectedIds?: string[];
     requests: NotificationTenantBalanceAdjustmentRequest[];
+    processingIds?: string[];
     onToggleSelected?: (id: string) => void;
     onApprove: (request: NotificationTenantBalanceAdjustmentRequest) => void;
     onReject: (request: NotificationTenantBalanceAdjustmentRequest) => void;
@@ -1463,7 +1471,9 @@ function BalanceAdjustmentApprovalTable({
                 <tbody>
                     {requests.length === 0 ? (
                         <tr><td colSpan={12} className="p-6 text-sm font-bold text-slate-500">No manual balance adjustment requests in this state.</td></tr>
-                    ) : requests.map((request) => (
+                    ) : requests.map((request) => {
+                        const rowProcessing = processingIds.includes(request.id);
+                        return (
                         <tr key={`tenant-balance-adjustment:${request.id}`}>
                             <td>
                                 {request.status === "pending" ? (
@@ -1494,17 +1504,17 @@ function BalanceAdjustmentApprovalTable({
                                     {request.status === "pending" ? (
                                         <>
                                             <button type="button" disabled={isPending} onClick={() => onApprove(request)} className="inline-flex items-center gap-1 rounded-xl bg-emerald-700 px-3 py-2 text-xs font-black text-white disabled:opacity-40">
-                                                <CheckCircle2 size={14} /> {isPending ? "Approving..." : "Approve"}
+                                                <CheckCircle2 size={14} /> {rowProcessing && isPending ? "Approving..." : "Approve"}
                                             </button>
                                             <button type="button" disabled={isPending} onClick={() => onReject(request)} className="inline-flex items-center gap-1 rounded-xl bg-red-700 px-3 py-2 text-xs font-black text-white disabled:opacity-40">
-                                                <XCircle size={14} /> {isPending ? "Rejecting..." : "Reject"}
+                                                <XCircle size={14} /> {rowProcessing && isPending ? "Rejecting..." : "Reject"}
                                             </button>
                                         </>
                                     ) : null}
                                 </div>
                             </td>
                         </tr>
-                    ))}
+                    );})}
                 </tbody>
             </table>
         </div>
