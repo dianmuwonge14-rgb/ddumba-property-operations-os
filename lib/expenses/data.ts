@@ -587,7 +587,7 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
         collectionQuery = collectionQuery.eq("office_id", selectedOfficeId);
     }
 
-    const [expensesResult, collectionsResult, categoriesResult, propertiesResult, landlordsResult, usersResult, officesResult, cashAccountsResult, cashTransactionsResult, pendingExpensesResult, cashSourceExpensesResult, landlordPaymentsResult, salaryPaymentsResult, employeesResult] = await Promise.all([
+    const [expensesResult, collectionsResult, categoriesResult, propertiesResult, landlordsResult, usersResult, officesResult, cashAccountsResult, cashTransactionsResult, pendingExpensesResult, cashSourceExpensesResult, landlordPaymentsResult, salaryPaymentsResult, treasuryRequestsResult, officeCashMovementsResult, employeesResult] = await Promise.all([
         expenseQuery,
         collectionQuery,
         supabase.from("expense_categories").select("*").or(`company_id.eq.${companyId},company_id.is.null`),
@@ -644,10 +644,28 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
             if (selectedOfficeId) query = query.eq("office_id", selectedOfficeId);
             return query;
         })(),
+        (() => {
+            let query = (supabase as unknown as { from: (table: string) => any })
+                .from("treasury_cash_requests")
+                .select("*")
+                .eq("company_id", companyId)
+                .limit(20000);
+            if (selectedOfficeId) query = query.eq("office_id", selectedOfficeId);
+            return query;
+        })(),
+        (() => {
+            let query = (supabase as unknown as { from: (table: string) => any })
+                .from("office_cash_movements")
+                .select("*")
+                .eq("company_id", companyId)
+                .limit(20000);
+            if (selectedOfficeId) query = query.eq("office_id", selectedOfficeId);
+            return query;
+        })(),
         supabase.from("employees").select("*").eq("company_id", companyId).neq("status", "terminated"),
     ]);
 
-    for (const result of [expensesResult, collectionsResult, categoriesResult, propertiesResult, landlordsResult, usersResult, officesResult, cashAccountsResult, cashTransactionsResult, pendingExpensesResult, cashSourceExpensesResult, landlordPaymentsResult, salaryPaymentsResult, employeesResult]) {
+    for (const result of [expensesResult, collectionsResult, categoriesResult, propertiesResult, landlordsResult, usersResult, officesResult, cashAccountsResult, cashTransactionsResult, pendingExpensesResult, cashSourceExpensesResult, landlordPaymentsResult, salaryPaymentsResult, treasuryRequestsResult, officeCashMovementsResult, employeesResult]) {
         if (result.error && !isMissingSchemaLikeError(result.error)) throw new Error(result.error.message);
     }
 
@@ -655,6 +673,8 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
     const cashSourceExpenses = (cashSourceExpensesResult.data ?? []) as ExpenseRow[];
     const landlordPaymentRows = ((landlordPaymentsResult.data ?? []) as Array<Record<string, unknown>>);
     const salaryPaymentRows = ((salaryPaymentsResult.data ?? []) as Array<Record<string, unknown>>);
+    const treasuryRequestRows = ((treasuryRequestsResult.data ?? []) as Array<Record<string, unknown>>);
+    const officeCashMovementRows = ((officeCashMovementsResult.data ?? []) as Array<Record<string, unknown>>);
     const collections = uniqueFinanciallyEffectiveCollections((collectionsResult.data ?? []) as CollectionRow[]);
     const items = hydrateExpenseItems(expenses, categoriesResult.data ?? [], propertiesResult.data ?? [], landlordsResult.data ?? [], usersResult.data ?? []);
     const officeById = new Map((officesResult.data ?? []).map((office) => [office.id, office.office_name ?? office.name ?? "Office"]));
@@ -673,6 +693,11 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
     const officeCashTransactions = ((cashTransactionsResult.data ?? []) as Array<Record<string, unknown>>)
         .filter(isApprovedLedger)
         .filter((row) => accountById.get(String(row.cash_account_id))?.account_type === "office_cash");
+    const officeCashTransactionSourceIds = new Set(
+        officeCashTransactions
+            .map((row) => typeof row.source_id === "string" ? row.source_id : null)
+            .filter(Boolean) as string[],
+    );
     const pendingExpenses = ((pendingExpensesResult.data ?? []) as ExpenseRow[]).filter((expense) => isPendingExpense(expense as Record<string, unknown>));
     const pendingCashExpenses = pendingExpenses.filter((expense) => isPendingPhysicalCashExpense(expense as Record<string, unknown>));
     const employeeById = new Map(((employeesResult.data ?? []) as EmployeeRow[]).map((employee) => [employee.id, employee.full_name ?? "Employee"]));
@@ -805,6 +830,13 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
         return !reference.startsWith("EXP-LP-");
     });
     const cashSalaryPayments = salaryPaymentRows.filter(isEffectiveCashPayout);
+    const approvedTreasuryCashOutflows = treasuryRequestRows
+        .filter(isApprovedTreasuryCashOutflow)
+        .filter((request) => typeof request.id !== "string" || !officeCashTransactionSourceIds.has(request.id));
+    const approvedOfficeCashMovementOutflows = officeCashMovementRows
+        .filter(isOfficeCashMovementOutflow)
+        .filter((movement) => typeof movement.id !== "string" || !officeCashTransactionSourceIds.has(movement.id))
+        .filter((movement) => typeof movement.source_id !== "string" || !officeCashTransactionSourceIds.has(movement.source_id));
     const approvedOrdinaryCashExpenses = cashSourceExpenses.filter((expense) => {
         if (!isApprovedExpense(expense as Record<string, unknown>)) return false;
         if (landlordPaymentRequestByExpenseId.has(expense.id) || isLandlordPaymentExpenseMirror(expense as Record<string, unknown>)) return false;
@@ -815,7 +847,9 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
     const approvedLandlordCashOutflows = approvedCashLandlordRequests.reduce((total, request) => total + Number(request.amount ?? 0), 0)
         + legacyCashLandlordPayments.reduce((total, payment) => total + payoutAmount(payment), 0);
     const approvedSalaryCashOutflows = cashSalaryPayments.reduce((total, payment) => total + payoutAmount(payment), 0);
-    const approvedCashOutflows = approvedOrdinaryCashExpenseOutflows + approvedLandlordCashOutflows + approvedSalaryCashOutflows;
+    const approvedTreasuryCashOutflowTotal = approvedTreasuryCashOutflows.reduce((total, request) => total + payoutAmount(request), 0);
+    const approvedOfficeCashMovementOutflowTotal = approvedOfficeCashMovementOutflows.reduce((total, movement) => total + payoutAmount(movement), 0);
+    const approvedCashOutflows = approvedOrdinaryCashExpenseOutflows + approvedLandlordCashOutflows + approvedSalaryCashOutflows + approvedTreasuryCashOutflowTotal + approvedOfficeCashMovementOutflowTotal;
     const sourceOutflowTypesCoveredByApprovedExpenses = new Set([
         "expense",
         "employee_salary_payment",
@@ -868,6 +902,8 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
             { label: "Approved ordinary cash expenses", amount: approvedOrdinaryCashExpenseOutflows, count: approvedOrdinaryCashExpenses.length, direction: "outflow" },
             { label: "Approved landlord cash payments", amount: approvedLandlordCashOutflows, count: approvedCashLandlordRequests.length + legacyCashLandlordPayments.length, direction: "outflow" },
             { label: "Approved salary cash payments", amount: approvedSalaryCashOutflows, count: cashSalaryPayments.length, direction: "outflow" },
+            { label: "Approved treasury cash requests not posted to cash ledger", amount: approvedTreasuryCashOutflowTotal, count: approvedTreasuryCashOutflows.length, direction: "outflow" },
+            { label: "Approved office cash movements not posted to cash ledger", amount: approvedOfficeCashMovementOutflowTotal, count: approvedOfficeCashMovementOutflows.length, direction: "outflow" },
             { label: "Banking, cash handovers and other cash ledger outflows", amount: otherLedgerCashOutflows, count: officeCashTransactions.filter(isCashLedgerOutflow).filter((row) => !sourceOutflowTypesCoveredByApprovedExpenses.has(String(row.source_type ?? "").toLowerCase())).length, direction: "outflow" },
         ],
         pendingCashExpenses: hydratedPendingCashExpenses,
@@ -1007,6 +1043,22 @@ function isEffectiveCashPayout(row: Record<string, unknown>) {
 
 function payoutAmount(row: Record<string, unknown>) {
     return Number(row.amount ?? row.paid_amount ?? row.requested_amount ?? row.cash_payment_amount ?? 0);
+}
+
+function isApprovedTreasuryCashOutflow(row: Record<string, unknown>) {
+    if (!isApprovedLedger(row)) return false;
+    const requestType = String(row.request_type ?? "").toLowerCase();
+    if (!["banking", "cash_handover_admin"].includes(requestType)) return false;
+    return requestType === "cash_handover_admin" || isCashMethod(typeof row.method === "string" ? row.method : "cash");
+}
+
+function isOfficeCashMovementOutflow(row: Record<string, unknown>) {
+    const text = `${row.movement_type ?? ""} ${row.source_type ?? ""}`.toLowerCase();
+    return text.includes("bank")
+        || text.includes("handover")
+        || text.includes("transfer")
+        || text.includes("cash_out")
+        || text.includes("cash out");
 }
 
 function metadataBankAccount(value: unknown) {
