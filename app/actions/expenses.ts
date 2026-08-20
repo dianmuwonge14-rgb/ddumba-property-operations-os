@@ -10,7 +10,6 @@ import { assertFinancialEntryDate, currentBusinessDate } from "@/lib/business-da
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getExpenseInActiveOffice } from "@/lib/expenses/data";
-import { paymentMethodBucket } from "@/lib/collections/payment-methods";
 import { calculateLandlordAdvancePlan } from "@/lib/landlord-advances/calculator";
 import { assertLandlordPayableIntegrity } from "@/lib/landlord-payables/integrity";
 import { buildLandlordPaymentAllocationPlan, eligibleLandlordPayableMonth, landlordMonthlyDue, landlordMonthlyPaid, normalizeSettlementTiming, summarizeLandlordPayables } from "@/lib/landlord-payables/payment-allocation";
@@ -1188,7 +1187,7 @@ export async function createExpense(input: CreateExpenseInput) {
     }
     const data = insertResult.data;
 
-    if (isDirectAdmin && paymentMethodBucket(input.paymentMethod || "cash") === "cash") {
+    if (isDirectAdmin) {
         await postOfficeCashOutflow({
             amount,
             companyId: context.activeCompany!.id,
@@ -2635,19 +2634,17 @@ export async function decideLandlordPaidExpenseRequest(input: DecideLandlordPaid
         source_id: request.id,
         source_type: "landlord_payment_expense_request",
     });
-    if (paymentMethodBucket(request.payment_method ?? "cash") === "cash") {
-        await postOfficeCashOutflow({
-            amount: requestedAmount,
-            companyId,
-            db,
-            description: `Approved landlord payment request ${request.id}. ${request.notes ?? ""}`.trim(),
-            officeId: request.office_id,
-            recordedBy: actorId,
-            sourceId: request.id,
-            sourceType: "landlord_payment_expense_request",
-            transactionDate: request.payment_date ?? reviewedAt.slice(0, 10),
-        });
-    }
+    await postOfficeCashOutflow({
+        amount: requestedAmount,
+        companyId,
+        db,
+        description: `Approved landlord payment request ${request.id}. ${request.notes ?? ""}`.trim(),
+        officeId: request.office_id,
+        recordedBy: actorId,
+        sourceId: request.id,
+        sourceType: "landlord_payment_expense_request",
+        transactionDate: request.payment_date ?? reviewedAt.slice(0, 10),
+    });
 
     const existingApprovedPayment = await db
         .from("landlord_payments")

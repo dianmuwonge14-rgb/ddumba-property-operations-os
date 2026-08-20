@@ -166,8 +166,6 @@ export type ExpensesPageData = {
         advanceAmount: number;
         advanceRecoveryAmount: number;
         cashPaymentAmount: number;
-        expenseId?: string | null;
-        approvedLandlordPaymentId?: string | null;
         remainingAdvanceBalance: number;
         currentNetPayable: number;
         alreadyPaidAmount: number;
@@ -281,10 +279,7 @@ export type ExpenseBalanceTotals = {
 };
 
 export type PendingCashExpenseProjection = {
-    approvedCashOutflows: number;
     currentActualOfficeCash: number;
-    ledgerCashInflows: number;
-    otherApprovedCashOutflows: number;
     pendingCashExpenses: number;
     pendingCashExpenseCount: number;
     pendingBankExpenses: number;
@@ -294,13 +289,6 @@ export type PendingCashExpenseProjection = {
     pendingSalaryPayments: number;
     pendingOtherCashOutflows: number;
     projectedOfficeCashAfterPendingExpenses: number;
-};
-
-export type OfficeCashReconciliationItem = {
-    label: string;
-    amount: number;
-    count: number;
-    direction: "inflow" | "outflow";
 };
 
 export type ExpenseReportCollectionItem = CollectionRow & {
@@ -330,7 +318,6 @@ export type ExpenseBalanceReport = {
     generatedBy: string;
     totals: ExpenseBalanceTotals;
     cashProjection: PendingCashExpenseProjection;
-    officeCashReconciliation: OfficeCashReconciliationItem[];
     pendingCashExpenses: ExpenseItem[];
     pendingCashOutflows: PendingCashOutflowItem[];
     expenses: ExpenseItem[];
