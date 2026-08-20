@@ -136,7 +136,7 @@ type LandlordPaymentPreview = Awaited<ReturnType<typeof previewLandlordPaymentEx
 type ExpenseEntryMode = "landlord_payment" | "authorised" | "unauthorised" | "banking" | "cash_handover_admin" | "salary_payment";
 type AuthorisedExpenseType = "employee_lunch" | "airtime" | "internet" | "transport_kampala";
 type ExpenseModalMode = "view" | "amount" | "delete" | "history";
-type SummaryDrilldownKind = "collections" | "adminCapitalInjection" | "expenses" | "pendingCashExpenses";
+type SummaryDrilldownKind = "collections" | "adminCapitalInjection" | "expenses" | "pendingCashExpenses" | "officeCashReconciliation";
 type RecordDatePreset = "today" | "yesterday" | "week" | "month" | "custom_date" | "custom_range" | "all_dates";
 type LandlordDueFilter = "" | "due_today" | "due_this_week" | "overdue" | "no_due_date" | "paid" | "outstanding";
 type ExpenseStatusFilter = "active" | "pending_changes" | "corrected" | "deleted" | "all";
@@ -569,7 +569,10 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
         [report?.totals],
     );
     const cashProjection = useMemo(() => report?.cashProjection ?? {
+        approvedCashOutflows: 0,
         currentActualOfficeCash: 0,
+        ledgerCashInflows: 0,
+        otherApprovedCashOutflows: 0,
         pendingCashExpenses: 0,
         pendingCashExpenseCount: 0,
         pendingBankExpenses: 0,
@@ -1556,7 +1559,15 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                         icon={<ReceiptText size={18} />}
                         onClick={() => setSummaryDrilldown("expenses")}
                     />
-                    <BalanceCard label="Remaining Office Balance" value={money(totals.remainingBalance)} hint="Collections minus expenses" tone={totals.remainingBalance >= 0 ? "blue" : "red"} icon={<WalletCards size={18} />} />
+                    <BalanceCard
+                        interactive
+                        label="Remaining Office Balance"
+                        value={money(totals.remainingBalance)}
+                        hint="Same live source as Current Office Cash"
+                        tone={totals.remainingBalance >= 0 ? "blue" : "red"}
+                        icon={<WalletCards size={18} />}
+                        onClick={() => setSummaryDrilldown("officeCashReconciliation")}
+                    />
                     <BalanceCard label="Number of expense rows" value={totals.expenseRows.toLocaleString()} hint={periodLabel} tone="slate" icon={<CheckCircle2 size={18} />} />
                     <BalanceCard label="Number of payment rows" value={totals.paymentRows.toLocaleString()} hint={report?.officeName ?? "Selected scope"} tone="slate" icon={<FileText size={18} />} />
                 </section>
@@ -1571,7 +1582,15 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                         <span className="w-fit rounded-full border border-white/70 bg-white px-3 py-1 text-xs font-black uppercase text-slate-700">{report?.officeName ?? "Selected scope"}</span>
                     </div>
                     <div className="mt-4 grid gap-3 md:grid-cols-3">
-                        <BalanceCard label="Current Office Cash" value={money(cashProjection.currentActualOfficeCash)} hint="True live physical office cash" tone="green" icon={<WalletCards size={18} />} />
+                        <BalanceCard
+                            interactive
+                            label="Current Office Cash"
+                            value={money(cashProjection.currentActualOfficeCash)}
+                            hint="True live physical office cash · Open reconciliation"
+                            tone="green"
+                            icon={<WalletCards size={18} />}
+                            onClick={() => setSummaryDrilldown("officeCashReconciliation")}
+                        />
                         <BalanceCard
                             interactive
                             label="Pending Cash Expenses"
@@ -2480,23 +2499,27 @@ function SummaryDrilldownModal({ kind, onClose, report }: { kind: SummaryDrilldo
     }, [onClose]);
     const isCollections = kind === "collections" || kind === "adminCapitalInjection";
     const isPendingCashExpenses = kind === "pendingCashExpenses";
+    const isOfficeCashReconciliation = kind === "officeCashReconciliation";
     const expenses = useMemo(() => {
         return (report?.expenses ?? []).filter((expense) => normalizeStatus(expense.status ?? expense.approvalState) === "approved");
     }, [report?.expenses]);
     const pendingCashOutflows = useMemo(() => report?.pendingCashOutflows ?? [], [report?.pendingCashOutflows]);
+    const officeCashReconciliation = useMemo(() => report?.officeCashReconciliation ?? [], [report?.officeCashReconciliation]);
     const collections = useMemo(() => {
         const rows = report?.collections ?? [];
         return kind === "adminCapitalInjection" ? rows.filter((collection) => collection.collectionSourceKey === "admin_capital_injection") : rows;
     }, [kind, report?.collections]);
     const total = isCollections
         ? collections.reduce((sum, collection) => sum + Number(collection.amountValue ?? 0), 0)
-        : isPendingCashExpenses
+        : isOfficeCashReconciliation
+            ? officeCashReconciliation.reduce((sum, row) => sum + (row.direction === "inflow" ? Number(row.amount ?? 0) : -Number(row.amount ?? 0)), 0)
+            : isPendingCashExpenses
             ? pendingCashOutflows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0)
             : expenses.reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
-    const count = isCollections ? collections.length : isPendingCashExpenses ? pendingCashOutflows.length : expenses.length;
-    const title = kind === "adminCapitalInjection" ? "Admin Capital Injection Records" : isCollections ? "Total Collections Records" : isPendingCashExpenses ? "Pending Cash Outflow Requests" : "Total Expenses Records";
+    const count = isCollections ? collections.length : isOfficeCashReconciliation ? officeCashReconciliation.reduce((sum, row) => sum + Number(row.count ?? 0), 0) : isPendingCashExpenses ? pendingCashOutflows.length : expenses.length;
+    const title = kind === "adminCapitalInjection" ? "Admin Capital Injection Records" : isCollections ? "Total Collections Records" : isOfficeCashReconciliation ? "Current Office Cash Reconciliation" : isPendingCashExpenses ? "Pending Cash Outflow Requests" : "Total Expenses Records";
     const officeLabel = report?.officeName ?? "Selected scope";
-    const period = isPendingCashExpenses ? "All currently pending cash expenses" : report ? `${report.filters.startDate} to ${report.filters.endDate}` : "Current filter";
+    const period = isOfficeCashReconciliation ? "Running physical office cash from live cash sources" : isPendingCashExpenses ? "All currently pending cash expenses" : report ? `${report.filters.startDate} to ${report.filters.endDate}` : "Current filter";
     const collectionUrl = report
         ? `/office/collections?startDate=${encodeURIComponent(report.filters.startDate)}&endDate=${encodeURIComponent(report.filters.endDate)}${report.filters.officeId ? `&officeId=${encodeURIComponent(report.filters.officeId)}` : ""}${kind === "adminCapitalInjection" ? "&collectionSource=admin_capital_injection" : ""}`
         : "/office/collections";
@@ -2571,6 +2594,35 @@ function SummaryDrilldownModal({ kind, onClose, report }: { kind: SummaryDrilldo
                                     </tr>
                                 ))}
                             </tbody>
+                        </table>
+                    ) : isOfficeCashReconciliation ? (
+                        <table className="w-full min-w-[760px] text-left text-sm">
+                            <thead className="bg-slate-100 text-xs uppercase text-slate-500">
+                                <tr>
+                                    <th className="px-4 py-3">Cash Source</th>
+                                    <th className="px-4 py-3">Direction</th>
+                                    <th className="px-4 py-3 text-right">Records</th>
+                                    <th className="px-4 py-3 text-right">Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {officeCashReconciliation.map((row) => (
+                                    <tr key={`office-cash-reconciliation:${row.label}`} className="border-b border-slate-100 hover:bg-emerald-50/60">
+                                        <td className="px-4 py-3 font-black text-slate-950">{row.label}</td>
+                                        <td className={`px-4 py-3 font-black uppercase ${row.direction === "inflow" ? "text-emerald-700" : "text-rose-700"}`}>{row.direction}</td>
+                                        <td className="px-4 py-3 text-right font-bold text-slate-500">{Number(row.count ?? 0).toLocaleString()}</td>
+                                        <td className={`px-4 py-3 text-right font-black ${row.direction === "inflow" ? "text-emerald-700" : "text-rose-700"}`}>
+                                            {row.direction === "outflow" ? "-" : "+"}{money(row.amount)}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                            <tfoot>
+                                <tr className="bg-emerald-50 text-xs uppercase text-emerald-900">
+                                    <td className="px-4 py-3 font-black" colSpan={3}>Current Office Cash</td>
+                                    <td className="px-4 py-3 text-right font-black">{money(total)}</td>
+                                </tr>
+                            </tfoot>
                         </table>
                     ) : (
                         <table className="w-full min-w-[980px] text-left text-sm">
