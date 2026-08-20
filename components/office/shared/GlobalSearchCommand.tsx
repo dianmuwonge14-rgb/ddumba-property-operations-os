@@ -208,6 +208,12 @@ export default function GlobalSearchCommand(props: Props) {
         setMobileActive(false);
         setQuery("");
         router.push(href);
+        window.setTimeout(() => {
+            const target = new URL(href, window.location.origin);
+            const currentPath = `${window.location.pathname}${window.location.search}`;
+            const targetPath = `${target.pathname}${target.search}`;
+            if (currentPath !== targetPath) window.location.assign(href);
+        }, 350);
     }
 
     function openRoomDestination(destination: "payments" | "defaulters" | "vacant" | "properties") {
