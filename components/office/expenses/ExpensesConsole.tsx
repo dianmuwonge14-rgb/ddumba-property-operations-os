@@ -59,6 +59,11 @@ function methodLabel(value: string | null | undefined) {
     return normalized.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) || "Cash";
 }
 
+function isOfficeCashCollectionRow(collection: ExpenseBalanceReport["collections"][number]) {
+    if (collection.collectionSourceKey === "admin_capital_injection") return false;
+    return methodLabel(collection.paymentMethod).toLowerCase().includes("cash");
+}
+
 function formatDateTime(value: string | null | undefined) {
     if (!value) return "--";
     return new Intl.DateTimeFormat("en-UG", {
@@ -1531,7 +1536,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                 <section className="mx-auto mt-5 max-w-6xl grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                     <BalanceCard
                         interactive
-                        label="Total Collections"
+                        label="True Collections"
                         value={money(totals.totalCollections)}
                         hint={`${totals.paymentRows} payment rows · Open records`}
                         tone="green"
@@ -1559,7 +1564,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                     <BalanceCard
                         label="Remaining Office Balance"
                         value={money(totals.remainingBalance)}
-                        hint="Collections + Capital Injection - Approved Expenses"
+                        hint="True Collections + Capital Injection - Approved Expenses"
                         tone={totals.remainingBalance >= 0 ? "blue" : "red"}
                         icon={<WalletCards size={18} />}
                     />
@@ -1578,9 +1583,9 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                     </div>
                     <div className="mt-4 grid gap-3 md:grid-cols-3">
                         <BalanceCard
-                            label="Current Office Balance"
+                            label="Money at Office"
                             value={money(cashProjection.currentActualOfficeCash)}
-                            hint="Collections + Capital Injection - Approved Expenses"
+                            hint="True Collections + Capital Injection - Approved Expenses"
                             tone="green"
                             icon={<WalletCards size={18} />}
                         />
@@ -2363,7 +2368,7 @@ export default function ExpensesConsole({ canManage, data, initialFilters, isAdm
                         <p className="text-xs font-black uppercase tracking-wide text-blue-600">Running totals</p>
                         <h2 className="text-lg font-black text-slate-950">Selected Period</h2>
                         <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-                            <Total label="Total collections" value={money(totals.totalCollections)} icon={<Banknote size={14} />} />
+                            <Total label="True collections" value={money(totals.totalCollections)} icon={<Banknote size={14} />} />
                             <Total label="Total expenses" value={money(totals.totalExpenses)} icon={<ReceiptText size={14} />} />
                             <Total label="Remaining balance" value={money(totals.remainingBalance)} icon={<WalletCards size={14} />} />
                             <Total label="Expense rows" value={totals.expenseRows.toLocaleString()} icon={<CheckCircle2 size={14} />} />
@@ -2498,7 +2503,9 @@ function SummaryDrilldownModal({ kind, onClose, report }: { kind: SummaryDrilldo
     const pendingCashOutflows = useMemo(() => report?.pendingCashOutflows ?? [], [report?.pendingCashOutflows]);
     const collections = useMemo(() => {
         const rows = report?.collections ?? [];
-        return kind === "adminCapitalInjection" ? rows.filter((collection) => collection.collectionSourceKey === "admin_capital_injection") : rows;
+        return kind === "adminCapitalInjection"
+            ? rows.filter((collection) => collection.collectionSourceKey === "admin_capital_injection")
+            : rows.filter(isOfficeCashCollectionRow);
     }, [kind, report?.collections]);
     const total = isCollections
         ? collections.reduce((sum, collection) => sum + Number(collection.amountValue ?? 0), 0)
@@ -2506,7 +2513,7 @@ function SummaryDrilldownModal({ kind, onClose, report }: { kind: SummaryDrilldo
             ? pendingCashOutflows.reduce((sum, row) => sum + Number(row.amount ?? 0), 0)
             : expenses.reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
     const count = isCollections ? collections.length : isPendingCashExpenses ? pendingCashOutflows.length : expenses.length;
-    const title = kind === "adminCapitalInjection" ? "Admin Capital Injection Records" : isCollections ? "Total Collections Records" : isPendingCashExpenses ? "Pending Cash Outflow Requests" : "Total Expenses Records";
+    const title = kind === "adminCapitalInjection" ? "Admin Capital Injection Records" : isCollections ? "True Collections Records" : isPendingCashExpenses ? "Pending Cash Outflow Requests" : "Total Expenses Records";
     const officeLabel = report?.officeName ?? "Selected scope";
     const period = isPendingCashExpenses ? "All currently pending cash expenses" : report ? `${report.filters.startDate} to ${report.filters.endDate}` : "Current filter";
     const collectionUrl = report
@@ -2873,7 +2880,7 @@ function PrintPreview({ companyName, onClose, report }: { companyName: string; o
                         </div>
                     </header>
                     <section className="mt-5 grid gap-3 sm:grid-cols-3">
-                        <ReportBox label="Collections" value={money(report.totals.totalCollections)} />
+                        <ReportBox label="True Collections" value={money(report.totals.totalCollections)} />
                         <ReportBox label="Expenses" value={money(report.totals.totalExpenses)} />
                         <ReportBox label="Remaining Balance" value={money(report.totals.remainingBalance)} />
                     </section>

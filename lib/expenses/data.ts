@@ -55,6 +55,16 @@ function physicalCollectionAmount(collection: CollectionRow) {
     return isPhysicalCashCollection(collection) ? collectionAmount(collection) : 0;
 }
 
+function isAdminCapitalInjection(collection: CollectionRow | Record<string, unknown>) {
+    const raw = collection as CollectionRow & Record<string, unknown>;
+    return String(raw.type ?? raw.collection_type ?? "").toUpperCase() === "ADMIN_CAPITAL_INJECTION";
+}
+
+function trueOfficeCollectionAmount(collection: CollectionRow) {
+    if (isAdminCapitalInjection(collection)) return 0;
+    return physicalCollectionAmount(collection);
+}
+
 function isApprovedExpense(expense: Record<string, unknown>) {
     const status = expenseStatus(expense);
     if (expense.financial_effective === false) return false;
@@ -578,14 +588,9 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
     const collections = uniqueFinanciallyEffectiveCollections((collectionsResult.data ?? []) as CollectionRow[]);
     const items = hydrateExpenseItems(expenses, categoriesResult.data ?? [], propertiesResult.data ?? [], landlordsResult.data ?? [], usersResult.data ?? []);
     const officeById = new Map((officesResult.data ?? []).map((office) => [office.id, office.office_name ?? office.name ?? "Office"]));
-    const totalCollections = collections.reduce((total, collection) => total + collectionAmount(collection), 0);
-    const physicalCollections = collections.reduce((total, collection) => total + physicalCollectionAmount(collection), 0);
-    const adminCapitalInjectionTotal = collections.reduce((total, collection) => {
-        const raw = collection as CollectionRow & Record<string, unknown>;
-        return String(raw.type ?? raw.collection_type ?? "").toUpperCase() === "ADMIN_CAPITAL_INJECTION"
-            ? total + collectionAmount(collection)
-            : total;
-    }, 0);
+    const trueCollections = collections.filter((collection) => trueOfficeCollectionAmount(collection) > 0);
+    const totalCollections = trueCollections.reduce((total, collection) => total + trueOfficeCollectionAmount(collection), 0);
+    const adminCapitalInjectionTotal = collections.reduce((total, collection) => isAdminCapitalInjection(collection) ? total + collectionAmount(collection) : total, 0);
     const approvedExpenses = expenses.filter(isApprovedExpense);
     const totalExpenses = sumExpenses(approvedExpenses);
     const currentOfficeBalance = totalCollections + adminCapitalInjectionTotal - totalExpenses;
@@ -713,7 +718,7 @@ export async function getExpenseBalanceReportData(filters: ExpenseBalanceFilters
             totalExpenses,
             remainingBalance: currentOfficeBalance,
             expenseRows: approvedExpenses.length,
-            paymentRows: collections.length,
+            paymentRows: trueCollections.length,
         },
         cashProjection: {
             currentActualOfficeCash: currentOfficeBalance,
